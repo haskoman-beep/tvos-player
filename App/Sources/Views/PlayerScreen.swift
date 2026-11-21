@@ -49,7 +49,9 @@ struct PlayerScreen: View {
             if !isTrailer { model.endPlayback(request) }
         }
         .onAppear {
+            // Beim Vorlader immer anmelden (onDisappear meldet ab), das Backend aber nur einmal anlegen.
             StreamPrefetcher.shared.playerAppeared(prefetchToken)
+            guard backend == nil else { return }
             do { backend = try AetherBackend() } catch { initError = "Player-Start fehlgeschlagen: \(error)"; RemoteLog.error("player", initError ?? "") }
         }
     }
@@ -154,7 +156,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             engine.stop()
             onEnded(!upNextCancelled)
         }
-        .sheet(isPresented: $showTracks) { TrackSheet(engine: engine) }
+        .fullScreenCover(isPresented: $showTracks) { PlayerTrackPanel(engine: engine, profile: profile, sourceURL: url) }
         .task {
             do {
                 RemoteLog.info("player", "Laden \(title) · Start \(start.map { Int($0) } ?? 0)s · \(url.host ?? "?")")
@@ -315,39 +317,5 @@ struct PlayerControls<E: PlaybackEngine>: View {
 
     private func fmt(_ s: Double) -> String {
         let t = Int(max(0, s)); return t >= 3600 ? String(format: "%d:%02d:%02d", t / 3600, t / 60 % 60, t % 60) : String(format: "%d:%02d", t / 60, t % 60)
-    }
-}
-
-struct TrackSheet<E: PlaybackEngine>: View {
-    @ObservedObject var engine: E
-    @Environment(\.dismiss) private var dismiss
-    var body: some View {
-        List {
-            Section("Ton") {
-                ForEach(engine.audioTracks, id: \.id) { t in
-                    Button { engine.selectAudio(t.id); dismiss() } label: {
-                        HStack {
-                            Text("\(t.language?.uppercased() ?? "?") · \(t.name ?? "") · \(t.channels ?? 0) Kanäle")
-                            Spacer()
-                            if t.id == engine.activeAudioID { Image(systemName: "checkmark") }
-                        }
-                    }
-                }
-            }
-            Section("Untertitel") {
-                Button { engine.selectSubtitle(nil); dismiss() } label: {
-                    HStack { Text("Aus"); Spacer(); if engine.activeSubtitleID == nil { Image(systemName: "checkmark") } }
-                }
-                ForEach(engine.subtitleTracks, id: \.id) { t in
-                    Button { engine.selectSubtitle(t.id); dismiss() } label: {
-                        HStack {
-                            Text("\(t.language?.uppercased() ?? "?") · \(t.name ?? "")")
-                            Spacer()
-                            if t.id == engine.activeSubtitleID { Image(systemName: "checkmark") }
-                        }
-                    }
-                }
-            }
-        }
     }
 }
