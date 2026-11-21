@@ -8,8 +8,8 @@ private var berlin: Calendar {
     return c
 }
 
-/// Fr 21.11.2026, 23:30 Berlin (spät am Abend, damit Zeitzonenfehler auffallen).
-private var friday: Date {
+/// Sa 21.11.2026, 23:30 Berlin (spät am Abend, damit Zeitzonenfehler auffallen).
+private var saturday: Date {
     berlin.date(from: DateComponents(year: 2026, month: 11, day: 21, hour: 23, minute: 30))!
 }
 
@@ -20,19 +20,19 @@ private func ep(_ series: String, _ date: String, s: Int = 1, e: Int = 1) -> Upc
 @Test func upcomingGroupsYesterdayTodayTomorrowDate() {
     let eps = [ep("Zeta", "2026-11-21"), ep("Alpha", "2026-11-21", e: 2), ep("Mitte", "2026-11-20"),
                ep("Beta", "2026-11-22"), ep("Gamma", "2026-11-25"), ep("Alpha", "2026-11-21", e: 2)]
-    let d = Upcoming.days(eps, today: friday, calendar: berlin)
+    let d = Upcoming.days(eps, today: saturday, calendar: berlin)
     #expect(d.map(\.label) == ["Gestern", "Heute", "Morgen", "Mi 25.11."])
     #expect(d[1].items.map(\.seriesName) == ["Alpha", "Zeta"])   // sortiert, Doppelte weg
-    #expect(Upcoming.today(eps, today: friday, calendar: berlin).count == 2)
+    #expect(Upcoming.today(eps, today: saturday, calendar: berlin).count == 2)
     #expect(ep("X", "2026-11-25", s: 2, e: 5).label == "S2 F5")
 }
 
 @Test func upcomingDropsOutOfRange() {
     let eps = [ep("Alt", "2026-11-19"), ep("Grenze", "2026-12-05"), ep("Zu spät", "2026-12-06"), ep("Kaputt", "bald")]
-    let d = Upcoming.days(eps, today: friday, calendar: berlin)
+    let d = Upcoming.days(eps, today: saturday, calendar: berlin)
     #expect(d.map(\.label) == ["Sa 5.12."])
     #expect(d[0].items.map(\.seriesName) == ["Grenze"])
-    #expect(Upcoming.lastDay(today: friday, calendar: berlin) == "2026-12-05")
+    #expect(Upcoming.lastDay(today: saturday, calendar: berlin) == "2026-12-05")
 }
 
 @Test func seriesIDsDedupContinueFirstLimit() {
@@ -93,4 +93,69 @@ private func ep(_ series: String, _ date: String, s: Int = 1, e: Int = 1) -> Upc
     let late = RecordingHTTP(show)
     _ = try await TMDBClient(apiKey: "K", http: late).nextEpisodes(tmdbID: 42, through: "2026-11-25")
     #expect(late.urls.count == 1)
+}
+
+/// Antwortet je URL-Pfad (für Serie + Staffel in einem Ablauf).
+final class PathHTTP: HTTPFetching, @unchecked Sendable {
+    var urls: [URL] = []
+    let bodies: [String: String]
+    init(_ bodies: [String: String]) { self.bodies = bodies }
+    func data(from url: URL) async throws -> Data {
+        urls.append(url)
+        guard let b = bodies[url.path] else { throw URLError(.fileDoesNotExist) }
+        return Data(b.utf8)
+    }
+}
+
+private let seasonTwo = #"{"episodes":[{"season_number":2,"episode_number":4,"name":"Vorher","air_date":"2026-11-20"},{"season_number":2,"episode_number":5,"name":"Fünf","air_date":"2026-11-27"},{"season_number":2,"episode_number":6,"name":"Sechs","air_date":"2026-12-04"}]}"#
+
+@Test func nextEpisodesMergesSeasonAndDedupes() async throws {
+    let show = #"""
+    {"id":42,"name":"Die Serie",
+     "last_episode_to_air":{"season_number":2,"episode_number":4,"name":"Vorher","air_date":"2026-11-20"},
+     "next_episode_to_air":{"season_number":2,"episode_number":5,"name":"Episode 5","air_date":"2026-11-27"}}
+    """#
+    let http = PathHTTP(["/3/tv/42": show, "/3/tv/42/season/2": seasonTwo])
+    let eps = try await TMDBClient(apiKey: "K", http: http).nextEpisodes(tmdbID: 42, from: "2026-11-20", through: "2026-12-05")
+    #expect(eps.map(\.episode) == [4, 5, 6])          // 4 und 5 nicht doppelt
+    #expect(eps.allSatisfy { $0.seriesName == "Die Serie" })
+    #expect(eps[1].title == nil)                         // aus /tv/{id} ("Episode 5"), Staffel-Duplikat verworfen
+}
+
+@Test func nextEpisodesWithoutNextUsesRecentLastSeason() async throws {
+    let show = #"{"id":42,"name":"Die Serie","next_episode_to_air":null,"last_episode_to_air":{"season_number":2,"episode_number":4,"air_date":"2026-11-20"}}"#
+    let http = PathHTTP(["/3/tv/42": show, "/3/tv/42/season/2": seasonTwo])
+    let client = TMDBClient(apiKey: "K", http: http)
+    let eps = try await client.nextEpisodes(tmdbID: 42, from: "2026-11-20", through: "2026-12-05")
+    #expect(http.urls.map(\.path) == ["/3/tv/42", "/3/tv/42/season/2"])
+    #expect(eps.map(\.episode) == [4, 5, 6])
+    // Letzte Folge liegt vor gestern → keine Staffel.
+    let old = PathHTTP(["/3/tv/42": show])
+    let only = try await TMDBClient(apiKey: "K", http: old).nextEpisodes(tmdbID: 42, from: "2026-11-21", through: "2026-12-06")
+    #expect(old.urls.count == 1 && only.map(\.episode) == [4])
+}
+
+@Test func emptyDaysAndHistory() {
+    #expect(Upcoming.days([], today: saturday, calendar: berlin).isEmpty)
+    #expect(Upcoming.today([], today: saturday, calendar: berlin).isEmpty)
+    #expect(ProgressBook().history().isEmpty)
+}
+
+@Test func upcomingRangeAcrossDSTChange() {
+    // 27.03.2027 Sa; Sommerzeit beginnt So 28.03.2027 in Berlin (Tag mit 23 h).
+    let today = berlin.date(from: DateComponents(year: 2027, month: 3, day: 27, hour: 0, minute: 30))!
+    let eps = [ep("Gestern", "2027-03-26"), ep("Morgen", "2027-03-28"), ep("Danach", "2027-03-29"),
+               ep("Grenze", "2027-04-10"), ep("Zu spät", "2027-04-11")]
+    let d = Upcoming.days(eps, today: today, calendar: berlin)
+    #expect(d.map(\.label) == ["Gestern", "Morgen", "Mo 29.3.", "Sa 10.4."])
+    #expect(Upcoming.lastDay(today: today, calendar: berlin) == "2027-04-10")
+    #expect(Upcoming.firstDay(today: today, calendar: berlin) == "2027-03-26")
+}
+
+@Test func localCalendarIsGregorian() {
+    #expect(Upcoming.localCalendar.identifier == .gregorian)
+    var buddhist = Calendar(identifier: .buddhist); buddhist.timeZone = berlin.timeZone
+    // Mit dem Hilfskalender stimmen die Tage auch, wenn das Gerät buddhistisch rechnet.
+    #expect(Upcoming.dayOffset("2026-11-22", today: saturday, calendar: berlin) == 1)
+    #expect(Upcoming.dayOffset("2026-11-22", today: saturday, calendar: buddhist) != 1)
 }

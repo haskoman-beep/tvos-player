@@ -8,7 +8,7 @@ struct CalendarView: View {
     @State private var loaded = false
 
     var body: some View {
-        let days = Upcoming.days(episodes, today: Date(), calendar: .current)
+        let days = Upcoming.days(episodes, today: Date(), calendar: Upcoming.localCalendar)
         ScrollView(.vertical) {
             LazyVStack(alignment: .leading, spacing: 50) {
                 Text("Kalender").font(.title2.bold()).padding(.leading, 60)
