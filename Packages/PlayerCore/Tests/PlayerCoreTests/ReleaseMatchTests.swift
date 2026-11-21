@@ -15,7 +15,8 @@ private func st(_ name: String, _ desc: String, file: String? = nil, binge: Stri
     let a = ReleaseName.pattern("Show.S01E01.Pilot.1080p.WEB-DL.DDP5.1.H.264-NTb.mkv")
     let b = ReleaseName.pattern("Show.S01E02.The.Next.One.1080p.WEB-DL.DDP5.1.H.264-NTb.mkv")
     #expect(a != nil && a == b)                                            // Folgentitel fällt heraus
-    #expect(ReleaseName.pattern("Show.S01E02.German.DL.1080p.WEB.h264-GRP.mkv") == "german.dl.1080p.web.h264-grp")
+    #expect(ReleaseName.pattern("Show.S01E02.German.DL.1080p.WEB.h264-GRP.mkv") == "1080p.web.h264-grp")
+    #expect(ReleaseName.pattern("Show.S01E03.Der.Plan.German.DL.WEB.h264-GRP.mkv") == "german.dl.web.h264-grp")
     #expect(ReleaseName.pattern("Film.2023.1080p.mkv") == nil)              // ohne Folgenkennung kein Muster
 }
 
@@ -102,4 +103,27 @@ private func st(_ name: String, _ desc: String, file: String? = nil, binge: Stri
     var q = p; q.stillWatchingAfter = 0
     let back = try JSONDecoder().decode(Profile.self, from: JSONEncoder().encode(q))
     #expect(back.stillWatchingAfter == 0)
+}
+
+@Test func languageOutweighsAddonAndService() {
+    let ref = ReleaseProfile(stream: st("[TB⚡] AIO", "⚡ 1080p 🇩🇪"), addon: "AIO")
+    let otherLang = st("[TB⚡] AIO", "⚡ 1080p 🇬🇧")
+    let sameLang = st("[RD+] Torrentio", "⚡ 1080p 🇩🇪")
+    #expect(nextEpisodeStream([("AIO", otherLang), ("Torrentio", sameLang)], matching: ref)?.id == sameLang.id)
+}
+
+@Test func withoutAnchorListOrderWins() {
+    // Weder Gruppe/Muster noch Auflösung gleich: erste Quelle, auch wenn eine andere Sprache/Addon teilt.
+    let ref = ReleaseProfile(stream: st("[TB⚡] AIO", "⚡ 1080p 🇩🇪"), addon: "AIO")
+    let first = st("[RD+] Torrentio", "⚡ 2160p HDR10 🇬🇧")
+    let low = st("[TB⚡] AIO", "⚡ 720p 🇩🇪")
+    #expect(nextEpisodeStream([("Torrentio", first), ("AIO", low)], matching: ref)?.id == first.id)
+}
+
+@Test func serviceNeedsWholeToken() {
+    #expect(ReleaseName.service(StreamItem(name: "AIO CACHED+ 1080p")) == nil)      // kein „ED+“
+    #expect(ReleaseName.service(StreamItem(name: "OPEN+ 1080p")) == nil)            // kein „EN+“ ohne Klammer
+    #expect(ReleaseName.service(StreamItem(name: "[EN⚡] Easynews")) == "NZB")
+    #expect(ReleaseName.service(StreamItem(name: "[EN] Usenet")) == "NZB")
+    #expect(ReleaseName.service(StreamItem(name: "[ED+] AIO")) == "ED")
 }

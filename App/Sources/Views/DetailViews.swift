@@ -365,7 +365,11 @@ struct StreamListView: View {
                     Text(model.profile.addons.isEmpty ? "Kein Addon installiert (Einstellungen → Addons)." : "Keine abspielbaren Quellen.")
                 }
                 ForEach(streams, id: \.stream.id) { entry in
-                    Button { fallbacks = 0; AutoNextState.userInput($autoNext); playing = entry.stream } label: {
+                    Button {
+                        fallbacks = 0; AutoNextState.userInput($autoNext)
+                        autoNext.ask = nil; autoNext.inputSinceStart = false   // Neustart von Hand: neue Folge ohne Eingabe
+                        playing = entry.stream
+                    } label: {
                         StreamRow(addon: entry.addon, stream: entry.stream).opacity(failed.contains(entry.stream.id) ? 0.4 : 1)
                     }
                 }
@@ -448,10 +452,16 @@ extension StreamListView {
         if autoNext.promptDue(model.profile) {
             RemoteLog.info("player", "Noch da?: nach \(autoNext.counter.autoStarts) automatischen Folgen, vor \(next.title)")
             // Erst nach dem Schließen des Players zeigen (Alert während der Cover-Animation geht verloren).
-            Task { try? await Task.sleep(for: .milliseconds(700)); autoNext.ask = StillWatchingAsk(stream: stream, next: next) }
+            Task {
+                try? await Task.sleep(for: .milliseconds(700))
+                // Inzwischen von Hand eine Quelle gestartet oder Zähler zurückgesetzt: keine veraltete Abfrage.
+                guard playing == nil, autoNext.promptDue(model.profile) else { return }
+                autoNext.ask = StillWatchingAsk(stream: stream, next: next)
+            }
             return
         }
-        startNext(next, after: stream, auto: true)
+        // „Klick: jetzt“ oder eine andere Taste in dieser Folge: der Start zählt nicht als automatisch.
+        startNext(next, after: stream, auto: !autoNext.inputSinceStart)
     }
 
     /// Quellen der nächsten Folge holen und die zum laufenden Release passende starten (Rückfall: Listenreihenfolge).
@@ -467,6 +477,7 @@ extension StreamListView {
             RemoteLog.info("player", "Nächste Folge: \(addon ?? "?") · \(s.name ?? "") · Nähe \(ref.score(s, addon: addon))\(s.behaviorHints?.bingeGroup == ref.bingeGroup && ref.bingeGroup != nil ? " (bingeGroup)" : "")")
             if let addon { autoNext.addons[s.id] = addon }
             if auto { autoNext.counter.autoStarted() }
+            autoNext.inputSinceStart = false
             nextNote = nil
             current = next
             try? await Task.sleep(for: .milliseconds(800))

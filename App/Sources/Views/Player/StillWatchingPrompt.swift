@@ -8,12 +8,18 @@ struct AutoNextState {
     /// Quellen-ID → Addon, auch für Quellen späterer Folgen (die nicht in der angezeigten Liste stehen).
     var addons: [String: String] = [:]
     var ask: StillWatchingAsk?
+    /// Seit dem Start der laufenden Folge eine Taste gedrückt (z. B. „Klick: jetzt“ auf der Up-next-Karte):
+    /// die nächste Folge zählt dann nicht als automatisch gestartet.
+    var inputSinceStart = false
 
-    /// Tastendruck: Zähler auf 0. Nur schreiben, wenn sich etwas ändert (sonst zeichnet jede Taste die Liste neu).
+    /// Tastendruck: Zähler auf 0, Eingabe merken. Nur schreiben, wenn sich etwas ändert (sonst zeichnet jede Taste
+    /// die Liste neu).
     @MainActor static func userInput(_ s: Binding<AutoNextState>) {
-        guard s.wrappedValue.counter.autoStarts > 0 else { return }
-        s.wrappedValue.counter.userInput()
-        RemoteLog.info("player", "Noch da?: Tastendruck, Zähler zurückgesetzt")
+        var v = s.wrappedValue
+        guard v.counter.autoStarts > 0 || !v.inputSinceStart else { return }
+        if v.counter.userInput() { RemoteLog.info("player", "Noch da?: Tastendruck, Zähler zurückgesetzt") }
+        v.inputSinceStart = true
+        s.wrappedValue = v
     }
 
     /// Vor dem automatischen Start der nächsten Folge: muss erst gefragt werden?
