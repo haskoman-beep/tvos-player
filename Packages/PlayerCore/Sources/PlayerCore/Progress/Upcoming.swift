@@ -53,7 +53,7 @@ public enum Upcoming {
         return calendar.dateComponents([.day], from: calendar.startOfDay(for: today), to: calendar.startOfDay(for: d)).day
     }
 
-    /// Nach Tag gruppiert (gestern … heute + 14), innerhalb eines Tages nach Serienname.
+    /// Nach Tag gruppiert (gestern … heute + 14), innerhalb eines Tages nach Sendezeit, dann Serienname.
     public static func days(_ eps: [UpcomingEpisode], today: Date, calendar: Calendar) -> [(label: String, items: [UpcomingEpisode])] {
         var byDay: [Int: [UpcomingEpisode]] = [:]
         var seen = Set<String>()
@@ -64,6 +64,8 @@ public enum Upcoming {
         }
         return byDay.keys.sorted().map { o in
             let items = byDay[o]!.sorted {
+                // Mit Sendezeit (TVmaze) nach Uhrzeit, Folgen ohne Zeit dahinter; sonst nach Serienname.
+                if $0.airTime != $1.airTime { return ($0.airTime ?? "~") < ($1.airTime ?? "~") }
                 let c = $0.seriesName.localizedCaseInsensitiveCompare($1.seriesName)
                 if c != .orderedSame { return c == .orderedAscending }
                 return ($0.season, $0.episode) < ($1.season, $1.episode)

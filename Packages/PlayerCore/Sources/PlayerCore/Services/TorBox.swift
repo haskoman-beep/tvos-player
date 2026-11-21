@@ -25,7 +25,9 @@ public struct TorBoxFile: Sendable, Hashable, Identifiable {
 }
 
 /// TorBox-API (`https://api.torbox.app`): eigene Dateien (`mylist`) und Abspiel-Link (`requestdl`).
-/// Der Schlüssel geht im Authorization-Kopf mit; `requestdl` verlangt ihn zusätzlich als `token` (Log schwärzt das).
+/// Der Schlüssel geht im Authorization-Kopf mit. Ausnahme: `requestdl` ist nur mit dem Parameter `token` dokumentiert,
+/// darum steht er dort zusätzlich in der Adresse – mit `redirect=false`, die Adresse geht nie an Player, Log oder
+/// Bildschirm (Fehler nur über `userMessage`, Alert und Log schwärzen zusätzlich).
 public struct TorBoxClient: Sendable {
     static let base = "https://api.torbox.app/v1/api"
     static let videoExtensions: Set<String> = ["mkv", "mp4", "m4v", "avi", "mov", "ts", "m2ts", "webm", "wmv", "mpg", "mpeg"]
@@ -39,18 +41,19 @@ public struct TorBoxClient: Sendable {
 
     /// Alle fertigen Video-Dateien aus Torrents, Usenet und Web-Downloads, neueste zuerst.
     /// Fällt eine der drei Listen aus, kommen die anderen trotzdem; scheitern alle, wird der erste Fehler geworfen.
-    public func files() async throws -> [TorBoxFile] {
+    /// `fresh` = an TorBox vorbei neu lesen (`bypass_cache`), nur beim manuellen Neuladen.
+    public func files(fresh: Bool = false) async throws -> [TorBoxFile] {
         var out: [TorBoxFile] = []
         var firstError: Error?
         for kind in TorBoxFile.Kind.allCases {
-            do { out += try await files(kind) } catch { if firstError == nil { firstError = error } }
+            do { out += try await files(kind, fresh: fresh) } catch { if firstError == nil { firstError = error } }
         }
         if out.isEmpty, let firstError { throw firstError }
         return out.sorted { ($0.added ?? .distantPast, $1.name) > ($1.added ?? .distantPast, $0.name) }
     }
 
-    func files(_ kind: TorBoxFile.Kind) async throws -> [TorBoxFile] {
-        guard let u = URL(string: "\(Self.base)/\(kind.path)/mylist?bypass_cache=true") else { return [] }
+    func files(_ kind: TorBoxFile.Kind, fresh: Bool) async throws -> [TorBoxFile] {
+        guard let u = URL(string: "\(Self.base)/\(kind.path)/mylist" + (fresh ? "?bypass_cache=true" : "")) else { return [] }
         return Self.parseList(try await data(u), kind: kind)
     }
 
@@ -65,6 +68,22 @@ public struct TorBoxClient: Sendable {
             throw APIError.decoding("requestdl")
         }
         return link
+    }
+
+    /// Kurze Meldung je Fehlerart für den Bildschirm, ohne Adresse (und damit ohne Schlüssel).
+    public static func userMessage(_ error: Error) -> String {
+        switch error {
+        case APIError.status(401), APIError.status(403): return "TorBox lehnt den Schlüssel ab"
+        case APIError.status(let n): return "TorBox antwortet mit Fehler \(n)"
+        case APIError.decoding: return "TorBox-Antwort unverständlich"
+        case let e as URLError:
+            switch e.code {
+            case .timedOut: return "TorBox antwortet nicht (Zeitüberschreitung)"
+            case .notConnectedToInternet, .networkConnectionLost: return "Keine Internetverbindung"
+            default: return "TorBox nicht erreichbar"
+            }
+        default: return "TorBox nicht erreichbar"
+        }
     }
 
     private func data(_ u: URL) async throws -> Data {

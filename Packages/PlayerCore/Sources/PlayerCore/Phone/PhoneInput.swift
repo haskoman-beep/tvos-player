@@ -98,7 +98,7 @@ public struct PhoneInputPage: Sendable {
         }
         switch (r.method, r.path) {
         case ("GET", "/"):
-            return (HTTPResponse(status: 200, body: Data(page(profileName: profileName, note: r.query["ok"]).utf8)), [])
+            return (HTTPResponse(status: 200, body: Data(page(profileName: profileName, note: r.query["ok"], importNote: r.query["imp"]).utf8)), [])
         case ("GET", "/export"):
             return (HTTPResponse(status: 200, contentType: "application/json", body: backup(),
                                  extraHeaders: ["Content-Disposition": "attachment; filename=\"player-profile.json\""]), [])
@@ -110,8 +110,8 @@ public struct PhoneInputPage: Sendable {
             if let x = val("import") {   // gemeinsames Feld, Erkennung in PhoneImportDetect
                 switch PhoneImportDetect.detect(x) {
                 case .command(let c): cmds.append(c)
-                case .refused: importNote = "abgelehnt"
-                case .unknown: importNote = "unerkannt"
+                case .refused(let why): importNote = why.rawValue
+                case .unknown: importNote = "unknown"
                 }
             }
             if let a = val("addon") { cmds.append(.addAddon(a)) }
@@ -121,22 +121,25 @@ public struct PhoneInputPage: Sendable {
             if let l = val("tmdb_link") { cmds.append(.addTMDBLink(l)) }
             if let b = val("backup_json") { cmds.append(.importBackup(Data(b.utf8))) }
             if let k = val("kit_url") { cmds.append(.importFusionURL(k)) }
-            let note = cmds.isEmpty ? (importNote ?? "leer") : "\(cmds.count)"
-            return (HTTPResponse(status: 303, body: Data(), extraHeaders: ["Location": "/?t=\(token)&ok=\(note)"]), cmds)
+            let note = cmds.isEmpty ? "leer" : "\(cmds.count)"
+            // Rückmeldung zum Schnell-Import immer mitgeben; „Nichts ausgefüllt“ entfällt, wenn nur er etwas meldet.
+            var loc = "/?t=\(token)"
+            if !(cmds.isEmpty && importNote != nil) { loc += "&ok=\(note)" }
+            if let importNote { loc += "&imp=\(importNote)" }
+            return (HTTPResponse(status: 303, body: Data(), extraHeaders: ["Location": loc]), cmds)
         default:
             return (HTTPResponse(status: 404, body: Data(Self.html("Nicht gefunden", "").utf8)), [])
         }
     }
 
-    func page(profileName: String, note: String?) -> String {
-        let msg: String
+    func page(profileName: String, note: String?, importNote: String? = nil) -> String {
+        var msg: String
         switch note {
         case nil: msg = ""
         case "leer": msg = "<p class=ok>Nichts ausgefüllt.</p>"
-        case "unerkannt": msg = "<p class=ok>Nicht erkannt. Möglich: Addon-Manifest, TMDB-/Trakt-Liste, Fusion-Kit- oder Nuvio-URL, Nuvio-JSON.</p>"
-        case "abgelehnt": msg = "<p class=ok>Sicherungen bitte über „Sicherung wiederherstellen“, Fusion-Kits über ihre „Copy JSON URL“.</p>"
         case let n?: msg = "<p class=ok>✓ \(n) Eingabe(n) an den Fernseher geschickt. Ergebnis siehst du dort.</p>"
         }
+        if let t = importNote.flatMap(PhoneImportDetect.noteText) { msg += "<p class=ok>\(Self.escape(t))</p>" }
         func field(_ name: String, _ label: String, _ ph: String, area: Bool = false) -> String {
             area ? "<label>\(label)<textarea name=\(name) rows=4 placeholder=\"\(ph)\"></textarea></label>"
                  : "<label>\(label)<input name=\(name) autocapitalize=off autocorrect=off placeholder=\"\(ph)\"></label>"

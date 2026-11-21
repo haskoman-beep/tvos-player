@@ -10,6 +10,14 @@ struct TorBoxFilesRow: View {
     @State private var playing: TorBoxPlay?
     @State private var resolving: String?
 
+    /// Liste 5 min im Speicher: Öffnen der Bibliothek fragt TorBox nicht jedes Mal.
+    @MainActor enum ListCache {
+        static var key: String?
+        static var at = Date.distantPast
+        static var files: [TorBoxFile] = []
+    }
+    static let maxShown = 100
+
     struct TorBoxPlay: Identifiable { let file: TorBoxFile; let url: URL; var id: String { file.id } }
 
     private var key: String? { model.profile.apiKeys["torbox"].flatMap { $0.isEmpty ? nil : $0 } }
@@ -21,7 +29,7 @@ struct TorBoxFilesRow: View {
                 if let files, !files.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
                         LazyHStack(spacing: 40) {
-                            ForEach(files.prefix(100)) { f in
+                            ForEach(files.prefix(Self.maxShown)) { f in
                                 Button { Task { await play(f, key: key) } } label: {
                                     VStack(alignment: .leading, spacing: 6) {
                                         Text(f.name).font(.headline).lineLimit(2)
@@ -34,6 +42,15 @@ struct TorBoxFilesRow: View {
                                 }
                                 .buttonStyle(.card)
                             }
+                            Button { Task { await load(key: key, fresh: true) } } label: {
+                                VStack(spacing: 8) {
+                                    Image(systemName: "arrow.clockwise")
+                                    Text(files.count > Self.maxShown ? "Neu laden · \(files.count - Self.maxShown) weitere nicht gezeigt" : "Neu laden")
+                                        .font(.caption).multilineTextAlignment(.center)
+                                }
+                                .frame(width: 240, height: 150).padding(16)
+                            }
+                            .buttonStyle(.card)
                         }
                         .padding(.horizontal, 60).padding(.vertical, 20)
                     }
@@ -42,7 +59,7 @@ struct TorBoxFilesRow: View {
                         .quietHintStyle().frame(height: 120).padding(.leading, 60)
                 }
             }
-            .task(id: key) { await load(key: key) }
+            .task(id: key) { await load(key: key, fresh: false) }
             .fullScreenCover(item: $playing) { p in
                 PlayerScreen(url: p.url,
                              request: PlayRequest(type: "movie", id: "torbox:\(p.file.id)", title: p.file.name,
@@ -58,14 +75,16 @@ struct TorBoxFilesRow: View {
         }
     }
 
-    private func load(key: String) async {
+    private func load(key: String, fresh: Bool) async {
+        if !fresh, ListCache.key == key, Date().timeIntervalSince(ListCache.at) < 300 { files = ListCache.files; return }
         do {
-            let list = try await TorBoxClient(apiKey: key).files()
+            let list = try await TorBoxClient(apiKey: key).files(fresh: fresh)
             files = list; failed = false
+            ListCache.key = key; ListCache.at = Date(); ListCache.files = list
             RemoteLog.info("torbox", "\(list.count) Video-Dateien im Konto")
         } catch {
             failed = true
-            RemoteLog.error("torbox", "Liste: \(error)")
+            RemoteLog.error("torbox", "Liste: \(LogRedact.text("\(error)"))")
         }
     }
 
@@ -77,8 +96,8 @@ struct TorBoxFilesRow: View {
             let url = try await TorBoxClient(apiKey: key).link(for: f)
             playing = TorBoxPlay(file: f, url: url)
         } catch {
-            model.lastError = "TorBox-Link nicht erhalten: \(error)"
-            RemoteLog.error("torbox", "Link: \(error)")
+            model.lastError = "TorBox-Link nicht erhalten: \(TorBoxClient.userMessage(error))"
+            RemoteLog.error("torbox", "Link: \(LogRedact.text("\(error)"))")
         }
     }
 }

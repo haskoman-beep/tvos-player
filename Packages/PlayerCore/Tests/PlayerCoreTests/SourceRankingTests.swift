@@ -273,8 +273,46 @@ private let de = SourceRankContext(audioPriority: ["de", "en", "orig"], av1Hardw
 @Test func ratingIconSetFormats() {
     let dict = RatingIconSet.parse(Data(#"{"IMDb":"https://i.example/imdb.png","Rotten Tomatoes":"https://i.example/rt.png","tmdb":"http://unsicher/x.png"}"#.utf8))
     #expect(dict == ["imdb": "https://i.example/imdb.png", "tomatoes": "https://i.example/rt.png"])
-    let arr = RatingIconSet.parse(Data(#"[{"name":"letterboxd","url":"https://i.example/lb.svg"},{"source":"mal","icon":"https://i.example/mal.png"},{"name":"x"}]"#.utf8))
-    #expect(arr == ["letterboxd": "https://i.example/lb.svg", "myanimelist": "https://i.example/mal.png"])
+    let arr = RatingIconSet.parse(Data(#"[{"name":"letterboxd","url":"https://i.example/lb.webp"},{"source":"mal","icon":"https://i.example/mal.png"},{"name":"x"},{"name":"trakt","url":"https://i.example/t.svg"}]"#.utf8))
+    #expect(arr == ["letterboxd": "https://i.example/lb.webp", "myanimelist": "https://i.example/mal.png"])   // SVG abgelehnt
+    // Grenzen: höchstens 50 Einträge, zu große Datei ergibt nichts.
+    let many = "{" + (0..<80).map { #""s\#($0)":"https://i.example/\#($0).png""# }.joined(separator: ",") + "}"
+    #expect(RatingIconSet.parse(Data(many.utf8)).count == RatingIconSet.maxEntries)
+    let big = #"{"imdb":"https://i.example/a.png","pad":""# + String(repeating: "x", count: RatingIconSet.maxBytes) + #""}"#
+    #expect(RatingIconSet.parse(Data(big.utf8)).isEmpty)
     #expect(RatingIconSet.parse(Data(#"{"icons":{"trakt":"https://i.example/t.png"}}"#.utf8)) == ["trakt": "https://i.example/t.png"])
     #expect(RatingIconSet.isValidSetURL("https://x.example/set.json") && !RatingIconSet.isValidSetURL("http://x/set.json"))
+}
+
+@Test func torboxErrorsNeverShowKey() {
+    let u = URL(string: "https://api.torbox.app/v1/api/torrents/requestdl?token=abcd1234efgh5678ijkl9012&torrent_id=7&file_id=0&redirect=false")!
+    let err = URLError(.cannotConnectToHost, userInfo: [NSURLErrorFailingURLErrorKey: u, NSURLErrorFailingURLStringErrorKey: u.absoluteString])
+    #expect(TorBoxClient.userMessage(err) == "TorBox nicht erreichbar")
+    #expect(TorBoxClient.userMessage(APIError.status(403)) == "TorBox lehnt den Schlüssel ab")
+    #expect(TorBoxClient.userMessage(APIError.status(500)) == "TorBox antwortet mit Fehler 500")
+    // Zentrale Schwärzung im Alert: auch ein roher Fehlertext verliert den Schlüssel.
+    let shown = LogRedact.text("TorBox-Link nicht erhalten: \(err)")
+    #expect(!shown.contains("abcd1234efgh5678ijkl9012"))
+}
+
+@Test func tvmazeDiskCacheSurvivesRestart() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tvmaze-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let file = dir.appendingPathComponent("tvmaze.json")
+    let http = FakeSender([(200, #"{"id":42}"#), (200, #"[{"season":1,"number":1,"airstamp":"2026-11-21T01:00:00+00:00"}]"#)])
+    _ = await TVmazeAirtimes(client: TVmazeClient(http: http, sleep: { _ in }), file: file).stamps(imdb: "tt5")
+    // Neuer Start: ID und Zeitpunkte von der Platte, kein Abruf.
+    let http2 = FakeSender([])
+    let s = await TVmazeAirtimes(client: TVmazeClient(http: http2, sleep: { _ in }), file: file).stamps(imdb: "tt5")
+    #expect(s.count == 1 && http2.sent.isEmpty)
+    try? FileManager.default.removeItem(at: dir)
+}
+
+@Test func upcomingSortsByAirtimeWithinDay() {
+    let cal = Upcoming.localCalendar
+    let today = Upcoming.dayString(0, today: Date(), calendar: cal)
+    var a = UpcomingEpisode(seriesID: "a", seriesName: "A", season: 1, episode: 1, airDate: today); a.airTime = "21:00"
+    var b = UpcomingEpisode(seriesID: "b", seriesName: "B", season: 1, episode: 1, airDate: today); b.airTime = "03:00"
+    let c = UpcomingEpisode(seriesID: "c", seriesName: "C", season: 1, episode: 1, airDate: today)
+    #expect(Upcoming.today([a, c, b], today: Date(), calendar: cal).map(\.seriesID) == ["b", "a", "c"])
 }

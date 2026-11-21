@@ -17,6 +17,7 @@ public struct TVmazeClient: Sendable {
     public func showID(imdb: String) async throws -> Int? {
         guard imdb.hasPrefix("tt"), imdb.dropFirst(2).allSatisfy(\.isNumber),
               let u = URL(string: "\(Self.base)/lookup/shows?imdb=\(imdb)") else { return nil }
+        await gate.wait()   // die Antwort ist eine Weiterleitung (301): zählt als zweiter Abruf
         let r = try await get(u)
         if r.status == 404 { return nil }
         guard (200..<300).contains(r.status) else { throw APIError.status(r.status) }
@@ -83,31 +84,65 @@ public actor TVmazeGate {
     }
 }
 
-/// Zwischenspeicher: TVmaze-ID je IMDb-ID (bleibt), Zeitpunkte je Serie 6 h; Fehler 5 min.
+/// Zwischenspeicher, auf Platte wenn `file` gesetzt: TVmaze-ID je IMDb-ID (ändert sich nie, bleibt; „unbekannt“
+/// 7 Tage), Zeitpunkte je Serie 6 h, nach Fehlern 5 min. So fallen beim Kaltstart höchstens die Folgenlisten an.
 public actor TVmazeAirtimes {
     public static let lifetime: TimeInterval = 6 * 3600
-    let client: TVmazeClient
-    private var ids: [String: Int?] = [:]
-    private var stamps: [Int: (at: Date, ttl: TimeInterval, value: [String: Date])] = [:]
+    static let missingLifetime: TimeInterval = 7 * 24 * 3600
+    static let failedLifetime: TimeInterval = 300
 
-    public init(client: TVmazeClient = TVmazeClient()) { self.client = client }
+    struct StampEntry: Codable, Equatable { var at: Date; var ttl: TimeInterval; var value: [String: Date] }
+    struct Disk: Codable, Equatable {
+        var ids: [String: Int] = [:]
+        var missing: [String: Date] = [:]
+        var stamps: [String: StampEntry] = [:]
+    }
+
+    let client: TVmazeClient
+    let file: URL?
+    private var disk = Disk()
+    private var loaded = false
+
+    public init(client: TVmazeClient = TVmazeClient(), file: URL? = nil) { self.client = client; self.file = file }
 
     /// Zeitpunkte der Folgen einer Serie; [] wenn unbekannt oder gestört.
     public func stamps(imdb: String, now: Date = Date()) async -> [String: Date] {
-        let id: Int?
-        if let known = ids[imdb] { id = known }
+        load()
+        let id: Int
+        if let known = disk.ids[imdb] { id = known }
+        else if let m = disk.missing[imdb], now.timeIntervalSince(m) < Self.missingLifetime { return [:] }
         else {
-            do { id = try await client.showID(imdb: imdb); ids[imdb] = id } catch { return [:] }
+            do {
+                guard let found = try await client.showID(imdb: imdb) else {
+                    disk.missing[imdb] = now; save(); return [:]
+                }
+                disk.ids[imdb] = found; disk.missing[imdb] = nil; id = found
+            } catch { return [:] }
         }
-        guard let id else { return [:] }
-        if let s = stamps[id], now.timeIntervalSince(s.at) < s.ttl { return s.value }
+        let key = String(id)
+        if let e = disk.stamps[key], now.timeIntervalSince(e.at) < e.ttl { return e.value }
         do {
             let v = try await client.airstamps(showID: id)
-            stamps[id] = (now, Self.lifetime, v)
+            disk.stamps[key] = StampEntry(at: now, ttl: Self.lifetime, value: v)
+            save()
             return v
         } catch {
-            stamps[id] = (now, 300, [:])
+            disk.stamps[key] = StampEntry(at: now, ttl: Self.failedLifetime, value: [:])
             return [:]
         }
+    }
+
+    private func load() {
+        guard !loaded else { return }
+        loaded = true
+        if let file, let d = try? Data(contentsOf: file), let x = try? JSONDecoder().decode(Disk.self, from: d) { disk = x }
+    }
+
+    private func save() {
+        guard let file else { return }
+        // Alte Zeitpunkte nicht ewig mitschleppen.
+        let now = Date()
+        disk.stamps = disk.stamps.filter { now.timeIntervalSince($0.value.at) < 7 * 24 * 3600 }
+        if let d = try? JSONEncoder().encode(disk) { try? d.write(to: file, options: .atomic) }
     }
 }

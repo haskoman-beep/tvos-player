@@ -56,7 +56,7 @@ struct RatingIconSettings: View {
                 Button("Eingebaute Plaketten verwenden") { save("") }
             }
             Text("JSON wie {\"imdb\": \"https://…/imdb.png\", \"tomatoes\": \"https://…\"} oder [{\"name\", \"url\"}]. "
-                 + "Nur https; fehlt ein Icon, bleibt der Text.")
+                 + "Nur https, Bilder als PNG/JPG/WebP/HEIC (kein SVG), höchstens 50 Einträge; fehlt oder scheitert ein Icon, bleibt der Text.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .task(id: model.profile.sources.ratingIconSetURL) { store.ensure(model.profile.sources.ratingIconSetURL) }

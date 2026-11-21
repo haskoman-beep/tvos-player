@@ -57,11 +57,18 @@ private func req(_ s: String) -> HTTPRequest {
     #expect(PhoneImportDetect.detect("https://x.example/nuvio-collections.json") == .command(.importNuvioURL("https://x.example/nuvio-collections.json")))
     let nuvio = #"[{"title":"A","folders":[]}]"#
     #expect(PhoneImportDetect.detect(nuvio) == .command(.importNuvioJSON(Data(nuvio.utf8))))
-    if case .refused = PhoneImportDetect.detect(#"{"profiles":[]}"#) {} else { Issue.record("Sicherung darf nicht importiert werden") }
+    #expect(PhoneImportDetect.detect(#"{"profiles":[]}"#) == .refused(.backup))
+    #expect(PhoneImportDetect.detect("stremio://a.example/catalog") == .unknown)
     #expect(PhoneImportDetect.detect("hallo") == .unknown)
     // Über die Seite: unerkannt → eigene Rückmeldung, kein Befehl.
     let page = PhoneInputPage(token: "tok")
     let body = "import=hallo"
     let (resp, cmds) = page.handle(req("POST /submit?t=tok HTTP/1.1\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)"), profileName: "Ich") { Data() }
-    #expect(cmds.isEmpty && resp.extraHeaders["Location"] == "/?t=tok&ok=unerkannt")
+    #expect(cmds.isEmpty && resp.extraHeaders["Location"] == "/?t=tok&imp=unknown")
+    // Rückmeldung bleibt, auch wenn ein anderes Feld etwas liefert; die Seite zeigt den Grund.
+    let body2 = "import=%7B%22profiles%22%3A%5B%5D%7D&key_tmdb=K"
+    let (resp2, cmds2) = page.handle(req("POST /submit?t=tok HTTP/1.1\r\nContent-Length: \(body2.utf8.count)\r\n\r\n\(body2)"), profileName: "Ich") { Data() }
+    #expect(cmds2 == [.setKey(service: "tmdb", value: "K")] && resp2.extraHeaders["Location"] == "/?t=tok&ok=1&imp=backup")
+    let (shown, _) = page.handle(req("GET /?t=tok&ok=1&imp=backup HTTP/1.1\r\n\r\n"), profileName: "Ich") { Data() }
+    #expect(String(data: shown.body, encoding: .utf8)!.contains("Sicherung wiederherstellen“ nutzen"))
 }
