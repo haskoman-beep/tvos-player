@@ -83,6 +83,8 @@ public enum GitHubBuilds {
         URL(string: "https://api.github.com/repos/\(repo)/actions/workflows/\(workflow)/runs?branch=\(branch)&status=success&per_page=1")!
     }
     public static var releaseURL: URL { URL(string: "https://api.github.com/repos/\(repo)/releases/tags/\(releaseTag)")! }
+    /// Einzige Paketadresse, die an atvloadly geht.
+    public static var ipaURL: URL { URL(string: "https://github.com/\(repo)/releases/download/\(releaseTag)/\(ipaName)")! }
     public static let headers = ["Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "Player-tvOS"]
 
     private struct Runs: Decodable {
@@ -112,10 +114,11 @@ public enum GitHubBuilds {
         return CIBuild(number: r.run_number, commit: r.head_sha, date: r.created_at.flatMap(parseDate))
     }
 
-    /// Release `app-main` mit dem Asset `Player.ipa`; nil, wenn das Asset fehlt.
+    /// Release `app-main` mit dem Asset `Player.ipa`; nil, wenn das Asset fehlt oder nicht genau unter `ipaURL` liegt.
     public static func parseRelease(_ data: Data) -> ReleaseBuild? {
         guard let rel = try? JSONDecoder().decode(Release.self, from: data), rel.draft != true,
-              let a = rel.assets.first(where: { $0.name == ipaName }), let url = URL(string: a.browser_download_url) else { return nil }
+              let a = rel.assets.first(where: { $0.name == ipaName }), a.browser_download_url == ipaURL.absoluteString else { return nil }
+        let url = ipaURL
         let notes = rel.body ?? ""
         let number = token(after: "Build ", in: notes, \.isNumber).flatMap { Int($0) }
             ?? token(after: "Build ", in: rel.name ?? "", \.isNumber).flatMap { Int($0) }
@@ -144,13 +147,19 @@ public enum UpdateState: Sendable, Equatable {
     case available(ReleaseBuild, latest: CIBuild)
     /// Neuester Lauf hat (noch) kein passendes Paket im Release `app-main`.
     case notPublished(CIBuild)
+    /// Installierter CI-Build (z. B. von einem Branch) ist neuer als main; `main` = Build-Nummer des main-Stands.
+    case newerInstalled(main: Int)
 
     public static func decide(current: AppBuildInfo, latest: CIBuild, release: ReleaseBuild?) -> UpdateState {
         if sameCommit(current.commit, latest.commit) { return .upToDate(latest) }
-        guard let release, let rc = release.commit else { return .notPublished(latest) }
+        let published = release?.commit == nil ? nil : release
+        // Verglichen wird mit dem, was installiert würde (Paket), ohne Paket mit dem neuesten Lauf.
+        let mainNumber = published?.number ?? latest.number
+        if !current.commit.isEmpty, let b = current.build, b > mainNumber { return .newerInstalled(main: mainNumber) }
+        guard let published, let rc = published.commit else { return .notPublished(latest) }
         // Paket ist der installierte Stand, der neuere Lauf ist noch nicht veröffentlicht.
         if sameCommit(current.commit, rc) { return .notPublished(latest) }
-        return .available(release, latest: latest)
+        return .available(published, latest: latest)
     }
 
     /// Commits gleich (auch gekürzt, mindestens 7 Zeichen). Leer = unbekannt = nie gleich.
@@ -247,6 +256,7 @@ public enum AppUpdateError: Error, Equatable, Sendable {
     case busy
     case needsChoice(String)
     case mcp(String)
+    case wrongPackage
 
     /// Text für Einstellungen/Log (ohne Konten oder Schlüssel).
     public var text: String {
@@ -264,6 +274,7 @@ public enum AppUpdateError: Error, Equatable, Sendable {
         case .busy: return "atvloadly installiert die App bereits."
         case .needsChoice(let s): return "atvloadly verlangt eine Auswahl (\(s)) – bitte über die atvloadly-Seite installieren."
         case .mcp(let m): return "atvloadly-MCP: \(AppUpdateLog.redact(m))"
+        case .wrongPackage: return "Paketadresse ist nicht das Release „app-main“ – Installation abgelehnt."
         }
     }
 }
@@ -340,11 +351,13 @@ public enum InstallRoute: Sendable, Equatable {
     /// Eintrag ist mit dem GitHub-Repo verknüpft: atvloadly lädt das neueste Release selbst.
     case sourceUpdate(appID: Int)
     /// MCP `install_app` mit Gerät und Konto des bestehenden Eintrags (ersetzt dessen IPA).
-    case mcp(deviceID: String, account: String)
+    /// `accountID` = md5 der Apple-ID; der Klartext bleibt im Eintrag.
+    case mcp(deviceID: String, accountID: String)
 
-    /// Bestehenden Eintrag dieser App wählen und den Weg bestimmen.
+    /// Bestehenden Eintrag dieser App wählen und den Weg bestimmen. `accountID` bildet den md5 der Apple-ID.
     public static func plan(apps: [AtvloadlyApp], devices: [AtvloadlyDevice], bundleID: String,
-                            repo: String = GitHubBuilds.repo) throws -> (app: AtvloadlyApp, route: InstallRoute) {
+                            repo: String = GitHubBuilds.repo,
+                            accountID: (String) -> String) throws -> (appID: Int, route: InstallRoute) {
         let mine = apps.filter { $0.bundleID == bundleID }
         guard !mine.isEmpty else { throw AppUpdateError.noApp }
         let udids = Set(devices.map(\.udid))
@@ -354,10 +367,82 @@ public enum InstallRoute: Sendable, Equatable {
             func rank(_ x: AtvloadlyApp) -> [Int] { [udids.contains(x.udid) ? 1 : 0, x.enabled ? 1 : 0, linked(x) ? 1 : 0, x.id] }
             return rank(a).lexicographicallyPrecedes(rank(b))
         }!
-        if linked(app) { return (app, .sourceUpdate(appID: app.id)) }
+        if linked(app) { return (app.id, .sourceUpdate(appID: app.id)) }
         guard let dev = devices.first(where: { $0.udid == app.udid }) else { throw AppUpdateError.noDevice }
         guard !app.account.isEmpty else { throw AppUpdateError.noAccount }
-        return (app, .mcp(deviceID: dev.id, account: app.account))
+        return (app.id, .mcp(deviceID: dev.id, accountID: accountID(app.account)))
+    }
+}
+
+// MARK: - Beobachten nach dem Start
+
+/// Wertet die Abfragen von `GET /api/apps/installing` nach dem Start aus.
+/// Fertig erst, wenn der Eintrag mindestens einmal in der Liste stand und danach verschwunden ist;
+/// taucht er innerhalb der Gnadenfrist nie auf, hat atvloadly die Aufgabe nicht gestartet.
+public struct InstallWatch: Sendable, Equatable {
+    public enum Outcome: Sendable, Equatable {
+        /// Noch nicht in der Liste, Gnadenfrist läuft.
+        case waiting
+        /// Steht in der Liste.
+        case running
+        /// War in der Liste und ist weg. Läuft die App danach noch, ist die Installation offenbar fehlgeschlagen
+        /// (bei Erfolg beendet tvOS die alte App).
+        case finished
+        /// Nie in der Liste erschienen, Gnadenfrist vorbei.
+        case notStarted
+        /// `maxMisses` Abfragefehler in Folge.
+        case unreachable
+        /// Gesamtfrist vorbei.
+        case timedOut
+
+        /// Endzustand: weiter abfragen lohnt nicht.
+        public var isFinal: Bool { self != .waiting && self != .running }
+
+        /// Text für die Einstellungen (nil = kein Endzustand).
+        public var text: String? {
+            switch self {
+            case .waiting, .running: return nil
+            case .finished: return "Installation offenbar fehlgeschlagen (App läuft noch). Protokoll auf der atvloadly-Seite ansehen."
+            case .notStarted: return "atvloadly hat die Aufgabe nicht gestartet."
+            case .unreachable: return "atvloadly antwortet nicht mehr."
+            case .timedOut: return "Keine Rückmeldung von atvloadly nach 20 Minuten."
+            }
+        }
+    }
+
+    /// Sekunden bis „nicht gestartet“.
+    public static let grace: Double = 60
+    /// Sekunden bis „keine Rückmeldung“.
+    public static let limit: Double = 20 * 60
+    public static let maxMisses = 10
+
+    public let appID: Int
+    public let bundleID: String
+    public let ipaURL: URL
+    public private(set) var seen = false
+    public private(set) var misses = 0
+
+    public init(appID: Int, bundleID: String, ipaURL: URL) {
+        self.appID = appID; self.bundleID = bundleID; self.ipaURL = ipaURL
+    }
+
+    /// Antwort der Liste; `elapsed` = Sekunden seit dem Start.
+    public mutating func observe(_ installing: [AtvloadlyApp], elapsed: Double) -> Outcome {
+        misses = 0
+        if Atvloadly.isInstalling(installing, appID: appID, bundleID: bundleID, ipaURL: ipaURL) {
+            seen = true
+            return elapsed >= Self.limit ? .timedOut : .running
+        }
+        if seen { return .finished }
+        return elapsed >= Self.grace ? .notStarted : .waiting
+    }
+
+    /// Abfrage fehlgeschlagen.
+    public mutating func failed(elapsed: Double) -> Outcome {
+        misses += 1
+        if misses >= Self.maxMisses { return .unreachable }
+        if elapsed >= Self.limit { return .timedOut }
+        return seen ? .running : .waiting
     }
 }
 
@@ -484,25 +569,67 @@ public enum AtvloadlyMCP {
 // MARK: - Log
 
 public enum AppUpdateLog {
-    /// Wörter mit „@“ (E-Mail) oder 32 Hex-Zeichen (md5 der Apple-ID) durch „…“ ersetzen.
+    /// Wörter mit „@“ (E-Mail) oder 32 Hex-Zeichen (md5 der Apple-ID) durch „…“ ersetzen;
+    /// bei `key=value` (auch mit `&` verkettet) nur den Wert, zusätzlich wenn er länger als 32 Zeichen ist.
     public static func redact(_ s: String) -> String {
-        s.split(separator: " ", omittingEmptySubsequences: false).map { w -> String in
-            let core = w.trimmingCharacters(in: CharacterSet(charactersIn: ".,:;()[]\"'"))
-            if core.contains("@") || (core.count == 32 && core.allSatisfy(\.isHexDigit)) { return "…" }
-            return String(w)
+        let punct = CharacterSet(charactersIn: ".,:;()[]\"'")
+        func secret(_ v: Substring) -> Bool {
+            let core = v.trimmingCharacters(in: punct)
+            return core.contains("@") || (core.count == 32 && core.allSatisfy(\.isHexDigit))
+        }
+        return s.split(separator: " ", omittingEmptySubsequences: false).map { w -> String in
+            if w.contains("=") {
+                return w.split(separator: "&", omittingEmptySubsequences: false).map { part -> String in
+                    guard let eq = part.firstIndex(of: "=") else { return secret(part) ? "…" : String(part) }
+                    let value = part[part.index(after: eq)...]
+                    let core = value.trimmingCharacters(in: punct)
+                    return secret(value) || core.count > 32 ? String(part[...eq]) + "…" : String(part)
+                }.joined(separator: "&")
+            }
+            return secret(w) ? "…" : String(w)
         }.joined(separator: " ")
     }
 }
 
 // MARK: - Ablauf (Netz über APISending, in Tests ersetzbar)
 
+/// Wie `URLSessionSender`, aber mit fester Zeitgrenze je Anfrage (atvloadly im Heimnetz: 10 s).
+public struct TimeoutSender: APISending {
+    public let timeout: Double
+    public init(timeout: Double) { self.timeout = timeout }
+    public func send(_ r: APIRequest) async throws -> (status: Int, data: Data) {
+        let x = try await sendFull(r)
+        return (x.status, x.data)
+    }
+    public func sendFull(_ r: APIRequest) async throws -> APIResponse {
+        var u = URLRequest(url: r.url, timeoutInterval: timeout)
+        u.httpMethod = r.method
+        for (k, v) in r.headers { u.setValue(v, forHTTPHeaderField: k) }
+        u.httpBody = r.body
+        let (d, resp) = try await URLSession.shared.data(for: u)
+        let http = resp as? HTTPURLResponse
+        var h: [String: String] = [:]
+        for (k, v) in http?.allHeaderFields ?? [:] { h[String(describing: k)] = String(describing: v) }
+        return APIResponse(status: http?.statusCode ?? 0, data: d, headers: h)
+    }
+}
+
 public struct AppUpdateClient: Sendable {
+    /// GitHub-Abfragen.
     public let http: any APISending
+    /// atvloadly-Abfragen (Standard: 10 s Zeitgrenze).
+    public let atv: any APISending
     /// md5 (hex, klein) der Apple-ID – kommt aus der App (CryptoKit), PlayerCore bleibt ohne Krypto.
     public let accountID: @Sendable (String) -> String
 
-    public init(http: any APISending = URLSessionSender(), accountID: @escaping @Sendable (String) -> String) {
-        self.http = http; self.accountID = accountID
+    public static let atvloadlyTimeout: Double = 10
+
+    /// Ohne `atvloadly` geht atvloadly über `http`, wenn das gesetzt ist (Tests), sonst über `TimeoutSender`.
+    public init(http: (any APISending)? = nil, atvloadly: (any APISending)? = nil,
+                accountID: @escaping @Sendable (String) -> String) {
+        self.http = http ?? URLSessionSender()
+        self.atv = atvloadly ?? http ?? TimeoutSender(timeout: Self.atvloadlyTimeout)
+        self.accountID = accountID
     }
 
     // GitHub
@@ -519,7 +646,7 @@ public struct AppUpdateClient: Sendable {
     // atvloadly
 
     private func get(_ base: URL, _ path: String) async throws -> Data {
-        let r = try await http.sendFull(APIRequest(url: base.appendingPathComponent(path)))
+        let r = try await atv.sendFull(APIRequest(url: base.appendingPathComponent(path)))
         guard (200..<300).contains(r.status) else { throw AppUpdateError.http(r.status) }
         return r.data
     }
@@ -537,28 +664,29 @@ public struct AppUpdateClient: Sendable {
 
     /// Installation des Release-Pakets anstoßen. Kehrt zurück, sobald atvloadly die Aufgabe angenommen hat.
     public func start(base: URL, bundleID: String, release: ReleaseBuild) async throws -> Started {
+        guard release.ipaURL == GitHubBuilds.ipaURL else { throw AppUpdateError.wrongPackage }
         let busy = try await installing(base: base)
         if Atvloadly.isInstalling(busy, appID: nil, bundleID: bundleID, ipaURL: release.ipaURL) { throw AppUpdateError.busy }
         let apps = try Atvloadly.parseApps(try await get(base, "api/apps"))
         let devices = try Atvloadly.parseDevices(try await get(base, "api/devices"))
-        let (app, route) = try InstallRoute.plan(apps: apps, devices: devices, bundleID: bundleID)
-        if Atvloadly.isInstalling(busy, appID: app.id, bundleID: bundleID, ipaURL: nil) { throw AppUpdateError.busy }
+        let (appID, route) = try InstallRoute.plan(apps: apps, devices: devices, bundleID: bundleID, accountID: accountID)
+        if Atvloadly.isInstalling(busy, appID: appID, bundleID: bundleID, ipaURL: nil) { throw AppUpdateError.busy }
         switch route {
         case .sourceUpdate(let id):
-            let r = try await http.sendFull(APIRequest(method: "POST", url: base.appendingPathComponent("api/apps/\(id)/source/update"),
-                                                       headers: ["Content-Type": "application/json"], body: Data("{}".utf8)))
+            let r = try await atv.sendFull(APIRequest(method: "POST", url: base.appendingPathComponent("api/apps/\(id)/source/update"),
+                                                      headers: ["Content-Type": "application/json"], body: Data("{}".utf8)))
             guard (200..<300).contains(r.status) else { throw AppUpdateError.http(r.status) }
-            return Started(route: route, appID: app.id, message: try Atvloadly.parseSourceUpdate(r.data))
+            return Started(route: route, appID: appID, message: try Atvloadly.parseSourceUpdate(r.data))
         case .mcp(let deviceID, let account):
-            let msg = try await mcpInstall(base: base, ipaURL: release.ipaURL, deviceID: deviceID, accountID: accountID(account))
-            return Started(route: route, appID: app.id, message: msg)
+            let msg = try await mcpInstall(base: base, ipaURL: release.ipaURL, deviceID: deviceID, accountID: account)
+            return Started(route: route, appID: appID, message: msg)
         }
     }
 
     private func mcpInstall(base: URL, ipaURL: URL, deviceID: String, accountID: String) async throws -> String {
         let url = base.appendingPathComponent("mcp")
         var h = ["Content-Type": "application/json", "Accept": AtvloadlyMCP.accept]
-        let ini = try await http.sendFull(APIRequest(method: "POST", url: url, headers: h,
+        let ini = try await atv.sendFull(APIRequest(method: "POST", url: url, headers: h,
                                                      body: AtvloadlyMCP.initialize(id: 1, client: "player-tvos", version: SyncAppInfo.version)))
         guard ini.status == 200 else { throw AppUpdateError.http(ini.status) }
         guard let session = ini.headers["mcp-session-id"], !session.isEmpty else { throw AppUpdateError.invalidResponse }
@@ -566,9 +694,9 @@ public struct AppUpdateClient: Sendable {
         let outcome: Result<String, any Error>
         do {
             h["Mcp-Protocol-Version"] = try AtvloadlyMCP.negotiatedVersion(ini.data, id: 1)
-            let note = try await http.sendFull(APIRequest(method: "POST", url: url, headers: h, body: AtvloadlyMCP.initialized()))
+            let note = try await atv.sendFull(APIRequest(method: "POST", url: url, headers: h, body: AtvloadlyMCP.initialized()))
             guard (200..<300).contains(note.status) else { throw AppUpdateError.http(note.status) }
-            let call = try await http.sendFull(APIRequest(method: "POST", url: url, headers: h,
+            let call = try await atv.sendFull(APIRequest(method: "POST", url: url, headers: h,
                                                           body: AtvloadlyMCP.installApp(id: 2, ipaURL: ipaURL, deviceID: deviceID, accountID: accountID)))
             guard call.status == 200 else { throw AppUpdateError.http(call.status) }
             outcome = .success(try AtvloadlyMCP.checkInstall(try AtvloadlyMCP.toolResult(call.data, id: 2)))
@@ -576,7 +704,7 @@ public struct AppUpdateClient: Sendable {
             outcome = .failure(error)
         }
         // Sitzung schließen; die Installation läuft am Pi unabhängig davon weiter.
-        _ = try? await http.sendFull(APIRequest(method: "DELETE", url: url, headers: ["Mcp-Session-Id": session]))
+        _ = try? await atv.sendFull(APIRequest(method: "DELETE", url: url, headers: ["Mcp-Session-Id": session]))
         return try outcome.get()
     }
 }

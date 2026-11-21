@@ -39,6 +39,10 @@ private func sse(_ json: String) -> String { "event: message\nid: X_0\ndata: \(j
     #expect(rel.number == 40 && rel.commit == sha40 && rel.size == 1234)
     #expect(rel.ipaURL.absoluteString == "https://github.com/haskoman-beep/tvos-player/releases/download/app-main/Player.ipa")
     #expect(GitHubBuilds.parseRelease(Data(releaseJSON(40, sha40, asset: "other.zip").utf8)) == nil)
+    // Nur genau die Release-Adresse des Repos geht an atvloadly.
+    let foreign = releaseJSON(40, sha40).replacingOccurrences(of: "github.com/haskoman-beep/", with: "github.com/someone-else/")
+    #expect(GitHubBuilds.parseRelease(Data(foreign.utf8)) == nil)
+    #expect(GitHubBuilds.ipaURL.absoluteString == "https://github.com/haskoman-beep/tvos-player/releases/download/app-main/Player.ipa")
     #expect(GitHubBuilds.latestRunURL.absoluteString.contains("branch=main&status=success&per_page=1"))
 }
 
@@ -56,6 +60,24 @@ private func sse(_ json: String) -> String { "event: message\nid: X_0\ndata: \(j
     let local = AppBuildInfo(version: "0.4.0", build: 1, commit: "", branch: "")
     #expect(UpdateState.decide(current: local, latest: latest, release: rel41) == .available(rel41, latest: latest))
     #expect(!UpdateState.sameCommit("", "") && !UpdateState.sameCommit("abc", "abcdef0"))
+}
+
+@Test func newerThanMainInstalled() {
+    let latest = CIBuild(number: 41, commit: sha41)
+    let rel41 = ReleaseBuild(number: 41, commit: sha41, ipaURL: GitHubBuilds.ipaURL)
+    let rel40 = ReleaseBuild(number: 40, commit: sha40, ipaURL: GitHubBuilds.ipaURL)
+    // Branch-Build 45 ist neuer als main: kein Angebot zum „Zurückinstallieren“.
+    let branch45 = AppBuildInfo(version: "0.4.0", build: 45, commit: "abcdef0123456789", branch: "welle-a-d")
+    #expect(UpdateState.decide(current: branch45, latest: latest, release: rel41) == .newerInstalled(main: 41))
+    #expect(UpdateState.decide(current: branch45, latest: latest, release: nil) == .newerInstalled(main: 41))
+    // Verglichen wird mit dem Paket, das installiert würde.
+    let branch41 = AppBuildInfo(version: "0.4.0", build: 41, commit: "abcdef0123456789", branch: "welle-a-d")
+    #expect(UpdateState.decide(current: branch41, latest: latest, release: rel40) == .newerInstalled(main: 40))
+    // Älterer Branch-Build bekommt das main-Paket angeboten, lokaler Build ohne Commit auch.
+    let branch39 = AppBuildInfo(version: "0.4.0", build: 39, commit: "abcdef0123456789", branch: "welle-a-d")
+    #expect(UpdateState.decide(current: branch39, latest: latest, release: rel41) == .available(rel41, latest: latest))
+    let local = AppBuildInfo(version: "0.4.0", build: 99, commit: "", branch: "")
+    #expect(UpdateState.decide(current: local, latest: latest, release: rel41) == .available(rel41, latest: latest))
 }
 
 @Test func atvloadlyAddressNormalizing() {
@@ -92,17 +114,20 @@ private func sse(_ json: String) -> String { "event: message\nid: X_0\ndata: \(j
 @Test func installRouteChoice() throws {
     let devices = [AtvloadlyDevice(id: "dev-1", name: "TV", udid: "U1")]
     let plain = AtvloadlyApp(id: 10, bundleID: "de.haskoman.player", udid: "U1", account: "user@example.com")
-    let r = try InstallRoute.plan(apps: [plain], devices: devices, bundleID: "de.haskoman.player")
-    #expect(r.app.id == 10 && r.route == .mcp(deviceID: "dev-1", account: "user@example.com"))
+    let h: (String) -> String = { "h(\($0.count))" }
+    let r = try InstallRoute.plan(apps: [plain], devices: devices, bundleID: "de.haskoman.player", accountID: h)
+    #expect(r.appID == 10 && r.route == .mcp(deviceID: "dev-1", accountID: "h(16)"))
+    // Die Apple-ID steht nicht im Weg (nur ihr Hash).
+    #expect(!String(describing: r.route).contains("@"))
     var linked = plain; linked.id = 11; linked.sourceKind = "github"; linked.sourceURL = "https://github.com/Haskoman-Beep/tvos-player.git"
-    #expect(try InstallRoute.plan(apps: [plain, linked], devices: devices, bundleID: "de.haskoman.player").route == .sourceUpdate(appID: 11))
+    #expect(try InstallRoute.plan(apps: [plain, linked], devices: devices, bundleID: "de.haskoman.player", accountID: h).route == .sourceUpdate(appID: 11))
     // Eintrag auf einem gerade nicht verbundenen Gerät verliert gegen den verbundenen.
     var away = plain; away.id = 12; away.udid = "U9"
-    #expect(try InstallRoute.plan(apps: [plain, away], devices: devices, bundleID: "de.haskoman.player").app.id == 10)
-    #expect(throws: AppUpdateError.noApp) { try InstallRoute.plan(apps: [], devices: devices, bundleID: "de.haskoman.player") }
-    #expect(throws: AppUpdateError.noDevice) { try InstallRoute.plan(apps: [away], devices: devices, bundleID: "de.haskoman.player") }
+    #expect(try InstallRoute.plan(apps: [plain, away], devices: devices, bundleID: "de.haskoman.player", accountID: h).appID == 10)
+    #expect(throws: AppUpdateError.noApp) { try InstallRoute.plan(apps: [], devices: devices, bundleID: "de.haskoman.player", accountID: h) }
+    #expect(throws: AppUpdateError.noDevice) { try InstallRoute.plan(apps: [away], devices: devices, bundleID: "de.haskoman.player", accountID: h) }
     var noAcc = plain; noAcc.account = ""
-    #expect(throws: AppUpdateError.noAccount) { try InstallRoute.plan(apps: [noAcc], devices: devices, bundleID: "de.haskoman.player") }
+    #expect(throws: AppUpdateError.noAccount) { try InstallRoute.plan(apps: [noAcc], devices: devices, bundleID: "de.haskoman.player", accountID: h) }
     #expect(Atvloadly.repoSlug("haskoman-beep/tvos-player") == "haskoman-beep/tvos-player")
     #expect(Atvloadly.repoSlug("https://github.com/haskoman-beep/tvos-player/releases") == "haskoman-beep/tvos-player")
 }
@@ -147,6 +172,38 @@ private func sse(_ json: String) -> String { "event: message\nid: X_0\ndata: \(j
     #expect(AppUpdateLog.redact("account_id not found: 0123456789abcdef0123456789abcdef") == "account_id not found: …")
     #expect(AppUpdateLog.redact("Konto (user@example.com) fehlt") == "Konto … fehlt")
     #expect(AppUpdateError.atvloadly("x user@example.com").text == "atvloadly: x …")
+    // key=value: nur der Wert, ab 33 Zeichen oder bei Konto/Hash.
+    #expect(AppUpdateLog.redact("GET /x?token=abcdefghijklmnopqrstuvwxyz0123456789 ok") == "GET /x?token=… ok")
+    #expect(AppUpdateLog.redact("a=1&secret=0123456789abcdef0123456789abcdef") == "a=1&secret=…")
+    #expect(AppUpdateLog.redact("account=user@example.com, mode=short") == "account=… mode=short")
+    #expect(AppUpdateLog.redact("k=abcdefghijklmnopqrstuvwxyz012345") == "k=abcdefghijklmnopqrstuvwxyz012345")
+}
+
+@Test func installWatchNeedsSeenEntry() {
+    let ipa = GitHubBuilds.ipaURL
+    let entry = AtvloadlyApp(id: 0, bundleID: "", ipaPath: ipa.absoluteString)
+    func watch() -> InstallWatch { InstallWatch(appID: 10, bundleID: "de.haskoman.player", ipaURL: ipa) }
+    // Leere Liste vor dem ersten Auftauchen ist nicht „fertig“.
+    var w = watch()
+    #expect(w.observe([], elapsed: 0) == .waiting && w.observe([], elapsed: 59) == .waiting && !w.seen)
+    #expect(w.observe([entry], elapsed: 62) == .running && w.seen)
+    #expect(w.failed(elapsed: 65) == .running)
+    #expect(w.observe([], elapsed: 68) == .finished)
+    #expect(InstallWatch.Outcome.finished.text?.hasPrefix("Installation offenbar fehlgeschlagen (App läuft noch)") == true)
+    // Nie aufgetaucht: nach der Gnadenfrist „nicht gestartet“.
+    var never = watch()
+    #expect(never.observe([], elapsed: 30) == .waiting && never.observe([], elapsed: InstallWatch.grace) == .notStarted)
+    #expect(InstallWatch.Outcome.notStarted.text == "atvloadly hat die Aufgabe nicht gestartet.")
+    // Fehler in Folge; eine Antwort setzt den Zähler zurück.
+    var flaky = watch()
+    for i in 1..<InstallWatch.maxMisses { #expect(flaky.failed(elapsed: Double(i)) == .waiting) }
+    #expect(flaky.observe([entry], elapsed: 12) == .running && flaky.misses == 0)
+    for i in 1..<InstallWatch.maxMisses { #expect(flaky.failed(elapsed: 12 + Double(i)) == .running) }
+    #expect(flaky.failed(elapsed: 30) == .unreachable)
+    var long = watch()
+    #expect(long.observe([entry], elapsed: InstallWatch.limit) == .timedOut)
+    #expect(!InstallWatch.Outcome.waiting.isFinal && !InstallWatch.Outcome.running.isFinal && InstallWatch.Outcome.finished.isFinal)
+    #expect(InstallWatch.Outcome.running.text == nil)
 }
 
 @Test func githubCheckFlow() async throws {
@@ -179,7 +236,7 @@ private func sse(_ json: String) -> String { "event: message\nid: X_0\ndata: \(j
     ])
     let client = AppUpdateClient(http: http, accountID: { "md5(\($0.count))" })
     let started = try await client.start(base: base, bundleID: "de.haskoman.player", release: release)
-    #expect(started == AppUpdateClient.Started(route: .mcp(deviceID: "dev-1", account: "user@example.com"), appID: 10, message: "queued"))
+    #expect(started == AppUpdateClient.Started(route: .mcp(deviceID: "dev-1", accountID: "md5(16)"), appID: 10, message: "queued"))
     #expect(http.sent.map { "\($0.method) \($0.url.path)" } == ["GET /api/apps/installing", "GET /api/apps", "GET /api/devices",
                                                                  "POST /mcp", "POST /mcp", "POST /mcp", "DELETE /mcp"])
     #expect(http.sent[3].headers["Accept"] == "application/json, text/event-stream" && http.sent[3].headers["Mcp-Session-Id"] == nil)
@@ -193,7 +250,7 @@ private func sse(_ json: String) -> String { "event: message\nid: X_0\ndata: \(j
 
 @Test func mcpInstallClosesSessionOnError() async throws {
     let base = AtvloadlyAddress.normalize("pi-name.local")!
-    let release = ReleaseBuild(number: 41, commit: sha41, ipaURL: URL(string: "https://x/Player.ipa")!)
+    let release = ReleaseBuild(number: 41, commit: sha41, ipaURL: GitHubBuilds.ipaURL)
     let http = ScriptSender([
         .ok(200, #"{"code":200,"msg":"success","data":[]}"#), .ok(200, appsJSON), .ok(200, devicesJSON),
         .ok(200, sse(#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}"#), ["mcp-session-id": "S2"]),
@@ -209,7 +266,7 @@ private func sse(_ json: String) -> String { "event: message\nid: X_0\ndata: \(j
 
 @Test func sourceUpdateFlowAndBusy() async throws {
     let base = AtvloadlyAddress.normalize("pi-name.local")!
-    let release = ReleaseBuild(number: 41, commit: sha41, ipaURL: URL(string: "https://x/Player.ipa")!)
+    let release = ReleaseBuild(number: 41, commit: sha41, ipaURL: GitHubBuilds.ipaURL)
     let linkedApps = appsJSON.replacingOccurrences(of: #""source":{"kind":"","url":"","filter":""}"#,
                                                    with: #""source":{"kind":"github","url":"haskoman-beep/tvos-player","filter":""}"#)
     let http = ScriptSender([
@@ -225,4 +282,12 @@ private func sse(_ json: String) -> String { "event: message\nid: X_0\ndata: \(j
         try await AppUpdateClient(http: busy, accountID: { _ in "h" }).start(base: base, bundleID: "de.haskoman.player", release: release)
     }
     #expect(busy.sent.count == 1)
+
+    // Andere Paketadresse: abgelehnt, bevor atvloadly gefragt wird.
+    let none = ScriptSender([])
+    let foreign = ReleaseBuild(number: 41, commit: sha41, ipaURL: URL(string: "https://x/Player.ipa")!)
+    await #expect(throws: AppUpdateError.wrongPackage) {
+        try await AppUpdateClient(http: none, accountID: { _ in "h" }).start(base: base, bundleID: "de.haskoman.player", release: foreign)
+    }
+    #expect(none.sent.isEmpty)
 }

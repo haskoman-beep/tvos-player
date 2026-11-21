@@ -73,6 +73,7 @@ final class AppUpdater: ObservableObject {
             let n = r.number.map { String($0) } ?? "?"
             return "Paket Build \(n) verfügbar (main \(b.number) · \(b.shortCommit))"
         case .notPublished(let b): return "main \(b.number) ohne Paket im Release"
+        case .newerInstalled(let main): return "installiert ist neuer als main (Build \(main))"
         }
     }
 
@@ -102,32 +103,31 @@ final class AppUpdater: ObservableObject {
         }
     }
 
-    /// Alle 3 s nachsehen, ob atvloadly noch installiert. Gelingt es, beendet tvOS die App vorher.
+    /// Alle 3 s nachsehen, ob atvloadly noch installiert (Auswertung: `InstallWatch`).
+    /// Gelingt die Installation, beendet tvOS die App vorher.
     private func watch(base: URL, appID: Int, bundleID: String, ipaURL: URL) {
         poll?.cancel()
         poll = Task {
-            var misses = 0
-            let deadline = Date().addingTimeInterval(20 * 60)
-            while !Task.isCancelled && Date() < deadline {
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
+            var w = InstallWatch(appID: appID, bundleID: bundleID, ipaURL: ipaURL)
+            let start = Date()
+            var first = true
+            while !Task.isCancelled {
+                if !first { try? await Task.sleep(nanoseconds: 3_000_000_000) }
+                first = false
+                let outcome: InstallWatch.Outcome
+                var detail = ""
                 do {
                     let list = try await client.installing(base: base)
-                    misses = 0
-                    if !Atvloadly.isInstalling(list, appID: appID, bundleID: bundleID, ipaURL: ipaURL) {
-                        phase = .done("atvloadly ist fertig, die App läuft aber noch. Zeigt sie nach dem Neustart den alten Build, ist die Installation fehlgeschlagen – Protokoll auf der atvloadly-Seite ansehen.")
-                        RemoteLog.error("update", "atvloadly meldet Ende der Installation, App läuft noch mit Build \(current.buildLabel)")
-                        return
-                    }
+                    outcome = w.observe(list, elapsed: Date().timeIntervalSince(start))
                 } catch {
-                    misses += 1
-                    if misses >= 10 {
-                        phase = .failed("atvloadly antwortet nicht mehr: \(Self.text(error))")
-                        RemoteLog.error("update", "Statusabfrage fehlgeschlagen: \(Self.text(error))")
-                        return
-                    }
+                    detail = Self.text(error)
+                    outcome = w.failed(elapsed: Date().timeIntervalSince(start))
                 }
+                guard outcome.isFinal, let text = outcome.text, !Task.isCancelled else { continue }
+                phase = .failed(outcome == .unreachable && !detail.isEmpty ? "\(text) \(detail)" : text)
+                RemoteLog.error("update", "Installation: \(text) \(detail) – App läuft mit Build \(current.buildLabel)")
+                return
             }
-            if !Task.isCancelled, case .installing = phase { phase = .failed("Keine Rückmeldung von atvloadly nach 20 Minuten.") }
         }
     }
 

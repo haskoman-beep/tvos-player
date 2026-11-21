@@ -84,6 +84,8 @@ struct UpdateSettings: View {
             return "Neu: Build \(num(r.number))\(lag) · \(commit)"
         case .notPublished(let b):
             return "Build \(b.number) ist fertig, aber noch nicht als Installationspaket veröffentlicht (Release „app-main“)."
+        case .newerInstalled(let main):
+            return "Installiert ist neuer als main (Build \(main))"
         }
     }
 
