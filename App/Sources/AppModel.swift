@@ -367,7 +367,7 @@ final class AppModel: ObservableObject {
             return await t.value
         }
         let task = Task { () -> [(addon: String, stream: StreamItem)] in
-            let all = await searchAddons(type: type, id: id)   // Welle C-a: Zeitgrenze und Status je Addon
+            let all = await searchAddons(type: type, id: id).results   // Welle C-a: Zeitgrenze und Status je Addon
             RemoteLog.info("streams", "\(type) \(id): " + all.map { "\($0.addon.manifest.name)=\($0.streams.count)" }.joined(separator: ", "))
             // Rohergebnis aller Addons leer (fehlgeschlagene fehlen in `all`, zählen also als leer): vermutlich
             // Ratenbegrenzung → Vorladen pausiert. Bewusst vor dem Filtern auf abspielbare Quellen.
@@ -378,6 +378,7 @@ final class AppModel: ObservableObject {
         let list = await task.value
         streamTasks[id] = nil
         storeStreams(id: id, list: list)
+        streamCache[id] = shortenStreamCache(streamCache[id], partial: StreamSearchStatus.shared.progress[id]?.isPartial ?? false)   // Welle C-a
         return list
     }
 

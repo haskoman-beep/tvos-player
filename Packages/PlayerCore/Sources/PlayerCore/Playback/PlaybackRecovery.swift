@@ -187,7 +187,11 @@ public struct RecoveryPlanner: Sendable {
     /// Nächster Schritt für diesen Fehler.
     public mutating func next(for failure: PlaybackFailure,
                               context: RecoveryContext = RecoveryContext()) -> (PlaybackErrorClass, RecoveryStep) {
-        let cls = PlaybackErrorClassifier.classify(failure, context: context)
+        var cls = PlaybackErrorClassifier.classify(failure, context: context)
+        // Zweiter Routenwechsel in dieser Wiedergabe: nicht weiterschalten, sondern den Fehler selbst einordnen.
+        if cls == .routeChange, attempts[.routeChange, default: 0] >= 1 {
+            cls = PlaybackErrorClassifier.classify(failure, context: RecoveryContext(offline: context.offline))
+        }
         let n = attempts[cls, default: 0]
         var step = Self.ladder(cls, attempt: n, canReresolve: canReresolve)
         switch step {

@@ -6,12 +6,16 @@ import PlayerCore
 final class StreamSearchStatus: ObservableObject {
     static let shared = StreamSearchStatus()
     @Published private(set) var progress: [String: AddonSearchProgress] = [:]
+    private var updatedAt: [String: Date] = [:]
     private init() {}
 
     func update(_ id: String, _ p: AddonSearchProgress) {
         progress[id] = p
-        // Nur wenige Inhalte behalten (Vorladen fragt viele ab).
-        if progress.count > 30, let drop = progress.keys.first(where: { $0 != id }) { progress[drop] = nil }
+        updatedAt[id] = Date()
+        // Nur wenige Inhalte behalten (Vorladen fragt viele ab): der am längsten nicht aktualisierte fällt heraus.
+        if progress.count > 30, let drop = updatedAt.filter({ $0.key != id }).min(by: { $0.value < $1.value })?.key {
+            progress[drop] = nil; updatedAt[drop] = nil
+        }
     }
 
     /// Schon eingetroffene, abspielbare Treffer in Addon-Reihenfolge.
@@ -23,15 +27,26 @@ final class StreamSearchStatus: ObservableObject {
 extension AppModel {
     /// Quellensuche mit Zeitgrenze je Addon (Profil `addonTimeout`); meldet jeden Zwischenstand an `StreamSearchStatus`.
     /// Ergebnis wie `addons.streams(from:type:id:)`: nur Addons mit Antwort, in Addon-Reihenfolge.
-    func searchAddons(type: String, id: String) async -> [(addon: InstalledAddon, streams: [StreamItem])] {
+    /// `partial`: mindestens ein Addon fehlt (Fehler, Zeitüberschreitung) → nur kurz zwischenspeichern.
+    /// Läuft als ungebundene Aufgabe in `streams()` (geteilt mit Vorladen und Cache) und endet spätestens nach der
+    /// Addon-Frist; Verlassen der Liste bricht sie deshalb bewusst nicht ab.
+    func searchAddons(type: String, id: String) async -> (results: [(addon: InstalledAddon, streams: [StreamItem])], partial: Bool) {
         let timeout = profile.addonTimeout
         let result = await addons.streams(from: profile.addons, type: type, id: id, timeout: timeout) { p in
             await MainActor.run { StreamSearchStatus.shared.update(id, p) }
         }
-        if let p = StreamSearchStatus.shared.progress[id] {
-            RemoteLog.info("streams", "\(id): Addon-Status \(p.logText) · Grenze \(Int(timeout)) s")
-        }
-        return result
+        let p = StreamSearchStatus.shared.progress[id]
+        if let p { RemoteLog.info("streams", "\(id): Addon-Status \(p.logText) · Grenze \(Int(timeout)) s") }
+        return (result, p?.isPartial ?? false)
+    }
+
+    /// Lückenhaftes Ergebnis: Zeitstempel so zurückdatieren, dass es nach `AddonSearch.partialCacheSeconds` statt nach
+    /// 10 min abläuft (alle Cache-Prüfungen rechnen mit 600 s).
+    func shortenStreamCache(_ entry: (at: Date, list: [(addon: String, stream: StreamItem)])?, partial: Bool)
+        -> (at: Date, list: [(addon: String, stream: StreamItem)])? {
+        guard partial, let entry else { return entry }
+        RemoteLog.info("streams", "Ergebnis lückenhaft → Cache nur \(Int(AddonSearch.partialCacheSeconds)) s")
+        return (Date().addingTimeInterval(AddonSearch.partialCacheSeconds - 600), entry.list)
     }
 }
 
@@ -43,6 +58,8 @@ struct AddonSearchStatusLine: View {
 
     var body: some View {
         let statuses = search.progress[id]?.statuses ?? []
+        // Nichts zu zeigen (z. B. Cache-Treffer ohne gemerkten Status, online): keine leere Zeile in der Liste.
+        if !statuses.isEmpty || !stability.isOnline {
         VStack(alignment: .leading, spacing: 6) {
             if !stability.isOnline {
                 Label("Keine Netzverbindung", systemImage: "wifi.slash").foregroundStyle(.orange)
@@ -58,6 +75,7 @@ struct AddonSearchStatusLine: View {
             }
         }
         .font(.caption)
+        }
     }
 
     private func symbol(_ s: AddonSearchState) -> String {
@@ -142,7 +160,10 @@ struct AddonTimeoutPicker: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
-        Picker("Zeitgrenze je Addon", selection: model.binding(\.addonTimeout)) {
+        let stored = model.binding(\.addonTimeout)
+        // Alte/fremde Werte auf die nächstliegende Auswahl abbilden, sonst zeigt der Picker nichts an.
+        let selection = Binding(get: { AddonSearch.nearestChoice(stored.wrappedValue) }, set: { stored.wrappedValue = $0 })
+        Picker("Zeitgrenze je Addon", selection: selection) {
             ForEach(AddonSearch.timeoutChoices, id: \.self) { Text("\(Int($0)) s").tag($0) }
         }
         Text("So lange wartet die Quellensuche auf jedes Addon. Schnelle Addons erscheinen sofort; "

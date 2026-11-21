@@ -42,8 +42,8 @@ private func at(_ s: Double) -> Date { t0.addingTimeInterval(s) }
     var s = LoadWatchdog()
     let seek = LoadWatchdog.Observation(seeking: true)
     #expect(call(&s) { $0.observe(seek, now: at(0)) == nil})
-    #expect(call(&s) { $0.observe(seek, now: at(19)) == nil})
-    #expect(call(&s) { $0.observe(seek, now: at(20)) == .seek})
+    #expect(call(&s) { $0.observe(seek, now: at(24)) == nil})
+    #expect(call(&s) { $0.observe(seek, now: at(25)) == .seek})
 }
 
 @Test func watchdogSuspendResetsClocks() {
@@ -72,8 +72,8 @@ private func at(_ s: Double) -> Date { t0.addingTimeInterval(s) }
     _ = w.observe(LoadWatchdog.Observation(starting: true), now: at(25))
     // Start fertig, gleich ein Sprung: Sprung-Uhr ab hier.
     #expect(call(&w) { $0.observe(LoadWatchdog.Observation(seeking: true), now: at(26)) == nil})
-    #expect(call(&w) { $0.observe(LoadWatchdog.Observation(seeking: true), now: at(45)) == nil})
-    #expect(call(&w) { $0.observe(LoadWatchdog.Observation(seeking: true), now: at(46)) == .seek})
+    #expect(call(&w) { $0.observe(LoadWatchdog.Observation(seeking: true), now: at(50)) == nil})
+    #expect(call(&w) { $0.observe(LoadWatchdog.Observation(seeking: true), now: at(51)) == .seek})
 }
 
 @Test func watchdogVerdictIsTimeoutForLadder() {
@@ -319,4 +319,49 @@ private func call<S, R>(_ x: inout S, _ f: (inout S) -> R) -> R { f(&x) }
     _ = call(&s) { $0.markPlaying(at(3)) }
     s.markResolved(at(60))   // nächste Folge automatisch
     #expect(call(&s) { $0.markPlaying(at(62)) }?.contains("ohne Tastendruck") == true)
+}
+
+// MARK: Nacharbeiten (Review C-a)
+
+@Test func watchdogLimitsAboveDiskCacheFallback() {
+    let p = DiskCachePolicy()
+    // Der Plattencache leitet nach Lesegrenze + Ursprung-Leerlauf selbst auf den direkten Link um; erst danach der Wächter.
+    #expect(LoadWatchdog.seekLimit > p.readerHardLimit + p.originIdleTimeout)
+    #expect(LoadWatchdog.stallLimit > p.readerHardLimit + p.originIdleTimeout)
+    #expect(LoadWatchdog.startLimit > p.probeHardLimit + p.originIdleTimeout)
+}
+
+@Test func deadStartOnlyWithoutFirstFrame() {
+    let k = LoadWatchdog.Verdict.start.kind
+    #expect(SourceVerdict.forNextSource(.timeout, failureKind: k, reachedFirstFrame: false) == .deadStart)
+    #expect(SourceVerdict.forNextSource(.timeout, failureKind: LoadWatchdog.Verdict.stall.kind, reachedFirstFrame: true) == .failed(.timeout))
+    #expect(SourceVerdict.forNextSource(.timeout, failureKind: "vodSourceTimedOut", reachedFirstFrame: false) == .failed(.timeout))
+    #expect(SourceVerdict.forNextSource(.linkExpired, failureKind: nil, reachedFirstFrame: false) == .failed(.linkExpired))
+    var b = FailedLinkBook()
+    #expect(call(&b) { $0.apply(.deadStart, stream: stream("A", file: "a.mkv"), title: "tt1") })
+    #expect(b.isRecentlyFailed(stream("A", file: "a.mkv"), title: "tt1"))
+}
+
+@Test func secondRouteChangeUsesBaseClass() {
+    var p = RecoveryPlanner()
+    let f = PlaybackFailure(kind: LoadWatchdog.Verdict.stall.kind)
+    let ctx = RecoveryContext(routeChangedRecently: true)
+    #expect(call(&p) { $0.next(for: f, context: ctx) } .0 == .routeChange)
+    let (cls, step) = call(&p) { $0.next(for: f, context: ctx) }
+    #expect(cls == .timeout)
+    #expect(step == .retrySame(delay: 2))
+}
+
+@Test func partialSearchAndCancel() async {
+    var prog = AddonSearchProgress(addons: [(index: 0, addon: streamAddon("a", "A")), (index: 1, addon: streamAddon("b", "B"))])
+    prog.finish(index: 0, addon: streamAddon("a", "A"), outcome: .streams([]), milliseconds: 5)
+    #expect(!prog.isPartial)
+    prog.finish(index: 1, addon: streamAddon("b", "B"), outcome: .timedOut, milliseconds: 5)
+    #expect(prog.isPartial)
+    // Abgebrochener Aufrufer: keine Zeitüberschreitung, sondern „abgebrochen“.
+    let t = Task { await AddonSearch.withDeadline(5) { try await Task.sleep(nanoseconds: 3_000_000_000); return 1 } }
+    t.cancel()
+    let r = await t.value
+    if case .some(.failure(let e)) = r { #expect(AddonSearch.describe(e) == "abgebrochen") } else { Issue.record("erwartet Abbruch: \(String(describing: r))") }
+    #expect(AddonSearch.nearestChoice(14) == 15 && AddonSearch.nearestChoice(100) == 45 && AddonSearch.nearestChoice(12) == 12)
 }

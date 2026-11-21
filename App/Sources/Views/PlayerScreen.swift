@@ -265,7 +265,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
         do {
             RemoteLog.info("player", "Laden \(title) · Start \(start.map { Int($0) } ?? 0)s · \(url.host ?? "?")")
             stabilityLoadBegins()
-            try await engine.load(url, start: start, prefs: prefs)
+            // Wiederholter Start nach neu aufgelöstem Link: dessen Adresse und Kopfzeilen.
+            try await engine.load(resolvedURL ?? url, start: start, prefs: resolvedPrefs ?? prefs)
             // Während des Ladens verlassen (oder Start vom Lade-Wächter abgebrochen): nicht mehr wählen und nicht starten.
             guard !Task.isCancelled, !leaving else { return }
             stabilityLoadEnded()
@@ -427,7 +428,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
         if startAborted { loadTask?.cancel(); stabilityLoadEnded() }
         switch step {
         case .nextSource:
-            onSourceVerdict(.failed(cls))
+            onSourceVerdict(SourceVerdict.forNextSource(cls, failureKind: failure.kind, reachedFirstFrame: stab.firstFrameSeen))
             saveProgress(); engine.stop(); leave { onFallback("\(cls.label): \(reason)") }; return
         case .giveUp(let message):
             if startAborted { stab.startPending = true }   // „Erneut versuchen“ wiederholt dann den ganzen Start
@@ -437,13 +438,28 @@ struct PlayerControls<E: PlaybackEngine>: View {
         case .retrySame, .reresolve: break
         }
         // Start war nicht fertig: ganzen Start wiederholen (Ton-/UT-Wahl, Platzhalter-Prüfung), nicht nur neu laden.
-        if stabilityResumes(startAborted: startAborted), case .retrySame(let delay) = step {
+        // Bei .reresolve zuerst den frischen Link holen, dann mit ihm den ganzen Start wiederholen.
+        if stabilityResumes(startAborted: startAborted) {
             failureNotice = nil; loadError = nil
             recoverTask?.cancel()
             loadTask = Task {
-                if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+                if case .retrySame(let delay) = step, delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
                 guard !Task.isCancelled, !leaving else { return }
-                RemoteLog.info("player", "Start wird wiederholt")
+                if step == .reresolve {
+                    let fresh = await reresolve?()
+                    guard !Task.isCancelled, !leaving else { return }
+                    guard let fresh else {
+                        RemoteLog.info("player", "Kein frischer Link → nächste Quelle")
+                        onSourceVerdict(.failed(cls))
+                        saveProgress(); engine.stop(); leave { onFallback("\(cls.label): \(reason)") }; return
+                    }
+                    var freshPrefs = prefs
+                    freshPrefs.headers = fresh.headers
+                    resolvedURL = fresh.url; resolvedPrefs = freshPrefs
+                    RemoteLog.info("player", "Frischer Link · Start wird wiederholt")
+                } else {
+                    RemoteLog.info("player", "Start wird wiederholt")
+                }
                 await loadAndStart()
             }
             return

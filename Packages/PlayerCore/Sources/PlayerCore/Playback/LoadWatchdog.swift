@@ -18,16 +18,20 @@ public struct LoadWatchdog: Sendable {
     public static let startHardLimit: TimeInterval = 120
     /// Nachpuffern am Stück im laufenden Film.
     public static let stallLimit: TimeInterval = 25
-    /// Sprung ohne Ankunft.
-    public static let seekLimit: TimeInterval = 20
+    /// Sprung ohne Ankunft. Über Plattencache-Lesegrenze + Ursprung-Leerlauf (14 + 6 s), damit dessen eigener
+    /// Rückfall auf den direkten Link nach einem Sprung in eine Cache-Lücke zuerst greift (Test pinnt das).
+    public static let seekLimit: TimeInterval = 25
 
     /// Was gerade beobachtet wird.
     public enum Phase: String, Sendable { case idle, starting, stalled, seeking }
 
+    /// Vorsilbe der Fehlerarten des Wächters.
+    public static let kindPrefix = "watchdog_"
+
     /// Grund der Zeitüberschreitung; `kind` geht als Fehlerart an die Fehlerleiter.
     public enum Verdict: String, Sendable, Equatable {
         case start, stall, seek
-        public var kind: String { "watchdog_" + rawValue }
+        public var kind: String { LoadWatchdog.kindPrefix + rawValue }
         public var logText: String {
             switch self {
             case .start: "Start hängt"

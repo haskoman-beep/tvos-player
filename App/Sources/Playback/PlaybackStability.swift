@@ -92,6 +92,7 @@ final class PlaybackStability: ObservableObject {
         switch verdict {
         case .healthy: RemoteLog.info("stabil", "Quelle spielt stabil → nicht mehr als fehlgeschlagen markiert")
         case .placeholder: RemoteLog.info("stabil", "Quelle für 8 h als fehlgeschlagen gemerkt (Platzhalter)")
+        case .deadStart: RemoteLog.info("stabil", "Quelle für 8 h als fehlgeschlagen gemerkt (Start ohne Bild)")
         case .failed(let cls): RemoteLog.info("stabil", "Quelle für 8 h als fehlgeschlagen gemerkt (\(cls.rawValue))")
         }
         guard let storage else { return }

@@ -61,6 +61,10 @@ public struct AddonSearchProgress: Sendable {
 
     public var finishedCount: Int { statuses.filter(\.state.isFinished).count }
     public var isComplete: Bool { finishedCount == statuses.count }
+    /// Mindestens ein Addon ohne Antwort (Fehler, Zeitüberschreitung): Ergebnis nur kurz zwischenspeichern.
+    public var isPartial: Bool {
+        statuses.contains { if case .failed = $0.state { return true }; return $0.state == .timedOut }
+    }
 
     /// „Addons 2/3“ während der Suche, nil wenn fertig.
     public var runningSummary: String? {
@@ -84,6 +88,13 @@ public enum AddonSearch {
     public static let defaultTimeout: Double = 15
     /// Auswahl in den Einstellungen.
     public static let timeoutChoices: [Double] = [8, 12, 15, 20, 30, 45]
+    /// Lückenhaftes Ergebnis (ein Addon fehlt) so lange im Quellen-Cache statt der vollen 10 min.
+    public static let partialCacheSeconds: TimeInterval = 60
+
+    /// Gespeicherter Wert → nächstliegende Auswahl (alte oder fremde Werte zeigen sonst keine Auswahl).
+    public static func nearestChoice(_ seconds: Double) -> Double {
+        timeoutChoices.min { abs($0 - seconds) < abs($1 - seconds) } ?? defaultTimeout
+    }
 
     /// Zeitgrenze aus dem Profil, auf einen sinnvollen Bereich geklemmt.
     public static func clamp(_ seconds: Double) -> Double { min(max(seconds, 3), 120) }
@@ -103,6 +114,7 @@ public enum AddonSearch {
             }
         }
         if error is DecodingError { return "Antwort unlesbar" }
+        if error is CancellationError { return "abgebrochen" }
         let ns = error as NSError
         if ns.domain == "NSURLErrorDomain" {
             switch ns.code {
@@ -124,7 +136,9 @@ public enum AddonSearch {
                 do { return .success(try await op()) } catch { return .failure(error) }
             }
             group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(max(seconds, 0) * 1_000_000_000))
+                // Abgebrochene Suche (Aufrufer weg) ist keine Zeitüberschreitung.
+                do { try await Task.sleep(nanoseconds: UInt64(max(seconds, 0) * 1_000_000_000)) }
+                catch { return .failure(CancellationError()) }
                 return nil
             }
             let first = await group.next() ?? nil

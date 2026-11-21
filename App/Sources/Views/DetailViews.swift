@@ -483,7 +483,8 @@ extension StreamListView {
             // Während der Suche von Hand eine Quelle gestartet: Liste und Folge so lassen, nichts ersetzen.
             guard playing == nil else { nextNote = nil; return }
             guard let s = nextEpisodeStream(PlaybackStability.shared.autoCandidates(list, title: next.id), matching: ref) else {
-                nextNote = "Keine Quelle für \(next.title) gefunden."; return
+                nextNote = nextEpisodeStream(list, matching: ref) != nil ? "Nur zuletzt fehlgeschlagene Quellen für \(next.title) – bitte wählen."
+                                                                         : "Keine Quelle für \(next.title) gefunden."; return
             }
             let addon = list.first { $0.stream.id == s.id }?.addon
             RemoteLog.info("player", "Nächste Folge: \(addon ?? "?") · \(s.name ?? "") · Nähe \(ref.score(s, addon: addon))\(s.behaviorHints?.bingeGroup == ref.bingeGroup && ref.bingeGroup != nil ? " (bingeGroup)" : "")")

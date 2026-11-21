@@ -45,6 +45,7 @@ extension PlayerControls {
     /// Start beginnt (loadAndStart): Zeitstempel t1, Wächter frisch.
     func stabilityLoadBegins() {
         stab.loadInFlight = true
+        stab.firstFrameSeen = false   // wiederholter Start: t2 und Routenfenster neu
         stab.watchdog.reset()
         PlaybackStability.shared.timing.markResolved()
     }

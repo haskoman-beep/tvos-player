@@ -8,6 +8,15 @@ public enum SourceVerdict: Equatable, Sendable {
     case placeholder
     /// `FailedLinkBook.healthySeconds` fehlerfrei gespielt.
     case healthy
+    /// Lade-Wächter hat aufgegeben, ohne dass der Start je ein Bild hatte: toter Link, wird gemerkt.
+    case deadStart
+
+    /// Urteil, wenn die Fehlerleiter zur nächsten Quelle schaltet. Zeitüberschreitung des Wächters gilt nur dann als
+    /// toter Link, wenn nie ein erstes Bild kam; Hänger danach (Netz, Server) werden nicht gemerkt.
+    public static func forNextSource(_ cls: PlaybackErrorClass, failureKind: String?, reachedFirstFrame: Bool) -> SourceVerdict {
+        if cls == .timeout, !reachedFirstFrame, failureKind?.hasPrefix(LoadWatchdog.kindPrefix) == true { return .deadStart }
+        return .failed(cls)
+    }
 }
 
 /// Kürzlich fehlgeschlagene Quellen je Titel (8 h). Automatische Wahl und Rückfall überspringen sie,
@@ -103,7 +112,7 @@ public struct FailedLinkBook: Codable, Sendable, Equatable {
         case .failed(let cls):
             guard Self.remembers(cls) else { return false }
             noteFailure(s, title: title, now: now); return true
-        case .placeholder:
+        case .placeholder, .deadStart:
             noteFailure(s, title: title, now: now); return true
         case .healthy:
             return noteHealthy(s, title: title)
