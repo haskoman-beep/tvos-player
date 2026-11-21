@@ -42,6 +42,8 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
     let profile: Profile
     /// Adresse der Quelle (für den Dateinamen im Info-Reiter).
     var sourceURL: URL? = nil
+    /// Tonspur-Wechsel gesperrt (nach dem Hintergrund bis Play neu aufgebaut hat).
+    var audioLocked = false
     @Environment(\.dismiss) private var dismiss
     @State private var tab: PlayerTrackTab = .audio
     @FocusState private var focus: Focus?
@@ -165,8 +167,9 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
                 if tracks.isEmpty { Text("Keine Tonspuren").foregroundStyle(.secondary).padding(16) }
                 ForEach(Array(tracks.enumerated()), id: \.element.id) { i, t in
                     row(TrackPanelLogic.audioRow(t, number: i + 1), active: t.id == engine.activeAudioID) {
-                        RemoteLog.info("player", "Tonspur gewählt: \(t.id)")
-                        engine.selectAudio(t.id); dismiss()
+                        RemoteLog.info("player", "Tonspur gewählt: \(t.id)\(audioLocked ? " · gesperrt bis Play" : "")")
+                        if !audioLocked { engine.selectAudio(t.id) }
+                        dismiss()
                     }
                     .focused($focus, equals: .audio(t.id))
                 }
