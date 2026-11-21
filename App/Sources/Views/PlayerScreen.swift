@@ -39,7 +39,8 @@ struct PlayerScreen: View {
                                                        prefs: LoadPrefs(audioLanguages: model.profile.audioPriority.filter { $0 != "orig" },
                                                                         // Untertitel bewusst ohne Engine-Vorwahl: SubtitlePicker wählt nach dem Laden.
                                                                         subtitleLanguages: [],
-                                                                        headers: headers, nativeRemoteHLS: remoteHLS),
+                                                                        headers: headers, nativeRemoteHLS: remoteHLS,
+                                                                        diskCache: isTrailer ? nil : model.profile.diskCache),
                                                        report: { pos, dur in if !isTrailer { model.recordProgress(request, position: pos, duration: dur) } },
                                                        // Ausgang bei offenem Panel: danach ist onDisappear echt.
                                                        onEnded: { tracksOpen = false; onEnded($0) },
