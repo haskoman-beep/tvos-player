@@ -211,11 +211,15 @@ struct DetailView: View {
                 Task { @MainActor in RemoteLog.info("trailer", "trailerio \(imdb) (\(lang)): \(line)") }
             })
             if Task.isCancelled { trailerLoading = false; RemoteLog.info("trailer", "\(imdb): abgebrochen"); return }
-            if let first = list.first {
+            // Profilsprache zuerst: erkennbar fremdsprachige Trailerio-Treffer hinter dem YouTube-Trailer in Profilsprache.
+            if let pick = TrailerioClient.choose(list, profileLanguage: lang, youtubeKey: extra?.trailerYouTube,
+                                                 youtubeLanguage: extra?.trailerYouTubeLanguage) {
                 trailerLoading = false
-                RemoteLog.info("trailer", "\(imdb) → trailerio · \(first.provider) · \(first.isHLS ? "HLS" : "MP4")")
-                trailer = TrailerPlay(key: key, stream: first.stream)
+                RemoteLog.info("trailer", "\(imdb) → trailerio · \(pick.provider) · \(pick.languageHint ?? "?") · \(pick.isHLS ? "HLS" : "MP4")")
+                trailer = TrailerPlay(key: key, stream: pick.stream)
                 return
+            } else if !list.isEmpty {
+                RemoteLog.info("trailer", "\(imdb): trailerio ohne Treffer in \(lang) → YouTube (\(extra?.trailerYouTubeLanguage ?? "?"))")
             }
         }
         RemoteLog.info("trailer", "\(key) wird aufgelöst")

@@ -107,6 +107,6 @@ import Testing
     #expect(m?.cast.first == CastMember(id: 19292, name: "Adam Sandler", role: "Lenny Feder", photo: "https://image.tmdb.org/t/p/w185/a.jpg"))
     #expect(m?.creators == ["Dennis Dugan"]); #expect(m?.writers == ["Adam Sandler", "Fred Wolf"])
     #expect(m?.studios == ["Happy Madison", "Columbia Pictures"]); #expect(m?.originalTitle == "Grown Ups")
-    #expect(m?.trailerYouTube == "trailerDE")
+    #expect(m?.trailerYouTube == "trailerDE" && m?.trailerYouTubeLanguage == "de")
     #expect(m?.recommendations.map(\.id) == ["tmdb:89492"]); #expect(m?.budget == 80_000_000)
 }

@@ -27,6 +27,8 @@ public struct LocalizedMeta: Sendable, Equatable {
     public var tagline: String?
     /// YouTube-Schlüssel des besten Trailers (Profilsprache zuerst).
     public var trailerYouTube: String?
+    /// Sprache (`iso_639_1`) dieses Trailers, falls TMDB sie angibt.
+    public var trailerYouTubeLanguage: String?
     public var recommendations: [MetaPreview] = []
 }
 
@@ -137,6 +139,7 @@ extension TMDBClient {
             return score(a) < score(b)
         }
         m.trailerYouTube = ordered.first.flatMap { nonEmpty($0["key"]) }
+        m.trailerYouTubeLanguage = ordered.first.flatMap { nonEmpty($0["iso_639_1"]) }
 
         let recs = (((o["recommendations"] as? [String: Any])?["results"] as? [[String: Any]]) ?? [])
         m.recommendations = recs.prefix(20).compactMap { preview($0, defaultType: series ? .series : .movie) }

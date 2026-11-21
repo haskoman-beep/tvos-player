@@ -14,6 +14,36 @@ public struct TrailerioTrailer: Sendable, Equatable {
     /// Höhe aus dem Anbieter-Text (4K → 2160, „1080p“ → 1080), sonst nil.
     public var height: Int?
 
+    /// Erkennbare Sprache des Trailers (zweistellig) oder nil, wenn nicht eindeutig.
+    /// Merkmale: Abfrageparameter `l=de-DE` (iTunes), Dateiname mit `_en_us_` (MUBI), Anbieter-Text „German“/„English“.
+    public var languageHint: String? {
+        if let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+           let l = items.first(where: { $0.name.lowercased() == "l" || $0.name.lowercased() == "lang" })?.value,
+           let code = Self.code(l) { return code }
+        let file = url.lastPathComponent.lowercased()
+        let parts = file.split(whereSeparator: { $0 == "_" || $0 == "-" || $0 == "." }).map(String.init)
+        if parts.count >= 2 {
+            for i in 0..<(parts.count - 1)
+            where parts[i].count == 2 && parts[i + 1].count == 2 && Self.knownLanguages.contains(parts[i])
+                && parts[i + 1].allSatisfy(\.isLetter) {
+                return parts[i]
+            }
+        }
+        let p = provider.lowercased()
+        if p.contains("german") || p.contains("deutsch") { return "de" }
+        if p.contains("english") { return "en" }
+        return nil
+    }
+
+    static let knownLanguages: Set<String> = ["de", "en", "fr", "es", "it", "pt", "ja", "ko", "ru", "tr", "hi", "ar", "cs", "nl", "pl", "sv"]
+
+    /// „de-DE“, „de_DE“, „de“ → „de“; sonst nil.
+    static func code(_ s: String) -> String? {
+        let c = String(s.lowercased().prefix(2))
+        guard c.count == 2, c.allSatisfy(\.isLetter), knownLanguages.contains(c) else { return nil }
+        return s.count == 2 || [Character("-"), "_"].contains(s[s.index(s.startIndex, offsetBy: 2)]) ? c : nil
+    }
+
     /// Für den bestehenden Trailer-Weg (Player bekommt dieselbe Struktur wie bei YouTube).
     public var stream: YouTubeStream {
         YouTubeStream(url: url, isHLS: isHLS, height: height, client: "trailerio", headers: [:])
@@ -75,6 +105,19 @@ public struct TrailerioClient: Sendable {
             if let h = Int(token.dropLast()), h >= 144 { return h }
         }
         return nil
+    }
+
+    /// Auswahl gegen den TMDB-YouTube-Trailer: Profilsprache Englisch → erster Trailerio-Treffer.
+    /// Sonst Trailerio nur, wenn ein Treffer erkennbar in der Profilsprache ist – oder wenn es keinen YouTube-Trailer
+    /// in der Profilsprache gibt (dann lieber unbekannte Sprache als erkennbar fremde). nil = YouTube nehmen.
+    public static func choose(_ list: [TrailerioTrailer], profileLanguage: String, youtubeKey: String?,
+                              youtubeLanguage: String?) -> TrailerioTrailer? {
+        let lang = String(profileLanguage.lowercased().prefix(2))
+        if lang == "en" { return list.first }
+        if let match = list.first(where: { $0.languageHint == lang }) { return match }
+        let youtubeMatches = youtubeKey != nil && youtubeLanguage.map { String($0.lowercased().prefix(2)) } == lang
+        if youtubeMatches { return nil }
+        return list.first(where: { $0.languageHint == nil }) ?? list.first
     }
 
     /// Trailer für die Profilsprache; leer bei Fehler, Zeitüberschreitung oder ohne Treffer.

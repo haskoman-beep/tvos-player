@@ -7,8 +7,8 @@ private let matrixDE = #"""
 {"meta":{"id":"tt0133093","type":"movie","name":"The Matrix","links":[
  {"trailers":"https://video.example.net/video.mp4?cmd=6&fmt=4","provider":"Plex 1080p"},
  {"trailers":"https://play-edge.example.com/hls/playlist.m3u8?cc=DE&l=de-DE","provider":"⭐ Apple TV 4K DV Atmos"},
- {"trailers":"https://cdn.example.net/720p-t-the-matrix.mp4","provider":"MUBI 720p"},
- {"trailers":"https://cdn.example.net/720p-t-the-matrix.mp4","provider":"MUBI 720p"},
+ {"trailers":"https://cdn.example.net/720p-t-the-matrix_en_us_1280_720_1559946549.mp4","provider":"MUBI 720p"},
+ {"trailers":"https://cdn.example.net/720p-t-the-matrix_en_us_1280_720_1559946549.mp4","provider":"MUBI 720p"},
  {"trailers":"javascript:alert(1)","provider":"kaputt"},
  {"provider":"ohne Adresse"}]}}
 """#
@@ -72,4 +72,32 @@ private struct SlowHTTP: HTTPFetching {
         .trailers(imdb: "tt0133093", series: false, language: "de")
     #expect(list.isEmpty)
     #expect(ContinuousClock.now - start < .seconds(3))
+}
+
+@Test func trailerioLanguageHints() throws {
+    let list = TrailerioClient.parse(Data(matrixDE.utf8))
+    #expect(list.map(\.languageHint) == ["de", nil, "en"])
+    let u = try #require(URL(string: "https://x.example/a/clip_de_de_1920.mp4"))
+    #expect(TrailerioTrailer(url: u, provider: "", isRecommended: false, isHLS: false).languageHint == "de")
+    let v = try #require(URL(string: "https://x.example/a.mp4"))
+    #expect(TrailerioTrailer(url: v, provider: "German Trailer", isRecommended: false, isHLS: false).languageHint == "de")
+    #expect(TrailerioTrailer.code("en-US") == "en" && TrailerioTrailer.code("english") == nil)
+}
+
+@Test func trailerioChoosePrefersProfileLanguage() throws {
+    let all = TrailerioClient.parse(Data(matrixDE.utf8))
+    let english = all.filter { $0.languageHint == "en" }   // nur MUBI en_us
+    let unknown = all.filter { $0.languageHint == nil }    // nur Plex
+    // Deutscher Trailerio-Treffer schlägt den deutschen YouTube-Trailer.
+    #expect(TrailerioClient.choose(all, profileLanguage: "de", youtubeKey: "k", youtubeLanguage: "de")?.provider == "Apple TV 4K DV Atmos")
+    // Nur englisch/unbekannt bei Trailerio, deutscher YouTube-Trailer vorhanden → YouTube.
+    #expect(TrailerioClient.choose(english, profileLanguage: "de", youtubeKey: "k", youtubeLanguage: "de") == nil)
+    #expect(TrailerioClient.choose(unknown, profileLanguage: "de", youtubeKey: "k", youtubeLanguage: "de") == nil)
+    // YouTube nur englisch oder ohne Sprache → Trailerio, unbekannte Sprache vor erkennbar fremder.
+    #expect(TrailerioClient.choose(english + unknown, profileLanguage: "de", youtubeKey: "k", youtubeLanguage: "en")?.provider == "Plex 1080p")
+    #expect(TrailerioClient.choose(english, profileLanguage: "de", youtubeKey: "k", youtubeLanguage: nil)?.provider == "MUBI 720p")
+    #expect(TrailerioClient.choose(english, profileLanguage: "de", youtubeKey: nil, youtubeLanguage: nil)?.provider == "MUBI 720p")
+    // Englisches Profil: erster Treffer wie bisher.
+    #expect(TrailerioClient.choose(all, profileLanguage: "en", youtubeKey: "k", youtubeLanguage: "en")?.provider == "Apple TV 4K DV Atmos")
+    #expect(TrailerioClient.choose([], profileLanguage: "de", youtubeKey: "k", youtubeLanguage: "en") == nil)
 }
