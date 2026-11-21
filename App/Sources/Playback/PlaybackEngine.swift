@@ -114,7 +114,7 @@ final class AetherBackend: PlaybackEngine {
                 default: return
                 }
             }
-            Task { @MainActor in RemoteLog.info("engine.\(cat.rawValue)", line) }
+            Task { @MainActor in RemoteLog.info("engine.\(cat.rawValue)", LogRedact.text(line)) }
         }
     }
 

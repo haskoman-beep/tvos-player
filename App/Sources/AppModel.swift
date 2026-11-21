@@ -103,7 +103,8 @@ final class AppModel: ObservableObject {
             else if s == "simkl", let simkl { r = try await simkl.poll(code) }
             else { return .failed(0) }
         } catch { return .pending }
-        RemoteLog.info("sync", "\(s) Login: \(r)".replacingOccurrences(of: #"accessToken: \"[^\"]*\""#, with: "accessToken: …", options: .regularExpression))
+        // Nur den Fall loggen (success/pending/…), nie das SyncToken mit Zugangs-/Erneuerungsschlüssel.
+        RemoteLog.info("sync", "\(s) Login: \(String(describing: r).prefix(while: { $0 != "(" }))")
         if case .success(let t) = r {
             update { $0.syncTokens[s] = t }
             cache.removeAll()

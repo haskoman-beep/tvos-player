@@ -31,6 +31,7 @@ final class StreamPrefetcher {
     private var lastPlayerAppeared: Date?
     /// Zählt Ruhe-Kacheln; eine späte TMDB-Nachschlage-Antwort gilt nur, solange keine neuere Kachel ruht.
     private var generation = 0
+    private var imagesVersion = 0
 
     private init() {}
 
@@ -49,11 +50,21 @@ final class StreamPrefetcher {
         players.insert(token)
         lastPlayerAppeared = Date()
         waiting.removeAll()
+        notifyImages()
     }
 
     func playerDisappeared(_ token: UUID) {
         players.remove(token)
         lastPlayerAppeared = Date()   // auch nach dem Schließen 2 s Ruhe
+        notifyImages()
+    }
+
+    /// Bildspeicher (Welle A b): während der Wiedergabe klein. Fortlaufende Nummer, damit eine
+    /// verspätete ältere Meldung den neueren Zustand nicht überschreibt.
+    private func notifyImages() {
+        imagesVersion += 1
+        let active = playerActive, version = imagesVersion
+        Task { await ImagePipeline.shared.setPlaybackActive(active, version: version) }
     }
 
     /// Ruhe-Kachel: Ziel bestimmen und einreihen. Ohne IMDb-ID oder bei Serien ohne bekannte Folge: nichts.
