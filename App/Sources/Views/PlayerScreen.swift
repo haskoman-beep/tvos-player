@@ -24,7 +24,8 @@ struct PlayerScreen: View {
                                                                         subtitleLanguages: model.profile.subtitlesEnabled ? [model.profile.subtitleLanguage] : [],
                                                                         headers: headers),
                                                        report: { pos, dur in model.recordProgress(request, position: pos, duration: dur) },
-                                                       onEnded: onEnded, onFallback: onFallback) }
+                                                       onEnded: onEnded, onFallback: onFallback,
+                                                       onPause: { model.scrobblePause(request) }) }
             else { Text(initError ?? "Player wird gestartet …") }
         }
         .onDisappear { model.endPlayback(request) }
@@ -46,6 +47,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
     let report: (Double, Double) -> Void
     let onEnded: () -> Void
     var onFallback: (String) -> Void = { _ in }
+    var onPause: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
     @State private var showOverlay = true
     @State private var showTracks = false
@@ -165,6 +167,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
         Task {
             try? await Task.sleep(for: .milliseconds(700))
             RemoteLog.info("player", "Play/Pause · Zustand danach \(engine.stateText)")
+            if !engine.isPlaying { saveProgress(); onPause() }
         }
         poke()
     }

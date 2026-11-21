@@ -4,22 +4,27 @@ import Foundation
 public struct SimklClient: Sendable {
     public let clientID: String
     let http: APISending
+    let sleep: APISleep
     static let base = "https://api.simkl.com"
 
-    public init(clientID: String, http: APISending = URLSessionSender()) { self.clientID = clientID; self.http = http }
+    public init(clientID: String, http: APISending = URLSessionSender(), sleep: @escaping APISleep = defaultAPISleep) {
+        self.clientID = clientID; self.http = http; self.sleep = sleep
+    }
 
     func request(_ method: String, _ path: String, token: SyncToken? = nil, json: [String: Any]? = nil) throws -> APIRequest {
         let sep = path.contains("?") ? "&" : "?"
         guard let u = URL(string: Self.base + path + sep + "client_id=\(clientID)") else { throw APIError.decoding("url") }
-        var h = ["Content-Type": "application/json", "simkl-api-key": clientID]
+        // Simkl verlangt bei jeder Anfrage App-Name, -Version und User-Agent.
+        var h = ["Content-Type": "application/json", "simkl-api-key": clientID,
+                 "app-name": SyncAppInfo.name, "app-version": SyncAppInfo.version, "User-Agent": SyncAppInfo.userAgent]
         if let token { h["Authorization"] = "Bearer \(token.accessToken)" }
         return APIRequest(method: method, url: u, headers: h, body: try json.map { try JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]) })
     }
 
     func json(_ r: APIRequest) async throws -> Any {
-        let (s, d) = try await http.send(r)
-        guard (200..<300).contains(s) else { throw APIError.status(s) }
-        return try JSONSerialization.jsonObject(with: d.isEmpty ? Data("{}".utf8) : d)
+        let res = try await http.sendRespectingRateLimit(r, sleep: sleep)
+        guard (200..<300).contains(res.status) else { throw APIError.status(res.status) }
+        return try JSONSerialization.jsonObject(with: res.data.isEmpty ? Data("{}".utf8) : res.data)
     }
 
     public func deviceCode() async throws -> DeviceCode {
@@ -42,7 +47,8 @@ public struct SimklClient: Sendable {
         if let s = season, let e = episode {
             body["show"] = ["ids": ["imdb": imdb]]; body["episode"] = ["season": s, "number": e]
         } else { body["movie"] = ["ids": ["imdb": imdb]] }
-        _ = try await json(request("POST", "/scrobble/\(action.rawValue)", token: token, json: body))
+        let r = try request("POST", "/scrobble/\(action.rawValue)", token: token, json: body)
+        try await SyncRetry.scrobble(action, sleep: sleep) { try await http.sendRespectingRateLimit(r, sleep: sleep) }
     }
 
     public func playback(token: SyncToken) async throws -> [RemoteProgress] {

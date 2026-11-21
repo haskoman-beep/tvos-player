@@ -33,8 +33,10 @@ private func body(_ r: APIRequest) -> [String: Any] { (try? JSONSerialization.js
 
 @Test func tokenRefreshWindow() {
     let now = Date(timeIntervalSince1970: 0)
-    #expect(SyncToken(accessToken: "a", expiresAt: now.addingTimeInterval(86400)).needsRefresh(now: now))
-    #expect(!SyncToken(accessToken: "a", expiresAt: now.addingTimeInterval(30 * 86400)).needsRefresh(now: now))
+    #expect(!SyncToken(accessToken: "a", expiresAt: now.addingTimeInterval(86400)).needsRefresh(now: now))
+    #expect(!SyncToken(accessToken: "a", expiresAt: now.addingTimeInterval(61)).needsRefresh(now: now))
+    #expect(SyncToken(accessToken: "a", expiresAt: now.addingTimeInterval(59)).needsRefresh(now: now))
+    #expect(SyncToken(accessToken: "a", expiresAt: now.addingTimeInterval(-5)).needsRefresh(now: now))
     #expect(!SyncToken(accessToken: "a").needsRefresh(now: now))
 }
 

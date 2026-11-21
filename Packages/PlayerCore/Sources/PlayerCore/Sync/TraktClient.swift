@@ -10,9 +10,12 @@ public struct SyncToken: Codable, Sendable, Equatable {
         self.accessToken = accessToken; self.refreshToken = refreshToken; self.expiresAt = expiresAt
     }
 
+    /// Sicherheitsabstand vor dem Ablauf, ab dem erneuert wird.
+    public static let refreshLeeway: TimeInterval = 60
+
     public func needsRefresh(now: Date = Date()) -> Bool {
         guard let e = expiresAt else { return false }
-        return e.timeIntervalSince(now) < 7 * 86400
+        return e.timeIntervalSince(now) < Self.refreshLeeway
     }
 }
 
@@ -46,10 +49,14 @@ public struct TraktClient: Sendable {
     public let clientID: String
     public let clientSecret: String
     let http: APISending
+    let sleep: APISleep
+    /// Nach einer 401 einmal aufgerufen (mit dem abgelehnten Token); liefert das erneuerte Token oder nil.
+    let onUnauthorized: (@Sendable (SyncToken) async -> SyncToken?)?
     static let base = "https://api.trakt.tv"
 
-    public init(clientID: String, clientSecret: String, http: APISending = URLSessionSender()) {
-        self.clientID = clientID; self.clientSecret = clientSecret; self.http = http
+    public init(clientID: String, clientSecret: String, http: APISending = URLSessionSender(), sleep: @escaping APISleep = defaultAPISleep,
+                onUnauthorized: (@Sendable (SyncToken) async -> SyncToken?)? = nil) {
+        self.clientID = clientID; self.clientSecret = clientSecret; self.http = http; self.sleep = sleep; self.onUnauthorized = onUnauthorized
     }
 
     func request(_ method: String, _ path: String, token: SyncToken? = nil, json: [String: Any]? = nil) throws -> APIRequest {
@@ -59,10 +66,19 @@ public struct TraktClient: Sendable {
         return APIRequest(method: method, url: u, headers: h, body: try json.map { try JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]) })
     }
 
-    func json(_ r: APIRequest) async throws -> Any {
-        let (s, d) = try await http.send(r)
-        guard (200..<300).contains(s) else { throw APIError.status(s) }
-        return try JSONSerialization.jsonObject(with: d.isEmpty ? Data("{}".utf8) : d)
+    /// 429: einmal nach `Retry-After`. 401 mit Token: einmal erneuern lassen und wiederholen.
+    func perform(_ r: APIRequest, token: SyncToken?) async throws -> APIResponse {
+        let res = try await http.sendRespectingRateLimit(r, sleep: sleep)
+        guard res.status == 401, let token, let onUnauthorized, let fresh = await onUnauthorized(token) else { return res }
+        var again = r
+        again.headers["Authorization"] = "Bearer \(fresh.accessToken)"
+        return try await http.sendRespectingRateLimit(again, sleep: sleep)
+    }
+
+    func json(_ r: APIRequest, token: SyncToken? = nil) async throws -> Any {
+        let res = try await perform(r, token: token)
+        guard (200..<300).contains(res.status) else { throw APIError.status(res.status) }
+        return try JSONSerialization.jsonObject(with: res.data.isEmpty ? Data("{}".utf8) : res.data)
     }
 
     // MARK: Login
@@ -106,7 +122,7 @@ public struct TraktClient: Sendable {
 
     // MARK: Daten
 
-    /// Scrobble: Fortschritt in Prozent (0…100).
+    /// Scrobble: Fortschritt in Prozent (0…100). 409 (schon erfasst) gilt als Erfolg, `stop` wird nach Netzfehler einmal wiederholt.
     public func scrobble(_ action: ScrobbleAction, imdb: String, season: Int?, episode: Int?, percent: Double, token: SyncToken) async throws {
         var body: [String: Any] = ["progress": (percent * 100).rounded() / 100]
         if let s = season, let e = episode {
@@ -114,11 +130,12 @@ public struct TraktClient: Sendable {
         } else {
             body["movie"] = ["ids": ["imdb": imdb]]
         }
-        _ = try await json(request("POST", "/scrobble/\(action.rawValue)", token: token, json: body))
+        let r = try request("POST", "/scrobble/\(action.rawValue)", token: token, json: body)
+        try await SyncRetry.scrobble(action, sleep: sleep) { try await perform(r, token: token) }
     }
 
     public func playback(token: SyncToken) async throws -> [RemoteProgress] {
-        let arr = try await json(request("GET", "/sync/playback?limit=50", token: token)) as? [[String: Any]] ?? []
+        let arr = try await json(request("GET", "/sync/playback?limit=50", token: token), token: token) as? [[String: Any]] ?? []
         return arr.compactMap { o in
             let pct = (o["progress"] as? Double ?? 0) / 100
             let date = (o["paused_at"] as? String).flatMap(Self.date) ?? .distantPast
@@ -134,7 +151,7 @@ public struct TraktClient: Sendable {
     }
 
     public func watchlist(token: SyncToken) async throws -> [MetaPreview] {
-        let arr = try await json(request("GET", "/sync/watchlist?sort_by=added&sort_how=desc", token: token)) as? [[String: Any]] ?? []
+        let arr = try await json(request("GET", "/sync/watchlist?sort_by=added&sort_how=desc", token: token), token: token) as? [[String: Any]] ?? []
         return Self.items(arr)
     }
 
@@ -144,7 +161,7 @@ public struct TraktClient: Sendable {
         if slug == "watchlist" { path = "/users/\(user ?? "me")/watchlist" }
         else if user == nil, Int(slug) != nil { path = "/lists/\(slug)/items" }   // Listen-ID (z. B. aus Nuvio)
         else { path = "/users/\(user ?? "me")/lists/\(slug)/items" }
-        let arr = try await json(request("GET", path, token: token)) as? [[String: Any]] ?? []
+        let arr = try await json(request("GET", path, token: token), token: token) as? [[String: Any]] ?? []
         return Self.items(arr)
     }
 

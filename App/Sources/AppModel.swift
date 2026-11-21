@@ -43,19 +43,27 @@ final class AppModel: ObservableObject {
 
     /// Player wird verlassen: Trakt/Simkl bekommen den letzten Stand.
     func endPlayback(_ r: PlayRequest) {
-        guard let s = scrobbling, s.request.id == r.id else { return }
-        scrobbling = nil
-        sendScrobble(.stop, s.request, fraction: s.fraction)
+        sendScrobble(scrobbler.end(id: r.id))
+    }
+
+    /// Player pausiert: Trakt/Simkl bekommen `pause`; der nächste Fortschritt schickt wieder `start`.
+    func scrobblePause(_ r: PlayRequest) {
+        guard Self.syncServices.contains(where: isConnected) else { return }
+        sendScrobble(scrobbler.pause(id: r.id))
     }
 
     // MARK: Trakt / Simkl
 
     static let syncServices = ["trakt", "simkl"]
-    private var scrobbling: (request: PlayRequest, fraction: Double)?
+    private var scrobbler = ScrobbleTracker<PlayRequest>(finishedAt: ProgressBook.finishedAt)
+    /// Scrobbles laufen nacheinander, damit stop/start/pause in der richtigen Reihenfolge ankommen.
+    private var scrobbleChain: Task<Void, Never>?
+    /// Laufende Trakt-Erneuerung; gleichzeitige Aufrufer warten auf dieselbe.
+    private var traktRefresh: Task<SyncToken?, Never>?
 
     var trakt: TraktClient? {
         guard let id = profile.apiKeys["trakt_id"], let sec = profile.apiKeys["trakt_secret"], !id.isEmpty, !sec.isEmpty else { return nil }
-        return TraktClient(clientID: id, clientSecret: sec)
+        return TraktClient(clientID: id, clientSecret: sec, onUnauthorized: { [weak self] old in await self?.refreshTrakt(after: old) })
     }
 
     var simkl: SimklClient? {
@@ -93,11 +101,31 @@ final class AppModel: ObservableObject {
 
     /// Gültige Anmeldung, Trakt-Token wird rechtzeitig erneuert.
     func token(_ s: String) async -> SyncToken? {
-        guard hasClient(s), var t = profile.syncTokens[s] else { return nil }
-        if s == "trakt", t.needsRefresh(), let trakt, let n = try? await trakt.refresh(t) {
-            t = n; update { $0.syncTokens[s] = n }
-        }
+        guard hasClient(s), let t = profile.syncTokens[s] else { return nil }
+        if s == "trakt", t.needsRefresh() { return await refreshTrakt(after: t) ?? t }
         return t
+    }
+
+    /// Trakt-Token erneuern; nur eine Erneuerung zur Zeit (der Refresh-Token rotiert).
+    /// Hat ein anderer Aufrufer `old` schon ersetzt, wird das neue Token zurückgegeben.
+    func refreshTrakt(after old: SyncToken) async -> SyncToken? {
+        if let running = traktRefresh { return await running.value }
+        guard let trakt, let cur = profile.syncTokens["trakt"] else { return nil }
+        if cur != old, !cur.needsRefresh() { return cur }
+        let profileID = profile.id
+        let task = Task { [weak self] () -> SyncToken? in
+            defer { self?.traktRefresh = nil }
+            do {
+                let n = try await trakt.refresh(cur)
+                if self?.profile.id == profileID { self?.update { $0.syncTokens["trakt"] = n } }
+                return n
+            } catch {
+                RemoteLog.error("sync", "Trakt-Erneuerung fehlgeschlagen: \(error)")
+                return nil
+            }
+        }
+        traktRefresh = task
+        return await task.value
     }
 
     /// Angefangenes aus dem gewählten Dienst holen und mit dem lokalen Stand zusammenführen.
@@ -114,22 +142,25 @@ final class AppModel: ObservableObject {
     }
 
     private func scrobbleProgress(_ r: PlayRequest, fraction: Double) {
-        if let s = scrobbling, s.request.id != r.id { sendScrobble(.stop, s.request, fraction: s.fraction); scrobbling = nil }
-        if scrobbling == nil { sendScrobble(.start, r, fraction: fraction) }
-        scrobbling = (r, fraction)
-        if fraction >= ProgressBook.finishedAt { sendScrobble(.stop, r, fraction: fraction); scrobbling = nil }
+        sendScrobble(scrobbler.progress(r, id: r.id, fraction: fraction))
     }
 
-    private func sendScrobble(_ a: ScrobbleAction, _ r: PlayRequest, fraction: Double) {
-        let imdb = r.item.id
-        guard imdb.hasPrefix("tt") else { return }
+    private func sendScrobble(_ events: [ScrobbleEvent<PlayRequest>]) {
+        let events = events.filter { $0.item.item.id.hasPrefix("tt") }
         let services = Self.syncServices.filter(isConnected)
-        guard !services.isEmpty else { return }
-        Task {
-            for s in services {
-                guard let t = await token(s) else { continue }
-                if s == "trakt" { try? await trakt?.scrobble(a, imdb: imdb, season: r.season, episode: r.episode, percent: fraction * 100, token: t) }
-                else { try? await simkl?.scrobble(a, imdb: imdb, season: r.season, episode: r.episode, percent: fraction * 100, token: t) }
+        guard !events.isEmpty, !services.isEmpty else { return }
+        let previous = scrobbleChain
+        scrobbleChain = Task {
+            await previous?.value
+            for e in events {
+                let r = e.item, imdb = r.item.id, pct = e.fraction * 100
+                for s in services {
+                    guard let t = await token(s) else { continue }
+                    do {
+                        if s == "trakt" { try await trakt?.scrobble(e.action, imdb: imdb, season: r.season, episode: r.episode, percent: pct, token: t) }
+                        else { try await simkl?.scrobble(e.action, imdb: imdb, season: r.season, episode: r.episode, percent: pct, token: t) }
+                    } catch { RemoteLog.error("sync", "\(s) \(e.action.rawValue): \(error)") }
+                }
             }
         }
     }
