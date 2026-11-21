@@ -27,6 +27,8 @@ enum DiskCacheError: Error, CustomStringConvertible {
     case badAnswer(String)
     case notEligible(String)
     case throttled(Int)
+    /// Leser hat auf einen laufenden Vorlauf-Block gewartet, bis die Lesergrenze ablief.
+    case readerDeadline(Int)
 
     var description: String {
         switch self {
@@ -34,6 +36,7 @@ enum DiskCacheError: Error, CustomStringConvertible {
         case .badAnswer(let s): "unerwartete Antwort (\(s))"
         case .notEligible(let t): "kein Dateityp für den Cache (\(t))"
         case .throttled(let s): "Ursprung drosselt (Status \(s))"
+        case .readerDeadline(let s): "Vorlauf-Block nicht in \(s) s"
         }
     }
 }
@@ -152,6 +155,9 @@ actor DiskCacheSession {
     private let budget: Int64
     private var index: DiskCacheIndex
     private var inflight: [Int: Task<Data, Error>] = [:]
+    /// Erzeugung je laufendem Abruf (`inflight[i]`), damit nur der eigene Abruf seinen Eintrag entfernt.
+    private var inflightGen: [Int: Int] = [:]
+    private var fetchGeneration = 0
     private var prefetchCount = 0
     private var prefetchPausedUntil = Date.distantPast
     private var readPosition: Int64 = 0
@@ -229,7 +235,11 @@ actor DiskCacheSession {
             // Auf den laufenden Vorlauf warten, aber nur bis zur Lesergrenze; der Vorlauf läuft weiter.
             let left = policy.readerHardLimit - Date().timeIntervalSince(started)
             do { return try await Self.value(of: t, within: max(0.5, left)) }
-            catch { readerGoesDirect(); throw error }
+            catch {
+                // Nur bei echter Fristüberschreitung ganz umleiten; ein schneller Fehler des Vorlaufs kostet ein 307.
+                if case DiskCacheError.readerDeadline = error { readerGoesDirect() }
+                throw error
+            }
         }
         stats.misses += 1
         do { return try await startFetch(i, prefetch: false).value }
@@ -241,11 +251,12 @@ actor DiskCacheSession {
     }
 
     /// Leser bekommt ein 307 nach Warten auf den Vorlauf oder gerissener Lesergrenze: ganze Sitzung leitet um,
-    /// laufender Vorlauf wird abgebrochen (keine Konkurrenz zum direkten Strom der Engine).
+    /// alle laufenden Abrufe werden abgebrochen (keine Konkurrenz zum direkten Strom der Engine; auch der Block,
+    /// auf den der Leser gewartet hat: er bekommt ohnehin das 307).
     private func readerGoesDirect() {
         guard !closed, !passthrough else { return }
         passthrough = true
-        for (b, t) in inflight where readerWaiting[b] == nil { t.cancel() }
+        for t in inflight.values { t.cancel() }
         cacheLog("Plattencache: Leser direkt, Vorlauf gestoppt")
     }
 
@@ -267,6 +278,7 @@ actor DiskCacheSession {
         closed = true
         for t in inflight.values { t.cancel() }
         inflight.removeAll()
+        inflightGen.removeAll()
         index.removeAll()
         try? FileManager.default.removeItem(at: dir)
     }
@@ -278,7 +290,7 @@ actor DiskCacheSession {
         return try await withCheckedThrowingContinuation { (k: CheckedContinuation<Data, Error>) in
             let timer = Task {
                 try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                if once.fire() { k.resume(throwing: DiskCacheError.badAnswer("Vorlauf-Block nicht in \(Int(seconds.rounded())) s")) }
+                if once.fire() { k.resume(throwing: DiskCacheError.readerDeadline(Int(seconds.rounded()))) }
             }
             Task {
                 let r = await t.result
@@ -291,14 +303,18 @@ actor DiskCacheSession {
         if prefetch { prefetchCount += 1 } else { readerFetches += 1 }
         // Laufende Abrufe (einschließlich dieses) beim Start: teilt die Messung der Geschwindigkeit.
         let running = prefetchCount + readerFetches
-        let t = Task { try await self.fetchBlock(i, prefetch: prefetch, concurrent: running) }
+        fetchGeneration &+= 1
+        let gen = fetchGeneration
+        let t = Task { try await self.fetchBlock(i, prefetch: prefetch, concurrent: running, gen: gen) }
         inflight[i] = t
+        inflightGen[i] = gen
         return t
     }
 
-    private func fetchBlock(_ i: Int, prefetch: Bool, concurrent: Int) async throws -> Data {
+    private func fetchBlock(_ i: Int, prefetch: Bool, concurrent: Int, gen: Int) async throws -> Data {
         defer {
-            inflight[i] = nil
+            // Nur den eigenen Eintrag entfernen (ein abgebrochener alter Abruf darf einen neueren nicht austragen).
+            if inflightGen[i] == gen { inflight[i] = nil; inflightGen[i] = nil }
             if prefetch { prefetchCount -= 1 } else { readerFetches -= 1 }
             pump()
         }
@@ -307,6 +323,7 @@ actor DiskCacheSession {
         let attempts = max(1, prefetch ? policy.prefetchAttempts : policy.readerAttempts)
         for attempt in 0..<attempts {
             if closed || Task.isCancelled { throw CancellationError() }
+            if passthrough, prefetch { throw CancellationError() }
             // Wartet die Engine auf diesen Block, kein zweiter Versuch: lieber gleich 307 als die Lesegrenze reißen.
             if attempt > 0, readerWaiting[i] != nil { break }
             do {

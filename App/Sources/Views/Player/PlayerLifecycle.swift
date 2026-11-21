@@ -76,7 +76,6 @@ extension PlayerControls {
                 // Nicht blind play(): die Fehlerleiter entscheidet. Meldet die Engine selbst einen Fehler, ruft
                 // onChange(errorText) recover auf (bricht diese Aufgabe ab); sonst nach 1,5 s escalate → recover.
                 guard engine.errorText == nil else { return }
-                restoring = false
                 await escalate(after: error)
                 return
             }
