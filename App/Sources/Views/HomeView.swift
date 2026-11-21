@@ -2,11 +2,15 @@ import SwiftUI
 import PlayerCore
 
 /// Startseite. Langer Druck auf eine Kachel → Bearbeiten-Modus mit dieser Reihe angefasst (Spec §2).
+/// Mit Hero (Spec §7a.1): hinten Hintergrund + Info des angezeigten Titels, darüber der ScrollView mit
+/// Knopfzeile und Reihen. Angezeigt wird die Diashow-Folie oder, solange der Fokus in den Reihen liegt, die Kachel.
 struct HomeView: View {
     @EnvironmentObject var model: AppModel
     @State private var editor: HomeEditor?
     @State private var cursor = 0
     @State private var longPressFired = false
+    @State private var focus = HomeFocus()
+    @State private var slides = HeroSlides()
 
     var body: some View {
         if editor != nil {
@@ -15,24 +19,66 @@ struct HomeView: View {
                 editor = nil
             }
         } else {
-            ScrollView(.vertical) {
-                LazyVStack(alignment: .leading, spacing: 56) {
-                    ForEach(model.profile.home.rows) { row in
-                        HomeRowView(row: row, onActivate: { route in
-                            if longPressFired { longPressFired = false; return nil }
-                            return route
-                        }, onLongPress: { startEditing(row.id) })
+            let layout = model.profile.home
+            let appearance = model.profile.appearance
+            let hero = layout.heroSource(appearance)
+            let rows = layout.rowsBelowHero(appearance)
+            Group {
+                if hero != nil && !(slides.loaded && slides.items.isEmpty) {
+                    heroHome(rows)
+                } else {
+                    ScrollView(.vertical) {
+                        LazyVStack(alignment: .leading, spacing: 56) { rowList(rows) }
+                            .padding(.vertical, 40)
                     }
-                    if model.profile.home.rows.isEmpty {
-                        Text("Noch keine Reihen. Collections importieren (Einstellungen) und dann hier bearbeiten.")
-                            .foregroundStyle(.secondary)
-                    }
-                    Button("Startseite bearbeiten") { startEditing(nil) }
-                        .padding(.top, 20)
                 }
-                .padding(.vertical, 40)
+            }
+            .task(id: hero.map { "\($0.id)|\($0.content.key)" } ?? "-") {
+                guard let hero else { return }
+                slides.set(await model.heroItems(for: hero))
+                RemoteLog.info("hero", "\(slides.items.count) Folien")
             }
         }
+    }
+
+    /// Hintergrund- und Info-Ebene hinter dem ScrollView; der Hero ist kein eigener Scroll-Abschnitt.
+    private func heroHome(_ rows: [HomeRow]) -> some View {
+        ZStack(alignment: .topLeading) {
+            HeroLayer(slides: slides)
+            ScrollView(.vertical) {
+                LazyVStack(alignment: .leading, spacing: 56) {
+                    HeroButtons(slides: slides)
+                    rowList(rows)
+                }
+                .padding(.top, 24)
+                .padding(.bottom, 60)
+            }
+            // Weicher Rand oben, damit hochgescrollte Reihen nicht hart an der Info abreißen.
+            .mask {
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: 24)
+                    Color.black
+                }
+            }
+            .padding(.top, HeroMetrics.listTop)
+            .ignoresSafeArea(edges: .bottom)
+        }
+        .environment(focus)
+    }
+
+    @ViewBuilder private func rowList(_ rows: [HomeRow]) -> some View {
+        ForEach(rows) { row in
+            HomeRowView(row: row, onActivate: { route in
+                if longPressFired { longPressFired = false; return nil }
+                return route
+            }, onLongPress: { startEditing(row.id) })
+        }
+        if model.profile.home.rows.isEmpty {
+            Text("Noch keine Reihen. Collections importieren (Einstellungen) und dann hier bearbeiten.")
+                .foregroundStyle(.secondary)
+        }
+        Button("Startseite bearbeiten") { startEditing(nil) }
+            .padding(.top, 20)
     }
 
     private func startEditing(_ id: UUID?) {

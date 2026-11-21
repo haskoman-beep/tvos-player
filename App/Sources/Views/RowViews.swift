@@ -11,6 +11,9 @@ struct HomeRowView: View {
     var interactive = true
     @State private var items: [MetaPreview] = []
     @State private var loaded = false
+    /// Startseite mit Hero: fokussierte Kachel meldet sich (nil außerhalb der Startseite).
+    @Environment(HomeFocus.self) private var homeFocus: HomeFocus?
+    @FocusState private var focusedRoute: Route?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -23,6 +26,9 @@ struct HomeRowView: View {
         .task(id: row.content.key + (row.content == .list(.continueWatching) ? "\(model.progress.entries.count)-\(model.progress.continueWatching().first?.updated.timeIntervalSince1970 ?? 0)" : "")) {
             guard case .list(let s) = row.content else { return }
             items = await model.items(s); loaded = true
+        }
+        .onChange(of: focusedRoute) { _, r in
+            if let r, let homeFocus { homeFocus.set(r.heroPreview) }
         }
     }
 
@@ -75,6 +81,7 @@ struct HomeRowView: View {
 
     private func card<L: View>(_ route: Route, @ViewBuilder label: () -> L) -> some View {
         NavigationLinkish(route: route, onActivate: onActivate, label: label())
+            .focused($focusedRoute, equals: route)
             .simultaneousGesture(LongPressGesture(minimumDuration: 0.8).onEnded { _ in onLongPress() })
     }
 }
