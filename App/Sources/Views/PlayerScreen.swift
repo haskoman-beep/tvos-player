@@ -38,7 +38,7 @@ struct PlayerScreen: View {
                                                            guard let n = request.nextRequest else { return }
                                                            Task { _ = await model.streams(type: n.type, id: n.id) }
                                                        },
-                                                       addonSubtitles: { await model.addonSubtitles(for: request, enabled: !isTrailer) }) }
+                                                       addonSubtitles: { await model.addonSubtitles(for: request, media: url, headers: headers, enabled: !isTrailer) }) }
             else { Text(initError ?? "Player wird gestartet …") }
         }
         .onDisappear { if !isTrailer { model.endPlayback(request) } }

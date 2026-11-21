@@ -73,9 +73,10 @@ extension AddonClient {
         addons.contains { $0.manifest.resources.contains { $0.name == "subtitles" } }
     }
 
-    /// `GET {base}/subtitles/{type}/{id}.json` eines Addons.
-    public func subtitles(_ addon: InstalledAddon, type: String, id: String) async throws -> [AddonSubtitle] {
-        let url = try resourceURL(addon, "subtitles", type: type, id: id)
+    /// `GET {base}/subtitles/{type}/{id}[/{extra}].json` eines Addons.
+    public func subtitles(_ addon: InstalledAddon, type: String, id: String,
+                          extra: [String: String] = [:]) async throws -> [AddonSubtitle] {
+        let url = try resourceURL(addon, "subtitles", type: type, id: id, extra: extra)
         let resp = try JSONDecoder().decode(SubtitlesResponse.self, from: try await http.data(from: url))
         return resp.subtitles.compactMap { s in
             guard URL(string: s.url) != nil else { return nil }
@@ -84,13 +85,13 @@ extension AddonClient {
     }
 
     /// Untertitel aller passenden Addons parallel, je Addon höchstens `timeout` Sekunden; Fehler werden übersprungen.
-    /// Reihenfolge wie die Addons, gleiche URL nur einmal.
+    /// Reihenfolge wie die Addons, gleiche URL nur einmal. `extra` z. B. `OpenSubtitlesHash.extras(...)`.
     public func subtitles(from addons: [InstalledAddon], type: String, id: String,
-                          timeout: Double = 8) async -> [AddonSubtitle] {
+                          extra: [String: String] = [:], timeout: Double = 8) async -> [AddonSubtitle] {
         let lists = await withTaskGroup(of: (Int, [AddonSubtitle])?.self) { group in
             for (i, a) in addons.enumerated() where a.manifest.supports("subtitles", type: type, id: id) {
                 group.addTask {
-                    guard let s = try? await Self.withTimeout(timeout, { try await self.subtitles(a, type: type, id: id) })
+                    guard let s = try? await Self.withTimeout(timeout, { try await self.subtitles(a, type: type, id: id, extra: extra) })
                     else { return nil }
                     return (i, s)
                 }
@@ -102,7 +103,8 @@ extension AddonClient {
         return AddonSubtitlePlan.dedupe(lists.flatMap { $0 })
     }
 
-    static func withTimeout<T: Sendable>(_ seconds: Double, _ op: @escaping @Sendable () async throws -> T) async throws -> T {
+    /// Ergebnis von `op` oder Fehler nach `seconds` (die Arbeit wird dann abgebrochen).
+    public static func withTimeout<T: Sendable>(_ seconds: Double, _ op: @escaping @Sendable () async throws -> T) async throws -> T {
         try await withThrowingTaskGroup(of: T.self) { group in
             group.addTask { try await op() }
             group.addTask {
@@ -180,5 +182,48 @@ public enum AddonSubtitlePlan {
         guard subtitlesWanted, let want = MediaLabels.languageCode(wishLanguage),
               !hasEmbeddedTrack(in: want, tracks: embedded) else { return nil }
         return added.first { $0.languageCode == want }
+    }
+}
+
+/// OpenSubtitles-Datei-Hash: Dateigröße plus Summe der ersten und letzten 64 KiB als Little-Endian-UInt64
+/// (Überlauf erlaubt), 16 Hex-Zeichen. Als Stremio-Extra `videoHash`/`videoSize` sortiert OpenSubtitles v3
+/// die zur Veröffentlichung passenden Untertitel nach vorn.
+public enum OpenSubtitlesHash {
+    public static let chunkSize = 65_536
+
+    /// nil bei falscher Blockgröße oder zu kleiner Datei.
+    public static func compute(size: Int64, head: Data, tail: Data) -> String? {
+        guard size >= Int64(chunkSize), head.count == chunkSize, tail.count == chunkSize else { return nil }
+        var sum = UInt64(size)
+        for block in [head, tail] {
+            block.withUnsafeBytes { raw in
+                for i in stride(from: 0, to: chunkSize, by: 8) {
+                    sum &+= UInt64(littleEndian: raw.loadUnaligned(fromByteOffset: i, as: UInt64.self))
+                }
+            }
+        }
+        let hex = String(sum, radix: 16)
+        return String(repeating: "0", count: max(0, 16 - hex.count)) + hex
+    }
+
+    /// Gesamtgröße aus `Content-Range: bytes 0-65535/123456`; nil bei "*" oder Unsinn.
+    public static func totalSize(contentRange: String?) -> Int64? {
+        guard let s = contentRange?.trimmingCharacters(in: .whitespaces), s.lowercased().hasPrefix("bytes "),
+              let slash = s.lastIndex(of: "/"), let n = Int64(s[s.index(after: slash)...]), n > 0 else { return nil }
+        return n
+    }
+
+    /// Nur einzelne HTTP(S)-Dateien: kein HLS/DASH, kein Loopback, kein YouTube.
+    public static func isHashable(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let host = url.host?.lowercased() else { return false }
+        if ["localhost", "127.0.0.1", "::1", "[::1]"].contains(host) { return false }
+        if host.contains("youtube.") || host.contains("youtu.be") || host.contains("googlevideo.") { return false }
+        return !["m3u8", "m3u", "mpd"].contains(url.pathExtension.lowercased())
+    }
+
+    /// Stremio-Extras für die Untertitel-Abfrage.
+    public static func extras(hash: String, size: Int64) -> [String: String] {
+        ["videoHash": hash, "videoSize": String(size)]
     }
 }

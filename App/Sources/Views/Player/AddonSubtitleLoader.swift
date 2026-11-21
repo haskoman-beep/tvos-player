@@ -11,7 +11,9 @@ enum AddonSubtitleLog {
 extension AppModel {
     /// Untertitel aller passenden Addons für den Titel; nil, wenn `enabled` false ist (Trailer)
     /// oder kein Untertitel-Addon installiert ist (einmal geloggt).
-    func addonSubtitles(for request: PlayRequest, enabled: Bool = true) async -> [AddonSubtitle]? {
+    /// Mit `media` wird vorher der OpenSubtitles-Datei-Hash geholt (zwei 64-KiB-Range-Abrufe) und als Extra mitgeschickt.
+    func addonSubtitles(for request: PlayRequest, media: URL? = nil, headers: [String: String] = [:],
+                        enabled: Bool = true) async -> [AddonSubtitle]? {
         guard enabled else { return nil }
         guard AddonClient.hasSubtitleAddon(profile.addons) else {
             if !AddonSubtitleLog.reportedNoAddon {
@@ -20,7 +22,49 @@ extension AppModel {
             }
             return nil
         }
-        return await addons.subtitles(from: profile.addons, type: request.type, id: request.id)
+        var extra: [String: String] = [:]
+        // Höchstens 8 s für den Hash, dann ohne fragen.
+        // `try?` glättet das doppelte Optional: nil bei Zeitablauf oder ohne Hash.
+        if let media, let h = try? await AddonClient.withTimeout(8, { await VideoHash.fetch(media, headers: headers) }) {
+            extra = OpenSubtitlesHash.extras(hash: h.hash, size: h.size)
+            RemoteLog.info("player", "Addon-UT: Datei-Hash \(h.hash) · \(h.size) B")
+        }
+        return await addons.subtitles(from: profile.addons, type: request.type, id: request.id, extra: extra)
+    }
+}
+
+/// OpenSubtitles-Hash der laufenden Datei über zwei Range-Abrufe (Anfang, Ende). Nur bei Antwort 206 mit
+/// `Content-Range`; bei jeder Auffälligkeit nil (dann ohne Hash fragen). Es werden höchstens 2 × 64 KiB gelesen.
+enum VideoHash {
+    static func fetch(_ url: URL, headers: [String: String]) async -> (hash: String, size: Int64)? {
+        guard OpenSubtitlesHash.isHashable(url) else { return nil }
+        let n = Int64(OpenSubtitlesHash.chunkSize)
+        guard let head = await range(url, headers, from: 0, to: n - 1),
+              let size = OpenSubtitlesHash.totalSize(contentRange: head.contentRange), size >= n,
+              let tail = await range(url, headers, from: size - n, to: size - 1),
+              let hash = OpenSubtitlesHash.compute(size: size, head: head.data, tail: tail.data) else { return nil }
+        return (hash, size)
+    }
+
+    private static func range(_ url: URL, _ headers: [String: String], from: Int64, to: Int64) async -> (data: Data, contentRange: String?)? {
+        var r = URLRequest(url: url, timeoutInterval: 8)
+        for (k, v) in headers { r.setValue(v, forHTTPHeaderField: k) }
+        r.setValue("bytes=\(from)-\(to)", forHTTPHeaderField: "Range")
+        r.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        guard let res = try? await URLSession.shared.bytes(for: r) else { return nil }
+        let (bytes, resp) = res
+        defer { bytes.task.cancel() }   // Server ohne Range-Unterstützung: nie die ganze Datei laden
+        guard let http = resp as? HTTPURLResponse, http.statusCode == 206 else { return nil }
+        let want = Int(to - from + 1)
+        var data = Data(); data.reserveCapacity(want)
+        do {
+            for try await b in bytes {
+                data.append(b)
+                if data.count >= want { break }
+            }
+        } catch { return nil }
+        guard data.count == want else { return nil }
+        return (data, http.value(forHTTPHeaderField: "Content-Range"))
     }
 }
 

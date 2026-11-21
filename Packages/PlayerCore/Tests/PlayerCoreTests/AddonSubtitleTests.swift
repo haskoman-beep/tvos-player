@@ -95,3 +95,36 @@ private struct SlowHTTP: HTTPFetching {
     #expect(AddonSubtitlePlan.autoSelect(added, subtitlesWanted: false, wishLanguage: "de", embedded: engOnly) == nil)
     #expect(AddonSubtitlePlan.autoSelect(added, subtitlesWanted: true, wishLanguage: "fr", embedded: engOnly) == nil)
 }
+
+@Test func openSubtitlesHashSumsLittleEndianWithOverflow() {
+    let n = OpenSubtitlesHash.chunkSize
+    let zeros = Data(count: n)
+    #expect(OpenSubtitlesHash.compute(size: 131_072, head: zeros, tail: zeros) == "0000000000020000")
+    var head = Data(count: n); head[0] = 0x01; head[8] = 0x00; head[15] = 0x01   // 1 + 2^56
+    var tail = Data(count: n); for i in 0..<8 { tail[i] = 0xFF }                   // 2^64 - 1 → Überlauf
+    #expect(OpenSubtitlesHash.compute(size: 131_072, head: head, tail: tail) == "0100000000020000")
+    #expect(OpenSubtitlesHash.compute(size: 1_000, head: zeros, tail: zeros) == nil)
+    #expect(OpenSubtitlesHash.compute(size: 131_072, head: Data(count: 10), tail: zeros) == nil)
+}
+
+@Test func openSubtitlesHashHelpers() {
+    #expect(OpenSubtitlesHash.totalSize(contentRange: "bytes 0-65535/1234567890") == 1_234_567_890)
+    #expect(OpenSubtitlesHash.totalSize(contentRange: "bytes 0-65535/*") == nil)
+    #expect(OpenSubtitlesHash.totalSize(contentRange: nil) == nil)
+    #expect(OpenSubtitlesHash.isHashable(URL(string: "https://cdn.example/f/Film.mkv")!))
+    #expect(!OpenSubtitlesHash.isHashable(URL(string: "https://cdn.example/master.m3u8")!))
+    #expect(!OpenSubtitlesHash.isHashable(URL(string: "http://127.0.0.1:8080/x.mkv")!))
+    #expect(!OpenSubtitlesHash.isHashable(URL(string: "https://www.youtube.com/watch?v=x")!))
+    #expect(!OpenSubtitlesHash.isHashable(URL(string: "file:///x.mkv")!))
+}
+
+@Test func subtitlesQueryCarriesHashExtras() async throws {
+    let a = try addon("https://os.example", osManifest)
+    let http = FakeHTTP(routes: [
+        "https://os.example/subtitles/movie/tt1/videoHash=0123456789abcdef&videoSize=1234.json":
+            #"{"subtitles":[{"id":"h","url":"https://s/h","lang":"ger"}]}"#,
+    ])
+    let subs = await AddonClient(http: http).subtitles(from: [a], type: "movie", id: "tt1",
+                                                       extra: OpenSubtitlesHash.extras(hash: "0123456789abcdef", size: 1234))
+    #expect(subs.map(\.id) == ["h"])
+}
