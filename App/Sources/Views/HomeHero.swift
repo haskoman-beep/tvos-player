@@ -276,9 +276,40 @@ struct HeroButtons: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .focusSection()
         .defaultFocus($field, .play, priority: .userInitiated)
+        // Die App-Akzentfarbe (RootView .tint) färbte beide Knöpfe blau: wie auf der Detailseite normale tvOS-Knöpfe.
+        .tint(Color?.none)
         .onChange(of: field) { _, f in
             if f != nil { focus.leaveRows() }
         }
+        .task { await claimLaunchFocus() }
+    }
+
+    /// Kaltstart: „Abspielen“ holt sich den ersten Fokus selbst (siehe `LaunchFocus`). Verliert es ihn, bevor er
+    /// 300 ms gehalten hat, war das die Seitenleiste → zurückholen. Der Anspruch endet nur, wenn „Abspielen“ den Fokus
+    /// 300 ms hält, der Fokus in den Reihen war oder das Startfenster vorbei ist. Ein Wegdrücken danach ist gewollt:
+    /// die Knopfzeile greift nie mehr ein.
+    private func claimLaunchFocus() async {
+        guard !LaunchFocus.done else { return }
+        let deadline = LaunchFocus.deadline ?? ContinuousClock.now + LaunchFocus.window
+        LaunchFocus.deadline = deadline
+        var heldSince: ContinuousClock.Instant?
+        while !Task.isCancelled, !LaunchFocus.done, ContinuousClock.now < deadline {
+            if focus.inRows { LaunchFocus.finish("Fokus in den Reihen"); return }
+            switch field {
+            case nil:
+                if heldSince != nil { RemoteLog.info("fokus", "Start: Fokus vor dem Halten verloren, zurückholen") }
+                heldSince = nil
+                field = .play
+            case .play:
+                let since = heldSince ?? ContinuousClock.now
+                heldSince = since
+                if ContinuousClock.now - since >= LaunchFocus.hold { LaunchFocus.finish("Abspielen hält den Fokus"); return }
+            case .details:
+                heldSince = nil
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        if !LaunchFocus.done, ContinuousClock.now >= deadline { LaunchFocus.finish("Startfenster vorbei") }
     }
 
     private func play() {
@@ -294,5 +325,23 @@ struct HeroButtons: View {
             RemoteLog.info("hero", "Abspielen \(m.name) → \(r.id)\(r.resumeLastSource ? " (letzte Quelle)" : "")")
             navigate(.streams(r))
         }
+    }
+}
+
+/// Erster Fokus nach dem Kaltstart. Die Seitenleiste (`.sidebarAdaptable`, tvOS 18) nimmt sich beim ersten
+/// Fokusdurchlauf den Fokus und klappt auf; `.defaultFocus` der Startseite greift dabei nicht.
+/// Gilt einmal pro App-Lauf; das Fenster beginnt mit dem ersten Erscheinen der Knopfzeile und überdauert
+/// einen Neuaufbau der Startseite in dieser Zeit.
+@MainActor enum LaunchFocus {
+    static let window: Duration = .milliseconds(2500)
+    /// So lange muss „Abspielen“ den Fokus halten, dann gilt der Start als erledigt.
+    static let hold: Duration = .milliseconds(300)
+    static var deadline: ContinuousClock.Instant?
+    private(set) static var done = false
+
+    static func finish(_ reason: String) {
+        guard !done else { return }
+        done = true
+        RemoteLog.info("fokus", "Start: \(reason)")
     }
 }

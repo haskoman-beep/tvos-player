@@ -10,13 +10,18 @@ struct LibraryView: View {
     @State private var focus = HomeFocus()
 
     var body: some View {
+        let watchlist = model.isConnected("trakt") || model.isConnected("simkl")
+        // Ohne Weiterschauen, Merkliste und Verlauf gäbe es nichts zu fokussieren (Zurück schlösse die App):
+        // dann ist der Merklisten-Hinweis das Fokusziel.
+        let nothingToFocus = !watchlist && model.progress.continueWatching().isEmpty && model.progress.history().isEmpty
         ScrollView(.vertical) {
             LazyVStack(alignment: .leading, spacing: 56) {
                 HomeRowView(row: continueRow, onActivate: { $0 }, onLongPress: {})
-                if model.isConnected("trakt") || model.isConnected("simkl") {
+                if watchlist {
                     HomeRowView(row: watchlistRow, onActivate: { $0 }, onLongPress: {})
                 } else {
                     LibraryHint(title: "Merkliste", text: "Die Merkliste kommt aus Trakt oder Simkl (Einstellungen → Dienste & Schlüssel).")
+                        .quietFocusTarget(nothingToFocus)
                 }
                 HistoryRow()
             }
@@ -54,7 +59,7 @@ private struct LibraryHint: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text(title).font(.title3.bold())
-            Text(text).foregroundStyle(.secondary).frame(height: 120)
+            Text(text).quietHintStyle().frame(height: 120)
         }
         .padding(.leading, 60)
     }

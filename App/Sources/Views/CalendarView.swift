@@ -6,19 +6,32 @@ struct CalendarView: View {
     @EnvironmentObject var model: AppModel
     @State private var episodes: [UpcomingEpisode] = []
     @State private var loaded = false
+    @FocusState private var tile: String?
+    @FocusState private var headerFocused: Bool
+    /// Kacheln sind in dieser Ansicht schon einmal erschienen (Fokus-Übergabe von der Kopfzeile nur beim ersten Mal).
+    @State private var tilesShown = false
 
     var body: some View {
         let days = Upcoming.days(episodes, today: Date(), calendar: Upcoming.localCalendar)
+        let showTiles = model.tmdb != nil && loaded && !days.isEmpty
+        let firstTile = showTiles ? days.first?.items.first?.id : nil
         ScrollView(.vertical) {
             LazyVStack(alignment: .leading, spacing: 50) {
-                Text("Kalender").font(.title2.bold()).padding(.leading, 60)
-                if model.tmdb == nil {
-                    CalendarHint(text: "TMDB-Key fehlt (Einstellungen → Dienste & Schlüssel).")
-                } else if !loaded {
-                    ProgressView().padding(.leading, 60)
-                } else if days.isEmpty {
-                    CalendarHint(text: "Keine neuen Folgen in den nächsten 14 Tagen")
-                } else {
+                // Kopfzeile mit Titel und Lade-/Hinweiszeile = festes Fokusziel der Seite (bleibt in allen Zuständen
+                // dasselbe). Ohne Fokussierbares im Inhalt (Laden, Hinweis) schlösse Zurück sonst die App.
+                VStack(alignment: .leading, spacing: 50) {
+                    Text("Kalender").font(.title2.bold()).foregroundStyle(.primary).padding(.leading, 60)
+                    if model.tmdb == nil {
+                        CalendarHint(text: "TMDB-Key fehlt (Einstellungen → Dienste & Schlüssel).")
+                    } else if !loaded {
+                        ProgressView().padding(.leading, 60)
+                    } else if days.isEmpty {
+                        CalendarHint(text: "Keine neuen Folgen in den nächsten 14 Tagen")
+                    }
+                }
+                .quietFocusTarget()
+                .focused($headerFocused)
+                if showTiles {
                     ForEach(days, id: \.label) { day in
                         VStack(alignment: .leading, spacing: 18) {
                             Text(day.label).font(.title3.bold()).padding(.leading, 60)
@@ -26,6 +39,7 @@ struct CalendarView: View {
                                 ForEach(day.items) { e in
                                     NavigationLinkish(route: .detail(e.seriesPreview), onActivate: { $0 },
                                                       label: CalendarTile(episode: e))
+                                        .focused($tile, equals: e.id)
                                 }
                             }
                         }
@@ -34,6 +48,20 @@ struct CalendarView: View {
             }
             .padding(.vertical, 40)
         }
+        // Mit Kacheln führt der Weg aus der Seitenleiste auf die erste Kachel, nicht auf die Kopfzeile.
+        .defaultFocus($tile, firstTile, priority: .userInitiated)
+        // Fokus lag beim Laden auf der Kopfzeile: beim ersten Erscheinen der Kacheln einmal auf die erste Kachel.
+        // Nur dieses eine Mal, wer später per ▲ auf die Kopfzeile geht, bleibt dort.
+        .onChange(of: showTiles) { _, shown in
+            guard shown, !tilesShown else { return }
+            tilesShown = true
+            guard let firstTile, tile == nil, headerFocused else { return }
+            DispatchQueue.main.async {
+                guard tile == nil, headerFocused else { return }
+                tile = firstTile
+                RemoteLog.info("kalender", "Fokus von der Kopfzeile auf die erste Kachel")
+            }
+        }
         .task(id: model.profile.id) {
             episodes = await model.upcoming()
             loaded = true
@@ -41,10 +69,11 @@ struct CalendarView: View {
     }
 }
 
+/// Hinweis statt Kacheln (kein TMDB-Key, keine Folgen); wird hell, solange die Kopfzeile den Fokus hat.
 private struct CalendarHint: View {
     let text: String
     var body: some View {
-        Text(text).foregroundStyle(.secondary).frame(height: 120).padding(.leading, 60)
+        Text(text).quietHintStyle().frame(height: 120).padding(.leading, 60)
     }
 }
 

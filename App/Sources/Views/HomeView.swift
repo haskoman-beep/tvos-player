@@ -35,7 +35,11 @@ struct HomeView: View {
             }
             .task(id: hero.map { "\($0.id)|\($0.content.key)" } ?? "-") {
                 guard let hero else { return }
-                slides.set(await model.heroItems(for: hero))
+                let items = await model.heroItems(for: hero)
+                // Abgebrochene Ladung (Neuaufbau beim Start, Katalog -999) liefert []: nicht als „kein Hero“ werten,
+                // sonst springt die Startseite kurz auf das Layout ohne Hero und die Knopfzeile verliert den Fokus.
+                guard !Task.isCancelled else { return }
+                slides.set(items)
                 RemoteLog.info("hero", "\(slides.items.count) Folien")
             }
         }
@@ -78,6 +82,8 @@ struct HomeView: View {
                 .foregroundStyle(.secondary)
         }
         Button("Startseite bearbeiten") { startEditing(nil) }
+            // Keine Akzentfarbe (RootView .tint) auf der Startseite: normaler tvOS-Knopf wie Abspielen/Details.
+            .tint(Color?.none)
             .padding(.top, 20)
     }
 
