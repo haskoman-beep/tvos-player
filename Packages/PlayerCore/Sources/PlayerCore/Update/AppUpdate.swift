@@ -133,9 +133,7 @@ public enum GitHubBuilds {
     }
 
     static func parseDate(_ s: String) -> Date? {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime]
-        return f.date(from: s)
+        ISODate.dateTime(s)
     }
 }
 

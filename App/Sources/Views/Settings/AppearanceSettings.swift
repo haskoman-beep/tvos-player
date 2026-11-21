@@ -37,6 +37,7 @@ struct AppearanceSettings: View {
                 Text("Groß").tag(CardSize.large)
             }
             Toggle("Poster aufklappen", isOn: model.binding(\.appearance.expandPosters))
+            SpoilerSettingsRow()
         }
         Section("Hero") {
             Toggle("Hero oben auf der Startseite", isOn: model.binding(\.appearance.heroEnabled))
@@ -58,6 +59,7 @@ struct AppearanceSettings: View {
                 Toggle(Self.badgeTypes[i].0, isOn: model.binding((\Profile.appearance.badges).appending(path: Self.badgeTypes[i].1)))
             }
         }
+        ExtrasSettingsSections()
     }
 
     /// Einzeln abschaltbare Plaketten-Typen (Quellenliste, Detailseite, Poster).

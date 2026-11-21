@@ -22,6 +22,8 @@ struct PlayerScreen: View {
     var holdsUpNext = false
     /// Welle C-a: Urteil über die laufende Quelle (fehlgeschlagen / Platzhalter / stabil) für das 8-h-Gedächtnis.
     var onSourceVerdict: (SourceVerdict) -> Void = { _ in }
+    /// Dateiname der Quelle (`behaviorHints.filename`) für den Untertitel-Abgleich; nil = aus der Adresse.
+    var releaseName: String? = nil
     @State private var backend: AetherBackend?
     @State private var initError: String?
     /// Kennzeichen beim Vorladen: solange ein Player offen ist, keine Vorlade-Abfragen.
@@ -60,7 +62,8 @@ struct PlayerScreen: View {
                                                        reresolve: { isTrailer ? nil : await model.freshStream(for: request) },
                                                        skipLookup: { isTrailer ? nil : await model.introDBQuery(for: request) },
                                                        onUserInput: onUserInput,
-                                                       onSourceVerdict: isTrailer ? { _ in } : onSourceVerdict) }
+                                                       onSourceVerdict: isTrailer ? { _ in } : onSourceVerdict,
+                                                       releaseName: releaseName) }
             else { Text(initError ?? "Player wird gestartet …") }
         }
         .onDisappear {
@@ -131,6 +134,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
     var onSourceVerdict: (SourceVerdict) -> Void = { _ in }
     @State var stab = PlayerStabilityState()
     @ObservedObject var stability = PlaybackStability.shared
+    /// Dateiname der Quelle für den Untertitel-Abgleich (AddonSubtitleLoader); nil = aus der Adresse.
+    var releaseName: String? = nil
     /// Laufende Addon-UT-Abfrage; abgebrochen beim Verlassen und vor dem Neuladen.
     @State var addonSubTask: Task<Void, Never>?
     /// Laufendes Neuladen nach einem Fehler; abgebrochen beim Verlassen.

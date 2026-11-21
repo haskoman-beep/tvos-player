@@ -149,6 +149,18 @@ public struct StreamBehaviorHints: Codable, Sendable, Equatable {
     public var filename: String?
     public var videoSize: Int64?
     public var proxyHeaders: ProxyHeaders?
+    /// AIOStreams-Zusatzfelder (optional; fehlen bei anderen Addons). Dienst-ID wie "torbox", "realdebrid".
+    public var service: String?
+    /// Datei liegt beim Dienst bereit (sofort abspielbar); gilt auch ohne `service` (z. B. Usenet-/P2P-Einträge).
+    public var cached: Bool?
+    /// Laufzeit in Sekunden.
+    public var duration: Double?
+    public var seeders: Int?
+    public var indexer: String?
+    /// ISO-8601-Datum der Veröffentlichung.
+    public var publishDate: String?
+    public var folderName: String?
+    public var folderSize: Int64?
 
     public struct ProxyHeaders: Codable, Sendable, Equatable {
         public var request: [String: String]?
@@ -181,5 +193,40 @@ public struct StreamItem: Codable, Sendable, Equatable, Identifiable, Hashable {
 }
 
 struct StreamsResponse: Codable { var streams: [StreamItem] }
+
+extension StreamBehaviorHints {
+    enum CodingKeys: String, CodingKey {
+        case bingeGroup, notWebReady, filename, videoSize, proxyHeaders
+        case service, cached, duration, seeders, indexer, publishDate, folderName, folderSize
+    }
+
+    /// Nachsichtig: ein Feld mit unerwartetem Typ wird übersprungen, statt die ganze Quelle zu verwerfen.
+    /// Zahlen dürfen auch als Text kommen, Wahrheitswerte auch als "true"/"false".
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func str(_ k: CodingKeys) -> String? { (try? c.decodeIfPresent(String.self, forKey: k)) ?? nil }
+        func num(_ k: CodingKeys) -> Double? {
+            if let d = (try? c.decodeIfPresent(Double.self, forKey: k)) ?? nil { return d }
+            return str(k).flatMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+        }
+        func bool(_ k: CodingKeys) -> Bool? {
+            if let b = (try? c.decodeIfPresent(Bool.self, forKey: k)) ?? nil { return b }
+            switch str(k)?.lowercased() { case "true", "1": return true; case "false", "0": return false; default: return nil }
+        }
+        bingeGroup = str(.bingeGroup)
+        notWebReady = bool(.notWebReady)
+        filename = str(.filename)
+        videoSize = num(.videoSize).flatMap { $0.isFinite && $0 >= 0 && $0 < 9e18 ? Int64($0) : nil }
+        proxyHeaders = (try? c.decodeIfPresent(ProxyHeaders.self, forKey: .proxyHeaders)) ?? nil
+        service = str(.service).flatMap { $0.isEmpty ? nil : $0 }
+        cached = bool(.cached)
+        duration = num(.duration).flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+        seeders = num(.seeders).flatMap { $0.isFinite && $0 >= 0 && $0 < 1e9 ? Int($0) : nil }
+        indexer = str(.indexer)
+        publishDate = str(.publishDate)
+        folderName = str(.folderName)
+        folderSize = num(.folderSize).flatMap { $0.isFinite && $0 >= 0 && $0 < 9e18 ? Int64($0) : nil }
+    }
+}
 struct MetasResponse: Codable { var metas: [MetaPreview] }
 struct MetaResponse: Codable { var meta: MetaDetail }

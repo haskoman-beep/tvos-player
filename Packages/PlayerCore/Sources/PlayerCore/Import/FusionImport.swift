@@ -16,7 +16,7 @@ public struct FusionNeeds: OptionSet, Sendable, Hashable {
     public static func of(_ s: CatalogSource) -> FusionNeeds {
         switch s.kind {
         case .trakt(let user, let list):
-            return user == nil && FusionImport.isWatchlistSlug(list) ? [.traktID, .traktLogin] : .traktID
+            return user == nil && (FusionImport.isWatchlistSlug(list) || TraktClient.isRecommendations(list)) ? [.traktID, .traktLogin] : .traktID
         case .watchlist: return []
         case .tmdbDiscover, .tmdbList, .tmdbCompany, .tmdbCollection: return .tmdb
         default: return []
@@ -199,7 +199,8 @@ public enum FusionImport {
         case "row.classic", nil: style = .poster
         case let t?: ctx.warn("Reihentyp \(t) als Poster-Reihe"); style = .poster
         }
-        guard let s = source(ds, id: id, title: title, ctx: ctx) else { return nil }
+        guard var s = source(ds, id: id, title: title, ctx: ctx) else { return nil }
+        if let n = w.limit, n > 0 { s.limit = n }
         return FusionKitRow(id: id, title: title, style: style, body: .list(s))
     }
 
@@ -217,7 +218,8 @@ public enum FusionImport {
                 if let c = source(s, id: "\(fid).\(k)", title: s.payload?.listName ?? ftitle, ctx: ctx) { sources.append(c) }
             }
             guard !sources.isEmpty else { ctx.warn("Kachel ohne Quellen"); continue }
-            out.append(Folder(id: fid, title: ftitle, coverImage: imageURL(it.imageURL ?? it.backgroundImageURL), sources: sources))
+            out.append(Folder(id: fid, title: ftitle, coverImage: imageURL(it.imageURL ?? it.backgroundImageURL), sources: sources,
+                              hideTitle: it.hideTitle))
         }
         return out
     }
@@ -281,7 +283,10 @@ public enum FusionImport {
             let suffix = mt == .series ? "Serien" : "Filme"
             return CatalogSource(id: id, title: "\(title) · \(suffix)", kind: .tmdbDiscover(filters: f), mediaType: mt, sortBy: f["sort_by"])
         case "traktRecommendations":
-            ctx.warn("traktRecommendations übersprungen"); return nil
+            // Braucht Trakt-Anmeldung (FusionNeeds); `type` movies/shows, sonst Filme.
+            let series = ["shows", "show", "tv", "series"].contains(p?.type?.lowercased() ?? "")
+            return CatalogSource(id: id, title: title, kind: .trakt(user: nil, list: series ? "recommendations/shows" : "recommendations/movies"),
+                                 mediaType: series ? .series : .movie, limit: p?.limit)
         case let k?:
             ctx.warn("Quelle \(k) übersprungen"); return nil
         case nil:
@@ -322,17 +327,18 @@ public enum FusionImport {
             do { widgets = try c.decodeIfPresent(LossyList<RawWidget>.self, forKey: .widgets) } catch { widgetsUnreadable = true }
         }
     }
-    struct RawWidget: Decodable { var id: String?; var title: String?; var type: String?; var dataSource: RawSource? }
+    struct RawWidget: Decodable { var id: String?; var title: String?; var type: String?; var limit: Int?; var dataSource: RawSource? }
     struct RawSource: Decodable { var kind: String?; var payload: RawPayload? }
     struct RawPayload: Decodable {
         var username: String?; var listSlug: String?; var listName: String?
         var type: String?; var includeGenres: [Int]?; var excludeGenres: [Int]?; var sortBy: String?
-        var releaseChannel: String?; var releaseStatus: String?
+        var releaseChannel: String?; var releaseStatus: String?; var limit: Int?
         var items: LossyList<RawItem>?
     }
     struct RawItem: Decodable {
         var id: String?; var title: String?; var name: String?
         var imageURL: String?; var backgroundImageURL: String?; var imageAspect: String?; var layout: String?
+        var hideTitle: Bool?
         var dataSources: LossyList<RawSource>?; var dataSource: RawSource?
     }
 }

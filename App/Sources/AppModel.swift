@@ -298,13 +298,14 @@ final class AppModel: ObservableObject {
                 out = try await addons.catalog(a, type: type, id: catalogId)
             case .trakt(let user, let list):
                 guard let trakt = trakt ?? traktPublic else { return [] }   // öffentliche Listen: Client ID reicht
-                out = try await trakt.list(user: user, slug: list, token: await token("trakt"))
+                out = try await trakt.list(user: user, slug: list, token: await token("trakt"), limit: source.limit)
             case .watchlist:
                 out = try await watchlistItems()
             case .continueWatching, .upcoming:
                 out = []
             }
         } catch { RemoteLog.error("katalog", "\(source.title): \(error)"); return [] }
+        out = source.applyingLimit(out)
         RemoteLog.info("katalog", "\(source.title): \(out.count) Einträge")
         // Nach Profilwechsel/Leeren nicht mehr ablegen; leere Erneuerung überschreibt keine gefüllte Liste.
         if refresh { cache.storeRefreshed(out, for: source.id, generation: generation) }

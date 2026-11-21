@@ -18,6 +18,7 @@ struct AboutSettings: View {
         }
         UpdateSettings()
         DiagnosticsSettings()   // Welle C-b
+        DeviceCheckSettings()
         Section("Danksagungen / Lizenzen") {
             // Zeilen als Knöpfe ohne Aktion: so erreicht der Fokus sie und die Liste scrollt bis ans Ende.
             ForEach(Self.credits, id: \.name) { c in

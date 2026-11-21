@@ -150,9 +150,22 @@ enum ReleaseName {
         ("NZB", ["USENET", "EASYNEWS"]),
     ]
 
+    /// Dienst-ID aus `behaviorHints.service` ("torbox", "realdebrid", …) → Kurzzeichen; unbekannte IDs in Großbuchstaben.
+    static func serviceCode(id: String) -> String? {
+        let key = id.lowercased().filter { $0.isLetter || $0.isNumber }
+        guard !key.isEmpty else { return nil }
+        let map: [String: String] = ["torbox": "TB", "realdebrid": "RD", "alldebrid": "AD", "premiumize": "PM",
+                                     "debridlink": "DL", "easydebrid": "ED", "offcloud": "OC", "pikpak": "PKP",
+                                     "usenet": "NZB", "easynews": "NZB", "nzbdav": "NZB", "altmount": "NZB"]
+        if let c = map[key] { return c }
+        if let hit = services.first(where: { $0.code.lowercased() == key }) { return hit.code }
+        return key.uppercased()
+    }
+
     /// Dienst aus dem Quellennamen ("[TB⚡] …", "[RD+]", "TorBox …"). Kurzzeichen nur als ganzes Wort mit "+", "⚡",
     /// "⏳" oder "]" dahinter (nicht "CACHED+", nicht "WEB-DL"). "[EN]" ist ein Sprach-Etikett, kein Dienst.
     static func service(_ s: StreamItem) -> String? {
+        if let id = s.behaviorHints?.service, let code = serviceCode(id: id) { return code }
         let up = (s.name ?? "").uppercased()
         for (code, names) in services {
             if up.range(of: #"(^|[^A-Z0-9])"# + code + #"(\+|⚡|⏳|\])"#, options: .regularExpression) != nil

@@ -162,8 +162,26 @@ public struct TraktClient: Sendable {
         }
     }
 
+    /// Pseudo-Listen für Trakt-Empfehlungen des angemeldeten Nutzers (`/recommendations/{movies,shows}`).
+    public static let recommendationSlugs = ["recommendations/movies", "recommendations/shows"]
+    public static func isRecommendations(_ slug: String) -> Bool { recommendationSlugs.contains(slug) }
+
+    /// Empfehlungen für den angemeldeten Nutzer, ohne Titel aus der Merkliste. Antwort: Titel-Objekte ohne Hülle.
+    public func recommendations(series: Bool, limit: Int = 20, token: SyncToken) async throws -> [MetaPreview] {
+        let n = max(1, min(limit, 100))
+        let path = "/recommendations/\(series ? "shows" : "movies")?ignore_watchlisted=true&limit=\(n)"
+        let arr = try await json(request("GET", path, token: token), token: token) as? [[String: Any]] ?? []
+        return arr.compactMap { Self.meta($0, type: series ? "series" : "movie") }
+    }
+
     /// Öffentliche oder eigene Liste. `user` nil = angemeldeter Nutzer ("me").
-    public func list(user: String?, slug: String, token: SyncToken?) async throws -> [MetaPreview] {
+    /// `recommendations/movies` / `recommendations/shows` (nur mit Anmeldung) liefern Trakt-Empfehlungen.
+    /// `limit` gilt nur für Empfehlungen (Trakt liefert dort höchstens 100, ohne Angabe 20).
+    public func list(user: String?, slug: String, token: SyncToken?, limit: Int? = nil) async throws -> [MetaPreview] {
+        if user == nil, Self.isRecommendations(slug) {
+            guard let token else { return [] }
+            return try await recommendations(series: slug.hasSuffix("shows"), limit: limit ?? 20, token: token)
+        }
         let isWatchlist = slug == "watchlist" || slug == "watchlist/movies" || slug == "watchlist/shows"
         if let user, !Self.isSafeName(user) { throw TraktNameError(name: user) }
         if !isWatchlist, !Self.isSafeName(slug) { throw TraktNameError(name: slug) }
@@ -192,8 +210,7 @@ public struct TraktClient: Sendable {
     }
 
     static func date(_ s: String) -> Date? {
-        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f.date(from: s) ?? ISO8601DateFormatter().date(from: s)
+        ISODate.dateTime(s)
     }
 }
 

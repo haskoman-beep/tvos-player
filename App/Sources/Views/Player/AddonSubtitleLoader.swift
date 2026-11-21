@@ -87,7 +87,10 @@ extension PlayerControls {
         let embedded = engine.subtitleTracks
         guard let found = await addonSubtitles(), !Task.isCancelled else { return }
         let languages = AddonSubtitlePlan.languages(subtitleLanguage: profile.subtitleLanguage, audioLanguage: audioLanguage)
-        let picked = AddonSubtitlePlan.select(found, languages: languages)
+        // Release der Quelle für den `label`-Abgleich: Dateiname aus der Quelle, sonst der letzte Teil der Adresse.
+        let fromURL = url.lastPathComponent.removingPercentEncoding ?? url.lastPathComponent
+        let file = releaseName.flatMap { $0.isEmpty ? nil : $0 } ?? fromURL
+        let picked = AddonSubtitlePlan.select(found, languages: languages, release: file.contains(".") && file.count >= 8 ? file : nil)
         let present = engine.subtitleTracks.filter(\.isExternal)
         let presentURLs = Set(present.compactMap { addonTrackURLs[$0.id] })
         var added: [(sub: AddonSubtitle, id: Int, name: String)] = []

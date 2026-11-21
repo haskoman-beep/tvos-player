@@ -9,9 +9,17 @@ public struct AddonSubtitle: Sendable, Equatable, Hashable, Identifiable {
     public var addonName: String
     /// Dateiname, falls das Addon ihn nennt (`subtitleFileName`), für den Formathinweis.
     public var fileName: String?
+    /// Nur fremdsprachige Stellen/Schilder (Feld `forced`).
+    public var forced: Bool
+    /// SDH / für Hörgeschädigte (Feld `hearingImpaired`).
+    public var hearingImpaired: Bool
+    /// Release, zu dem der Untertitel passt, bzw. Spurtitel (Feld `label`).
+    public var label: String?
 
-    public init(id: String, url: String, lang: String?, addonName: String, fileName: String? = nil) {
+    public init(id: String, url: String, lang: String?, addonName: String, fileName: String? = nil,
+                forced: Bool = false, hearingImpaired: Bool = false, label: String? = nil) {
         self.id = id; self.url = url; self.lang = lang; self.addonName = addonName; self.fileName = fileName
+        self.forced = forced; self.hearingImpaired = hearingImpaired; self.label = label
     }
 
     /// Normalisierter Code ("ger" → "de", "pob" → "pt-BR").
@@ -38,8 +46,11 @@ struct SubtitlesResponse: Decodable {
         var url: String
         var lang: String?
         var fileName: String?
+        var forced = false
+        var hearingImpaired = false
+        var label: String?
 
-        enum CodingKeys: String, CodingKey { case id, url, lang, subtitleFileName }
+        enum CodingKeys: String, CodingKey { case id, url, lang, subtitleFileName, forced, hearingImpaired, label }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -49,6 +60,17 @@ struct SubtitlesResponse: Decodable {
             else { id = nil }
             lang = try? c.decodeIfPresent(String.self, forKey: .lang)
             fileName = try? c.decodeIfPresent(String.self, forKey: .subtitleFileName)
+            forced = Self.flag(c, .forced)
+            hearingImpaired = Self.flag(c, .hearingImpaired)
+            label = (try? c.decodeIfPresent(String.self, forKey: .label)).flatMap { $0?.isEmpty == true ? nil : $0 }
+        }
+
+        /// Wahrheitswert, auch als "true"/"1"; fehlt oder unlesbar → false.
+        static func flag(_ c: KeyedDecodingContainer<CodingKeys>, _ k: CodingKeys) -> Bool {
+            if let b = (try? c.decodeIfPresent(Bool.self, forKey: k)) ?? nil { return b }
+            if let n = (try? c.decodeIfPresent(Int.self, forKey: k)) ?? nil { return n != 0 }
+            let s = ((try? c.decodeIfPresent(String.self, forKey: k)) ?? nil)?.lowercased()
+            return s == "true" || s == "1"
         }
     }
 
@@ -80,7 +102,8 @@ extension AddonClient {
         let resp = try JSONDecoder().decode(SubtitlesResponse.self, from: try await http.data(from: url))
         return resp.subtitles.compactMap { s in
             guard URL(string: s.url) != nil else { return nil }
-            return AddonSubtitle(id: s.id ?? s.url, url: s.url, lang: s.lang, addonName: addon.manifest.name, fileName: s.fileName)
+            return AddonSubtitle(id: s.id ?? s.url, url: s.url, lang: s.lang, addonName: addon.manifest.name, fileName: s.fileName,
+                                 forced: s.forced, hearingImpaired: s.hearingImpaired, label: s.label)
         }
     }
 
@@ -135,10 +158,30 @@ public enum AddonSubtitlePlan {
         return out
     }
 
-    /// Höchstens `perLanguage` Spuren je Sprache, sortiert nach `languages`, innerhalb einer Sprache in Addon-Reihenfolge.
-    public static func select(_ subs: [AddonSubtitle], languages: [String], perLanguage: Int = 3) -> [AddonSubtitle] {
+    /// Höchstens `perLanguage` volle Spuren je Sprache, sortiert nach `languages`. Innerhalb einer Sprache:
+    /// passendes Release (`label` gegen den Dateinamen der Quelle) vor anderen, Nicht-SDH vor SDH, sonst
+    /// Addon-Reihenfolge. Dazu je Sprache höchstens eine erzwungene Spur (die Auswahl darüber trifft SubtitlePicker).
+    public static func select(_ subs: [AddonSubtitle], languages: [String], perLanguage: Int = 3,
+                              release: String? = nil) -> [AddonSubtitle] {
         let unique = dedupe(subs)
-        return languages.flatMap { lang in unique.filter { $0.languageCode == lang }.prefix(perLanguage) }
+        return languages.flatMap { lang -> [AddonSubtitle] in
+            let inLang = unique.enumerated().filter { $0.element.languageCode == lang }
+            let ranked = inLang.sorted { a, b in
+                let ka = (releaseMatch(a.element.label, release: release), a.element.hearingImpaired ? 1 : 0, a.offset)
+                let kb = (releaseMatch(b.element.label, release: release), b.element.hearingImpaired ? 1 : 0, b.offset)
+                return ka < kb
+            }.map(\.element)
+            return Array(ranked.filter { !$0.forced }.prefix(perLanguage)) + Array(ranked.filter(\.forced).prefix(1))
+        }
+    }
+
+    /// 0 = gleiches Release, 1 = gleiche Release-Gruppe, 2 = unbekannt/anders.
+    public static func releaseMatch(_ label: String?, release: String?) -> Int {
+        guard let label, let release, !label.isEmpty, !release.isEmpty else { return 2 }
+        let a = ReleaseName.tokens(label), b = ReleaseName.tokens(release)
+        if !a.isEmpty, a == b { return 0 }
+        if let g = ReleaseName.group(label), g == ReleaseName.group(release) { return 1 }
+        return 2
     }
 
     /// Addon-Name ohne angehängte Versionsnummer ("OpenSubtitles v3" → "OpenSubtitles").
@@ -152,16 +195,20 @@ public enum AddonSubtitlePlan {
     }
 
     /// Spurname: "Deutsch · OpenSubtitles", ab der zweiten Spur derselben Sprache mit Nummer ("… 2").
+    /// Erzwungene/SDH-Spuren tragen das im Namen ("· Erzwungen", "· SDH"): daran erkennt SubtitlePicker sie.
     public static func trackName(_ sub: AddonSubtitle, number: Int) -> String {
-        let base = "\(MediaLabels.languageName(sub.lang)) · \(displayAddonName(sub.addonName))"
-        return number > 1 ? "\(base) \(number)" : base
+        var base = "\(MediaLabels.languageName(sub.lang)) · \(displayAddonName(sub.addonName))"
+        if number > 1 { base += " \(number)" }
+        if sub.forced { base += " · Erzwungen" }
+        if sub.hearingImpaired { base += " · SDH" }
+        return base
     }
 
     /// Namen für die ausgewählten Spuren (Nummer zählt je Sprache und Addon).
     public static func trackNames(_ subs: [AddonSubtitle]) -> [String] {
         var counts: [String: Int] = [:]
         return subs.map { s in
-            let key = "\(s.languageCode ?? "?")|\(s.addonName)"
+            let key = "\(s.languageCode ?? "?")|\(s.addonName)|\(s.forced)|\(s.hearingImpaired)"
             counts[key, default: 0] += 1
             return trackName(s, number: counts[key]!)
         }

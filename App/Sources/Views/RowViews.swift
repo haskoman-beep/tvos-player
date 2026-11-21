@@ -302,7 +302,7 @@ struct FolderTile: View {
             RemoteImage(url: folder.coverImage ?? folder.backdrop)
                 .frame(width: 440 * scale, height: 248 * scale).clipped()
                 .overlay(alignment: .bottomLeading) {
-                    if folder.coverImage == nil { Text(folder.title).font(.headline).padding(14) }
+                    if folder.coverImage == nil || folder.showsTitleOverImage { Text(folder.title).font(.headline).shadow(radius: 4).padding(14) }
                 }
         }
     }

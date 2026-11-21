@@ -280,6 +280,7 @@ struct DetailView: View {
                     } label: {
                         HStack(spacing: 24) {
                             RemoteImage(url: v.thumbnail, maxPixels: 560).frame(width: 280, height: 158).clipped()
+                                .spoilerBlur(model.profile.sources.blurUnwatchedStills && !model.progress.isWatched("\(imdb):\(season):\(v.episode ?? 0)"))
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack {
                                     Text("\(v.episode ?? 0). \(v.name ?? v.title ?? "Folge")").font(.headline)
@@ -385,11 +386,11 @@ struct StreamListView: View {
         // durchscheinender Hintergrund). Neutral: keine Akzent-Tönung, eigener dunkler, deckender Hintergrund.
         .tint(Color?.none)
         .background(Color(white: 0.07).ignoresSafeArea())
-        .streamSearchPartials(id: request.id, loading: loading && current == nil) { streams = $0 }
+        .streamSearchPartials(id: request.id, loading: loading && current == nil) { streams = model.orderedStreams($0) }
         .task {
-            streams = request.resumeLastSource && playing == nil
+            streams = model.orderedStreams(request.resumeLastSource && playing == nil
                 ? await model.streamsForAutoplay(type: request.type, id: request.id)
-                : await model.streams(type: request.type, id: request.id)
+                : await model.streams(type: request.type, id: request.id))
             loading = false
             if request.type == "series", request.episodes.isEmpty, let base = request.id.split(separator: ":").first {
                 // Aus Weiterschauen: Folgenliste nachladen, damit die nächste Folge automatisch kommt.
@@ -419,7 +420,8 @@ struct StreamListView: View {
                                                                              onEnded: { ended(s, autoplay: $0) }, onFallback: { fallback(from: s, reason: $0) },
                                                                              onUserInput: { AutoNextState.userInput($autoNext) },
                                                                              holdsUpNext: autoNext.promptDue(model.profile),
-                                                                             onSourceVerdict: { [id = (current ?? request).id] in PlaybackStability.shared.apply($0, stream: s, title: id) }).environmentObject(model) }
+                                                                             onSourceVerdict: { [id = (current ?? request).id] in PlaybackStability.shared.apply($0, stream: s, title: id) },
+                                                                             releaseName: s.behaviorHints?.filename).environmentObject(model) }
         }
         .modifier(StillWatchingAlert(state: $autoNext, note: $nextNote) { startNext($0.next, after: $0.stream, auto: false) })
     }
@@ -481,7 +483,7 @@ extension StreamListView {
         nextNote = "Nächste Folge wird gesucht: \(next.title) …"
         let ref = autoNext.releaseProfile(stream, listAddon: streams.first { $0.stream.id == stream.id }?.addon)
         Task {
-            let list = await model.streamsForAutoplay(type: next.type, id: next.id)
+            let list = model.orderedStreams(await model.streamsForAutoplay(type: next.type, id: next.id))
             // Während der Suche von Hand eine Quelle gestartet: Liste und Folge so lassen, nichts ersetzen.
             guard playing == nil else { nextNote = nil; return }
             guard let s = nextEpisodeStream(PlaybackStability.shared.autoCandidates(list, title: next.id), matching: ref) else {
@@ -601,7 +603,7 @@ struct InfoBadges: View {
                 }
                 ForEach(rated) { b in
                     HStack(spacing: 6) {
-                        Text(b.label).foregroundStyle(labelColor(b.source))
+                        RatingIconLabel(source: b.source) { Text(b.label).foregroundStyle(labelColor(b.source)) }
                         Text(b.text)
                     }
                     .modifier(BadgeShape())
@@ -719,8 +721,7 @@ struct DetailExtras: View {
     }
 
     static func germanDate(_ s: String) -> String? {
-        let p = s.split(separator: "-")
-        return p.count == 3 ? "\(p[2]).\(p[1]).\(p[0])" : s
+        ISODate.germanDay(s)
     }
 
     static func money(_ v: Int) -> String {

@@ -21,7 +21,8 @@ extension AppModel {
     func upcoming() async -> [UpcomingEpisode] {
         guard let tmdb else { return [] }
         let cache = UpcomingCache.shared
-        let key = "\(profile.id.uuidString):\(tmdb.language)"
+        let airtimes = profile.sources.tvmazeAirtimes
+        let key = "\(profile.id.uuidString):\(tmdb.language):\(airtimes)"
         let watchlist = await items(.watchlist)
         let ids = Upcoming.seriesIDs(continueWatching: progress.continueWatching(limit: 200), watchlist: watchlist)
         if let e = cache.entries[key], Date().timeIntervalSince(e.at) < e.ttl, Set(e.ids) == Set(ids) {
@@ -51,6 +52,8 @@ extension AppModel {
             cache.entries[key] = .init(at: Date(), ttl: failed == 0 ? UpcomingCache.lifetime : UpcomingCache.failedLifetime,
                                        ids: ids, episodes: out)
             cache.running[key] = nil
+            // Zweite Stufe: TMDB-Ergebnis sofort, TVmaze-Sendezeiten im Hintergrund nachziehen (AppModel+Airtimes).
+            if airtimes { AppModel.enrichAirtimes(key: key, episodes: out) }
             return out
         }
         cache.running[key] = task

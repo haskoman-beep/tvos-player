@@ -82,7 +82,7 @@ public enum PhoneCommand: Equatable, Sendable {
 /// Seitenlogik ohne Netzwerk: Token prüfen, Formular lesen, Befehle erzeugen.
 public struct PhoneInputPage: Sendable {
     public let token: String
-    public static let services = ["tmdb", "mdblist", "tvdb", "trakt_id", "trakt_secret", "simkl_id", "atvloadly"]
+    public static let services = ["tmdb", "mdblist", "tvdb", "trakt_id", "trakt_secret", "simkl_id", "atvloadly", "torbox"]
 
     public init(token: String) { self.token = token }
 
@@ -98,7 +98,7 @@ public struct PhoneInputPage: Sendable {
         }
         switch (r.method, r.path) {
         case ("GET", "/"):
-            return (HTTPResponse(status: 200, body: Data(page(profileName: profileName, note: r.query["ok"]).utf8)), [])
+            return (HTTPResponse(status: 200, body: Data(page(profileName: profileName, note: r.query["ok"], importNote: r.query["imp"]).utf8)), [])
         case ("GET", "/export"):
             return (HTTPResponse(status: 200, contentType: "application/json", body: backup(),
                                  extraHeaders: ["Content-Disposition": "attachment; filename=\"player-profile.json\""]), [])
@@ -106,6 +106,14 @@ public struct PhoneInputPage: Sendable {
             let f = r.form
             var cmds: [PhoneCommand] = []
             func val(_ k: String) -> String? { f[k].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 } }
+            var importNote: String?
+            if let x = val("import") {   // gemeinsames Feld, Erkennung in PhoneImportDetect
+                switch PhoneImportDetect.detect(x) {
+                case .command(let c): cmds.append(c)
+                case .refused(let why): importNote = why.rawValue
+                case .unknown: importNote = "unknown"
+                }
+            }
             if let a = val("addon") { cmds.append(.addAddon(a)) }
             for s in Self.services { if let v = val("key_\(s)") { cmds.append(.setKey(service: s, value: v)) } }
             if let n = val("nuvio_url") { cmds.append(.importNuvioURL(n)) }
@@ -114,19 +122,24 @@ public struct PhoneInputPage: Sendable {
             if let b = val("backup_json") { cmds.append(.importBackup(Data(b.utf8))) }
             if let k = val("kit_url") { cmds.append(.importFusionURL(k)) }
             let note = cmds.isEmpty ? "leer" : "\(cmds.count)"
-            return (HTTPResponse(status: 303, body: Data(), extraHeaders: ["Location": "/?t=\(token)&ok=\(note)"]), cmds)
+            // Rückmeldung zum Schnell-Import immer mitgeben; „Nichts ausgefüllt“ entfällt, wenn nur er etwas meldet.
+            var loc = "/?t=\(token)"
+            if !(cmds.isEmpty && importNote != nil) { loc += "&ok=\(note)" }
+            if let importNote { loc += "&imp=\(importNote)" }
+            return (HTTPResponse(status: 303, body: Data(), extraHeaders: ["Location": loc]), cmds)
         default:
             return (HTTPResponse(status: 404, body: Data(Self.html("Nicht gefunden", "").utf8)), [])
         }
     }
 
-    func page(profileName: String, note: String?) -> String {
-        let msg: String
+    func page(profileName: String, note: String?, importNote: String? = nil) -> String {
+        var msg: String
         switch note {
         case nil: msg = ""
         case "leer": msg = "<p class=ok>Nichts ausgefüllt.</p>"
         case let n?: msg = "<p class=ok>✓ \(n) Eingabe(n) an den Fernseher geschickt. Ergebnis siehst du dort.</p>"
         }
+        if let t = importNote.flatMap(PhoneImportDetect.noteText) { msg += "<p class=ok>\(Self.escape(t))</p>" }
         func field(_ name: String, _ label: String, _ ph: String, area: Bool = false) -> String {
             area ? "<label>\(label)<textarea name=\(name) rows=4 placeholder=\"\(ph)\"></textarea></label>"
                  : "<label>\(label)<input name=\(name) autocapitalize=off autocorrect=off placeholder=\"\(ph)\"></label>"
@@ -134,9 +147,10 @@ public struct PhoneInputPage: Sendable {
         let body = """
         \(msg)
         <form method=post action="/submit?t=\(token)">
+        <h2>Schnell-Import</h2>\(field("import", "Link oder JSON einfügen – wird erkannt (Addon, TMDB-/Trakt-Liste, Fusion-Kit, Nuvio)", "https://…", area: true))
         <h2>Addon</h2>\(field("addon", "Manifest-URL", "https://…/manifest.json"))
         <h2>Schlüssel</h2>\(field("key_tmdb", "TMDB-API-Key", ""))\(field("key_mdblist", "MDBList-Key", ""))\(field("key_tvdb", "TVDB-Key", ""))
-        \(field("key_trakt_id", "Trakt Client ID", ""))\(field("key_trakt_secret", "Trakt Client Secret", ""))\(field("key_simkl_id", "Simkl Client ID", ""))
+        \(field("key_trakt_id", "Trakt Client ID", ""))\(field("key_trakt_secret", "Trakt Client Secret", ""))\(field("key_simkl_id", "Simkl Client ID", ""))\(field("key_torbox", "TorBox-API-Key (Bibliothek „Meine TorBox-Dateien“)", ""))
         <h2>Collections</h2>\(field("nuvio_url", "Nuvio-Export (URL)", "https://…json"))\(field("nuvio_json", "… oder Nuvio-JSON einfügen", "{…}", area: true))
         \(field("tmdb_link", "TMDB- oder Trakt-Liste, Filmreihe, Studio als Reihe", "https://www.themoviedb.org/list/… oder https://trakt.tv/users/…/lists/…"))
         \(field("kit_url", "Fusion-Kit: „Copy JSON URL“ einfügen (braucht meist die Trakt Client ID)", "https://raw.githubusercontent.com/…json"))

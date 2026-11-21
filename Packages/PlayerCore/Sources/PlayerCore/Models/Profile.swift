@@ -39,6 +39,8 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     public var audioShaping: AudioShapingSettings
     /// Bildmodus: Dolby-Vision-Angabe, FEL, HDMI-Modus zwischen Folgen halten (Welle C-c).
     public var displayMode: DisplayModeSettings
+    /// Quellen-Sortierung und Extras (Welle C-d).
+    public var sources: SourceSettings = SourceSettings()
 
     public init(id: UUID = UUID(), name: String, language: AppLanguage = .de, audioPriority: [String] = ["de", "en", "orig"],
                 subtitleMode: SubtitleMode = .forcedOnly, subtitleLanguage: String = "de", progressSource: ProgressSource = .local,
@@ -63,6 +65,7 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         case addons, collections, home, apiKeys, autoplayNext, stillWatchingAfter, syncTokens, appearance
         case diskCache, audioShaping, displayMode
         case addonTimeout
+        case sources
     }
     /// Nur zum Lesen alter Profile.
     private enum LegacyKeys: String, CodingKey { case subtitlesEnabled }
@@ -96,6 +99,7 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         addonTimeout = try c.decodeIfPresent(Double.self, forKey: .addonTimeout) ?? d.addonTimeout
         audioShaping = try c.decodeIfPresent(AudioShapingSettings.self, forKey: .audioShaping) ?? d.audioShaping
         displayMode = try c.decodeIfPresent(DisplayModeSettings.self, forKey: .displayMode) ?? d.displayMode
+        sources = (try? c.decodeIfPresent(SourceSettings.self, forKey: .sources)) ?? nil ?? d.sources
     }
 
     public static func makeDefault(name: String = "Ich") -> Profile {

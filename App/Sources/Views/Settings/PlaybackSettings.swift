@@ -23,6 +23,7 @@ struct PlaybackSettings: View {
                 }
             }
             Toggle("Quellen vorladen", isOn: model.binding(\.appearance.prefetchStreams))
+            SourceSettingsRows()
             DiskCacheSettingsRows()
             AudioShapingSettingsRows()
             DisplayModeSettingsRows()

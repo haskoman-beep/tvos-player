@@ -5,6 +5,7 @@ import PlayerCore
 struct CalendarView: View {
     @EnvironmentObject var model: AppModel
     @State private var episodes: [UpcomingEpisode] = []
+    @ObservedObject private var revision = UpcomingRevision.shared   // Sendezeiten kommen nachträglich (Welle C-d)
     @State private var loaded = false
     @FocusState private var tile: String?
     @FocusState private var headerFocused: Bool
@@ -62,7 +63,7 @@ struct CalendarView: View {
                 RemoteLog.info("kalender", "Fokus von der Kopfzeile auf die erste Kachel")
             }
         }
-        .task(id: model.profile.id) {
+        .task(id: "\(model.profile.id)|\(revision.value)") {
             episodes = await model.upcoming()
             loaded = true
         }

@@ -15,6 +15,8 @@ public struct UpcomingEpisode: Sendable, Hashable, Identifiable {
     public var still: String?
     /// Hintergrund der Serie (Rückfall für die Querformat-Kachel).
     public var background: String?
+    /// Sendezeit in der Gerätezeitzone ("20:15", aus TVmaze); nil = nur das Datum bekannt.
+    public var airTime: String? = nil
 
     public init(seriesID: String, seriesName: String, poster: String? = nil, season: Int, episode: Int,
                 title: String? = nil, airDate: String, still: String? = nil, background: String? = nil) {
@@ -26,8 +28,8 @@ public struct UpcomingEpisode: Sendable, Hashable, Identifiable {
     public var id: String { "\(seriesID):\(season):\(episode)" }
     /// "S2 F5".
     public var episodeLabel: String { "S\(season) F\(episode)" }
-    /// "S2 F5 · Titel".
-    public var label: String { [episodeLabel, title].compactMap { $0 }.joined(separator: " · ") }
+    /// "S2 F5 · Titel", mit Sendezeit "20:15 · S2 F5 · Titel".
+    public var label: String { [airTime, episodeLabel, title].compactMap { $0 }.joined(separator: " · ") }
 }
 
 /// Kalenderlogik (Spec §7a.3): Serien aus Weiterschauen und Merkliste, Zeitraum gestern bis 14 Tage voraus.
@@ -51,7 +53,7 @@ public enum Upcoming {
         return calendar.dateComponents([.day], from: calendar.startOfDay(for: today), to: calendar.startOfDay(for: d)).day
     }
 
-    /// Nach Tag gruppiert (gestern … heute + 14), innerhalb eines Tages nach Serienname.
+    /// Nach Tag gruppiert (gestern … heute + 14), innerhalb eines Tages nach Sendezeit, dann Serienname.
     public static func days(_ eps: [UpcomingEpisode], today: Date, calendar: Calendar) -> [(label: String, items: [UpcomingEpisode])] {
         var byDay: [Int: [UpcomingEpisode]] = [:]
         var seen = Set<String>()
@@ -62,6 +64,8 @@ public enum Upcoming {
         }
         return byDay.keys.sorted().map { o in
             let items = byDay[o]!.sorted {
+                // Mit Sendezeit (TVmaze) nach Uhrzeit, Folgen ohne Zeit dahinter; sonst nach Serienname.
+                if $0.airTime != $1.airTime { return ($0.airTime ?? "~") < ($1.airTime ?? "~") }
                 let c = $0.seriesName.localizedCaseInsensitiveCompare($1.seriesName)
                 if c != .orderedSame { return c == .orderedAscending }
                 return ($0.season, $0.episode) < ($1.season, $1.episode)

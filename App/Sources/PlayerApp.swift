@@ -85,7 +85,7 @@ struct RootView: View {
         }
         .alert("Fehler", isPresented: Binding(get: { model.lastError != nil }, set: { if !$0 { model.lastError = nil } })) {
             Button("OK") { model.lastError = nil }
-        } message: { Text(model.lastError ?? "") }
+        } message: { Text(LogRedact.text(model.lastError ?? "")) }   // Schlüssel nie auf dem Bildschirm
     }
 
     private var tabs: some View {
