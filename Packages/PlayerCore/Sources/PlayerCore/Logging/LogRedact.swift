@@ -22,7 +22,11 @@ public enum LogRedact {
 
     /// Freitext (Logzeile, Fehlerbeschreibung). Mehrfaches Anwenden ändert nichts mehr.
     public static func text(_ s: String) -> String {
-        let (head, wasCut) = capped(s)
+        // Schon gekürzte Zeile (zweiter Durchlauf): Marke abnehmen, damit sie nie Teil eines Werts wird.
+        var input = s
+        var wasCut = false
+        if input.hasSuffix(cutMarker) { input = String(input.dropLast(cutMarker.count)); wasCut = true }
+        let (head, cutNow) = capped(input)
         var out = head
         if out.contains("/") { out = replaceURLs(out) }
         let lower = out.lowercased()
@@ -35,8 +39,12 @@ public enum LogRedact {
             out = opaquePattern.stringByReplacingMatches(
                 in: out, range: NSRange(location: 0, length: (out as NSString).length), withTemplate: "…")
         }
-        // Marke erst nach dem Entschärfen anhängen (mit Leerzeichen davor, damit sie nie Teil eines Werts wird).
-        return wasCut ? out + cutMarker : out
+        // „…“ (3 Bytes) kann die Zeile verlängern: Grenze nach dem Entschärfen erneut anwenden.
+        // Marke erst ganz am Ende und nur einmal anhängen (mit Leerzeichen davor).
+        if wasCut || cutNow || out.utf8.count > maxLineBytes {
+            return prefix(out, bytes: maxLineBytes - cutMarker.utf8.count) + cutMarker
+        }
+        return out
     }
 
     /// Längste Logzeile in UTF-8-Bytes (samt Kürzungsmarke); begrenzt die Regex-Laufzeit.
@@ -49,16 +57,21 @@ public enum LogRedact {
     /// (vor jedem Regex: begrenzt Rücksprünge in allen Mustern).
     private static func capped(_ s: String) -> (String, Bool) {
         guard s.utf8.count > maxLineBytes else { return (s, false) }
-        let budget = maxLineBytes - cutMarker.utf8.count
+        return (prefix(s, bytes: maxLineBytes - cutMarker.utf8.count), true)
+    }
+
+    /// Längster Anfang aus ganzen Zeichen mit höchstens `bytes` UTF-8-Bytes.
+    private static func prefix(_ s: String, bytes: Int) -> String {
+        guard s.utf8.count > bytes else { return s }
         var used = 0
         var end = s.startIndex
         for i in s.indices {
             let n = s[i].utf8.count
-            if used + n > budget { break }
+            if used + n > bytes { break }
             used += n
             end = s.index(after: i)
         }
-        return (String(s[..<end]), true)
+        return String(s[..<end])
     }
 
     /// Teil nach `schema://` (bzw. eine Adresse ohne Schema): Host + gekürzter Pfad.
@@ -143,12 +156,12 @@ public enum LogRedact {
     /// direkt danach `:`/`=` (sonst kein Treffer – „keyboard“ bleibt). Wert: `"…"`, `'…'` (auch mit Leerzeichen),
     /// `Optional("…")` oder ungequotet bis zum nächsten Trenner. Groß/Klein egal.
     nonisolated(unsafe) private static let keyValuePattern = try! NSRegularExpression(
-        pattern: #"(?<![A-Za-z0-9_\-])([A-Za-z0-9_\-]*(?:token|key|passwd|password|secret))(["']?\s*[:=]\s*)(Optional\()?("[^"]*"|'[^']*'|[^\s"',;&)}\]]+)"#,
+        pattern: #"(?<![A-Za-z0-9_\-])([A-Za-z0-9_\-]*(?:token|key|passwd|password|secret))(["']?\s*[:=]\s*)(Optional\()?("[^"]*"|'[^']*'|"[^"]*$|'[^']*$|[^\s"',;&)}\]]+)"#,
         options: [.caseInsensitive])
 
     /// `Authorization: Bearer <Wert>`
     nonisolated(unsafe) private static let bearerPattern = try! NSRegularExpression(
-        pattern: #"\b(Bearer)\s+(?:"[^"]*"|'[^']*'|[A-Za-z0-9._~+/=\-]+)"#, options: [.caseInsensitive])
+        pattern: #"\b(Bearer)\s+(?:"[^"]*"|'[^']*'|"[^"]*$|'[^']*$|[A-Za-z0-9._~+/=\-]+)"#, options: [.caseInsensitive])
 
     nonisolated(unsafe) private static let opaquePattern = try! NSRegularExpression(
         pattern: "[A-Za-z0-9_-]{\(opaqueRun),}")

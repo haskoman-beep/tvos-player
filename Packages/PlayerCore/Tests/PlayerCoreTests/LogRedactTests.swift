@@ -205,6 +205,32 @@ import Testing
     #expect(LogRedact.text("Authorization: Bearer 'abc'") == "Authorization: Bearer …")
 }
 
+// MARK: Nachtrag 3
+
+@Test func redactUnterminatedQuotedValues() {
+    // Ungekürzt, Anführungszeichen nicht geschlossen
+    #expect(!LogRedact.text(#"password: "my secret pass"#).contains("secret pass"))
+    #expect(!LogRedact.text("apikey: 'abc def").contains("abc"))
+    #expect(!LogRedact.text(#"Authorization: Bearer "abc def"#).contains("abc"))
+    // Vorgabe aus dem Review (knapp unter der Grenze)
+    #expect(!LogRedact.text(String(repeating: "a", count: 8170) + #" password: "geheim ab"#).contains("geheim"))
+    // Kürzung mitten im gequoteten Wert: schließendes Anführungszeichen abgeschnitten
+    let cut = LogRedact.text(String(repeating: "a", count: 8150) + #" password: "geheim abcdefghijklmnopqrstuvwxyz0123456789" ende"#)
+    #expect(!cut.contains("geheim"))
+    #expect(cut.hasSuffix(LogRedact.cutMarker))
+    #expect(LogRedact.text(cut) == cut)
+}
+
+@Test func redactGrowthStaysWithinCapAndIdempotent() {
+    for n in [1_300, 1_500] {                       // 7 800 B (wächst über 8 KB) und 9 000 B (schon zu lang)
+        let x = String(repeating: "key=a,", count: n)
+        let once = LogRedact.text(x)
+        #expect(once.utf8.count <= LogRedact.maxLineBytes)
+        #expect(once.hasSuffix(LogRedact.cutMarker))
+        #expect(LogRedact.text(once) == once)
+    }
+}
+
 // MARK: Nachtrag
 
 @Test func redactQuotedValuesWithSpaces() {
