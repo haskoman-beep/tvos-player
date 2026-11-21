@@ -27,6 +27,7 @@ struct PlaybackSettings: View {
             DiskCacheSettingsRows()
             AudioShapingSettingsRows()
             DisplayModeSettingsRows()
+            PlayerComfortSettingsRows()   // Welle D-a: Spur-Gedächtnis, Bildschirmschoner
             Picker("Fortschritt & Gesehen", selection: model.binding(\.progressSource)) {
                 Text("Lokal").tag(ProgressSource.local); Text("Trakt").tag(ProgressSource.trakt); Text("Simkl").tag(ProgressSource.simkl)
             }

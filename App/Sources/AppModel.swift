@@ -36,6 +36,7 @@ final class AppModel: ObservableObject {
         progress = progressStore.load(profile: profile.id)
         FusionKitStore.shared.attach(self)   // Welle A e: Kit-Reihen der Startseite (AppModel+FusionKit)
         PlaybackStability.shared.attach(storage)   // Welle C-a: Netz, Ton-Route, fehlgeschlagene Quellen
+        PlayerMemory.shared.attach(storage)   // Welle D-a: Spur-Wahl je Serie, TorBox-Fortschritt
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         RemoteLog.info("start", "App \(v) · \(stored.profiles.count) Profil(e) · Addons \(profile.addons.map(\.manifest.name)) · Reihen \(profile.home.rows.count) · Quelle \(profile.progressSource.rawValue)")
         observeCatalogWake()

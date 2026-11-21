@@ -2,13 +2,15 @@ import SwiftUI
 import PlayerCore
 
 /// Welle C-d: „Meine TorBox-Dateien“ in der Bibliothek. Nur mit TorBox-Schlüssel (Handy-Seite → Schlüssel).
-/// Abspielen über einen frischen `requestdl`-Link; wie ein Trailer ohne Fortschritt/Scrobble (keine IMDb-ID).
+/// Abspielen über einen frischen `requestdl`-Link; ohne Weiterschauen/Scrobble (keine IMDb-ID). Welle D-a: eigener
+/// Fortschritt je TorBox-Datei (PlayerMemory), „Fortsetzen ab …“ auf der Kachel, Kontextmenü „Von vorn abspielen“.
 struct TorBoxFilesRow: View {
     @EnvironmentObject var model: AppModel
     @State private var files: [TorBoxFile]?
     @State private var failed = false
     @State private var playing: TorBoxPlay?
     @State private var resolving: String?
+    @ObservedObject private var memory = PlayerMemory.shared
 
     /// Liste 5 min im Speicher: Öffnen der Bibliothek fragt TorBox nicht jedes Mal.
     @MainActor enum ListCache {
@@ -18,7 +20,10 @@ struct TorBoxFilesRow: View {
     }
     static let maxShown = 100
 
-    struct TorBoxPlay: Identifiable { let file: TorBoxFile; let url: URL; var id: String { file.id } }
+    struct TorBoxPlay: Identifiable { let file: TorBoxFile; let url: URL; let start: Double?; var id: String { file.id } }
+
+    /// Fortschritts-Schlüssel: TorBox-Datei-ID (wie die Wiedergabe-ID).
+    static func progressKey(_ f: TorBoxFile) -> String { "torbox:\(f.id)" }
 
     private var key: String? { model.profile.apiKeys["torbox"].flatMap { $0.isEmpty ? nil : $0 } }
 
@@ -30,17 +35,24 @@ struct TorBoxFilesRow: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         LazyHStack(spacing: 40) {
                             ForEach(files.prefix(Self.maxShown)) { f in
-                                Button { Task { await play(f, key: key) } } label: {
+                                let resume = memory.fileResume(profile: model.profile.id, key: Self.progressKey(f))
+                                Button { Task { await play(f, key: key, fromStart: false) } } label: {
                                     VStack(alignment: .leading, spacing: 6) {
                                         Text(f.name).font(.headline).lineLimit(2)
                                         Text([f.folder == f.name ? nil : f.folder, f.sizeLabel].compactMap { $0 }.joined(separator: " · "))
                                             .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                        progressLine(f, resume: resume)
                                         if resolving == f.id { ProgressView() }
                                     }
                                     .frame(width: 480, height: 150, alignment: .topLeading)
                                     .padding(16)
                                 }
                                 .buttonStyle(.card)
+                                .contextMenu {
+                                    if resume != nil {
+                                        Button("Von vorn abspielen") { Task { await play(f, key: key, fromStart: true) } }
+                                    }
+                                }
                             }
                             Button { Task { await load(key: key, fresh: true) } } label: {
                                 VStack(spacing: 8) {
@@ -69,7 +81,10 @@ struct TorBoxFilesRow: View {
                                  playing = nil
                                  RemoteLog.info("torbox", "Wiedergabe fehlgeschlagen: \(reason)")
                              },
-                             isTrailer: true)
+                             isTrailer: true,
+                             ownProgress: OwnProgress(start: p.start) { [profile = model.profile.id] pos, dur in
+                                 PlayerMemory.shared.recordFile(profile: profile, key: Self.progressKey(p.file), position: pos, duration: dur)
+                             })
                     .environmentObject(model)
             }
         }
@@ -88,13 +103,30 @@ struct TorBoxFilesRow: View {
         }
     }
 
-    private func play(_ f: TorBoxFile, key: String) async {
+    /// „Fortsetzen ab …“ mit Balken bzw. „Gesehen“.
+    @ViewBuilder private func progressLine(_ f: TorBoxFile, resume: Double?) -> some View {
+        let k = Self.progressKey(f)
+        if let resume {
+            HStack(spacing: 12) {
+                Text("Fortsetzen ab \(timeText(resume))").font(.caption)
+                if let fr = memory.fileFraction(profile: model.profile.id, key: k) {
+                    ProgressView(value: fr).frame(width: 160)
+                }
+            }
+        } else if memory.fileWatched(profile: model.profile.id, key: k) {
+            Label("Gesehen", systemImage: "checkmark").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func play(_ f: TorBoxFile, key: String, fromStart: Bool) async {
         guard resolving == nil else { return }
         resolving = f.id
         defer { resolving = nil }
         do {
             let url = try await TorBoxClient(apiKey: key).link(for: f)
-            playing = TorBoxPlay(file: f, url: url)
+            let start = fromStart ? nil : PlayerMemory.shared.fileResume(profile: model.profile.id, key: Self.progressKey(f))
+            RemoteLog.info("torbox", "Start \(start.map { "ab \(Int($0)) s" } ?? "von vorn")")
+            playing = TorBoxPlay(file: f, url: url, start: start)
         } catch {
             model.lastError = "TorBox-Link nicht erhalten: \(TorBoxClient.userMessage(error))"
             RemoteLog.error("torbox", "Link: \(LogRedact.text("\(error)"))")

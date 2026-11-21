@@ -94,9 +94,13 @@ extension PlayerControls {
         let present = engine.subtitleTracks.filter(\.isExternal)
         let presentURLs = Set(present.compactMap { addonTrackURLs[$0.id] })
         var added: [(sub: AddonSubtitle, id: Int, name: String)] = []
+        // Welle D-a: Text-Untertitel selbst laden und nach UTF-8 umwandeln (CP1252, UTF-16, BOM, „Ã¤“);
+        // geht das nicht, bekommt die Engine die Adresse. `addonTrackURLs` behält die Addon-Adresse.
+        let local = await AddonSubtitleFiles.prepare(picked.filter { !presentURLs.contains($0.url) })
+        guard !Task.isCancelled, !leaving else { return }
         for (sub, name) in zip(picked, AddonSubtitlePlan.trackNames(picked)) where !presentURLs.contains(sub.url) {
             guard !Task.isCancelled else { return }
-            guard let url = URL(string: sub.url),
+            guard let url = local[sub.url] ?? URL(string: sub.url),
                   let id = engine.addExternalSubtitle(url: url, name: name, language: sub.languageCode, formatHint: sub.formatHint)
             else { continue }
             addonTrackURLs[id] = sub.url
@@ -124,6 +128,8 @@ extension PlayerControls {
         // Wunsch-/Zweitsprache, „Nur erzwungene“ volle Spur nur bei fremdem Ton (sonst Forced in Tonsprache);
         // Nicht-SDH vor SDH, nie Kommentar. Hat der Nutzer im Panel gewählt (selectSubtitle setzt
         // subtitleChosenByUser), tut reconsiderSubtitles nichts: Spuren nur hinzugefügt.
+        // Spur-Gedächtnis (Welle D-a): gemerkte Sprache erst jetzt da → sie nehmen statt neu zu bewerten.
+        if !added.isEmpty, !Task.isCancelled, applyPendingSubtitleMemory() { return }
         guard !added.isEmpty,
               AddonSubtitlePlan.shouldReconsider(mode: profile.subtitleMode, wishLanguage: profile.subtitleLanguage,
                                                  embedded: embedded),
