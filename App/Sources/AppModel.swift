@@ -486,7 +486,26 @@ extension AppModel {
             let drop = streamCache.sorted { $0.value.at < $1.value.at }.prefix(streamCache.count - StreamPrefetcher.cacheLimit)
             for (k, _) in drop { streamCache[k] = nil }
         }
+        QualityBadgeCache.shared.streamsStored(id: id)
     }
 
     static let emptyStreamsTTL: TimeInterval = 120
+}
+
+// Task 8: Plaketten auf Postern – Schlüssel des Quellen-Caches für eine Kachel, ohne Netzabfrage
+// (gleiche Regeln wie StreamPrefetcher.request: Film = IMDb-ID, auch aus dem TMDB-Nachschlage-Cache; Serie = angefangene Folge).
+extension AppModel {
+    func streamCacheKey(for m: MetaPreview) -> String? {
+        switch m.type {
+        case "movie":
+            if m.id.hasPrefix("tt") { return m.id }
+            guard m.id.hasPrefix("tmdb:"), let n = Int(m.id.dropFirst(5)) else { return nil }
+            return imdbCache["movie:\(n)"]
+        case "series":
+            guard let p = progress.latest(forItem: m.id), p.season != nil, p.episode != nil, !p.finished else { return nil }
+            return p.id
+        default:
+            return nil
+        }
+    }
 }

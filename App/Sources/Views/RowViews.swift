@@ -173,9 +173,13 @@ struct PosterCard: View {
         }
         .frame(width: (expanded ? h * 16 / 9 : 240 * scale), height: h, alignment: .leading).clipped()
         .overlay(alignment: .bottomLeading) {
-            if item.poster == nil && !expanded { Text(item.name).font(.caption).padding(10) }
+            // Über der Plakettenzone (PosterQualityBadges unten rechts), damit nichts darunter läuft.
+            if item.poster == nil && !expanded {
+                Text(item.name).font(.caption).padding(10).padding(.bottom, (PosterQualityBadges.badgeHeight + 10) * scale)
+            }
         }
         .overlay { CardStateOverlay(itemID: item.id) }
+        .overlay { PosterQualityBadges(item: item, scale: scale) }
         .task(id: focused && expandable) {
             guard focused && expandable else {
                 if expanded { withAnimation(.easeInOut(duration: 0.25)) { expanded = false } }
@@ -201,11 +205,14 @@ private struct ExpandedPoster: View {
                     .frame(width: g.size.width, height: g.size.height).clipped()
                 LinearGradient(colors: [.black.opacity(0.75), .clear], startPoint: .bottom, endPoint: .center)
                 Group {
+                    // Breite begrenzt: rechts unten sitzen die Qualitäts-Plaketten (PosterQualityBadges).
+                    let maxW = g.size.width * PosterQualityBadges.leadingContentMaxFraction
                     if let logo = item.logo {
                         RemoteImage(url: logo, maxPixels: 600, fit: true)
-                            .frame(maxWidth: g.size.width * 0.6, maxHeight: g.size.height * 0.3, alignment: .bottomLeading)
+                            .frame(maxWidth: maxW, maxHeight: g.size.height * 0.3, alignment: .bottomLeading)
                     } else {
                         Text(item.name).font(.headline).lineLimit(2).shadow(radius: 6)
+                            .frame(maxWidth: maxW, alignment: .leading)
                     }
                 }
                 .padding(.horizontal, 18).padding(.bottom, 26)
