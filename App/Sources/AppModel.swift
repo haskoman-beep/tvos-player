@@ -5,7 +5,7 @@ import PlayerCore
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var stored: StoredProfiles
-    @Published var lastError: String?
+    @Published var lastError: String? { didSet { if let e = lastError { RemoteLog.error("fehler", e) } } }
     @Published var notice: String?
     let store: ProfileStore
     let progressStore: ProgressStore
@@ -26,6 +26,8 @@ final class AppModel: ObservableObject {
         stored = store.load()
         progressStore = ProgressStore(storage: storage)
         progress = progressStore.load(profile: profile.id)
+        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        RemoteLog.info("start", "App \(v) · \(stored.profiles.count) Profil(e) · Addons \(profile.addons.map(\.manifest.name)) · Reihen \(profile.home.rows.count) · Quelle \(profile.progressSource.rawValue)")
     }
 
     // MARK: Fortschritt
@@ -80,6 +82,7 @@ final class AppModel: ObservableObject {
             else if s == "simkl", let simkl { r = try await simkl.poll(code) }
             else { return .failed(0) }
         } catch { return .pending }
+        RemoteLog.info("sync", "\(s) Login: \(r)".replacingOccurrences(of: #"accessToken: \"[^\"]*\""#, with: "accessToken: …", options: .regularExpression))
         if case .success(let t) = r {
             update { $0.syncTokens[s] = t }
             cache.removeAll()
@@ -105,6 +108,7 @@ final class AppModel: ObservableObject {
         do {
             let remote = s == "trakt" ? try await trakt?.playback(token: t) : try await simkl?.playback(token: t)
             progress.merge(remote: remote ?? [])
+            RemoteLog.info("sync", "\(s): \(remote?.count ?? 0) angefangene Titel geholt")
             try progressStore.save(progress, profile: profile.id)
         } catch { lastError = "\(s == "trakt" ? "Trakt" : "Simkl") nicht erreichbar: \(error)" }
     }
@@ -244,7 +248,8 @@ final class AppModel: ObservableObject {
             case .continueWatching:
                 out = []
             }
-        } catch { return [] }
+        } catch { RemoteLog.error("katalog", "\(source.title): \(error)"); return [] }
+        RemoteLog.info("katalog", "\(source.title): \(out.count) Einträge")
         cache[source.id] = out
         return out
     }
@@ -262,6 +267,7 @@ final class AppModel: ObservableObject {
 
     func streams(type: String, id: String) async -> [(addon: String, stream: StreamItem)] {
         let all = await addons.streams(from: profile.addons, type: type, id: id)
+        RemoteLog.info("streams", "\(type) \(id): " + all.map { "\($0.addon.manifest.name)=\($0.streams.count)" }.joined(separator: ", "))
         return all.flatMap { r in playableStreams(r.streams).map { (r.addon.manifest.name, $0) } }
     }
 
@@ -270,6 +276,16 @@ final class AppModel: ObservableObject {
     func backupData() -> Data { (try? store.exportData(stored)) ?? Data() }
 
     func apply(_ commands: [PhoneCommand]) async {
+        RemoteLog.info("handy", "Befehle: " + commands.map { c -> String in
+            switch c {
+            case .addAddon(let u): return "addon \(URL(string: u)?.host ?? "?")"
+            case .setKey(let s, _): return "key \(s)"
+            case .importNuvioURL: return "nuvio-url"
+            case .importNuvioJSON: return "nuvio-json"
+            case .addTMDBLink(let l): return "link \(l)"
+            case .importBackup: return "backup"
+            }
+        }.joined(separator: ", "))
         for c in commands {
             switch c {
             case .addAddon(let u): await installAddon(u)

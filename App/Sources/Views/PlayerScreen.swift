@@ -22,7 +22,7 @@ struct PlayerScreen: View {
         }
         .onDisappear { model.endPlayback(request) }
         .onAppear {
-            do { backend = try AetherBackend() } catch { initError = "Player-Start fehlgeschlagen: \(error)" }
+            do { backend = try AetherBackend() } catch { initError = "Player-Start fehlgeschlagen: \(error)"; RemoteLog.error("player", initError ?? "") }
         }
     }
 }
@@ -71,7 +71,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
             tick &+= 1
             if tick % 10 == 0 && engine.isPlaying { saveProgress() }
         }
-        .onDisappear { saveProgress() }
+        .onDisappear { saveProgress(); RemoteLog.info("player", "Verlassen bei \(Int(engine.currentTime))/\(Int(engine.duration))s") }
+        .onChange(of: engine.errorText) { _, e in if let e { RemoteLog.error("player", "Engine: \(e) · \(engine.infoText)") } }
         .onChange(of: engine.duration) { _, d in
             // Stand aus Trakt/Simkl kennt nur den Anteil: springen, sobald die Laufzeit da ist.
             guard d > 0, !fractionApplied, start == nil, let f = startFraction else { return }
@@ -87,8 +88,11 @@ struct PlayerControls<E: PlaybackEngine>: View {
         .sheet(isPresented: $showTracks) { TrackSheet(engine: engine) }
         .task {
             do {
+                RemoteLog.info("player", "Laden \(title) · Start \(start.map { Int($0) } ?? 0)s · \(url.host ?? "?")")
                 try await engine.load(url, start: start)
-                if let best = preferredAudioTrack(engine.audioTracks, priority: profile.audioPriority), best.id != engine.activeAudioID {
+                RemoteLog.info("player", "Geladen · \(Int(engine.duration))s · \(engine.infoText) · Ton: " +
+                    engine.audioTracks.map { "\($0.id):\($0.language ?? "?")/\($0.channels ?? 0)ch" }.joined(separator: " ") +
+                    " · UT: \(engine.subtitleTracks.count)")                if let best = preferredAudioTrack(engine.audioTracks, priority: profile.audioPriority), best.id != engine.activeAudioID {
                     engine.selectAudio(best.id)
                 }
                 if profile.subtitlesEnabled,
@@ -97,9 +101,10 @@ struct PlayerControls<E: PlaybackEngine>: View {
                 } else {
                     engine.selectSubtitle(nil)
                 }
+                RemoteLog.info("player", "Spielt · Tonspur \(engine.activeAudioID.map(String.init) ?? "-") · UT \(engine.activeSubtitleID.map(String.init) ?? "aus")")
                 engine.play()
                 poke()
-            } catch { loadError = "\(error)" }
+            } catch { loadError = "\(error)"; RemoteLog.error("player", "Laden fehlgeschlagen: \(error)") }
         }
     }
 
