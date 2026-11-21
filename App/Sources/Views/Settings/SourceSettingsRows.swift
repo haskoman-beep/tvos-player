@@ -6,10 +6,21 @@ struct SourceSettingsRows: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
-        Toggle("Quellen klug ordnen", isOn: model.binding(\.sources.smartOrder))
-        if model.profile.sources.smartOrder {
-            Text("Gecachte Quellen und Quellen in der ersten Tonsprache zuerst; AV1 ab 1440p ohne Hardware-Dekoder und AV1 "
-                 + "bei Dolby Vision nach hinten; bei mehreren Diensten TorBox zuerst. Sonst bleibt die Reihenfolge der Addons.")
+        // Welle E-b: Liste folgt standardmäßig dem Addon (Reihenfolge und Text wie dessen Formatter).
+        Picker("Quellen sortieren", selection: model.binding(\.sources.order)) {
+            ForEach(StreamOrderMode.allCases, id: \.self) { Text($0.label).tag($0) }
+        }
+        Text(model.profile.sources.order == .smart
+             ? "Gecachte Quellen und Quellen in der ersten Tonsprache zuerst; AV1 ab 1440p ohne Hardware-Dekoder und AV1 "
+               + "bei Dolby Vision nach hinten; bei mehreren Diensten TorBox zuerst. Sonst bleibt die Reihenfolge der Addons."
+             : "Reihenfolge, wie die Addons sie liefern. Weiterschauen, automatischer Wechsel und nächste Folge wählen "
+               + "trotzdem klug (Tonsprache, AV1-Dekoder, Cache-Status).")
+            .font(.caption).foregroundStyle(.secondary)
+        Picker("App-Plaketten in der Quellenliste", selection: model.binding(\.sources.appBadges)) {
+            ForEach(StreamListBadgeMode.allCases, id: \.self) { Text($0.label).tag($0) }
+        }
+        if model.profile.sources.appBadges == .compact {
+            Text("Nur „sofort“ und Größe, und nur, wenn der Text des Addons sie nicht schon zeigt.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

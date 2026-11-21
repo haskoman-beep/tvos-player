@@ -361,6 +361,8 @@ struct StreamListView: View {
     @State private var refreshingPartial = false
 
     var body: some View {
+        // Welle E-b: Addon-Name nur, wenn die Liste mehrere Addons mischt (sonst steht er schon im Text des Addons).
+        let showAddon = Set(streams.map(\.addon)).count > 1
         // Titel als Listenkopf (scrollt mit weg) statt navigationTitle: der große tvOS-Titel lag über den Zeilen.
         List {
             Section {
@@ -377,7 +379,7 @@ struct StreamListView: View {
                         PlaybackStability.shared.timing.markTap()
                         playing = entry.stream
                     } label: {
-                        StreamRow(addon: entry.addon, stream: entry.stream).opacity(failed.contains(entry.stream.id) ? 0.4 : 1)
+                        StreamRow(addon: showAddon ? entry.addon : nil, stream: entry.stream).opacity(failed.contains(entry.stream.id) ? 0.4 : 1)
                             .recentlyFailedMark(entry.stream, title: (current ?? request).id)
                     }
                 }
@@ -403,7 +405,8 @@ struct StreamListView: View {
                 if current == nil { var r = request; r.episodes = eps; current = r }
             }
             if request.resumeLastSource, playing == nil, let last = model.progress.lastSource(for: request.id) {
-                let pick = Self.resumeCandidate(last, in: streams, title: request.id)   // nie eine zuletzt fehlgeschlagene
+                // nie eine zuletzt fehlgeschlagene; Welle E-b: Wahl immer in kluger Ordnung, egal wie die Liste sortiert ist
+                let pick = Self.resumeCandidate(last, in: model.autoOrderedStreams(streams), title: request.id)
                 if let s = pick.stream {
                     RemoteLog.info("player", "Weiterschauen mit letzter Quelle: \(s.name ?? "") \(s.label.prefix(60))")
                     playing = s
@@ -448,7 +451,7 @@ struct StreamListView: View {
 }
 
 extension StreamListView {
-    /// Nächste Quelle: zuerst gecachte (⚡) unterhalb, dann gecachte oberhalb, zuletzt unbekannte; nie sicher ungecachte (🎫/⏳).
+    /// Nächste Quelle (Liste in kluger Ordnung): zuerst gecachte (⚡) unterhalb, dann gecachte oberhalb, zuletzt unbekannte; nie sicher ungecachte (🎫/⏳).
     func fallbackCandidate(after i: Int, in list: [StreamItem]) -> StreamItem? {
         let order = Array(list[(i + 1)...]) + Array(list[..<i])
         let open = order.filter { !failed.contains($0.id) && $0.url != nil
@@ -460,7 +463,8 @@ extension StreamListView {
     func fallback(from s: StreamItem, reason: String) {
         failed.insert(s.id)
         playing = nil
-        let list = streams.map(\.stream)
+        // Welle E-b: Rückfall in kluger Ordnung (Dekoder, Sprache, Cache), auch wenn die Liste wie das Addon sortiert ist.
+        let list = model.autoOrderedStreams(streams).map(\.stream)
         guard fallbacks < 3, let i = list.firstIndex(where: { $0.id == s.id }),
               let next = fallbackCandidate(after: i, in: list) else {
             nextNote = "\(reason). Bitte eine andere Quelle wählen."
@@ -503,7 +507,9 @@ extension StreamListView {
         nextNote = "Nächste Folge wird gesucht: \(next.title) …"
         let ref = autoNext.releaseProfile(stream, listAddon: streams.first { $0.stream.id == stream.id }?.addon)
         Task {
-            let list = model.orderedStreams(await model.streamsForAutoplay(type: next.type, id: next.id))
+            // Welle E-b: Wahl in kluger Ordnung, angezeigt wird die Liste nach „Quellen sortieren“.
+            let fetched = await model.streamsForAutoplay(type: next.type, id: next.id)
+            let list = model.autoOrderedStreams(fetched)
             // Während der Suche von Hand eine Quelle gestartet: Liste und Folge so lassen, nichts ersetzen.
             guard playing == nil else { nextNote = nil; return }
             guard let s = nextEpisodeStream(PlaybackStability.shared.autoCandidates(list, title: next.id), matching: ref) else {
@@ -517,7 +523,7 @@ extension StreamListView {
             nextNote = nil
             current = next
             // Liste zeigt jetzt die Quellen dieser Folge: Auswahl von Hand und Rückfall arbeiten auf ihr.
-            streams = list
+            streams = model.orderedStreams(fetched)
             failed = []
             fallbacks = 0
             try? await Task.sleep(for: .milliseconds(800))
@@ -527,22 +533,38 @@ extension StreamListView {
     }
 }
 
+/// Welle E-b: Zeile wie vom Formatter des Addons gebaut: links `name`, rechts `description`/`title`, Umbrüche und
+/// Emoji bleiben, je höchstens 4 Zeilen (StreamRowText). App-Plaketten nur kompakt („sofort“, Größe) und nur, wenn
+/// der Addon-Text sie nicht schon zeigt (StreamListBadges). Addon-Name nur bei gemischter Liste (`addon` nicht nil).
 struct StreamRow: View {
     @EnvironmentObject var model: AppModel
-    let addon: String
+    let addon: String?
     let stream: StreamItem
     /// Fokussierte Zeile ist weiß: dann dunkle Schrift und dunkles Glas, sonst weiß auf hellem Glas.
     @Environment(\.isFocused) private var focused
     var body: some View {
-        let badges = QualityBadges.forStream(StreamTraits.parse(stream), settings: model.profile.appearance.badges)
+        let text = StreamRowText(stream)
+        let badges = StreamListBadges.badges(stream, mode: model.profile.sources.appBadges, settings: model.profile.appearance.badges)
+        let primary = focused ? Color.black : Color.white
         let secondary = focused ? Color.black.opacity(0.65) : Color.white.opacity(0.65)
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                ForEach(badges) { QualityBadgeView(badge: $0, height: 38, surface: focused ? .light : .dark) }
-                Spacer()
-                Text(addon).font(.caption).foregroundStyle(secondary)
+        HStack(alignment: .top, spacing: 28) {
+            if !text.name.isEmpty {
+                Text(text.name).font(.caption.bold()).foregroundStyle(primary)
+                    .lineLimit(StreamRowText.maxLines).frame(width: 330, alignment: .leading)
             }
-            Text(stream.label.isEmpty ? (stream.name ?? "") : stream.label).font(.caption).lineLimit(2).foregroundStyle(secondary)
+            Text(text.body).font(.caption).foregroundStyle(secondary)
+                .lineLimit(StreamRowText.maxLines).frame(maxWidth: .infinity, alignment: .leading)
+            if !badges.isEmpty || addon != nil {
+                VStack(alignment: .trailing, spacing: 8) {
+                    if !badges.isEmpty {
+                        HStack(spacing: 10) {
+                            ForEach(badges) { QualityBadgeView(badge: $0, height: 38, surface: focused ? .light : .dark) }
+                        }
+                    }
+                    if let addon { Text(addon).font(.caption2).foregroundStyle(secondary).lineLimit(1) }
+                }
+                .fixedSize()
+            }
         }
     }
 }
