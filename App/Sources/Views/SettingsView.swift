@@ -36,8 +36,11 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
 /// Links die Kategorien, rechts der Inhalt der fokussierten Kategorie.
 struct SettingsView: View {
     @EnvironmentObject var model: AppModel
-    @State private var selected: SettingsCategory = .profile
-    @FocusState private var focused: SettingsCategory?
+    @Binding var selected: SettingsCategory
+    @FocusState private var focused: LeftFocus?
+
+    /// Fokusziele der linken Spalte (QR-Eintrag zählt mit, damit „von außen“ eindeutig ist).
+    private enum LeftFocus: Hashable { case qr, category(SettingsCategory) }
 
     var body: some View {
         HStack(alignment: .top, spacing: 40) {
@@ -47,6 +50,7 @@ struct SettingsView: View {
                 } label: {
                     Label("Am Handy eingeben (QR-Code)", systemImage: "qrcode")
                 }
+                .focused($focused, equals: .qr)
                 ForEach(SettingsCategory.allCases) { c in
                     Button { selected = c } label: {
                         HStack {
@@ -55,11 +59,12 @@ struct SettingsView: View {
                             if c == selected { Image(systemName: "chevron.right").foregroundStyle(.secondary) }
                         }
                     }
-                    .focused($focused, equals: c)
+                    .focused($focused, equals: .category(c))
                 }
             }
             .frame(width: 520)
             .focusSection()
+            .defaultFocus($focused, .category(selected))
 
             List {
                 Section {
@@ -70,7 +75,16 @@ struct SettingsView: View {
             .id(selected)
             .focusSection()
         }
-        .onChange(of: focused) { _, f in if let f { selected = f } }
+        .onChange(of: focused) { old, new in
+            guard case .category(let c)? = new else { return }
+            if old == nil && c != selected {
+                // Fokus kommt von außen (z. B. aus der Inhaltsspalte): auf die aktive Kategorie lenken,
+                // statt still die geometrisch nächste zu wählen.
+                focused = .category(selected)
+            } else {
+                selected = c
+            }
+        }
         .navigationTitle("Einstellungen")
     }
 

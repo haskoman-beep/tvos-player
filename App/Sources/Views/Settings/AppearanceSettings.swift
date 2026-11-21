@@ -40,7 +40,7 @@ struct AppearanceSettings: View {
         }
         Section("Hero") {
             Toggle("Hero oben auf der Startseite", isOn: model.binding(\.appearance.heroEnabled))
-            Picker("Hero-Quelle", selection: model.binding(\.appearance.heroRowID)) {
+            Picker("Hero-Quelle", selection: heroSelection) {
                 Text("Automatisch").tag(UUID?.none)
                 ForEach(listRows) { r in
                     Text(title(r)).tag(UUID?.some(r.id))
@@ -48,6 +48,14 @@ struct AppearanceSettings: View {
             }
             .disabled(!model.profile.appearance.heroEnabled)
         }
+    }
+
+    /// Zeigt „Automatisch“, wenn die gespeicherte Reihe keine Listen-Reihe (mehr) ist.
+    private var heroSelection: Binding<UUID?> {
+        Binding(get: {
+            let id = model.profile.appearance.heroRowID
+            return listRows.contains { $0.id == id } ? id : nil
+        }, set: { v in model.update { $0.appearance.heroRowID = v } })
     }
 
     /// Nur Listen-Reihen, nie Collection-Reihen.

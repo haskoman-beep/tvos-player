@@ -55,6 +55,8 @@ struct RootView: View {
     @State private var calendarPath = NavigationPath()
     @State private var settingsPath = NavigationPath()
     @State private var pickedProfile = false
+    /// Gewählte Einstellungs-Kategorie; liegt hier, damit sie den Neuaufbau beim Wechsel der Navigationsart übersteht.
+    @State private var settingsCategory: SettingsCategory = .profile
 
     var body: some View {
         Group {
@@ -62,6 +64,10 @@ struct RootView: View {
                 ProfilePickerView { pickedProfile = true }
             } else {
                 styled(tabs)
+                    .overlay(alignment: .topTrailing) {
+                        ClockView().padding(.top, 40).padding(.trailing, 80)
+                            .opacity(model.profile.appearance.navigation == .top ? 1 : 0)
+                    }
                     .tint(model.profile.appearance.accent.color)
             }
         }
@@ -85,19 +91,19 @@ struct RootView: View {
                 stack($calendarPath) { CalendarView() }
             }
             Tab("Einstellungen", systemImage: "gearshape", value: AppTab.settings) {
-                stack($settingsPath) { SettingsView() }
+                stack($settingsPath) { SettingsView(selected: $settingsCategory) }
             }
         }
     }
 
-    /// Seitenleiste oder obere Leiste mit Uhr rechts oben.
+    /// Seitenleiste oder Standard-Leiste oben. SwiftUI hat keinen typgelöschten TabViewStyle, daher bleibt die
+    /// Verzweigung: beim Umschalten baut sich die TabView neu auf. Tab-Auswahl, Pfade und Einstellungs-Kategorie
+    /// liegen deshalb in RootView und überstehen das.
     @ViewBuilder private func styled<V: View>(_ v: V) -> some View {
         if model.profile.appearance.navigation == .sidebar {
             v.tabViewStyle(.sidebarAdaptable)
         } else {
-            v.overlay(alignment: .topTrailing) {
-                ClockView().padding(.top, 40).padding(.trailing, 80)
-            }
+            v
         }
     }
 
