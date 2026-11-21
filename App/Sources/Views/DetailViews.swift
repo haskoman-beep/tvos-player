@@ -168,8 +168,13 @@ struct DetailView: View {
                          onEnded: { _ in trailer = nil },
                          onFallback: { reason in
                              trailer = nil
-                             trailerNote = "Trailer nicht verfügbar"
-                             RemoteLog.info("trailer", "\(t.key) Wiedergabe fehlgeschlagen: \(reason)")
+                             RemoteLog.info("trailer", "\(t.key) Wiedergabe fehlgeschlagen (\(t.stream.client)): \(reason)")
+                             // Trailerio-Datei nicht abspielbar → bestehender YouTube-Weg.
+                             if t.stream.client == "trailerio", YouTubeResolver.isVideoID(t.key) {
+                                 trailerTask = Task { await playTrailer(t.key, useTrailerio: false) }
+                             } else {
+                                 trailerNote = "Trailer nicht verfügbar"
+                             }
                          },
                          isTrailer: true, remoteHLS: t.stream.isHLS)
                 .environmentObject(model)
@@ -194,11 +199,25 @@ struct DetailView: View {
         }
     }
 
-    /// Trailer im eigenen Player (YouTube-Adresse über Innertube auflösen); kein Wechsel in die YouTube-App.
-    private func playTrailer(_ key: String) async {
+    /// Trailer im eigenen Player: zuerst trailerio.cc (direkte Datei in Profilsprache), sonst YouTube-Adresse über Innertube;
+    /// kein Wechsel in die YouTube-App.
+    private func playTrailer(_ key: String, useTrailerio: Bool = true) async {
         guard !trailerLoading else { return }
         trailerLoading = true
         trailerNote = nil
+        if useTrailerio, let imdb {
+            let lang = model.profile.language.rawValue
+            let list = await TrailerioClient().trailers(imdb: imdb, series: isSeries, language: lang, log: { line in
+                Task { @MainActor in RemoteLog.info("trailer", "trailerio \(imdb) (\(lang)): \(line)") }
+            })
+            if Task.isCancelled { trailerLoading = false; RemoteLog.info("trailer", "\(imdb): abgebrochen"); return }
+            if let first = list.first {
+                trailerLoading = false
+                RemoteLog.info("trailer", "\(imdb) → trailerio · \(first.provider) · \(first.isHLS ? "HLS" : "MP4")")
+                trailer = TrailerPlay(key: key, stream: first.stream)
+                return
+            }
+        }
         RemoteLog.info("trailer", "\(key) wird aufgelöst")
         let s = await YouTubeResolver().resolve(videoID: key, log: { line in
             Task { @MainActor in RemoteLog.info("trailer", line) }
