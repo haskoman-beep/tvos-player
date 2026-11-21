@@ -76,6 +76,8 @@ struct LoadPrefs {
     var headers: [String: String] = [:]
     /// Entferntes HLS direkt an AVPlayer (Trailer).
     var nativeRemoteHLS = false
+    /// Plattencache (Welle B-d); nil oder aus = direkte Adresse wie bisher.
+    var diskCache: DiskCacheSettings? = nil
 }
 
 /// AetherEngine-Backend.
@@ -83,6 +85,8 @@ struct LoadPrefs {
 final class AetherBackend: PlaybackEngine {
     let engine: AetherEngine
     private var bag: AnyCancellable?
+    /// Plattencache-Sitzung dieser Wiedergabe (nil = direkt); stop() schließt sie.
+    private var cacheSession: String?
 
     init() throws {
         engine = try AetherEngine()
@@ -166,7 +170,17 @@ final class AetherBackend: PlaybackEngine {
         o.probesize = 8 * 1024 * 1024
         o.maxAnalyzeDuration = 5_000_000
         o.skipsContainerAttachments = true
-        _ = try await engine.load(url: url, startPosition: start, options: o)
+        // Plattencache: nur die Adresse tauschen; jeder Fehler dort → direkte Adresse.
+        let routed = await DiskCacheProxy.shared.route(url, headers: prefs.headers, settings: prefs.diskCache,
+                                                      nativeHLS: prefs.nativeRemoteHLS, reuse: cacheSession)
+        if let s = routed.session { cacheSession = s }
+        do { _ = try await engine.load(url: routed.url, startPosition: start, options: o) }
+        catch where routed.session != nil && !Task.isCancelled {
+            RemoteLog.error("cache", "Laden über den Plattencache fehlgeschlagen (\(error)) → direkte Adresse")
+            if let s = routed.session { await DiskCacheProxy.shared.giveUp(url, token: s) }
+            cacheSession = nil
+            _ = try await engine.load(url: url, startPosition: start, options: o)
+        }
     }
     func recover() async throws { try await engine.reloadAtCurrentPosition() }
     func play() { engine.play() }
@@ -202,7 +216,10 @@ final class AetherBackend: PlaybackEngine {
     private func applySubtitle(_ id: Int?) {
         if let id { engine.selectSubtitleTrack(index: id) } else { engine.clearSubtitle() }
     }
-    func stop() { engine.stop() }
+    func stop() {
+        engine.stop()
+        if let s = cacheSession { cacheSession = nil; Task { await DiskCacheProxy.shared.close(s) } }
+    }
     func surface() -> some View { AetherPlayerSurface(engine: engine) }
     /// AetherEngine #88: Spur erscheint in `subtitleTracks` (synthetische ID, `isExternal`), wählbar über `selectSubtitle`.
     /// `httpHeaders` nil: Kopfzeilen der Quelle gehen nur an denselben Ursprung.

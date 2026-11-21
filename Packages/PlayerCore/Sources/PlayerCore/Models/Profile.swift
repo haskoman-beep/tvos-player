@@ -29,22 +29,26 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     public var syncTokens: [String: SyncToken]
     /// Aussehen (Navigation, Akzent, Kachelgröße, Hero).
     public var appearance: Appearance
+    /// Plattencache für den laufenden Film (Standard aus).
+    public var diskCache: DiskCacheSettings
 
     public init(id: UUID = UUID(), name: String, language: AppLanguage = .de, audioPriority: [String] = ["de", "en", "orig"],
                 subtitleMode: SubtitleMode = .forcedOnly, subtitleLanguage: String = "de", progressSource: ProgressSource = .local,
                 addons: [InstalledAddon] = [], collections: [MediaCollection] = [], home: HomeLayout = HomeLayout(),
                 apiKeys: [String: String] = [:], autoplayNext: Bool = true, syncTokens: [String: SyncToken] = [:],
-                appearance: Appearance = Appearance()) {
+                appearance: Appearance = Appearance(), diskCache: DiskCacheSettings = DiskCacheSettings()) {
         self.id = id; self.name = name; self.language = language; self.audioPriority = audioPriority
         self.subtitleMode = subtitleMode; self.subtitleLanguage = subtitleLanguage
         self.progressSource = progressSource; self.addons = addons; self.collections = collections
         self.home = home; self.apiKeys = apiKeys; self.autoplayNext = autoplayNext
         self.syncTokens = syncTokens; self.appearance = appearance
+        self.diskCache = diskCache
     }
 
     enum CodingKeys: String, CodingKey {
         case id, name, language, audioPriority, subtitleMode, subtitleLanguage, progressSource
         case addons, collections, home, apiKeys, autoplayNext, syncTokens, appearance
+        case diskCache
     }
     /// Nur zum Lesen alter Profile.
     private enum LegacyKeys: String, CodingKey { case subtitlesEnabled }
@@ -73,6 +77,7 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         autoplayNext = try c.decodeIfPresent(Bool.self, forKey: .autoplayNext) ?? d.autoplayNext
         syncTokens = try c.decodeIfPresent([String: SyncToken].self, forKey: .syncTokens) ?? [:]
         appearance = try c.decodeIfPresent(Appearance.self, forKey: .appearance) ?? d.appearance
+        diskCache = try c.decodeIfPresent(DiskCacheSettings.self, forKey: .diskCache) ?? d.diskCache
     }
 
     public static func makeDefault(name: String = "Ich") -> Profile {
