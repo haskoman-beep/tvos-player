@@ -45,8 +45,15 @@ struct DetailView: View {
     @State private var trailerNote: String?
     @State private var showFullText = false
     @State private var trailerTask: Task<Void, Never>?
+    /// Daten schon geladen: `.task` läuft bei jeder Rückkehr auf die Seite erneut, dann nichts neu laden/zurücksetzen.
+    @State private var loaded = false
+    /// Startfokus nur einmal setzen, sonst springt er bei der Rückkehr (z. B. von Folge 7 auf Folge 1).
+    @State private var didInitialFocus = false
+    /// Zeitpunkt des ersten Erscheinens und ob „erste Plaketten“ schon geloggt ist (Gerätemessung Addon-Antwortzeit).
+    @State private var appeared: Date?
+    @State private var badgesLogged = false
     /// Startfokus auf der Hauptaktion, nicht auf der (darüber liegenden) Beschreibung.
-    enum Focus: Hashable { case play, episode(String) }
+    enum Focus: Hashable { case play, episode(String), overview }
     @FocusState private var focus: Focus?
 
     private var isSeries: Bool { item.type == "series" }
@@ -64,12 +71,12 @@ struct DetailView: View {
                     Text([meta?.releaseInfo ?? item.releaseInfo, meta?.runtime, meta?.genres?.prefix(3).joined(separator: ", ")]
                         .compactMap { $0 }.joined(separator: " · ")).foregroundStyle(.secondary)
                     InfoBadges(ratings: ratings, tech: tech, certification: certification ?? ratings?.certification)
-                        .frame(minHeight: InfoBadges.height, alignment: .leading)   // Platz halten, damit nichts springt
                     if let t = extra?.tagline { Text(t).italic().foregroundStyle(.secondary) }
                     if !overview.isEmpty {
                         // Kurz halten; Klick zeigt den ganzen Text.
-                        Button { showFullText = true } label: { FocusHighlight { Text(overview).font(.callout).foregroundStyle(.primary).lineLimit(3).multilineTextAlignment(.leading) } }
+                        Button { showFullText = true } label: { FocusHighlight { Text(overview).font(.callout).foregroundStyle(.white).lineLimit(3).multilineTextAlignment(.leading) } }
                             .buttonStyle(.plain)
+                            .focused($focus, equals: .overview)
                             .frame(maxWidth: 1100, alignment: .leading)
                     }
 
@@ -101,16 +108,30 @@ struct DetailView: View {
             // Die App-Akzentfarbe (RootView .tint) färbte Knöpfe und Text-Knöpfe hier flächig: normale tvOS-Knöpfe.
             .tint(Color?.none)
         }
+        .onAppear {
+            if appeared == nil { appeared = Date() }
+            // Quellen schon im Cache (z. B. zweiter Besuch): Technik-Plaketten im ersten Bild, nicht erst nach dem Laden.
+            let id = imdb ?? (item.id.hasPrefix("tt") ? item.id : nil)
+            if tech.isEmpty, !isSeries, let id, let c = model.cachedStreams(id: id), !c.isEmpty {
+                tech = TechBadges.summary(c.map(\.stream))
+                logFirstBadges("Technik aus Cache")
+            }
+        }
         .task {
-            let opened = Date()
+            guard !loaded else { return }
+            let opened = appeared ?? Date()
             imdb = await model.imdbID(for: item)
             if let imdb {
-                if !isSeries {
+                if !isSeries, tech.isEmpty, let c = model.cachedStreams(id: imdb), !c.isEmpty {
+                    tech = TechBadges.summary(c.map(\.stream))
+                    logFirstBadges("Technik aus Cache")
+                } else if !isSeries, tech.isEmpty {
                     // Quellen sofort und parallel holen (Technik-Plaketten; AppModel cached sie für die Quellenliste).
                     let id = imdb
                     Task {
                         let list = await model.streams(type: "movie", id: id)
                         tech = TechBadges.summary(list.map(\.stream))
+                        if !tech.isEmpty { logFirstBadges("Technik") }
                         RemoteLog.info("detail", "Plaketten nach \(Int(Date().timeIntervalSince(opened) * 1000)) ms (\(list.count) Quellen)")
                     }
                 }
@@ -118,13 +139,23 @@ struct DetailView: View {
                 meta = await model.meta(type: isSeries ? "series" : "movie", imdb: imdb)
                 extra = await model.localized(imdb: imdb, series: isSeries)
                 certification = extra?.certification
+                if certification != nil { logFirstBadges("Altersfreigabe") }
                 ratings = await r
+                if certification != nil || ratings?.certification != nil || !(ratings.map(MDBList.badges) ?? []).isEmpty {
+                    logFirstBadges("Bewertungen")
+                }
             }
+            if Task.isCancelled { return }   // Seite verlassen: beim nächsten Erscheinen vollständig neu laden
             season = imdb.flatMap { model.progress.latest(forItem: $0)?.season } ?? seasons.first ?? 1
             loading = false
+            loaded = true
             // Während des Ladens war die Beschreibung das einzige fokussierbare Element: Fokus auf die Hauptaktion holen.
             try? await Task.sleep(for: .milliseconds(50))
-            focus = .play
+            guard !Task.isCancelled else { return }
+            if !didInitialFocus {
+                didInitialFocus = true
+                if focus == nil || focus == .overview { focus = .play }
+            }
             await translateSeason()
         }
         .onChange(of: season) { Task { await translateSeason() } }
@@ -145,10 +176,20 @@ struct DetailView: View {
         }
     }
 
+    /// Einmal je Seite: Zeit vom Erscheinen bis zur ersten sichtbaren Plakette und deren Quelle.
+    private func logFirstBadges(_ source: String) {
+        guard !badgesLogged else { return }
+        badgesLogged = true
+        let ms = appeared.map { Int(Date().timeIntervalSince($0) * 1000) } ?? -1
+        RemoteLog.info("detail", "erste Plaketten nach \(ms) ms (\(source))")
+    }
+
     private var overview: String { meta?.description ?? item.description ?? "" }
 
     private func trailerButton(_ key: String) -> some View {
         Button(trailerLoading ? "Trailer wird geladen …" : "🎬 Trailer") {
+            // Doppeldruck: laufende Auflösung behalten, sonst ginge der Abbruch-Griff verloren.
+            guard !trailerLoading else { return }
             trailerTask = Task { await playTrailer(key) }
         }
     }
@@ -303,6 +344,7 @@ struct StreamListView: View {
                     .textCase(nil).lineLimit(2).padding(.bottom, 10)
             }
         }
+        .listStyle(.grouped)
         .task {
             streams = await model.streams(type: request.type, id: request.id)
             loading = false
@@ -465,7 +507,10 @@ struct InfoBadges: View {
 
     var body: some View {
         let rated = ratings.map(MDBList.badges) ?? []
-        if !rated.isEmpty || !tech.isEmpty || certification != nil {
+        // Immer vorhandener Platzhalter hält die Zeilenhöhe, auch bevor die erste Plakette kommt.
+        ZStack(alignment: .leading) {
+          Color.clear.frame(height: Self.height)
+          if !rated.isEmpty || !tech.isEmpty || certification != nil {
             FlowLayout(spacing: 14, lineSpacing: 14) {
                 ForEach(tech, id: \.self) { t in
                     Text(t).foregroundStyle(.black)
@@ -488,6 +533,7 @@ struct InfoBadges: View {
             }
             .frame(maxWidth: 1400, alignment: .leading)
             .transition(.opacity)
+          }
         }
     }
 
