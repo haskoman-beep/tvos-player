@@ -171,6 +171,40 @@ import Testing
     #expect(!LogRedact.looksSecret("manifest.json"))
 }
 
+// MARK: Nachtrag 2
+
+@Test func redactLongRunIsFastAndCapped() {
+    let run = String(repeating: "a-", count: 10_000) + "key"          // 20 003 Zeichen
+    let line = "token=geheim1 " + run + "=wert9"
+    let clock = ContinuousClock()
+    var r = ""
+    let took = clock.measure { r = LogRedact.text(line) }
+    #expect(took < .milliseconds(500))
+    #expect(r.hasPrefix("token=… "))
+    #expect(!r.contains("geheim1"))
+    #expect(r.hasSuffix(LogRedact.cutMarker))
+    #expect(r.utf8.count <= LogRedact.maxLineBytes)
+    #expect(LogRedact.text(r) == r)
+}
+
+@Test func redactLongRunBelowCapIsFastAndMasked() {
+    let line = String(repeating: "a-", count: 3_500) + "key=wert9"      // < 8 KB, kein Kürzen
+    let clock = ContinuousClock()
+    var r = ""
+    let took = clock.measure { r = LogRedact.text(line) }
+    #expect(took < .milliseconds(500))
+    #expect(!r.contains("wert9"))
+    #expect(!r.contains(LogRedact.cutMarker))
+    // Ohne Schlüssel: lange Folge mit „/“ (Adress-Zweige laufen) bleibt ebenfalls schnell.
+    let noKey = String(repeating: "a-b.", count: 2_000) + "/x"
+    #expect(clock.measure { _ = LogRedact.text(noKey) } < .milliseconds(500))
+}
+
+@Test func redactBearerQuoted() {
+    #expect(LogRedact.text(#"Authorization: Bearer "abc def""#) == "Authorization: Bearer …")
+    #expect(LogRedact.text("Authorization: Bearer 'abc'") == "Authorization: Bearer …")
+}
+
 // MARK: Nachtrag
 
 @Test func redactQuotedValuesWithSpaces() {

@@ -22,7 +22,8 @@ public enum LogRedact {
 
     /// Freitext (Logzeile, Fehlerbeschreibung). Mehrfaches Anwenden ändert nichts mehr.
     public static func text(_ s: String) -> String {
-        var out = s
+        let (head, wasCut) = capped(s)
+        var out = head
         if out.contains("/") { out = replaceURLs(out) }
         let lower = out.lowercased()
         if keyWords.contains(where: { lower.contains($0) }) { out = maskKeyValues(out) }
@@ -34,10 +35,31 @@ public enum LogRedact {
             out = opaquePattern.stringByReplacingMatches(
                 in: out, range: NSRange(location: 0, length: (out as NSString).length), withTemplate: "…")
         }
-        return out
+        // Marke erst nach dem Entschärfen anhängen (mit Leerzeichen davor, damit sie nie Teil eines Werts wird).
+        return wasCut ? out + cutMarker : out
     }
 
+    /// Längste Logzeile in UTF-8-Bytes (samt Kürzungsmarke); begrenzt die Regex-Laufzeit.
+    public static let maxLineBytes = 8 * 1024
+    public static let cutMarker = " …[gekürzt]"
+
     // MARK: - intern
+
+    /// Zeilen über `maxLineBytes` so kürzen, dass sie mit Marke höchstens `maxLineBytes` lang sind
+    /// (vor jedem Regex: begrenzt Rücksprünge in allen Mustern).
+    private static func capped(_ s: String) -> (String, Bool) {
+        guard s.utf8.count > maxLineBytes else { return (s, false) }
+        let budget = maxLineBytes - cutMarker.utf8.count
+        var used = 0
+        var end = s.startIndex
+        for i in s.indices {
+            let n = s[i].utf8.count
+            if used + n > budget { break }
+            used += n
+            end = s.index(after: i)
+        }
+        return (String(s[..<end]), true)
+    }
 
     /// Teil nach `schema://` (bzw. eine Adresse ohne Schema): Host + gekürzter Pfad.
     private static func redactAfterScheme(_ rest: Substring) -> String {
@@ -112,7 +134,7 @@ public enum LogRedact {
     /// Torrentio-Konfiguration `providers=…|realdebrid=KEY`, IPv6-Hosts) – oder ohne Schema
     /// `host.tld[:port]/…`, `10.0.0.5[:port]/…`, `localhost[:port]/…`.
     nonisolated(unsafe) private static let urlPattern = try! NSRegularExpression(
-        pattern: #"[A-Za-z][A-Za-z0-9+.\-]*://[^\s"'<>]+|(?<![A-Za-z0-9_.@/:%\-])(?:(?:[A-Za-z0-9\-]+\.)+[A-Za-z]{2,}|(?:[0-9]{1,3}\.){3}[0-9]{1,3}|localhost)(?::[0-9]+)?/[^\s"'<>]*"#,
+        pattern: #"(?<![A-Za-z0-9+.\-])[A-Za-z][A-Za-z0-9+.\-]*://[^\s"'<>]+|(?<![A-Za-z0-9_.@/:%\-])(?:(?:[A-Za-z0-9\-]+\.)+[A-Za-z]{2,}|(?:[0-9]{1,3}\.){3}[0-9]{1,3}|localhost)(?::[0-9]+)?/[^\s"'<>]*"#,
         options: [.caseInsensitive])
 
     private static let keyWords = ["token", "key", "passwd", "password", "secret"]
@@ -121,12 +143,12 @@ public enum LogRedact {
     /// direkt danach `:`/`=` (sonst kein Treffer – „keyboard“ bleibt). Wert: `"…"`, `'…'` (auch mit Leerzeichen),
     /// `Optional("…")` oder ungequotet bis zum nächsten Trenner. Groß/Klein egal.
     nonisolated(unsafe) private static let keyValuePattern = try! NSRegularExpression(
-        pattern: #"\b([A-Za-z0-9_\-]*(?:token|key|passwd|password|secret))(["']?\s*[:=]\s*)(Optional\()?("[^"]*"|'[^']*'|[^\s"',;&)}\]]+)"#,
+        pattern: #"(?<![A-Za-z0-9_\-])([A-Za-z0-9_\-]*(?:token|key|passwd|password|secret))(["']?\s*[:=]\s*)(Optional\()?("[^"]*"|'[^']*'|[^\s"',;&)}\]]+)"#,
         options: [.caseInsensitive])
 
     /// `Authorization: Bearer <Wert>`
     nonisolated(unsafe) private static let bearerPattern = try! NSRegularExpression(
-        pattern: #"\b(Bearer)\s+[A-Za-z0-9._~+/=\-]+"#, options: [.caseInsensitive])
+        pattern: #"\b(Bearer)\s+(?:"[^"]*"|'[^']*'|[A-Za-z0-9._~+/=\-]+)"#, options: [.caseInsensitive])
 
     nonisolated(unsafe) private static let opaquePattern = try! NSRegularExpression(
         pattern: "[A-Za-z0-9_-]{\(opaqueRun),}")
