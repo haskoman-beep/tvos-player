@@ -31,13 +31,6 @@ import Testing
     #expect(!MDBList.isFresh(storedAt: now - 7 * 3600, found: false, now: now))
 }
 
-@Test func techBadgesUseBestUsableStream() {
-    let s = [StreamItem(name: "⚡ 2160p", title: "Film.2160p.DV.HDR10.TrueHD.Atmos.7.1", url: "https://a"),
-             StreamItem(name: "⚡ 1080p", title: "Film.1080p.DDP.5.1", url: "https://b"),
-             StreamItem(name: "🎫 2160p", title: "Film.2160p.HDR10+", url: "https://c")]
-    #expect(TechBadges.summary(s) == ["4K", "Dolby Vision", "HDR", "Dolby Atmos", "7.1"])
-}
-
 @Test func cardStates() {
     var b = ProgressBook()
     let film = MetaPreview(id: "tt1", type: "movie", name: "F")

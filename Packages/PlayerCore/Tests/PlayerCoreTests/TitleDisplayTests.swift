@@ -32,8 +32,7 @@ private func traits(_ desc: String, cached: Bool? = nil) -> StreamTraits {
 
 @Test func posterBadgesFollowPlacement() {
     let b = BestQuality.from([traits("2160p DV HDR10 TrueHD Atmos 7.1 REMUX")])!
-    var s = BadgeSettings()
-    s.onPosters = false   // altes Feld zählt nicht mehr
+    let s = BadgeSettings()
     #expect(QualityBadges.poster(b, settings: s, placement: .off).isEmpty)
     #expect(QualityBadges.poster(b, settings: s, placement: .topTrailing).map(\.text) == ["4K", "DV", "Atmos"])
     #expect(QualityBadges.poster(b, settings: s, placement: .bottom).count == 3)

@@ -164,18 +164,6 @@ extension TMDBClient {
 }
 
 extension MetaDetail {
-    /// Übersetzte Felder übernehmen, wo vorhanden; Cinemeta bleibt Rückfall.
-    public func applying(_ l: LocalizedMeta) -> MetaDetail {
-        var m = self
-        m.name = l.name ?? name
-        m.description = l.overview ?? description
-        m.poster = l.poster ?? poster
-        m.background = background ?? l.background
-        m.logo = l.logo ?? logo
-        if let g = l.genres, !g.isEmpty { m.genres = g }
-        return m
-    }
-
     public func applying(season: Int, episodes: [Int: LocalizedEpisode]) -> MetaDetail {
         var m = self
         m.videos = videos?.map { v in

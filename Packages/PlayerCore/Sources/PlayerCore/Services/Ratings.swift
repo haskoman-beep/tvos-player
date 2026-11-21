@@ -73,22 +73,3 @@ public enum MDBList {
         now.timeIntervalSince(storedAt) < (found ? 24 : 6) * 3600
     }
 }
-
-/// Technik-Plaketten für die Detailseite: das Beste, was die verfügbaren (nicht sicher ungecachten) Quellen bieten.
-public enum TechBadges {
-    public static func summary(_ streams: [StreamItem]) -> [String] {
-        let traits = streams.map(StreamTraits.parse)
-        let usable = traits.filter { $0.cached != false }
-        let t = usable.isEmpty ? traits : usable
-        var out: [String] = []
-        if t.contains(where: { $0.resolution == "2160p" }) { out.append("4K") }
-        else if t.contains(where: { $0.resolution == "1080p" }) { out.append("HD") }
-        if t.contains(where: { $0.hdr.contains("DV") }) { out.append("Dolby Vision") }
-        if t.contains(where: { $0.hdr.contains("HDR10+") }) { out.append("HDR10+") }
-        else if t.contains(where: { !$0.hdr.filter { $0 != "DV" }.isEmpty }) { out.append("HDR") }
-        if t.contains(where: { $0.audio.contains("Atmos") }) { out.append("Dolby Atmos") }
-        if t.contains(where: { $0.channels == "7.1" }) { out.append("7.1") }
-        else if t.contains(where: { $0.channels == "5.1" }) { out.append("5.1") }
-        return out
-    }
-}

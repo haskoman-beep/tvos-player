@@ -42,19 +42,17 @@ public struct BadgeSettings: Codable, Sendable, Hashable {
     public var size: Bool
     public var cacheStatus: Bool
     public var style: BadgeStyle
-    /// Kleine Plaketten auf Postern (nur bei schon gecachten Quellen).
-    public var onPosters: Bool
 
     public init(resolution: Bool = true, hdr: Bool = true, source: Bool = true, videoCodec: Bool = false, audio: Bool = true,
                 channels: Bool = true, languages: Bool = true, size: Bool = true, cacheStatus: Bool = true,
-                style: BadgeStyle = .logo, onPosters: Bool = true) {
+                style: BadgeStyle = .logo) {
         self.resolution = resolution; self.hdr = hdr; self.source = source; self.videoCodec = videoCodec; self.audio = audio
         self.channels = channels; self.languages = languages; self.size = size; self.cacheStatus = cacheStatus
-        self.style = style; self.onPosters = onPosters
+        self.style = style
     }
 
     enum CodingKeys: String, CodingKey {
-        case resolution, hdr, source, videoCodec, audio, channels, languages, size, cacheStatus, style, onPosters
+        case resolution, hdr, source, videoCodec, audio, channels, languages, size, cacheStatus, style
     }
 
     public init(from decoder: Decoder) throws {
@@ -71,7 +69,6 @@ public struct BadgeSettings: Codable, Sendable, Hashable {
         size = try b(.size, d.size)
         cacheStatus = try b(.cacheStatus, d.cacheStatus)
         style = try c.decodeIfPresent(BadgeStyle.self, forKey: .style) ?? d.style
-        onPosters = try b(.onPosters, d.onPosters)
     }
 
     public func shows(_ t: BadgeType) -> Bool {
@@ -104,7 +101,7 @@ public struct BadgeSettings: Codable, Sendable, Hashable {
 }
 
 /// Beste Werte über alle (gecachten) Quellen eines Titels – für Detailseite und Poster.
-/// Wie `TechBadges.summary`: sicher ungecachte Quellen zählen nur, wenn es keine anderen gibt.
+/// Sicher ungecachte Quellen zählen nur, wenn es keine anderen gibt.
 public struct BestQuality: Equatable, Sendable {
     /// Beste Auflösung ("2160p", "1440p", "1080p", "720p", "480p").
     public var resolution: String?
@@ -171,29 +168,9 @@ public enum QualityBadges {
         return out
     }
 
-    /// Technik-Plaketten der Detailseite: 4K/HD, Dolby Vision, HDR-Art, REMUX, Atmos, DTS:X, DTS-HD MA, Kanäle.
-    public static func detail(_ b: BestQuality, settings s: BadgeSettings) -> [QualityBadge] {
-        let logos = s.style == .logo
-        var out: [QualityBadge] = []
-        func add(_ type: BadgeType, _ text: String, _ logo: QualityLogoKind?) {
-            guard s.shows(type) else { return }
-            out.append(QualityBadge(type: type, text: text, logo: logos ? logo : nil))
-        }
-        if let r = resolutionBadge(b.resolution) { add(.resolution, r.text, r.logo) }
-        if b.dolbyVision { add(.hdr, "Dolby Vision", .dolbyVision) }
-        if let h = b.hdr { add(.hdr, h, hdrLogo(h)) }
-        if b.remux { add(.source, "REMUX", .remux) }
-        if b.atmos { add(.audio, "Dolby Atmos", .dolbyAtmos) }
-        if b.dtsX { add(.audio, "DTS:X", .dtsX) }
-        if b.dtsHDMA { add(.audio, "DTS-HD MA", .dtsHDMA) }
-        if let ch = b.channels, ch != "2.0" { add(.channels, ch, nil) }
-        return out
-    }
-
-    /// Höchstens 3 kleine Plaketten fürs Poster: beste Auflösung, DV (sonst HDR-Art), Atmos. Leer, wenn abgeschaltet.
+    /// Höchstens 3 kleine Plaketten fürs Poster: beste Auflösung, DV (sonst HDR-Art), Atmos.
     /// Kurze Texte („DV“, „Atmos“), damit auch der Text-Stil in die Posterbreite passt.
     public static func poster(_ b: BestQuality, settings s: BadgeSettings) -> [QualityBadge] {
-        guard s.onPosters else { return [] }
         let logos = s.style == .logo
         var out: [QualityBadge] = []
         func add(_ type: BadgeType, _ text: String, _ logo: QualityLogoKind?) {

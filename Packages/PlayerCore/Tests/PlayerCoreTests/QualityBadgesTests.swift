@@ -7,15 +7,15 @@ import Testing
     let old = try JSONDecoder().decode(Appearance.self, from: Data(#"{"accent":"green"}"#.utf8))
     #expect(old.badges == BadgeSettings())
     let d = BadgeSettings()
-    #expect(d.style == .logo && d.onPosters && !d.videoCodec)
+    #expect(d.style == .logo && !d.videoCodec)
     #expect(BadgeType.allCases.filter { !d.shows($0) } == [.videoCodec])
     // Teilweise vorhandene Plaketten-Daten: Rest Standard.
     let partial = try JSONDecoder().decode(BadgeSettings.self, from: Data(#"{"size":false,"style":"text"}"#.utf8))
-    #expect(!partial.size && partial.style == .text && partial.languages && partial.onPosters)
+    #expect(!partial.size && partial.style == .text && partial.languages)
     // Rundreise über Appearance.
     var a = Appearance()
     a.badges.set(.languages, false)
-    a.badges.onPosters = false
+    a.badges.style = .text
     let back = try JSONDecoder().decode(Appearance.self, from: JSONEncoder().encode(a))
     #expect(back == a)
     #expect(!back.badges.shows(.languages))
@@ -59,12 +59,8 @@ import Testing
     #expect(BestQuality.from([StreamItem]()) == nil)
 }
 
-@Test func detailAndPosterBadges() {
+@Test func posterBadges() {
     let b = BestQuality(resolution: "2160p", dolbyVision: true, hdr: "HDR10+", atmos: true, dtsX: true, dtsHDMA: true, remux: true, channels: "7.1")
-    let d = QualityBadges.detail(b, settings: BadgeSettings())
-    #expect(d.map(\.text) == ["4K", "Dolby Vision", "HDR10+", "REMUX", "Dolby Atmos", "DTS:X", "DTS-HD MA", "7.1"])
-    #expect(d.compactMap(\.logo) == [.uhd4K, .dolbyVision, .hdr10Plus, .remux, .dolbyAtmos, .dtsX, .dtsHDMA])
-    #expect(!QualityBadges.detail(b, settings: BadgeSettings(source: false)).contains { $0.text == "REMUX" })
     // Poster: höchstens 3, DV vor HDR.
     let p = QualityBadges.poster(b, settings: BadgeSettings())
     #expect(p.map(\.logo) == [.uhd4K, .dolbyVision, .dolbyAtmos])
@@ -72,14 +68,9 @@ import Testing
     // Ohne DV: HDR-Art; ohne Atmos: nur 2.
     let p2 = QualityBadges.poster(BestQuality(resolution: "1080p", hdr: "HDR"), settings: BadgeSettings())
     #expect(p2.map(\.text) == ["HD", "HDR"] && p2.allSatisfy { $0.logo == nil })
-    // Schalter: Poster aus, Typ aus, Text-Stil.
-    #expect(QualityBadges.poster(b, settings: BadgeSettings(onPosters: false)).isEmpty)
+    // Schalter: Typ aus, Text-Stil.
     #expect(QualityBadges.poster(b, settings: BadgeSettings(hdr: false)).map(\.text) == ["4K", "Atmos"])
     #expect(QualityBadges.poster(b, settings: BadgeSettings(style: .text)).allSatisfy { $0.logo == nil })
-    #expect(QualityBadges.detail(b, settings: BadgeSettings(resolution: false, source: false, channels: false)).map(\.text)
-            == ["Dolby Vision", "HDR10+", "Dolby Atmos", "DTS:X", "DTS-HD MA"])
-    // 720p: keine Auflösungs-Plakette; Stereo: keine Kanal-Plakette.
-    #expect(QualityBadges.detail(BestQuality(resolution: "720p", channels: "2.0"), settings: BadgeSettings()).isEmpty)
 }
 
 @Test func sizeFormatting() {

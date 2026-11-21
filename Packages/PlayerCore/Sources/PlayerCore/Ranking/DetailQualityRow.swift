@@ -71,11 +71,8 @@ extension QualityBadges {
     }
 
     /// Poster-Plaketten (höchstens 3: Auflösung, DV/HDR, Atmos) nach „Qualität auf Postern“; leer bei „Aus“.
-    /// Das ältere Feld `onPosters` zählt nicht mehr (die Auswahl ersetzt den Schalter).
     public static func poster(_ b: BestQuality, settings s: BadgeSettings, placement: PosterBadgePlacement) -> [QualityBadge] {
         guard placement != .off else { return [] }
-        var on = s
-        on.onPosters = true
-        return poster(b, settings: on)
+        return poster(b, settings: s)
     }
 }

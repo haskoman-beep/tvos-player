@@ -73,7 +73,12 @@ private actor Gauge {
     try? await Task.sleep(nanoseconds: 20_000_000)
     caller.cancel()
     #expect(await caller.value == nil)
-    while await left.done + left.now == 0 { await Task.yield() }
+    // Höchstens 2 s warten, sonst fehlschlagen statt ewig zu hängen.
+    let deadline = ContinuousClock.now + .seconds(2)
+    while await left.done + left.now == 0 {
+        guard ContinuousClock.now < deadline else { Issue.record("onCancel kam nicht binnen 2 s"); long.cancel(); return }
+        await Task.yield()
+    }
     #expect(await left.now == 1)   // onCancel kam an
     long.cancel()
 }
