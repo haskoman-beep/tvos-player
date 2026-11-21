@@ -84,7 +84,9 @@ struct UpcomingTodayCard: View {
                     }
             } else {
                 // Hochformat wie alle Poster-Reihen: Kartengröße, Aufklappen, Scroll-Anker.
+                // Die Fortschritts-Kapsel oben links würde das Folgen-Label verdecken → ausgeblendet.
                 PosterCard(item: item)
+                    .environment(\.hidesCardTopLabel, true)
             }
         }
         .overlay(alignment: .topLeading) {

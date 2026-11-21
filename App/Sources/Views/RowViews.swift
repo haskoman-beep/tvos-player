@@ -280,6 +280,8 @@ struct FolderTile: View {
 struct CardStateOverlay: View {
     @EnvironmentObject var model: AppModel
     let itemID: String
+    /// „Heute neu“ zeigt oben links sein eigenes Folgen-Label; dann entfällt hier die obere Kapsel.
+    @Environment(\.hidesCardTopLabel) private var hidesTopLabel
 
     var body: some View {
         if let st = model.progress.cardState(itemID: itemID) {
@@ -291,7 +293,7 @@ struct CardStateOverlay: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                 }
                 let top = [st.episode, st.remainingSeconds.map { "noch \(max(1, Int($0 / 60))) min" }].compactMap { $0 }.joined(separator: " · ")
-                if !top.isEmpty {
+                if !top.isEmpty && !hidesTopLabel {
                     Text(top).font(.caption2.weight(.semibold))
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .background(.black.opacity(0.65), in: Capsule()).padding(8)
@@ -319,6 +321,7 @@ private struct CardScaleKey: EnvironmentKey { static let defaultValue: CGFloat =
 /// Außerhalb der Startseiten-Reihen (Detail, Person) klappt nichts auf.
 private struct ExpandPostersKey: EnvironmentKey { static let defaultValue = false }
 private struct AnchorFocusedCardKey: EnvironmentKey { static let defaultValue: (String) -> Void = { _ in } }
+private struct HidesCardTopLabelKey: EnvironmentKey { static let defaultValue = false }
 
 extension EnvironmentValues {
     /// `appearance.cardSize.scale` für die Kartenmaße.
@@ -334,5 +337,10 @@ extension EnvironmentValues {
     var anchorFocusedCard: (String) -> Void {
         get { self[AnchorFocusedCardKey.self] }
         set { self[AnchorFocusedCardKey.self] = newValue }
+    }
+    /// Blendet in `CardStateOverlay` die Folgen/Restzeit-Kapsel oben links aus (Haken und Balken bleiben).
+    var hidesCardTopLabel: Bool {
+        get { self[HidesCardTopLabelKey.self] }
+        set { self[HidesCardTopLabelKey.self] = newValue }
     }
 }
