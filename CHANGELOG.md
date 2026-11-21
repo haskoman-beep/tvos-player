@@ -1,195 +1,195 @@
-# Versionsverlauf
+# Changelog
 
-Alle nennenswerten Änderungen an Player stehen in dieser Datei. Das Format folgt
-[Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
+All notable changes to Player are documented in this file. The format is based on
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-Die Abschnitte sind nach Stufen geordnet. „Build“ ist die CI-Laufnummer, die die App als Build-Nummer anzeigt.
-Ein Abschnitt mit dem Vermerk **integ** liegt auf dem Testzweig `integ` und kommt erst nach dem Gerätetest
-auf `main`.
+Sections are ordered by stage. "Build" is the CI run number, which the app shows as its build number.
+A section marked **integ** is on the `integ` testing branch and only moves to `main` after device
+testing.
 
-## [Unveröffentlicht]
+## [Unreleased]
 
-In Arbeit, noch nicht auf `integ`.
+Work in progress, not yet on `integ`.
 
-### Hinzugefügt
-- Welle E, aus Rückmeldungen nach dem Gerätetest:
-  - Poster: neue Einstellung „Qualität auf Postern“ (Aus / Oben rechts / Unten), standardmäßig aus. Die Zeile
-    mit Genre und Bewertung bleibt immer lesbar.
-  - Detailseite: wählbar, welche Bewertungen erscheinen (Standard: IMDb, Rotten Tomatoes, Trakt). Höchstens
-    5 Qualitäts-Plaketten in einer Zeile, in dieser Reihenfolge: Auflösung, Dolby Vision/HDR, Atmos,
-    Tonformat mit Kanälen, Remux. Die Altersfreigabe bleibt in der Textzeile.
-  - Bilder und Bewertungen vom Metadaten-Addon (Poster, Hintergrund, Logo) gehen vor TMDB, abschaltbar.
-  - Quellenliste: die Reihenfolge des Addons gilt als Standard, „Smart (App)“ ist wählbar. Die Texte des Addons
-    werden unverändert gezeigt (bis 4 Zeilen), die App-Plaketten nur kompakt, und doppelte Quellen werden
-    ausgeblendet.
+### Added
+- Wave E, based on feedback after device testing:
+  - Posters: new setting „Qualität auf Postern“ (quality on posters: Aus / Oben rechts / Unten, i.e. off / top right /
+    bottom), off by default. The genre and rating line always stays readable.
+  - Detail page: choose which ratings are shown (default: IMDb, Rotten Tomatoes, Trakt). At most
+    5 quality badges in one row, in this order: resolution, Dolby Vision/HDR, Atmos,
+    audio format with channels, remux. The age rating stays in the text line.
+  - Images and ratings from the metadata addon (poster, background, logo) take precedence over TMDB; this can be turned off.
+  - Source list: the addon's order is the default, „Smart (App)“ can be selected. The addon's text
+    is shown unchanged (up to 4 lines), the app's badges only in compact form, and duplicate sources are
+    hidden.
 
-### Behoben
-- Einstellungen: eine Korrektur ist in Arbeit.
+### Fixed
+- Settings: a fix is in progress.
 
-## [Welle D] – 2026-11-21 (integ, Build 121)
+## [Wave D] – 2026-11-21 (integ, Build 121)
 
-Bild und Ton im Player.
+Video and audio in the player.
 
-### Hinzugefügt
-- Spur-Gedächtnis je Serie bzw. Titel: Tonsprache, Untertitel und Untertitel-Versatz werden beim nächsten
-  Mal übernommen.
-- Untertitel-Versatz einstellbar, auch negativ.
-- Zeichensatz-Erkennung für Untertitel (etwa Windows-1252) und Reparatur kaputter Umlaute.
-- Der Bildschirmschoner bleibt während der Wiedergabe aus.
-- Fortschrittsanzeige für TorBox-Downloads.
+### Added
+- Track memory per series or title: audio language, subtitles and subtitle offset are carried over
+  next time.
+- Adjustable subtitle offset, including negative values.
+- Character-encoding detection for subtitles (such as Windows-1252) and repair of broken umlauts.
+- The screen saver stays off during playback.
+- Progress display for TorBox downloads.
 
-### Behoben
-- Ein Profilwechsel während der Quellensuche mischt keine Ergebnisse mehr zwischen den Profilen.
-- Eine nur teilweise geladene Quellenliste füllt sich nach.
-- Der Icon-Satz für Bewertungen flackert beim Neustart nicht mehr.
-- Sendezeiten werden genauer abgeglichen und kompakter zwischengespeichert.
+### Fixed
+- Switching profiles during a source search no longer mixes results between profiles.
+- A partially loaded source list now fills in the rest.
+- The rating icon set no longer flickers on restart.
+- Air times are matched more accurately and cached more compactly.
 
-## [Welle C] – 2026-11-21 (integ, Build 116)
+## [Wave C] – 2026-11-21 (integ, Build 116)
 
-Stabilität, Tempo, Player-Komfort sowie Quellen und Extras.
+Stability, speed, player comfort, plus sources and extras.
 
-### Hinzugefügt
-- Spulen über die Touchfläche mit Vorschaubild, Intro-Marken auf der Zeitleiste.
-- Einstellungen für Ton (Tonausgang) und Bildmodus (Dolby-Vision-Anzeigemodus); geordneter Ausstieg aus dem
-  Player.
-- TorBox: gecachte Quellen werden erkannt und bevorzugt, und „Meine TorBox-Dateien“ steht in der Bibliothek.
-- Quellen: AIOStreams-Felder werden ausgewertet. Die Reihenfolge berücksichtigt Sprache, AV1-Fähigkeit und
-  TorBox. Untertitel-Felder (forced, SDH, label) werden gelesen.
-- Trakt-Empfehlungen als Startseiten-Reihe; Fusion-Optionen `limit` und `hideTitle`.
-- Spoilerschutz für Folgenbilder.
-- Kalender mit Sendetag und Sendezeit über TVmaze.
-- „Über“: Geräte-Check (Inhalt anpassen, HDR des Fernsehers, Tonausgang, AV1-Hardware) und die Tabelle
-  „Was spielt wie“.
-- Handy-Seite: ein gemeinsames Schnell-Import-Feld, das erkennt, was eingefügt wurde.
-- Eigener Icon-Satz für die Bewertungen, per URL.
+### Added
+- Scrubbing via the touch surface with a preview thumbnail, intro markers on the timeline.
+- Settings for audio (audio output) and picture mode (Dolby Vision display mode); clean exit from the
+  player.
+- TorBox: cached sources are detected and preferred, and „Meine TorBox-Dateien“ (my TorBox files) is in the library.
+- Sources: AIOStreams fields are parsed. Ordering takes language, AV1 support and
+  TorBox into account. Subtitle fields (forced, SDH, label) are read.
+- Trakt recommendations as a home-screen row; Fusion options `limit` and `hideTitle`.
+- Spoiler protection for episode thumbnails.
+- Calendar with air date and air time via TVmaze.
+- „Über“ (about): device check (match content, TV HDR, audio output, AV1 hardware) and the
+  „Was spielt wie“ (what plays how) table.
+- Phone page: a single quick-import field that recognizes what was pasted.
+- Custom icon set for ratings, via URL.
 
-### Geändert
-- Die Startseite erscheint sofort aus dem Plattencache. Quellen kommen aus einem Cache, der im Hintergrund
-  erneuert wird.
-- Bilder werden in der Größe geladen, in der sie angezeigt werden. Jede Reihe merkt sich den Fokus.
+### Changed
+- The home screen appears instantly from the disk cache. Sources come from a cache that is refreshed in the
+  background.
+- Images are loaded at the size they are displayed. Each row remembers its focus.
 
-### Behoben
-- Die Addon-Suche hat Zeitgrenzen, sodass ein langsames Addon nicht mehr alles aufhält.
-- Ein Lade-Wächter erkennt hängende Starts. Gescheiterte Links werden 8 Stunden gemieden.
-- Die App wartet auf das Netz, statt abzubrechen, und reagiert auf Wechsel der Ton-Route.
-- Ein Hänger-Wächter für die Oberfläche wurde ergänzt.
+### Fixed
+- The addon search has timeouts, so a slow addon no longer holds everything up.
+- A loading watchdog detects stalled starts. Failed links are avoided for 8 hours.
+- The app waits for the network instead of giving up, and reacts to audio route changes.
+- Added a hang watchdog for the UI.
 
 ## [Dolby Vision FEL] – 2026-11-21 (integ, Build 108)
 
-### Hinzugefügt
-- Dolby Vision Profil 7 FEL: Die Erweiterungsschicht wird in die Profil-8.1-Wiedergabe eingerechnet, statt
-  verloren zu gehen. Dafür schaltet das neue Paket `Packages/AetherFEL` den Engine-Trait
-  `DolbyVisionFelCurves` ein.
-- Die CI weist nach, dass der Trait im Build aktiv ist und dass alle Engine-Frameworks in der App stecken.
+### Added
+- Dolby Vision Profile 7 FEL: the enhancement layer is applied during Profile 8.1 playback instead of
+  being lost. To do this, the new `Packages/AetherFEL` package enables the engine trait
+  `DolbyVisionFelCurves`.
+- CI verifies that the trait is active in the build and that all engine frameworks are included in the app.
 
-## [Welle B] – 2026-11-21 (integ, Builds 92–100)
+## [Wave B] – 2026-11-21 (integ, Builds 92–100)
 
-### Hinzugefügt
-- Pause, wenn der Fernseher ausgeht oder die App in den Hintergrund wechselt. Danach wird die Wiedergabe sauber
-  neu aufgebaut.
-- Eine Fehlerleiter je nach Fehlerart: neu laden, neu auflösen, andere Quelle.
-- Sichtbare Lade-Schritte beim Start eines Films.
-- „Intro überspringen“ über IntroDB und Kapitelmarken.
-- Die nächste Folge kommt aus demselben Release (Gruppe, Sprache, Qualität), dazu die Abfrage „Noch da?“ nach
-  mehreren Folgen ohne Eingabe.
-- Plattencache für den laufenden Film über einen lokalen Proxy (standardmäßig aus).
-- Lizenzhinweise: `THIRD_PARTY_NOTICES.md`, „Danksagungen / Lizenzen“ unter „Über“, MIT-Lizenz für den
-  eigenen Quelltext.
+### Added
+- Pause when the TV turns off or the app goes to the background. Playback is then cleanly
+  rebuilt.
+- An error escalation ladder depending on the error type: reload, re-resolve, switch source.
+- Visible loading steps when a movie starts.
+- „Intro überspringen“ (skip intro) via IntroDB and chapter markers.
+- The next episode comes from the same release (group, language, quality), plus the „Noch da?“ (still there?)
+  prompt after several episodes without input.
+- Disk cache for the currently playing movie via a local proxy (off by default).
+- License notices: `THIRD_PARTY_NOTICES.md`, „Danksagungen / Lizenzen“ (acknowledgements / licenses) under „Über“
+  (about), MIT License for the app's own source code.
 
-### Geändert
-- Die Wiedergabe-Engine ist auf eine feste Version festgelegt.
-- Fehlertexte zeigen keine Links mehr.
+### Changed
+- The playback engine is pinned to a fixed version.
+- Error messages no longer show links.
 
-### Behoben
-- Nach dem automatischen Weiterschalten zur nächsten Folge stimmt die Quellenliste.
+### Fixed
+- After automatically advancing to the next episode, the source list is correct.
 
-## [Welle A] – 2026-11-21 (integ, Builds 32–80)
+## [Wave A] – 2026-11-21 (integ, Builds 32–80)
 
-Neuer Player, Startseiten-Umbau und erste Ausbaustufe.
+New player, home-screen rework and first expansion stage.
 
-### Hinzugefügt
-- Startseite: Hero-Diashow, Info folgt dem Fokus, Poster klappen nach kurzer Ruhe auf, Kartengröße für alle
-  Reihen.
-- Bibliothek, Kalender und die Reihe „Heute neu“.
-- Quellen werden im Hintergrund vorgeladen, sobald der Fokus kurz auf einer Kachel ruht.
-- Player: lesbare Namen für Spuren und Formate, Info-Plaketten statt Engine-Rohtext, Panel mit den Reitern
-  Info · Ton · Untertitel.
-- Untertitel: eigenes Overlay, automatische Auswahl, Untertitel aus Addons (Stremio-Ressource `subtitles`,
-  auch per Datei-Hash).
-- Qualitäts-Plaketten neu gestaltet: neutral, einstellbar, mit gezeichneten Schriftzügen, auch auf Postern.
-- Trailer zuerst über Trailerio, YouTube als Rückfall; die Profilsprache wird bevorzugt.
-- Fusion- bzw. betterer-Startseiten-Kits als Startseiten-Reihen.
-- „App aktualisieren“ in den Einstellungen; die Build-Nummer kommt aus der CI.
+### Added
+- Home screen: hero slideshow, info follows focus, posters expand after a short pause, card size for all
+  rows.
+- Library, calendar and the „Heute neu“ (new today) row.
+- Sources are preloaded in the background as soon as focus rests briefly on a tile.
+- Player: readable names for tracks and formats, info badges instead of raw engine text, a panel with the tabs
+  Info · Ton · Untertitel (info · audio · subtitles).
+- Subtitles: custom overlay, automatic selection, subtitles from addons (Stremio `subtitles` resource,
+  also via file hash).
+- Redesigned quality badges: neutral, configurable, with drawn lettering, also on posters.
+- Trailers via Trailerio first, YouTube as fallback; the profile language is preferred.
+- Fusion or betterer home-screen kits as home-screen rows.
+- „App aktualisieren“ (update app) in the settings; the build number comes from CI.
 
-### Geändert
-- Protokolle enthalten keine Schlüssel und Token mehr.
-- Der Bildspeicher richtet sich nach dem freien Arbeitsspeicher.
+### Changed
+- Logs no longer contain keys or tokens.
+- The image cache size adapts to available memory.
 
-### Behoben
-- Speicher-Absturzschutz: Große Datenblöcke werden als Datei abgelegt, Profile liegen nie nur im Cache, und der
-  Katalog-Cache läuft nach 24 Stunden ab.
-- Navigation: Der Startfokus liegt auf „Abspielen“, die Knöpfe der Startseite sind nicht mehr blau, und „Zurück“
-  im Kalender führt in die Seitenleiste.
+### Fixed
+- Memory crash protection: large data blobs are stored as files, profiles are never kept only in the cache, and the
+  catalog cache expires after 24 hours.
+- Navigation: initial focus is on „Abspielen“ (play), the home-screen buttons are no longer blue, and „Zurück“ (back)
+  in the calendar leads to the sidebar.
 
 ## [0.4.0] – 2026-11-21 (main, Builds 12–39)
 
-### Hinzugefügt
-- Platzhalter-Streams werden erkannt, und die App wechselt dann automatisch die Quelle. Bei Fehlern lädt sie neu.
-- Ladeoptionen (Sprachen, Proxy-Kopfzeilen); Dolby-Digital- und DD+-Tonspuren werden bevorzugt.
-- Infozeile auf der Detailseite: Bewertungen über MDBList (IMDb, Rotten Tomatoes, Metacritic, Letterboxd,
-  Trakt, TMDB und weitere), Altersfreigabe, Technik-Plaketten (4K, Dolby Vision, HDR, Atmos, 7.1/5.1).
-- Stream-Plaketten: REMUX/BluRay/WEB-DL, HEVC/AV1/H.264 mit 10 Bit, DTS:X, HLG, Kanäle.
-- Kachelzustand: Fortschrittsbalken, Restzeit, Folge (etwa S1 F3), Haken für „gesehen“.
-- Deutsche Texte und Bilder aus TMDB: Titel, Beschreibung, Poster, Logo, Genres, Freigabe und Folgennamen.
-- Up-next: Die Quellen der nächsten Folge werden vorgeladen, kurz vor Ende läuft ein Countdown. Noch nicht
-  ausgestrahlte Folgen werden übersprungen.
-- Detailseite: Trailer im eigenen Player, Besetzung mit Personenseite, ähnliche Titel, Angaben unter „Über“
-  (Regie, Studio, Originaltitel, Budget).
-- Neues Design: Seitenleiste und obere Leiste mit Uhr, Einstellungen in Kategorien, Aussehen-Einstellungen
-  je Profil, wählbare Hero-Quelle.
+### Added
+- Placeholder streams are detected, and the app then switches source automatically. On errors it reloads.
+- Loading options (languages, proxy headers); Dolby Digital and DD+ audio tracks are preferred.
+- Info line on the detail page: ratings via MDBList (IMDb, Rotten Tomatoes, Metacritic, Letterboxd,
+  Trakt, TMDB and others), age rating, tech badges (4K, Dolby Vision, HDR, Atmos, 7.1/5.1).
+- Stream badges: REMUX/BluRay/WEB-DL, HEVC/AV1/H.264 with 10-bit, DTS:X, HLG, channels.
+- Tile state: progress bar, remaining time, episode (such as S1 F3), checkmark for watched.
+- German text and images from TMDB: title, description, poster, logo, genres, age rating and episode names.
+- Up next: sources for the next episode are preloaded, and a countdown runs shortly before the end. Episodes that
+  have not aired yet are skipped.
+- Detail page: trailers in the app's own player, cast with person page, similar titles, details under „Über“
+  (about: director, studio, original title, budget).
+- New design: sidebar and top bar with clock, settings in categories, appearance settings
+  per profile, selectable hero source.
 
-### Geändert
-- „Weiterschauen“ startet die zuletzt gespielte Quelle direkt.
-- Beim Quellenwechsel kommen gecachte Quellen zuerst.
-- Eigener Bildlader mit 400 MB Plattencache statt der Systemkomponente.
-- Trakt/Simkl: Die Anmeldung wird rechtzeitig erneuert, Wiederholung bei 401/429, Scrobble-Regeln
-  (80 %, Pause, 409).
-- Auf der Detailseite laden die Quellen sofort und parallel. Die Technik-Plaketten erscheinen sofort aus dem
-  Cache, ohne dass die Zeile springt.
+### Changed
+- „Weiterschauen“ (continue watching) starts the last played source directly.
+- When switching sources, cached sources come first.
+- Custom image loader with a 400 MB disk cache instead of the system component.
+- Trakt/Simkl: login is renewed in time, retries on 401/429, scrobble rules
+  (80 %, pause, 409).
+- On the detail page, sources load immediately and in parallel. The tech badges appear instantly from the
+  cache without the row jumping.
 
-### Behoben
-- Viele einzelne Sprünge hintereinander verbrauchen die Neustarts der Engine nicht mehr; sie werden gesammelt.
-- Play/Pause folgt dem echten Zustand des Players.
-- Der Fokus bleibt bei der Rückkehr zur Detailseite erhalten.
+### Fixed
+- Many individual seeks in a row no longer use up the engine's restarts; they are batched.
+- Play/pause follows the player's actual state.
+- Focus is kept when returning to the detail page.
 
 ## [0.3.0] – 2026-11-21 (Builds 8–11)
 
-### Hinzugefügt
-- Fern-Log: Die App schickt Ereignisse per Bonjour an `tools/logcollector.py` im lokalen Netz.
+### Added
+- Remote log: the app sends events via Bonjour to `tools/logcollector.py` on the local network.
 
-### Geändert
-- Ein Klick auf das Touchpad pausiert die Wiedergabe. Das Log zeigt Fehlerdetails und Sprünge.
+### Changed
+- A click on the touchpad pauses playback. The log shows error details and seeks.
 
 ## [0.2.0] – 2026-11-21 (Builds 4–7)
 
-### Hinzugefügt
-- Nächste Folge automatisch (gleiche `bingeGroup`), mit einem Schalter für Autoplay. „Weiterschauen“ zeigt die
-  nächste Folge.
-- Trakt und Simkl: Geräte-Login, Scrobbling, Abgleich von „Weiterschauen“, Merkliste, Trakt-Listen als Reihen.
-  Die Fortschritt-Quelle ist wählbar.
+### Added
+- Automatic next episode (same `bingeGroup`), with an autoplay toggle. „Weiterschauen“ (continue watching) shows the
+  next episode.
+- Trakt and Simkl: device login, scrobbling, Continue Watching sync, watchlist, Trakt lists as rows.
+  The progress source is selectable.
 
-### Behoben
-- Speichern unter tvOS: Profile liegen jetzt in den UserDefaults (komprimiert), weil tvOS den Ordner
-  „Application Support“ nicht beschreiben lässt.
-- Profile laden auch, wenn Felder fehlen.
+### Fixed
+- Storage on tvOS: profiles are now kept in UserDefaults (compressed), because tvOS does not allow writing to the
+  "Application Support" folder.
+- Profiles load even when fields are missing.
 
 ## [0.1.0] – 2026-11-21 (Builds 1–3)
 
-### Hinzugefügt
-- Probelauf in einem eigenen Spike: AetherEngine auf dem Apple TV mit Dolby Vision und 5.1-Ton geprüft.
-- `PlayerCore`: Stremio-Addon-Client, Modelle, Profile, Import von Collections, Stream-Merkmale, TMDB.
-- App-Gerüst: Startseite mit Bearbeiten-Modus (lange drücken, dann Reihen verschieben, Stil wechseln, von der
-  Startseite nehmen), Detailseite, Quellenliste, Player hinter einer eigenen Wiedergabe-Schnittstelle,
-  Einstellungen, CI mit unsignierter IPA.
-- Fertige Pakete (Streaming-Dienste, Genres), TMDB-Links als Reihe, Suche, „Weiterschauen“ mit Fortsetzen.
-- Handy-Eingabeseite: QR-Code, lokaler Server, Sicherung der Profile.
+### Added
+- Trial run in a separate spike: AetherEngine verified on Apple TV with Dolby Vision and 5.1 audio.
+- `PlayerCore`: Stremio addon client, models, profiles, collection import, stream attributes, TMDB.
+- App skeleton: home screen with edit mode (long press, then move rows, change style, remove from the
+  home screen), detail page, source list, player behind its own playback interface,
+  settings, CI with unsigned IPA.
+- Ready-made packs (streaming services, genres), TMDB links as a row, search, „Weiterschauen“ (continue watching) with resume.
+- Phone input page: QR code, local server, profile backup.

@@ -1,73 +1,73 @@
 # Player
 
-Player ist eine tvOS-App für das Apple TV. Sie spielt Inhalte aus Stremio-kompatiblen Addons ab und
-ist auf hochwertige Wiedergabe ausgelegt: Dolby Vision bis Profil 7 FEL, 4K/HDR und Mehrkanalton.
-Die App ist ein privates Hobbyprojekt. Der Quelltext ist öffentlich, es gibt aber keinen Support und
-keine Veröffentlichung im App Store.
+Player is a tvOS app for Apple TV. It plays content from Stremio-compatible addons and is built for
+high-quality playback: Dolby Vision up to Profile 7 FEL, 4K/HDR and multichannel audio.
+The app is a personal hobby project. The source code is public, but there is no support and no
+App Store release.
 
-Die App liefert selbst keine Inhalte. Sie zeigt nur, was die eingerichteten Addons und Dienste liefern.
+The app does not provide any content itself. It only shows what the configured addons and services provide.
 
-## Funktionen
+## Features
 
-- **Stremio-Addons:** Kataloge, Metadaten, Streams und Untertitel über das Stremio-Addon-Protokoll.
-  AIOStreams wird mit seinen Zusatzfeldern ausgewertet.
-- **TorBox:** gecachte Quellen werden bevorzugt, und die eigenen TorBox-Dateien erscheinen in der
-  Bibliothek.
-- **Bild:** Dolby Vision (Profil 5, 8 und 7 mit Umwandlung nach 8.1; bei FEL-Filmen wird die
-  Erweiterungsschicht eingerechnet), HDR10/HDR10+/HLG, AV1 und HEVC.
-- **Ton:** 5.1 und Atmos als Passthrough; TrueHD und DTS-HD werden zu Mehrkanal-PCM dekodiert. Dolby-Digital-Spuren
-  werden bevorzugt.
-- **Player:** eigene Steuerleiste mit lesbaren Plaketten, ein Ton- und Untertitel-Panel, Untertitel aus Addons
-  (auch über den Datei-Hash) mit Versatz und Zeichensatz-Erkennung, Spulen mit Vorschau über die
-  Touchfläche, „Intro überspringen“, Autoplay der nächsten Folge mit gleichem Release, die Abfrage „Noch da?“ und
-  ein Spur-Gedächtnis je Serie.
-- **Startseite:** Reihen und Stile lassen sich selbst zusammenstellen (Hero, Poster, Querformat, Top 10,
-  Logo- und Collection-Kacheln). Fertige Pakete sowie Listen von TMDB, Trakt und MDBList stehen bereit, und Fusion-
-  bzw. betterer-Startseiten-Kits werden als Reihen übernommen.
-- **Detailseite:** Bewertungen über MDBList, Technik-Plaketten (4K, Dolby Vision, HDR, Atmos, Kanäle),
-  deutsche Texte und Bilder aus TMDB, Besetzung, Personenseite, ähnliche Titel und Trailer.
-- **Sync:** Trakt und Simkl mit Geräte-Login, Scrobbling, Weiterschauen-Abgleich, Merkliste und Listen.
-  Wo Fortschritt und „Gesehen“ geführt werden, ist wählbar: lokal, bei Trakt oder bei Simkl.
-- **Kalender und Bibliothek:** neue Folgen mit Sendetag und -zeit, die Reihe „Heute neu“ und die Merkliste.
-- **Profile:** jedes Profil ist eigenständig, mit eigener Startseite, eigenen Addons, Konten und Einstellungen.
-  Die Oberfläche gibt es auf Deutsch und auf Englisch.
+- **Stremio addons:** catalogs, metadata, streams and subtitles via the Stremio addon protocol.
+  AIOStreams is supported including its extra fields.
+- **TorBox:** cached sources are preferred, and your own TorBox files show up in the
+  library.
+- **Video:** Dolby Vision (Profiles 5, 8 and 7, with conversion to 8.1; for FEL titles the
+  enhancement layer is applied), HDR10/HDR10+/HLG, AV1 and HEVC.
+- **Audio:** 5.1 and Atmos as passthrough; TrueHD and DTS-HD are decoded to multichannel PCM. Dolby Digital tracks
+  are preferred.
+- **Player:** custom control bar with readable badges, an audio and subtitle panel, subtitles from addons
+  (also matched by file hash) with offset and character-encoding detection, scrubbing with preview via the
+  touch surface, „Intro überspringen“ (skip intro), autoplay of the next episode from the same release, the „Noch da?“
+  (still there?) prompt and per-series track memory.
+- **Home screen:** rows and styles can be arranged freely (hero, poster, landscape, top 10,
+  logo and collection tiles). Ready-made packs as well as lists from TMDB, Trakt and MDBList are available, and Fusion
+  or betterer home-screen kits are imported as rows.
+- **Detail page:** ratings via MDBList, tech badges (4K, Dolby Vision, HDR, Atmos, channels),
+  German text and images from TMDB, cast, person page, similar titles and trailers.
+- **Sync:** Trakt and Simkl with device login, scrobbling, Continue Watching sync, watchlist and lists.
+  You can choose where progress and watched state are kept: locally, on Trakt or on Simkl.
+- **Calendar and library:** new episodes with air date and time, the „Heute neu“ (new today) row and the watchlist.
+- **Profiles:** each profile is self-contained, with its own home screen, addons, accounts and settings.
+  The interface is available in German and English.
 
 ## Installation
 
-Die CI baut bei jedem Stand von `main` eine **unsignierte IPA** (`Player.ipa`) und legt sie im
-GitHub-Release **`app-main`** ab. Die IPA muss vor der Installation signiert werden, zum Beispiel mit
-einem Sideloading-Werkzeug wie [atvloadly](https://github.com/bitxeno/atvloadly) und einer eigenen
-Apple-ID. Danach wird sie aufs Apple TV übertragen.
-Mit einer kostenlosen Apple-ID läuft die Signatur nach 7 Tagen ab und muss erneuert werden.
+On every commit to `main`, CI builds an **unsigned IPA** (`Player.ipa`) and publishes it in the
+GitHub release **`app-main`**. The IPA has to be signed before installation, for example with
+a sideloading tool such as [atvloadly](https://github.com/bitxeno/atvloadly) and your own
+Apple ID. It is then transferred to the Apple TV.
+With a free Apple ID the signature expires after 7 days and has to be renewed.
 
-Voraussetzungen: tvOS 18 oder neuer, auf dem Gerät mit tvOS 26 getestet.
+Requirements: tvOS 18 or later; tested on a device running tvOS 26.
 
-In den Einstellungen gibt es den Punkt „App aktualisieren“. Er vergleicht die installierte Build-Nummer mit dem
-Release. Ist im lokalen Netz eine atvloadly-Instanz erreichbar, stößt er bei Bedarf die
-Neuinstallation an.
+The settings include an „App aktualisieren“ (update app) item. It compares the installed build number with the
+release. If an atvloadly instance is reachable on the local network, it triggers a
+reinstall when needed.
 
-## Einrichtung
+## Setup
 
-Alle Zugangsdaten werden **nur in der App** eingegeben, und zwar über die Handy-Eingabeseite:
+All credentials are entered **only in the app**, using the phone input page:
 
-1. Am Apple TV „Einstellungen“ öffnen und die Handy-Eingabe starten. Die App zeigt einen QR-Code.
-2. Den QR-Code mit dem Handy im selben Netz scannen. Es öffnet sich eine Eingabeseite, die das Apple TV selbst
-   bereitstellt.
-3. Dort Addon-Adressen (etwa ein AIOStreams-Manifest) und die API-Schlüssel eintragen: TMDB, MDBList,
-   Trakt/Simkl-Client-ID, TorBox und andere. Über dieselbe Seite lassen sich auch alle Profile sichern und
-   wiederherstellen.
-4. Trakt und Simkl verbindet man anschließend in der App per Geräte-Code.
+1. On the Apple TV, open „Einstellungen“ (settings) and start the phone input. The app shows a QR code.
+2. Scan the QR code with a phone on the same network. This opens an input page served by the Apple TV
+   itself.
+3. Enter addon URLs (such as an AIOStreams manifest) and API keys there: TMDB, MDBList,
+   Trakt/Simkl client ID, TorBox and others. The same page can also back up and
+   restore all profiles.
+4. Then connect Trakt and Simkl in the app using a device code.
 
-Im Repository stehen keine Schlüssel, Token oder Adressen, und es sollen auch keine hinein. Die Protokolle der
-App schwärzen Schlüssel und Token, bevor sie geschrieben werden.
+The repository contains no keys, tokens or addresses, and none should be added. The app's logs
+redact keys and tokens before they are written.
 
-Optional: `tools/logcollector.py` empfängt das Fern-Log der App im lokalen Netz (per Bonjour) und schreibt es in
-eine Datei, etwa zur Fehlersuche.
+Optional: `tools/logcollector.py` receives the app's remote log on the local network (via Bonjour) and writes it to
+a file, for example for debugging.
 
-## Bauen
+## Building
 
-Die App wird mit Xcode gebaut. Das Projekt erzeugt [XcodeGen](https://github.com/yonaskolb/XcodeGen)
-aus `App/project.yml`:
+The app is built with Xcode. The project is generated by [XcodeGen](https://github.com/yonaskolb/XcodeGen)
+from `App/project.yml`:
 
 ```sh
 brew install xcodegen
@@ -77,45 +77,45 @@ xcodebuild -project Player.xcodeproj -scheme Player -configuration Release \
   CODE_SIGNING_ALLOWED=NO build
 ```
 
-Die CI (`.github/workflows/build.yml`, GitHub Actions auf macOS) baut bei Änderungen unter `App/`,
-`Packages/` oder `.github/workflows/`. Ein Lauf baut die IPA, prüft den App-Inhalt und den Dolby-Vision-FEL-Trait
-und veröffentlicht die IPA für `main` als Release `app-main`. Die Build-Nummer der App ist die Laufnummer der CI.
+CI (`.github/workflows/build.yml`, GitHub Actions on macOS) builds on changes under `App/`,
+`Packages/` or `.github/workflows/`. A run builds the IPA, checks the app contents and the Dolby Vision FEL trait,
+and publishes the IPA for `main` as the `app-main` release. The app's build number is the CI run number.
 
-Die plattformunabhängige Logik liegt im Paket `PlayerCore` und lässt sich ohne Mac testen, zum Beispiel unter
-Linux mit Swift 6:
+The platform-independent logic lives in the `PlayerCore` package and can be tested without a Mac, for example on
+Linux with Swift 6:
 
 ```sh
 cd Packages/PlayerCore && swift test
 ```
 
-## Aufbau
+## Structure
 
-| Pfad | Inhalt |
+| Path | Contents |
 | --- | --- |
-| `App/` | tvOS-App (SwiftUI): Ansichten, App-Modell, Player-Anbindung, Bildlader, Fern-Log, Updater |
-| `App/project.yml` | XcodeGen-Projektbeschreibung |
-| `Packages/PlayerCore/` | Kernlogik mit Tests: Addon-Client, Modelle, Profile und Speicher, Sync (Trakt/Simkl), Fortschritt, Quellen-Reihenfolge, Handy-Seite, Update-Prüfung |
-| `Packages/AetherFEL/` | dünne Hülle um die Wiedergabe-Engine [AetherEngine](https://github.com/superuser404notfound/AetherEngine), die den Trait `DolbyVisionFelCurves` einschaltet |
-| `tools/` | Hilfsprogramme, zum Beispiel der Empfänger für das Fern-Log |
-| `docs/` | Design- und Plandokumente |
+| `App/` | tvOS app (SwiftUI): views, app model, player integration, image loader, remote log, updater |
+| `App/project.yml` | XcodeGen project spec |
+| `Packages/PlayerCore/` | core logic with tests: addon client, models, profiles and storage, sync (Trakt/Simkl), progress, source ordering, phone page, update check |
+| `Packages/AetherFEL/` | thin wrapper around the playback engine [AetherEngine](https://github.com/superuser404notfound/AetherEngine) that enables the `DolbyVisionFelCurves` trait |
+| `tools/` | helper tools, for example the remote log receiver |
+| `docs/` | design and planning documents |
 
-## Stand und Zweige
+## Status and branches
 
-- **`main`**: der Stand, der auf dem Gerät getestet ist. Aus ihm entsteht das Release `app-main`.
-- **`integ`**: der Testzweig. Neue Stufen werden hier zusammengeführt und erst nach dem Gerätetest nach `main`
-  übernommen.
+- **`main`**: the state that has been tested on the device. The `app-main` release is built from it.
+- **`integ`**: the testing branch. New stages are merged here and only moved to `main` after device
+  testing.
 
-Zurzeit enthält `main` die Version 0.4.0. Die Stufen ab Welle A (darunter TorBox, Fusion-Kits,
-Dolby Vision FEL, das Paket `Packages/AetherFEL` und das Release `app-main`) liegen noch auf `integ`. Den
-Verlauf beschreibt [CHANGELOG.md](CHANGELOG.md).
+`main` currently contains version 0.4.0. The stages from Wave A onwards (including TorBox, Fusion kits,
+Dolby Vision FEL, the `Packages/AetherFEL` package and the `app-main` release) are still on `integ`. The
+history is described in [CHANGELOG.md](CHANGELOG.md).
 
-## Lizenz
+## License
 
-Der Quelltext der App steht unter der [MIT-Lizenz](LICENSE).
+The app's source code is licensed under the [MIT License](LICENSE).
 
-Die mitgelieferten Fremdkomponenten (AetherEngine, FFmpeg, dav1d, libdovi und weitere) behalten ihre eigenen
-Lizenzen, unter anderem LGPL. Einzelheiten und die vollständigen Lizenztexte stehen in
+The bundled third-party components (AetherEngine, FFmpeg, dav1d, libdovi and others) keep their own
+licenses, including LGPL. Details and the full license texts are in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-Dolby, Dolby Vision und Dolby Atmos sind Marken der Dolby Laboratories. Dieses Projekt steht in keiner Verbindung zu
-Dolby, Apple oder den genannten Diensten.
+Dolby, Dolby Vision and Dolby Atmos are trademarks of Dolby Laboratories. This project is not affiliated with
+Dolby, Apple or any of the services mentioned.
