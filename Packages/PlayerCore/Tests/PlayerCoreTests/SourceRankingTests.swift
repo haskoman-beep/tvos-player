@@ -269,3 +269,12 @@ private let de = SourceRankContext(audioPriority: ["de", "en", "orig"], av1Hardw
     let q = URLComponents(url: http.sent[3].url, resolvingAgainstBaseURL: false)?.queryItems ?? []
     #expect(q.contains(URLQueryItem(name: "torrent_id", value: "7")) && q.contains(URLQueryItem(name: "file_id", value: "0")))
 }
+
+@Test func ratingIconSetFormats() {
+    let dict = RatingIconSet.parse(Data(#"{"IMDb":"https://i.example/imdb.png","Rotten Tomatoes":"https://i.example/rt.png","tmdb":"http://unsicher/x.png"}"#.utf8))
+    #expect(dict == ["imdb": "https://i.example/imdb.png", "tomatoes": "https://i.example/rt.png"])
+    let arr = RatingIconSet.parse(Data(#"[{"name":"letterboxd","url":"https://i.example/lb.svg"},{"source":"mal","icon":"https://i.example/mal.png"},{"name":"x"}]"#.utf8))
+    #expect(arr == ["letterboxd": "https://i.example/lb.svg", "myanimelist": "https://i.example/mal.png"])
+    #expect(RatingIconSet.parse(Data(#"{"icons":{"trakt":"https://i.example/t.png"}}"#.utf8)) == ["trakt": "https://i.example/t.png"])
+    #expect(RatingIconSet.isValidSetURL("https://x.example/set.json") && !RatingIconSet.isValidSetURL("http://x/set.json"))
+}

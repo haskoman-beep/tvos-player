@@ -593,7 +593,7 @@ struct InfoBadges: View {
                 }
                 ForEach(rated) { b in
                     HStack(spacing: 6) {
-                        Text(b.label).foregroundStyle(labelColor(b.source))
+                        RatingIconLabel(source: b.source) { Text(b.label).foregroundStyle(labelColor(b.source)) }
                         Text(b.text)
                     }
                     .modifier(BadgeShape())

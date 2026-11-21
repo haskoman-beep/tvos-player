@@ -35,5 +35,38 @@ struct ExtrasSettingsSections: View {
                  + "Sendedaten von TVmaze.com, Lizenz CC BY-SA 4.0.")
                 .font(.caption).foregroundStyle(.secondary)
         }
+        RatingIconSettings()
+    }
+}
+
+/// Welle C-d: Adresse eines eigenen Bewertungs-Icon-Satzes (JSON, wird nur zur Laufzeit geladen).
+struct RatingIconSettings: View {
+    @EnvironmentObject var model: AppModel
+    @ObservedObject private var store = RatingIconStore.shared
+    @State private var text = ""
+
+    var body: some View {
+        Section("Bewertungs-Icons") {
+            TextField("https://…/icons.json", text: $text)
+                .textInputAutocapitalization(.never).autocorrectionDisabled()
+                .onSubmit { save(text) }
+            if let current = model.profile.sources.ratingIconSetURL {
+                HStack { Text("Aktiv"); Spacer(); Text(store.status ?? "lädt …").foregroundStyle(.secondary) }
+                Text(current).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Button("Eingebaute Plaketten verwenden") { save("") }
+            }
+            Text("JSON wie {\"imdb\": \"https://…/imdb.png\", \"tomatoes\": \"https://…\"} oder [{\"name\", \"url\"}]. "
+                 + "Nur https; fehlt ein Icon, bleibt der Text.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .task(id: model.profile.sources.ratingIconSetURL) { store.ensure(model.profile.sources.ratingIconSetURL) }
+    }
+
+    private func save(_ s: String) {
+        let v = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !v.isEmpty, !RatingIconSet.isValidSetURL(v) { model.lastError = "Icon-Satz: nur https-Adressen"; return }
+        model.update { $0.sources.ratingIconSetURL = v.isEmpty ? nil : v }
+        text = ""
+        RemoteLog.info("bewertung", v.isEmpty ? "Icon-Satz aus" : "Icon-Satz gesetzt")
     }
 }
