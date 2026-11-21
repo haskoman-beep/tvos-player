@@ -23,6 +23,7 @@ struct PlaybackSettings: View {
                 }
             }
             Toggle("Quellen vorladen", isOn: model.binding(\.appearance.prefetchStreams))
+            SourceSettingsRows()
             DiskCacheSettingsRows()
             Picker("Fortschritt & Gesehen", selection: model.binding(\.progressSource)) {
                 Text("Lokal").tag(ProgressSource.local); Text("Trakt").tag(ProgressSource.trakt); Text("Simkl").tag(ProgressSource.simkl)

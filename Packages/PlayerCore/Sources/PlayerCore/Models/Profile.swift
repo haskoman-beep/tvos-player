@@ -33,6 +33,8 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     public var appearance: Appearance
     /// Plattencache für den laufenden Film (Standard aus).
     public var diskCache: DiskCacheSettings
+    /// Quellen-Sortierung und Extras (Welle C-d).
+    public var sources: SourceSettings = SourceSettings()
 
     public init(id: UUID = UUID(), name: String, language: AppLanguage = .de, audioPriority: [String] = ["de", "en", "orig"],
                 subtitleMode: SubtitleMode = .forcedOnly, subtitleLanguage: String = "de", progressSource: ProgressSource = .local,
@@ -52,6 +54,7 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         case id, name, language, audioPriority, subtitleMode, subtitleLanguage, progressSource
         case addons, collections, home, apiKeys, autoplayNext, stillWatchingAfter, syncTokens, appearance
         case diskCache
+        case sources
     }
     /// Nur zum Lesen alter Profile.
     private enum LegacyKeys: String, CodingKey { case subtitlesEnabled }
@@ -82,6 +85,7 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         syncTokens = try c.decodeIfPresent([String: SyncToken].self, forKey: .syncTokens) ?? [:]
         appearance = try c.decodeIfPresent(Appearance.self, forKey: .appearance) ?? d.appearance
         diskCache = try c.decodeIfPresent(DiskCacheSettings.self, forKey: .diskCache) ?? d.diskCache
+        sources = (try? c.decodeIfPresent(SourceSettings.self, forKey: .sources)) ?? nil ?? d.sources
     }
 
     public static func makeDefault(name: String = "Ich") -> Profile {

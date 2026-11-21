@@ -16,6 +16,17 @@ public struct StreamTraits: Equatable, Sendable {
     /// "HEVC", "AV1", "H.264".
     public var videoCodec: String?
     public var tenBit = false
+    /// Debrid-/Usenet-Dienst als Kurzzeichen ("TB", "RD", …): zuerst das Feld `behaviorHints.service`, sonst der Name.
+    public var service: String?
+    /// Laufzeit in Sekunden laut `behaviorHints.duration`.
+    public var durationSeconds: Double?
+    public var seeders: Int?
+
+    /// Mittlere Bitrate in Mbit/s aus Größe und Laufzeit (nur wenn beide bekannt sind).
+    public var bitrateMbps: Double? {
+        guard let b = sizeBytes, b > 0, let d = durationSeconds, d > 0 else { return nil }
+        return Double(b) * 8 / d / 1_000_000
+    }
 
     public static func parse(_ s: StreamItem) -> StreamTraits {
         let text = [s.name, s.title, s.description, s.behaviorHints?.filename].compactMap { $0 }.joined(separator: " ")
@@ -55,8 +66,13 @@ public struct StreamTraits: Equatable, Sendable {
         if containsToken(up, "MULTI") && !t.languages.contains("multi") { t.languages.append("multi") }
 
         t.sizeBytes = s.behaviorHints?.videoSize ?? parseSize(up)
+        t.service = ReleaseName.service(s)
+        t.durationSeconds = s.behaviorHints?.duration
+        t.seeders = s.behaviorHints?.seeders
 
-        if text.contains("⚡") || up.contains("[TB+]") || up.contains("[RD+]") || up.contains("CACHED") { t.cached = true }
+        // Strukturiertes Feld vor der Text-Erkennung (AIOStreams `behaviorHints.cached`).
+        if let c = s.behaviorHints?.cached { t.cached = c }
+        else if text.contains("⚡") || up.contains("[TB+]") || up.contains("[RD+]") || up.contains("CACHED") { t.cached = true }
         else if text.contains("⏳") || text.contains("🎫") || up.contains("DOWNLOAD") || up.contains("UNCACHED") { t.cached = false }
         return t
     }
