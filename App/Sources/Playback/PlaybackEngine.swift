@@ -33,6 +33,9 @@ protocol PlaybackEngine: ObservableObject {
     func stop()
     associatedtype Surface: View
     func surface() -> Surface
+    /// Untertitel-Overlay für die aktive Spur (über der Surface, unter der Steuerleiste).
+    associatedtype SubtitleLayer: View
+    func subtitleLayer(controlsVisible: Bool) -> SubtitleLayer
 }
 
 /// Wünsche für das Laden, unabhängig vom Backend.
@@ -53,6 +56,9 @@ final class AetherBackend: PlaybackEngine {
     init() throws {
         engine = try AetherEngine()
         bag = engine.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        // Kein Untertitel-Versatz in der App: ohne Vorlauf-Reichweite liest die Engine eine Fernquelle
+        // nicht ein zweites Mal für Cues voraus (AetherEngine-Doku „Cue retention“, AE#1015).
+        engine.maximumSubtitleOffsetSeconds = 0
         Self.installEngineLog()
     }
 
@@ -95,7 +101,8 @@ final class AetherBackend: PlaybackEngine {
             AudioTrackInfo(id: $0.id, language: $0.language, name: $0.name, codec: $0.codec,
                            isDefault: $0.isDefault, isForced: $0.isForced, isHearingImpaired: $0.isHearingImpaired,
                            isCommentary: $0.isCommentary, isExternal: $0.isExternal,
-                           isImage: MediaLabels.isImageSubtitleCodec($0.codec))
+                           isImage: MediaLabels.isImageSubtitleCodec($0.codec),
+                           isNativelyRendered: $0.isNativelyRenderedSubtitle)
         }
     }
     var activeSubtitleID: Int? { engine.activeSubtitleTrackIndex }

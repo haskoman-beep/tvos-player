@@ -123,16 +123,19 @@ public struct AudioTrackInfo: Equatable, Sendable {
     public var isDTSX: Bool
     /// libav-Kanallayout, z. B. "stereo", "5.1(side)", "7.1". Nur Ton.
     public var channelLayout: String?
+    /// Untertitel, die das Wiedergabe-Backend selbst zeichnet (nicht über die Cue-Liste). Das eigene Overlay zeichnet sie nicht.
+    public var isNativelyRendered: Bool
 
     public init(id: Int, language: String?, name: String? = nil, channels: Int? = nil, codec: String? = nil,
                 isDefault: Bool = false, isForced: Bool = false, isHearingImpaired: Bool = false, isCommentary: Bool = false,
                 isVisualImpaired: Bool = false, isExternal: Bool = false, isImage: Bool = false,
-                profile: String? = nil, isAtmos: Bool = false, isDTSX: Bool = false, channelLayout: String? = nil) {
+                profile: String? = nil, isAtmos: Bool = false, isDTSX: Bool = false, channelLayout: String? = nil,
+                isNativelyRendered: Bool = false) {
         self.id = id; self.language = language; self.name = name; self.channels = channels; self.codec = codec
         self.isDefault = isDefault; self.isForced = isForced; self.isHearingImpaired = isHearingImpaired
         self.isCommentary = isCommentary; self.isVisualImpaired = isVisualImpaired; self.isExternal = isExternal
         self.isImage = isImage; self.profile = profile; self.isAtmos = isAtmos; self.isDTSX = isDTSX
-        self.channelLayout = channelLayout
+        self.channelLayout = channelLayout; self.isNativelyRendered = isNativelyRendered
     }
 
     /// Über ARC unverändert durchreichbar (kein Umkodieren nötig).

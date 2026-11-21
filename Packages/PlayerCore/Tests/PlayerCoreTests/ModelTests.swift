@@ -14,7 +14,7 @@ import Testing
 @Test func defaultProfileValues() {
     let p = Profile.makeDefault()
     #expect(p.audioPriority == ["de", "en", "orig"])
-    #expect(p.subtitlesEnabled == false)
+    #expect(p.subtitleMode == .forcedOnly)
     #expect(p.progressSource == .local)
     #expect(p.home.rows.count == 1)
 }

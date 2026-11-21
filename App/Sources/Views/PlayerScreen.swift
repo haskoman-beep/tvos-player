@@ -28,7 +28,8 @@ struct PlayerScreen: View {
                                                        checksPlaceholder: !isTrailer,
                                                        fallsBackOnLoadError: isTrailer,
                                                        prefs: LoadPrefs(audioLanguages: model.profile.audioPriority.filter { $0 != "orig" },
-                                                                        subtitleLanguages: model.profile.subtitlesEnabled ? [model.profile.subtitleLanguage] : [],
+                                                                        // Untertitel bewusst ohne Engine-Vorwahl: SubtitlePicker wählt nach dem Laden.
+                                                                        subtitleLanguages: [],
                                                                         headers: headers, nativeRemoteHLS: remoteHLS),
                                                        report: { pos, dur in if !isTrailer { model.recordProgress(request, position: pos, duration: dur) } },
                                                        onEnded: onEnded, onFallback: onFallback,
@@ -90,6 +91,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
         ZStack(alignment: .bottom) {
             Color.black.ignoresSafeArea()
             engine.surface().ignoresSafeArea()
+            engine.subtitleLayer(controlsVisible: showOverlay)
             if engine.isLoading { ProgressView().scaleEffect(2) }
             if let e = loadError ?? engine.errorText {
                 Text("Fehler: \(e)").padding(30).background(.red.opacity(0.8), in: RoundedRectangle(cornerRadius: 16))
@@ -150,15 +152,17 @@ struct PlayerControls<E: PlaybackEngine>: View {
                 RemoteLog.info("player", "Geladen · \(Int(engine.duration))s · \(engine.infoText) · Ton: " +
                     engine.audioTracks.map { "\($0.id):\($0.language ?? "?")/\($0.channels ?? 0)ch" }.joined(separator: " ") +
                     " · UT: \(engine.subtitleTracks.count)")
-                if let best = preferredAudioTrack(engine.audioTracks, priority: profile.audioPriority), best.id != engine.activeAudioID {
+                let best = preferredAudioTrack(engine.audioTracks, priority: profile.audioPriority)
+                if let best, best.id != engine.activeAudioID {
                     engine.selectAudio(best.id)
                 }
-                if profile.subtitlesEnabled,
-                   let sub = engine.subtitleTracks.first(where: { ($0.language ?? "").hasPrefix(profile.subtitleLanguage) }) {
-                    engine.selectSubtitle(sub.id)
-                } else {
-                    engine.selectSubtitle(nil)
-                }
+                let subPick = SubtitlePicker.pick(engine.subtitleTracks, mode: profile.subtitleMode,
+                                                  preferredLanguage: profile.subtitleLanguage,
+                                                  audioLanguage: (best ?? engine.audioTracks.first(where: { $0.id == engine.activeAudioID }))?.language,
+                                                  secondaryLanguages: SubtitlePicker.secondaryLanguages(preferred: profile.subtitleLanguage,
+                                                                                                        audioPriority: profile.audioPriority))
+                engine.selectSubtitle(subPick.track?.id)
+                RemoteLog.info("player", subPick.logText)
                 RemoteLog.info("player", "Spielt · Tonspur \(engine.activeAudioID.map(String.init) ?? "-") · UT \(engine.activeSubtitleID.map(String.init) ?? "aus")")
                 engine.play()
                 poke()
@@ -268,8 +272,10 @@ struct PlayerControls<E: PlaybackEngine>: View {
             do { try await engine.recover() }
             catch {
                 RemoteLog.error("player", "reloadAtCurrentPosition fehlgeschlagen: \(error) → load ab \(Int(pos))s")
+                let sub = engine.activeSubtitleID   // Laden ohne Engine-Vorwahl: Untertitelwahl übernehmen
                 do { try await engine.load(url, start: pos, prefs: prefs) }
                 catch { engine.stop(); onFallback("Wiedergabefehler: \(reason)"); return }
+                engine.selectSubtitle(sub)
             }
             engine.play()
         }
