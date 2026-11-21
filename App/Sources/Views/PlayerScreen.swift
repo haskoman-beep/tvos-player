@@ -18,6 +18,8 @@ struct PlayerScreen: View {
     var remoteHLS = false
     @State private var backend: AetherBackend?
     @State private var initError: String?
+    /// Kennzeichen beim Vorladen: solange ein Player offen ist, keine Vorlade-Abfragen.
+    @State private var prefetchToken = UUID()
 
     var body: some View {
         Group {
@@ -40,8 +42,12 @@ struct PlayerScreen: View {
                                                        }) }
             else { Text(initError ?? "Player wird gestartet …") }
         }
-        .onDisappear { if !isTrailer { model.endPlayback(request) } }
+        .onDisappear {
+            StreamPrefetcher.shared.playerDisappeared(prefetchToken)
+            if !isTrailer { model.endPlayback(request) }
+        }
         .onAppear {
+            StreamPrefetcher.shared.playerAppeared(prefetchToken)
             do { backend = try AetherBackend() } catch { initError = "Player-Start fehlgeschlagen: \(error)"; RemoteLog.error("player", initError ?? "") }
         }
     }

@@ -6,6 +6,8 @@ struct LibraryView: View {
     @EnvironmentObject var model: AppModel
     @State private var continueRow = HomeRow(content: .list(.continueWatching), style: .landscape)
     @State private var watchlistRow = HomeRow(content: .list(.watchlist), style: .poster)
+    /// Fokus-Entprellung wie auf der Startseite (ohne Hero): treibt das Vorladen der Quellen.
+    @State private var focus = HomeFocus()
 
     var body: some View {
         ScrollView(.vertical) {
@@ -20,6 +22,7 @@ struct LibraryView: View {
             }
             .padding(.vertical, 40)
         }
+        .environment(focus)
     }
 }
 

@@ -28,15 +28,18 @@ public struct Appearance: Codable, Sendable, Hashable {
     /// Reihe, deren Titel im Hero laufen; nil = automatisch.
     public var heroRowID: UUID?
     public var expandPosters: Bool
+    /// Quellen vorladen, wenn der Fokus 350 ms auf einer Kachel ruht.
+    public var prefetchStreams: Bool
 
     public init(navigation: NavigationStyle = .sidebar, accent: AccentChoice = .blue, cardSize: CardSize = .medium,
-                heroEnabled: Bool = true, heroRowID: UUID? = nil, expandPosters: Bool = true) {
+                heroEnabled: Bool = true, heroRowID: UUID? = nil, expandPosters: Bool = true, prefetchStreams: Bool = true) {
         self.navigation = navigation; self.accent = accent; self.cardSize = cardSize
         self.heroEnabled = heroEnabled; self.heroRowID = heroRowID; self.expandPosters = expandPosters
+        self.prefetchStreams = prefetchStreams
     }
 
     enum CodingKeys: String, CodingKey {
-        case navigation, accent, cardSize, heroEnabled, heroRowID, expandPosters
+        case navigation, accent, cardSize, heroEnabled, heroRowID, expandPosters, prefetchStreams
     }
 
     /// Fehlende Felder bekommen Standardwerte.
@@ -49,6 +52,7 @@ public struct Appearance: Codable, Sendable, Hashable {
         heroEnabled = try c.decodeIfPresent(Bool.self, forKey: .heroEnabled) ?? d.heroEnabled
         heroRowID = try c.decodeIfPresent(UUID.self, forKey: .heroRowID)
         expandPosters = try c.decodeIfPresent(Bool.self, forKey: .expandPosters) ?? d.expandPosters
+        prefetchStreams = try c.decodeIfPresent(Bool.self, forKey: .prefetchStreams) ?? d.prefetchStreams
     }
 }
 

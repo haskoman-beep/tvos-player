@@ -337,8 +337,14 @@ final class AppModel: ObservableObject {
 
     func streams(type: String, id: String) async -> [(addon: String, stream: StreamItem)] {
         // Kurzer Cache: Detailseite holt vorab (für die Technik-Plaketten), die Quellenliste nutzt das Ergebnis.
-        if let c = streamCache[id], Date().timeIntervalSince(c.at) < 600 { return c.list }   // 10 min
-        if let t = streamTasks[id] { return await t.value }
+        if let c = streamCache[id], Date().timeIntervalSince(c.at) < 600 {   // 10 min
+            RemoteLog.info("streams", "\(id): Cache-Treffer\(StreamPrefetcher.shared.prefetched.contains(id) ? " (vorgeladen)" : "") · \(c.list.count) Quellen")
+            return c.list
+        }
+        if let t = streamTasks[id] {
+            RemoteLog.info("streams", "\(id): wartet auf laufende Abfrage\(StreamPrefetcher.shared.isRunning(id) ? " (Vorladen)" : "")")
+            return await t.value
+        }
         let task = Task { () -> [(addon: String, stream: StreamItem)] in
             let all = await addons.streams(from: profile.addons, type: type, id: id)
             RemoteLog.info("streams", "\(type) \(id): " + all.map { "\($0.addon.manifest.name)=\($0.streams.count)" }.joined(separator: ", "))
@@ -428,5 +434,15 @@ extension AppModel {
         return PlayRequest(type: "series", id: "\(imdb):\(n.season):\(n.episode)", title: "\(m.name) S\(n.season)E\(n.episode)",
                            item: progressItem(m, imdb: imdb, meta: detail), season: n.season, episode: n.episode,
                            episodes: eps, resumeLastSource: true)
+    }
+}
+
+// Task 7: Zustand des Quellen-Caches für das Vorladen (StreamPrefetcher) – liest die privaten Caches oben.
+extension AppModel {
+    enum StreamCacheState { case cached, running, missing }
+
+    func streamCacheState(id: String) -> StreamCacheState {
+        if let c = streamCache[id], Date().timeIntervalSince(c.at) < 600 { return .cached }
+        return streamTasks[id] != nil ? .running : .missing
     }
 }

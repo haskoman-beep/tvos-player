@@ -28,7 +28,7 @@ struct HomeRowView: View {
             items = await model.items(s); loaded = true
         }
         .onChange(of: focusedRoute) { _, r in
-            if let r, let homeFocus { homeFocus.set(r.heroPreview) }
+            if let r, let homeFocus { homeFocus.set(r.heroPreview) { StreamPrefetcher.shared.request(r, model: model) } }
         }
     }
 
