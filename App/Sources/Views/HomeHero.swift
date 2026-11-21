@@ -276,9 +276,32 @@ struct HeroButtons: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .focusSection()
         .defaultFocus($field, .play, priority: .userInitiated)
+        // Die App-Akzentfarbe (RootView .tint) färbte beide Knöpfe blau: wie auf der Detailseite normale tvOS-Knöpfe.
+        .tint(Color?.none)
         .onChange(of: field) { _, f in
             if f != nil { focus.leaveRows() }
         }
+        .task { await claimLaunchFocus() }
+    }
+
+    /// Kaltstart: „Abspielen“ holt sich den ersten Fokus selbst (siehe `LaunchFocus`) und fasst bis zum Ende
+    /// des Startfensters nach, falls die Seitenleiste ihn wieder an sich zieht. Sobald der Fokus in den Reihen
+    /// war oder das Fenster vorbei ist, greift die Knopfzeile nie mehr ein.
+    private func claimLaunchFocus() async {
+        guard !LaunchFocus.done else { return }
+        let deadline = LaunchFocus.deadline ?? ContinuousClock.now + LaunchFocus.window
+        LaunchFocus.deadline = deadline
+        while !Task.isCancelled, !LaunchFocus.done, ContinuousClock.now < deadline {
+            if focus.inRows { LaunchFocus.done = true; return }
+            if field == nil {
+                field = .play
+            } else if !LaunchFocus.logged {
+                LaunchFocus.logged = true
+                RemoteLog.info("fokus", "Start: Abspielen hat den Fokus")
+            }
+            try? await Task.sleep(for: .milliseconds(150))
+        }
+        if ContinuousClock.now >= deadline { LaunchFocus.done = true }
     }
 
     private func play() {
@@ -295,4 +318,15 @@ struct HeroButtons: View {
             navigate(.streams(r))
         }
     }
+}
+
+/// Erster Fokus nach dem Kaltstart. Die Seitenleiste (`.sidebarAdaptable`, tvOS 18) nimmt sich beim ersten
+/// Fokusdurchlauf den Fokus und klappt auf; `.defaultFocus` der Startseite greift dabei nicht.
+/// Gilt einmal pro App-Lauf; das Fenster beginnt mit dem ersten Erscheinen der Knopfzeile und überdauert
+/// einen Neuaufbau der Startseite in dieser Zeit.
+@MainActor enum LaunchFocus {
+    static let window: Duration = .milliseconds(2500)
+    static var deadline: ContinuousClock.Instant?
+    static var done = false
+    static var logged = false
 }

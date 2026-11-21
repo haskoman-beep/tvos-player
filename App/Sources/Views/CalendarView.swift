@@ -41,11 +41,29 @@ struct CalendarView: View {
     }
 }
 
+/// Hinweis statt Kacheln (kein TMDB-Key, keine Folgen). Ist zugleich das Fokusziel der Seite, sonst gäbe es
+/// im Inhalt nichts Fokussierbares und Zurück schlösse die App statt in die Seitenleiste zu führen.
 private struct CalendarHint: View {
     let text: String
     var body: some View {
         Text(text).foregroundStyle(.secondary).frame(height: 120).padding(.leading, 60)
+            .quietFocusTarget()
     }
+}
+
+extension View {
+    /// Fokusziel ohne sichtbare Hervorhebung für Seiten, die nur einen Hinweis zeigen.
+    /// Ohne Fokusziel im Inhalt landet der Fokus nirgends (oder bleibt in der Seitenleiste), und tvOS wertet
+    /// Zurück als „App verlassen“. Mit diesem Ziel führt Zurück wie in den anderen Bereichen in die Seitenleiste.
+    func quietFocusTarget() -> some View {
+        Button {} label: { self.frame(maxWidth: .infinity, alignment: .leading) }
+            .buttonStyle(QuietFocusStyle())
+    }
+}
+
+/// Zeigt nur das Label: kein Fokusrahmen, kein Anheben, keine Akzentfarbe.
+private struct QuietFocusStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { configuration.label }
 }
 
 /// Querformat-Kachel: Standbild der Folge (sonst Serienhintergrund bzw. Poster), Serie und „S2 F5 · Titel“.
