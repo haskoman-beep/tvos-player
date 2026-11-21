@@ -7,10 +7,14 @@ struct CalendarView: View {
     @State private var episodes: [UpcomingEpisode] = []
     @State private var loaded = false
     @FocusState private var tile: String?
+    @FocusState private var headerFocused: Bool
+    /// Kacheln sind in dieser Ansicht schon einmal erschienen (Fokus-Übergabe von der Kopfzeile nur beim ersten Mal).
+    @State private var tilesShown = false
 
     var body: some View {
         let days = Upcoming.days(episodes, today: Date(), calendar: Upcoming.localCalendar)
         let showTiles = model.tmdb != nil && loaded && !days.isEmpty
+        let firstTile = showTiles ? days.first?.items.first?.id : nil
         ScrollView(.vertical) {
             LazyVStack(alignment: .leading, spacing: 50) {
                 // Kopfzeile mit Titel und Lade-/Hinweiszeile = festes Fokusziel der Seite (bleibt in allen Zuständen
@@ -26,6 +30,7 @@ struct CalendarView: View {
                     }
                 }
                 .quietFocusTarget()
+                .focused($headerFocused)
                 if showTiles {
                     ForEach(days, id: \.label) { day in
                         VStack(alignment: .leading, spacing: 18) {
@@ -44,7 +49,19 @@ struct CalendarView: View {
             .padding(.vertical, 40)
         }
         // Mit Kacheln führt der Weg aus der Seitenleiste auf die erste Kachel, nicht auf die Kopfzeile.
-        .defaultFocus($tile, showTiles ? days.first?.items.first?.id : nil, priority: .userInitiated)
+        .defaultFocus($tile, firstTile, priority: .userInitiated)
+        // Fokus lag beim Laden auf der Kopfzeile: beim ersten Erscheinen der Kacheln einmal auf die erste Kachel.
+        // Nur dieses eine Mal, wer später per ▲ auf die Kopfzeile geht, bleibt dort.
+        .onChange(of: showTiles) { _, shown in
+            guard shown, !tilesShown else { return }
+            tilesShown = true
+            guard let firstTile, tile == nil, headerFocused else { return }
+            DispatchQueue.main.async {
+                guard tile == nil, headerFocused else { return }
+                tile = firstTile
+                RemoteLog.info("kalender", "Fokus von der Kopfzeile auf die erste Kachel")
+            }
+        }
         .task(id: model.profile.id) {
             episodes = await model.upcoming()
             loaded = true

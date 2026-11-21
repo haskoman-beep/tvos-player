@@ -278,17 +278,16 @@ struct HeroButtons: View {
         .defaultFocus($field, .play, priority: .userInitiated)
         // Die App-Akzentfarbe (RootView .tint) färbte beide Knöpfe blau: wie auf der Detailseite normale tvOS-Knöpfe.
         .tint(Color?.none)
-        .onChange(of: field) { old, f in
+        .onChange(of: field) { _, f in
             if f != nil { focus.leaveRows() }
-            // Fokus verlässt die Knopfzeile (Nutzer drückt weg): Startfokus nie wieder erzwingen.
-            if old != nil, f == nil, LaunchFocus.deadline != nil { LaunchFocus.finish("Fokus hat die Knopfzeile verlassen") }
         }
         .task { await claimLaunchFocus() }
     }
 
-    /// Kaltstart: „Abspielen“ holt sich den ersten Fokus selbst (siehe `LaunchFocus`), bis er ~300 ms sitzt.
-    /// Danach, sobald der Fokus die Knopfzeile wieder verlässt, in den Reihen war oder das Startfenster vorbei ist,
-    /// greift die Knopfzeile nie mehr ein.
+    /// Kaltstart: „Abspielen“ holt sich den ersten Fokus selbst (siehe `LaunchFocus`). Verliert es ihn, bevor er
+    /// 300 ms gehalten hat, war das die Seitenleiste → zurückholen. Der Anspruch endet nur, wenn „Abspielen“ den Fokus
+    /// 300 ms hält, der Fokus in den Reihen war oder das Startfenster vorbei ist. Ein Wegdrücken danach ist gewollt:
+    /// die Knopfzeile greift nie mehr ein.
     private func claimLaunchFocus() async {
         guard !LaunchFocus.done else { return }
         let deadline = LaunchFocus.deadline ?? ContinuousClock.now + LaunchFocus.window
@@ -296,12 +295,17 @@ struct HeroButtons: View {
         var heldSince: ContinuousClock.Instant?
         while !Task.isCancelled, !LaunchFocus.done, ContinuousClock.now < deadline {
             if focus.inRows { LaunchFocus.finish("Fokus in den Reihen"); return }
-            if field == nil {
+            switch field {
+            case nil:
+                if heldSince != nil { RemoteLog.info("fokus", "Start: Fokus vor dem Halten verloren, zurückholen") }
+                heldSince = nil
                 field = .play
-            } else {
+            case .play:
                 let since = heldSince ?? ContinuousClock.now
                 heldSince = since
                 if ContinuousClock.now - since >= LaunchFocus.hold { LaunchFocus.finish("Abspielen hält den Fokus"); return }
+            case .details:
+                heldSince = nil
             }
             try? await Task.sleep(for: .milliseconds(100))
         }
