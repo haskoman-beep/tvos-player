@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import os
+import PlayerCore
 
 /// Ereignis-Log: os_log + Sendung ans Log-Programm im Heimnetz (per Bonjour `_playerlog._tcp` gefunden).
 /// Ohne Empfänger bleiben die letzten 500 Zeilen im Speicher und gehen raus, sobald einer auftaucht.
@@ -32,7 +33,10 @@ final class RemoteLog {
     static func info(_ cat: String, _ msg: String) { shared.add("info", cat, msg) }
     static func error(_ cat: String, _ msg: String) { shared.add("error", cat, msg) }
 
-    private func add(_ level: String, _ cat: String, _ msg: String) {
+    /// Jede Zeile läuft durch `LogRedact.text`: Adressen nur mit Schema + Host (+ letzte Pfadkomponente),
+    /// Schlüssel in Pfad/Query (Debrid, AIOStreams, Torrentio) landen weder im os_log noch beim Log-Empfänger.
+    private func add(_ level: String, _ cat: String, _ raw: String) {
+        let msg = LogRedact.text(raw)
         if level == "error" { os.error("\(cat, privacy: .public): \(msg, privacy: .public)") }
         else { os.info("\(cat, privacy: .public): \(msg, privacy: .public)") }
         pending.append(["t": iso.string(from: Date()), "s": session, "l": level, "c": cat, "m": msg])

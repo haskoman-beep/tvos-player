@@ -72,7 +72,7 @@ final class AetherBackend: PlaybackEngine {
             case .session, .demux: if !important || l.contains("restarted=false") { return }
             default: return
             }
-            Task { @MainActor in RemoteLog.info("engine.\(cat.rawValue)", line) }
+            Task { @MainActor in RemoteLog.info("engine.\(cat.rawValue)", LogRedact.text(line)) }
         }
     }
 
