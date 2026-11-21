@@ -82,7 +82,7 @@ public enum PhoneCommand: Equatable, Sendable {
 /// Seitenlogik ohne Netzwerk: Token prüfen, Formular lesen, Befehle erzeugen.
 public struct PhoneInputPage: Sendable {
     public let token: String
-    public static let services = ["tmdb", "mdblist", "tvdb", "trakt_id", "trakt_secret", "simkl_id"]
+    public static let services = ["tmdb", "mdblist", "tvdb", "trakt_id", "trakt_secret", "simkl_id", "atvloadly"]
 
     public init(token: String) { self.token = token }
 
@@ -141,6 +141,7 @@ public struct PhoneInputPage: Sendable {
         \(field("tmdb_link", "TMDB- oder Trakt-Liste, Filmreihe, Studio als Reihe", "https://www.themoviedb.org/list/… oder https://trakt.tv/users/…/lists/…"))
         \(field("kit_url", "Fusion-Kit: „Copy JSON URL“ einfügen (braucht meist die Trakt Client ID)", "https://raw.githubusercontent.com/…json"))
         <p><a href="\(FusionKitCatalog.siteURL)">Kit-Katalog öffnen</a></p>
+        <h2>App-Update</h2>\(field("key_atvloadly", "atvloadly-Adresse (Pi)", "http://pi-name.local:5533"))
         <h2>Sicherung</h2><p><a href="/export?t=\(token)">Alle Profile herunterladen (JSON)</a></p>
         \(field("backup_json", "Sicherung wiederherstellen (ersetzt alle Profile!)", "{…}", area: true))
         <button>An den Fernseher senden</button>

@@ -3,12 +3,18 @@ on:
   push:
     paths: ['App/**', 'Packages/**', '.github/workflows/**']
   workflow_dispatch:
+# Standard nur lesen; Schreibrecht bekommt allein der Job „release“.
+permissions:
+  contents: read
 jobs:
   build:
     runs-on: macos-26
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      # Aktionen auf Commit festgelegt (Tag als Kommentar; dieselben Stände wie zuvor @v4).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Xcode
         run: |
           ls /Applications | grep -i xcode
@@ -21,23 +27,73 @@ jobs:
       - name: Build
         run: |
           set -o pipefail
+          # Build-Nummer = Laufnummer; Commit/Branch für „App aktualisieren“ in den Einstellungen.
           cd App && xcodebuild -project Player.xcodeproj -scheme Player -configuration Release \
             -sdk appletvos -destination 'generic/platform=tvOS' -derivedDataPath build \
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" PLAYER_BUILD_COMMIT="$GITHUB_SHA" PLAYER_BUILD_BRANCH="$GITHUB_REF_NAME" \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build > build.log 2>&1 || { grep -E 'error:|BUILD FAILED' build.log | head -80; exit 1; }
           tail -5 build.log
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' -c 'Print :PlayerBuildCommit' -c 'Print :PlayerBuildBranch' build/Build/Products/Release-appletvos/Player.app/Info.plist
       - name: Package IPA
         run: |
           mkdir -p Payload
           cp -R App/build/Build/Products/Release-appletvos/Player.app Payload/
           zip -qry Player.ipa Payload
           ls -la Player.ipa
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure()
         with:
           name: build-log
           path: App/build.log
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: Player-ipa
           path: Player.ipa
           retention-days: 14
+  release:
+    # Öffentliches Release „app-main“ mit Player.ipa (nur main): atvloadly lädt es ohne Anmeldung,
+    # das Artefakt „Player-ipa“ dagegen braucht eine Anmeldung und ist gezippt.
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: release-app-main
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: Player-ipa
+      - name: Release app-main
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ls -la Player.ipa
+          notes="Build $GITHUB_RUN_NUMBER · Commit $GITHUB_SHA · Branch main"
+          title="Player Build $GITHUB_RUN_NUMBER"
+          if old=$(gh release view app-main --json body --jq .body 2>/dev/null); then
+            prev=$(printf '%s\n' "$old" | sed -n 's/.*Build \([0-9][0-9]*\).*/\1/p' | head -1)
+            if [ -n "$prev" ] && [ "$prev" -ge "$GITHUB_RUN_NUMBER" ]; then
+              echo "Release hat schon Build $prev – nichts zu tun"
+              exit 0
+            fi
+            # Erst der Text, dann das Paket: die Build-Nummer im Text hinkt dem Paket nie hinterher.
+            gh release edit app-main --title "$title" --notes "$notes"
+            gh release upload app-main Player.ipa --clobber
+            echo "move_tag=true" >> "$GITHUB_OUTPUT"
+          else
+            gh release create app-main Player.ipa --target "$GITHUB_SHA" --title "$title" --notes "$notes" --latest
+          fi
+      - name: Tag app-main nachziehen
+        if: steps.release.outputs.move_tag == 'true'
+        # Darf scheitern: GITHUB_TOKEN darf Refs nicht immer ändern (z. B. wenn der Lauf den Workflow selbst
+        # geändert hat). Die App liest Build und Commit aus dem Release-Text, nicht aus dem Tag.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh api -X PATCH "repos/$GH_REPO/git/refs/tags/app-main" -f sha="$GITHUB_SHA" -F force=true > /dev/null

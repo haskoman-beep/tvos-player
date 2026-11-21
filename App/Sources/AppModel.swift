@@ -418,7 +418,10 @@ final class AppModel: ObservableObject {
         for c in commands {
             switch c {
             case .addAddon(let u): await installAddon(u)
-            case .setKey(let s, let v): update { $0.apiKeys[s] = v }; cache.removeAll()
+            case .setKey(let s, let v):
+                update { $0.apiKeys[s] = v }
+                // Pi-Adresse für „App aktualisieren“ betrifft keine Katalog-/Quellendaten.
+                if s != AtvloadlyAddress.key { cache.removeAll() }
             case .importNuvioURL(let u): await importNuvio(from: u)
             case .importNuvioJSON(let d): importNuvio(data: d)
             case .addTMDBLink(let l):

@@ -22,10 +22,12 @@ targets:
       properties:
         CFBundleDisplayName: Player
         CFBundleShortVersionString: "0.4.0"
-        CFBundleVersion: "1"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        PlayerBuildCommit: "$(PLAYER_BUILD_COMMIT)"
+        PlayerBuildBranch: "$(PLAYER_BUILD_BRANCH)"
         UILaunchScreen: {}
         UIUserInterfaceStyle: Dark
-        NSBonjourServices: ["_playerlog._tcp"]
+        NSBonjourServices: ["_playerlog._tcp", "_workstation._tcp"]
         NSLocalNetworkUsageDescription: "Für die Handy-Eingabeseite und Addons im Heimnetz (z. B. AIOStreams auf dem Pi)."
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
@@ -34,6 +36,10 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: de.haskoman.player
         SWIFT_VERSION: "5.0"
+        # Build-Nummer/Commit/Branch: lokal 1 bzw. leer; die CI setzt Laufnummer, Commit und Branch (build.yml).
+        CURRENT_PROJECT_VERSION: "1"
+        PLAYER_BUILD_COMMIT: ""
+        PLAYER_BUILD_BRANCH: ""
         CODE_SIGNING_ALLOWED: "NO"
         CODE_SIGNING_REQUIRED: "NO"
         CODE_SIGN_IDENTITY: ""
