@@ -33,12 +33,15 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     public var appearance: Appearance
     /// Plattencache für den laufenden Film (Standard aus).
     public var diskCache: DiskCacheSettings
+    /// Ton: Nachtmodus, Dialog, Lautheit, Versatz, Brücke (Standard alles aus).
+    public var audioShaping: AudioShapingSettings
 
     public init(id: UUID = UUID(), name: String, language: AppLanguage = .de, audioPriority: [String] = ["de", "en", "orig"],
                 subtitleMode: SubtitleMode = .forcedOnly, subtitleLanguage: String = "de", progressSource: ProgressSource = .local,
                 addons: [InstalledAddon] = [], collections: [MediaCollection] = [], home: HomeLayout = HomeLayout(),
                 apiKeys: [String: String] = [:], autoplayNext: Bool = true, stillWatchingAfter: Int = StillWatchingCounter.defaultLimit, syncTokens: [String: SyncToken] = [:],
-                appearance: Appearance = Appearance(), diskCache: DiskCacheSettings = DiskCacheSettings()) {
+                appearance: Appearance = Appearance(), diskCache: DiskCacheSettings = DiskCacheSettings(),
+                audioShaping: AudioShapingSettings = AudioShapingSettings()) {
         self.id = id; self.name = name; self.language = language; self.audioPriority = audioPriority
         self.subtitleMode = subtitleMode; self.subtitleLanguage = subtitleLanguage
         self.progressSource = progressSource; self.addons = addons; self.collections = collections
@@ -46,12 +49,13 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         self.stillWatchingAfter = stillWatchingAfter
         self.syncTokens = syncTokens; self.appearance = appearance
         self.diskCache = diskCache
+        self.audioShaping = audioShaping
     }
 
     enum CodingKeys: String, CodingKey {
         case id, name, language, audioPriority, subtitleMode, subtitleLanguage, progressSource
         case addons, collections, home, apiKeys, autoplayNext, stillWatchingAfter, syncTokens, appearance
-        case diskCache
+        case diskCache, audioShaping
     }
     /// Nur zum Lesen alter Profile.
     private enum LegacyKeys: String, CodingKey { case subtitlesEnabled }
@@ -82,6 +86,7 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         syncTokens = try c.decodeIfPresent([String: SyncToken].self, forKey: .syncTokens) ?? [:]
         appearance = try c.decodeIfPresent(Appearance.self, forKey: .appearance) ?? d.appearance
         diskCache = try c.decodeIfPresent(DiskCacheSettings.self, forKey: .diskCache) ?? d.diskCache
+        audioShaping = try c.decodeIfPresent(AudioShapingSettings.self, forKey: .audioShaping) ?? d.audioShaping
     }
 
     public static func makeDefault(name: String = "Ich") -> Profile {
