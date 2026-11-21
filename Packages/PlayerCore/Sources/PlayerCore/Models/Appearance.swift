@@ -32,18 +32,21 @@ public struct Appearance: Codable, Sendable, Hashable {
     public var prefetchStreams: Bool
     /// Qualitäts-Plaketten: welche Typen, Text oder Logo, auf Postern (Task 8).
     public var badges: BadgeSettings
+    /// Welle E-a: Plaketten auf Postern, Bewertungsauswahl, Bilder vom Metadaten-Addon.
+    public var titles: TitleDisplaySettings
 
     public init(navigation: NavigationStyle = .sidebar, accent: AccentChoice = .blue, cardSize: CardSize = .medium,
                 heroEnabled: Bool = true, heroRowID: UUID? = nil, expandPosters: Bool = true, prefetchStreams: Bool = true,
-                badges: BadgeSettings = BadgeSettings()) {
+                badges: BadgeSettings = BadgeSettings(), titles: TitleDisplaySettings = TitleDisplaySettings()) {
         self.navigation = navigation; self.accent = accent; self.cardSize = cardSize
         self.heroEnabled = heroEnabled; self.heroRowID = heroRowID; self.expandPosters = expandPosters
         self.prefetchStreams = prefetchStreams
         self.badges = badges
+        self.titles = titles
     }
 
     enum CodingKeys: String, CodingKey {
-        case navigation, accent, cardSize, heroEnabled, heroRowID, expandPosters, prefetchStreams, badges
+        case navigation, accent, cardSize, heroEnabled, heroRowID, expandPosters, prefetchStreams, badges, titles
     }
 
     /// Fehlende Felder bekommen Standardwerte.
@@ -58,6 +61,7 @@ public struct Appearance: Codable, Sendable, Hashable {
         expandPosters = try c.decodeIfPresent(Bool.self, forKey: .expandPosters) ?? d.expandPosters
         prefetchStreams = try c.decodeIfPresent(Bool.self, forKey: .prefetchStreams) ?? d.prefetchStreams
         badges = try c.decodeIfPresent(BadgeSettings.self, forKey: .badges) ?? d.badges
+        titles = try c.decodeIfPresent(TitleDisplaySettings.self, forKey: .titles) ?? d.titles
     }
 }
 

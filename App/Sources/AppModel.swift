@@ -337,11 +337,8 @@ final class AppModel: ObservableObject {
     /// TMDB-ID → IMDb-ID (ändert sich nicht; spart die Nachfrage bei jedem Vorladen/Öffnen).
     private var imdbCache: [String: String] = [:]
 
-    func meta(type: String, imdb: String) async -> MetaDetail? {
-        guard var m = try? await addons.meta(Self.cinemeta, type: type, id: imdb) else { return nil }
-        if let l = await localized(imdb: imdb, series: type == "series") { m = m.applying(l) }
-        return m
-    }
+    /// Welle E-a: Cinemeta + Metadaten-Addon (Bilder, Bewertung) + TMDB-Texte, zusammengeführt in AppModel+MetaAddon.
+    func meta(type: String, imdb: String) async -> MetaDetail? { await mergedMeta(type: type, imdb: imdb) }
 
     private var localizedCache: [String: LocalizedMeta] = [:]
     private var seasonCache: [String: [Int: LocalizedEpisode]] = [:]

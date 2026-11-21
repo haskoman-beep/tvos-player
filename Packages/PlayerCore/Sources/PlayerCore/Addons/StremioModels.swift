@@ -141,6 +141,29 @@ public struct MetaDetail: Codable, Sendable, Equatable {
     public var runtime: String?
     public var genres: [String]?
     public var videos: [MetaVideo]?
+    /// Welle E-a: IMDb-Wertung, die das Metadaten-Addon mitliefert ("7.1"; als Zahl gesendet wird sie zum Text).
+    public var imdbRating: String?
+}
+
+extension MetaDetail {
+    /// Wie die automatische Dekodierung; nur `imdbRating` darf Text oder Zahl sein und bricht bei anderem Inhalt nichts.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        type = try c.decode(String.self, forKey: .type)
+        name = try c.decode(String.self, forKey: .name)
+        poster = try c.decodeIfPresent(String.self, forKey: .poster)
+        background = try c.decodeIfPresent(String.self, forKey: .background)
+        logo = try c.decodeIfPresent(String.self, forKey: .logo)
+        description = try c.decodeIfPresent(String.self, forKey: .description)
+        releaseInfo = try c.decodeIfPresent(String.self, forKey: .releaseInfo)
+        runtime = try c.decodeIfPresent(String.self, forKey: .runtime)
+        genres = try c.decodeIfPresent([String].self, forKey: .genres)
+        videos = try c.decodeIfPresent([MetaVideo].self, forKey: .videos)
+        if let s = try? c.decodeIfPresent(String.self, forKey: .imdbRating) { imdbRating = s }
+        else if let d = try? c.decodeIfPresent(Double.self, forKey: .imdbRating) { imdbRating = String(d) }
+        else { imdbRating = nil }
+    }
 }
 
 public struct StreamBehaviorHints: Codable, Sendable, Equatable {
