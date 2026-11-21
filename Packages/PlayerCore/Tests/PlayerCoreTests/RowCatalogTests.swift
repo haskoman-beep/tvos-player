@@ -1,0 +1,133 @@
+import Foundation
+import Testing
+@testable import PlayerCore
+
+private func addon() -> InstalledAddon {
+    InstalledAddon(manifestURL: "https://example.invalid/manifest.json", manifest: AddonManifest(
+        id: "aio", name: "AIOStreams", version: "1", resources: [], types: ["movie", "series"], catalogs: [
+            CatalogDescriptor(type: "series", id: "top", name: "Top 10 Serien"),
+            CatalogDescriptor(type: "movie", id: "pop", name: "Beliebte Filme"),
+            CatalogDescriptor(type: "movie", id: "kom", name: "Komödie"),
+            CatalogDescriptor(type: "anime", id: "ani", name: "Anime neu"),
+            CatalogDescriptor(type: "movie", id: "search", name: "Suche", extra: [CatalogExtra(name: "search", isRequired: true)]),
+        ]))
+}
+
+private func tmdb(_ id: String) -> CatalogSource {
+    CatalogSource(id: id, title: id, kind: .tmdbDiscover(filters: [:]), mediaType: .movie)
+}
+
+private func traktList(_ id: String) -> CatalogSource {
+    CatalogSource(id: id, title: id, kind: .trakt(user: "u", list: "l"), mediaType: .movie)
+}
+
+private func kitRow(_ id: String, _ title: String, tiles: Int, trakt: Bool = false) -> FusionKitRow {
+    let folders = (0..<tiles).map { Folder(id: "\(id).\($0)", title: "K\($0)", sources: [trakt ? traktList("\(id).\($0)") : tmdb("\(id).\($0)")]) }
+    return FusionKitRow(id: id, title: title, style: .collectionTiles, body: .collection(MediaCollection(id: id, title: title, folders: folders)))
+}
+
+private let kitA = FusionKitSource(id: "ka", title: "Genres · dannyrutledge", url: "u1", custom: false)
+private let kitB = FusionKitSource(id: "kb", title: "Genres · mousa.a", url: "u2", custom: false)
+private let kitC = FusionKitSource(id: "kc", title: "Streaming · x", url: "u3", custom: false)
+private let kitD = FusionKitSource(id: "kd", title: "Jahrzehnte · y", url: "u4", custom: false)
+
+private let kitContents: [String: FusionKitContent] = [
+    "ka": FusionKitContent(rows: [kitRow("fusion.ka.g", "Genres", tiles: 56)]),
+    "kb": FusionKitContent(rows: [kitRow("fusion.kb.g", "Genres", tiles: 10)]),
+    "kc": FusionKitContent(rows: [kitRow("fusion.kc.s", "Streaming-Dienste", tiles: 24),
+                                  kitRow("fusion.kc.t", "Trakt-Listen", tiles: 3, trakt: true)]),
+]
+
+private func catalog(layout: HomeLayout = HomeLayout(), traktID: Bool = false, traktLogin: Bool = false) -> RowCatalog {
+    RowCatalog(layout: layout, addons: [addon()],
+               collections: [MediaCollection(id: "c1", title: "Studios", folders: []), ReadyPackages.streamingDE],
+               kitSources: [kitA, kitB, kitC, kitD], kitContents: kitContents,
+               traktID: traktID, traktLogin: traktLogin)
+}
+
+@Test func groupsBySourceInFixedOrder() {
+    let c = catalog()
+    #expect(c.groups.map(\.title) == ["AIOStreams", "Meine Collections", "Fusion-Kit", "Trakt", "Sonderlisten", "Fertige Pakete"])
+    let aio = c.groups[0]
+    #expect(aio.kind == .addon && aio.count == 4)   // Katalog mit Pflicht-Suche fällt weg
+    #expect(aio.sections.map(\.title) == ["Filme", "Serien", "Anime"])
+    #expect(aio.sections[0].entries.map(\.title) == ["Beliebte Filme", "Komödie"])
+    #expect(aio.sections[1].entries[0].subtitle == "Liste · Serie")
+    // Gleiche Quellen-ID wie bisher im Hinzufügen-Blatt.
+    #expect(aio.sections[0].entries[0].action == .content(.list(RowCatalog.addonSource(addon: addon().manifest,
+                                                                                         catalog: CatalogDescriptor(type: "movie", id: "pop", name: "Beliebte Filme")))))
+    #expect(aio.sections[0].entries[0].id == "list:addon:aio:movie:pop")
+    #expect(c.group("special")?.entries.map(\.title) == ["Weiterschauen", "Merkliste", "Heute neu"])
+    // Ein Paket, das schon eigene Collection ist, steht nur unter „Meine Collections“.
+    #expect(c.group("collections")?.entries.map(\.title) == ["Studios", "Streaming-Dienste"])
+    #expect(c.group("packages")?.entries.map(\.id) == ["collection:" + ReadyPackages.genreCollection.id])
+}
+
+@Test func addonWithoutCatalogsHasNoGroup() {
+    var a = addon(); a.manifest.catalogs = []
+    let c = RowCatalog(layout: HomeLayout(), addons: [a])
+    #expect(!c.groups.contains { $0.kind == .addon })
+    #expect(c.group("collections")?.count == 0 && c.group("collections")?.sections.isEmpty == true)
+}
+
+@Test func statusShowsHomePosition() {
+    var l = HomeLayout()
+    l.insert(.list(.continueWatching))
+    l.insert(.collection(id: "c1"))
+    l.insert(.list(RowCatalog.addonSource(addon: addon().manifest, catalog: CatalogDescriptor(type: "series", id: "top", name: "Top 10 Serien"))))
+    l.insert(.collection(id: "fusion.kc.s"))
+    let c = catalog(layout: l)
+    #expect(c.group("special")?.entries[0].status == .onHome(position: 1))
+    #expect(c.group("special")?.entries[1].status == .available)
+    #expect(c.group("collections")?.entries[0].statusText == "auf der Startseite (2)")
+    #expect(c.groups[0].sections[1].entries[0].isOnHome)
+    #expect(c.group("kit")?.entries.first { $0.title == "Streaming-Dienste" }?.status == .onHome(position: 4))
+    // ▶ springt auf den ersten Eintrag ohne Häkchen.
+    #expect(c.group("special")?.firstAvailable?.title == "Merkliste")
+}
+
+@Test func kitGroupedByTopicWithCreator() {
+    let c = catalog(traktID: true, traktLogin: true)
+    let kit = c.group("kit")!
+    #expect(kit.sections.map(\.title) == ["Genres", "Streaming"])
+    #expect(kit.sections[0].entries.map(\.subtitle) == ["56 Kacheln · dannyrutledge", "10 Kacheln · mousa.a"])
+    #expect(kit.count == 4 && kit.hiddenCount == 0 && kit.hint == nil)
+    #expect(kit.pendingSources == 1)   // „Jahrzehnte“ noch nicht geladen
+    #expect(kit.sections[0].entries[0].action == .kit(rowID: "fusion.ka.g", source: kitA))
+}
+
+@Test func kitHidesTraktRowsWithHint() {
+    let kit = catalog(traktID: false).group("kit")!
+    #expect(kit.count == 3 && kit.hiddenCount == 1)
+    #expect(kit.hint == "Trakt Client ID fehlt – 1 Reihe ausgeblendet")
+}
+
+@Test func traktNeedsLogin() {
+    let off = catalog(traktID: true, traktLogin: false).group("trakt")!
+    #expect(off.count == 2)
+    #expect(off.entries.allSatisfy { $0.status == .unavailable("braucht Trakt-Anmeldung") })
+    #expect(off.firstAvailable?.title == CatalogSource.traktRecommendedMovies.title)
+    let on = catalog(traktID: true, traktLogin: true).group("trakt")!
+    #expect(on.entries.allSatisfy { $0.status == .available })
+}
+
+@Test func searchFoldsCaseAndUmlauts() {
+    let c = catalog()
+    #expect(c.search("komodie").map(\.title) == ["Komödie"])
+    #expect(c.search("KOMÖDIE").map(\.title) == ["Komödie"])
+    #expect(RowCatalog.fold("  Straße  ÄÖÜ é ") == "strasse aou e")
+    #expect(c.search("strasse").isEmpty)
+    #expect(c.search("   ").isEmpty)
+    // Mehrere Wörter: alle müssen passen; Quelle zählt mit, Titeltreffer zuerst.
+    #expect(c.search("aiostreams beliebte").map(\.title) == ["Beliebte Filme"])
+    let genres = c.search("genres")
+    #expect(genres.map(\.source) == ["Fusion-Kit", "Fusion-Kit", "Fertige Pakete"])
+    #expect(genres.prefix(2).map(\.subtitle) == ["56 Kacheln · dannyrutledge", "10 Kacheln · mousa.a"])
+    let serie = c.search("serie")
+    #expect(serie.first?.title == "Top 10 Serien")                       // Titeltreffer, Katalogreihenfolge
+    #expect(serie.contains { $0.title == CatalogSource.traktRecommendedShows.title })
+    let film = c.search("film").map(\.title)
+    // „Komödie“ passt nur über den Untertitel „Liste · Film“ und steht deshalb hinter den Titeltreffern.
+    #expect(film.first == "Beliebte Filme")
+    #expect(film.firstIndex(of: "Komödie")! > film.firstIndex(of: CatalogSource.traktRecommendedMovies.title)!)
+}
