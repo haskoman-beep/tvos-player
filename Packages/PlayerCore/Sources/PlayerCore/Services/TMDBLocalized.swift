@@ -190,17 +190,24 @@ extension MetaDetail {
 // MARK: Kalender (Task 5)
 
 extension TMDBClient {
-    /// Kommende Folgen einer Serie: letzte und nächste Folge aus `/tv/{id}`, dazu die Folgen der laufenden Staffel
-    /// (nur abgerufen, wenn die nächste Folge bis `through` (YYYY-MM-DD) erscheint).
+    /// Kommende Folgen einer Serie: letzte und nächste Folge aus `/tv/{id}`, dazu die Folgen der laufenden Staffel.
+    /// Die Staffel wird nur abgerufen, wenn die nächste Folge bis `through` erscheint – oder, ohne nächste Folge,
+    /// wenn die letzte ab `from` lief (Daten YYYY-MM-DD).
     /// `seriesID` ist "tmdb:{id}"; die App ersetzt sie durch die ID aus Weiterschauen/Merkliste.
-    public func nextEpisodes(tmdbID: Int, through: String? = nil) async throws -> [UpcomingEpisode] {
+    public func nextEpisodes(tmdbID: Int, from: String? = nil, through: String? = nil) async throws -> [UpcomingEpisode] {
         let base = Self.parseNextEpisodes(try await http.data(from: url("/tv/\(tmdbID)")))
-        guard let next = base.first(where: { $0.isNext }) else { return base.map(\.episode) }
-        if let through, next.episode.airDate > through { return base.map(\.episode) }
-        let data = try await http.data(from: url("/tv/\(tmdbID)/season/\(next.episode.season)"))
-        let season = Self.parseSeasonEpisodes(data, like: next.episode)
+        let episodes = base.map(\.episode)
+        let anchor: UpcomingEpisode?
+        if let next = base.first(where: { $0.isNext })?.episode {
+            anchor = next.airDate <= (through ?? next.airDate) ? next : nil
+        } else if let last = base.first(where: { !$0.isNext })?.episode {
+            anchor = from.map { last.airDate >= $0 } == true ? last : nil
+        } else { anchor = nil }
+        guard let anchor else { return episodes }
+        let data = try await http.data(from: url("/tv/\(tmdbID)/season/\(anchor.season)"))
+        let season = Self.parseSeasonEpisodes(data, like: anchor)
         var seen = Set<String>(), out: [UpcomingEpisode] = []
-        for e in base.map(\.episode) + season where seen.insert(e.id).inserted { out.append(e) }
+        for e in episodes + season where seen.insert(e.id).inserted { out.append(e) }
         return out
     }
 

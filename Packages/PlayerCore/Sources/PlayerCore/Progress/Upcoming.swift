@@ -35,6 +35,14 @@ public enum Upcoming {
     public static let daysAhead = 14
     static let weekdays = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"]
 
+    /// Gregorianischer Kalender in der Gerätezeitzone (TMDB-Daten sind gregorianisch; Gerätekalender kann
+    /// buddhistisch/japanisch sein).
+    public static var localCalendar: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = .current
+        return c
+    }
+
     /// Tag relativ zu `today` (0 = heute), nil bei unlesbarem Datum.
     public static func dayOffset(_ airDate: String, today: Date, calendar: Calendar) -> Int? {
         let parts = airDate.prefix(10).split(separator: "-").compactMap { Int($0) }
@@ -90,8 +98,13 @@ public enum Upcoming {
     }
 
     /// Letzter Tag des Kalenders als YYYY-MM-DD (Abrufe weiterer Folgen nur bis dahin).
-    public static func lastDay(today: Date, calendar: Calendar) -> String {
-        let d = calendar.date(byAdding: .day, value: daysAhead, to: calendar.startOfDay(for: today)) ?? today
+    public static func lastDay(today: Date, calendar: Calendar) -> String { dayString(daysAhead, today: today, calendar: calendar) }
+
+    /// Erster Tag des Kalenders (gestern) als YYYY-MM-DD.
+    public static func firstDay(today: Date, calendar: Calendar) -> String { dayString(-1, today: today, calendar: calendar) }
+
+    static func dayString(_ offset: Int, today: Date, calendar: Calendar) -> String {
+        let d = calendar.date(byAdding: .day, value: offset, to: calendar.startOfDay(for: today)) ?? today
         let c = calendar.dateComponents([.year, .month, .day], from: d)
         return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
     }

@@ -32,6 +32,13 @@ struct HomeRowView: View {
         }
     }
 
+    private var emptyText: String {
+        if row.content == .list(.continueWatching) { return "Noch nichts angefangen." }
+        if model.tmdb == nil { return "TMDB-Key fehlt (Einstellungen)" }
+        if row.content == .list(.upcoming) { return "Heute keine neuen Folgen." }
+        return "Keine Einträge"
+    }
+
     private var title: String {
         switch row.content {
         case .list(let s): s.title
@@ -50,7 +57,7 @@ struct HomeRowView: View {
             }
         case .list:
             if loaded && items.isEmpty {
-                Text(row.content == .list(.continueWatching) ? "Noch nichts angefangen." : row.content == .list(.upcoming) && model.tmdb != nil ? "Heute keine neuen Folgen." : model.tmdb == nil ? "TMDB-Key fehlt (Einstellungen)" : "Keine Einträge")
+                Text(emptyText)
                     .foregroundStyle(.secondary).padding(.leading, 60).frame(height: 120)
             } else {
                 Strip {
