@@ -26,6 +26,10 @@ public struct TrackRowLabel: Equatable, Sendable {
     public var name: String?
     /// Plaketten (Erzwungen, SDH, Kommentar, Hörfilm, Standard, Extern).
     public var badges: [String]
+
+    public init(title: String, detail: String? = nil, name: String? = nil, badges: [String] = []) {
+        self.title = title; self.detail = detail; self.name = name; self.badges = badges
+    }
 }
 
 /// Technik-Rohwerte der laufenden Wiedergabe für den Info-Reiter (vom Backend befüllt).
