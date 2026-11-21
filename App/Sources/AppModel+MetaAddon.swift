@@ -52,6 +52,22 @@ extension AppModel {
         return nil
     }
 
+    /// Metadaten-Addon, das eine TMDB-Kachel bedienen kann (gleiche Bedingung wie `tileTarget`): die `tmdb:`-ID
+    /// direkt, sonst ein Addon für IMDb-IDs. nil bei Schalter aus oder ohne passendes Addon.
+    func tileAddonURL(for m: MetaPreview) -> String? {
+        guard profile.appearance.titles.addonImages, m.id.hasPrefix("tmdb:") else { return nil }
+        let a = MetaImageChoice.metadataAddon(in: profile.addons, type: m.type, id: m.id)
+            ?? MetaImageChoice.metadataAddon(in: profile.addons, type: m.type, id: cachedIMDbID(for: m) ?? "tt")
+        return a?.manifestURL
+    }
+
+    /// Runde 2 (Minor 2): Addon-Antwort steht noch aus (Wartezeit abgelaufen) – Ergebnis dann nicht dauerhaft merken.
+    func addonMetaPending(type: String, imdb: String) -> Bool {
+        guard profile.appearance.titles.addonImages,
+              let a = MetaImageChoice.metadataAddon(in: profile.addons, type: type, id: imdb) else { return false }
+        return AddonMetaCache.fresh(AddonMetaCache.key(a, type: type, id: imdb)) == nil
+    }
+
     /// Synchroner Cache-Treffer (kein Flackern beim Neuzeichnen); nil = TMDB-Poster zeigen.
     func cachedTilePoster(for m: MetaPreview) -> String? {
         guard let t = tileTarget(m, imdb: cachedIMDbID(for: m)) else { return nil }
@@ -61,9 +77,11 @@ extension AppModel {
     /// Addon-Poster einer sichtbaren Kachel laden (höchstens 4 Abfragen zugleich). Bricht die Kachel ab
     /// (verschwindet), wird ihre Wartestelle bzw. Abfrage abgemeldet und nichts gemerkt.
     func loadTilePoster(for m: MetaPreview) async -> String? {
-        guard profile.appearance.titles.addonImages, m.id.hasPrefix("tmdb:"), hasMetadataAddon else { return nil }
+        guard tileAddonURL(for: m) != nil else { return nil }
         if let p = cachedTilePoster(for: m) { return p }
-        guard await AddonMetaCache.tiles.acquire() else { return nil }
+        // Runde 2 (Minor 1): Ruhezeit vor dem Platz, schnelles Durchscrollen bricht hier ohne Abfrage ab.
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        guard !Task.isCancelled, await AddonMetaCache.tiles.acquire() else { return nil }
         let p = await tilePosterWithSlot(m)
         await AddonMetaCache.tiles.release()
         return p
@@ -102,7 +120,7 @@ extension AppModel {
 /// dazu laufende Abfragen je Schlüssel (geteilt; eine Kachel-Abfrage endet, wenn keine Kachel mehr wartet).
 @MainActor enum AddonMetaCache {
     struct Entry { var at: Date; var meta: MetaDetail? }
-    struct Flight { var id = UUID(); var task: Task<MetaDetail?, Never>; var tiles = 0; var pinned = false }
+    struct Flight { var id = UUID(); var task: Task<MetaDetail?, Never>; var waiters: FlightWaiters }
     static var entries: [String: Entry] = [:]
     static var inFlight: [String: Flight] = [:]
     /// Höchstens 4 Abfragen sichtbarer Kacheln gleichzeitig.
@@ -119,7 +137,7 @@ extension AppModel {
     /// Laufende Abfrage übernehmen oder starten. `tile: false` (Detailseite, Hero, Folgenliste) hält sie bis zum Ende.
     static func join(_ key: String, tile: Bool, start: @escaping @Sendable () async throws -> MetaDetail) -> Flight {
         if var f = inFlight[key] {
-            if tile { f.tiles += 1 } else { f.pinned = true }
+            f.waiters.join(tile: tile)
             inFlight[key] = f
             return f
         }
@@ -133,7 +151,7 @@ extension AppModel {
             case .cancelled: return nil
             }
         }
-        let f = Flight(id: id, task: task, tiles: tile ? 1 : 0, pinned: !tile)
+        let f = Flight(id: id, task: task, waiters: FlightWaiters(tile: tile))
         inFlight[key] = f
         return f
     }
@@ -141,8 +159,7 @@ extension AppModel {
     /// Eine Kachel wartet nicht mehr; ohne weitere Wartende wird die Abfrage abgebrochen (nicht gemerkt).
     static func leave(_ key: String, flight: UUID) {
         guard var f = inFlight[key], f.id == flight else { return }
-        f.tiles -= 1
-        if f.tiles <= 0 && !f.pinned { f.task.cancel(); inFlight[key] = nil } else { inFlight[key] = f }
+        if f.waiters.leaveTile() { f.task.cancel(); inFlight[key] = nil } else { inFlight[key] = f }
     }
 
     /// Profilwechsel: alles vergessen, laufende Abfragen abbrechen.

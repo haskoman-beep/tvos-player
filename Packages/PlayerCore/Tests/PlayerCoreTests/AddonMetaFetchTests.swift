@@ -73,5 +73,23 @@ private actor Gauge {
     try? await Task.sleep(nanoseconds: 20_000_000)
     caller.cancel()
     #expect(await caller.value == nil)
+    while await left.done + left.now == 0 { await Task.yield() }
+    #expect(await left.now == 1)   // onCancel kam an
     long.cancel()
+}
+
+@Test func flightWaitersCancelOnlyWithoutWaiters() {
+    var a = FlightWaiters(tile: true)
+    a.join(tile: true)
+    let a1 = a.leaveTile(), a2 = a.leaveTile()
+    #expect(!a1)
+    #expect(a2)
+    var b = FlightWaiters(tile: true)
+    b.join(tile: false)
+    let b1 = b.leaveTile()
+    #expect(!b1)          // Detailseite hält die Abfrage
+    var c = FlightWaiters(tile: false)
+    let c1 = c.leaveTile()
+    #expect(!c1)
+    #expect(c.tiles == 0 && c.pinned)
 }

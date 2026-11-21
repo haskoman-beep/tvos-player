@@ -243,7 +243,8 @@ struct HeroInfo: View {
                             certification: loc?.certification, overview: meta?.description ?? loc?.overview,
                             ratings: await r, imdbRating: meta?.imdbRating)
         guard !Task.isCancelled else { return }
-        HeroDetailsCache.all[id] = d
+        // Welle E-a Runde 2: Addon-Antwort noch offen (3-s-Grenze) → nicht merken, nächster Besuch holt sie aus dem Cache.
+        if !model.addonMetaPending(type: series ? "series" : "movie", imdb: imdb) { HeroDetailsCache.all[id] = d }
         details = d; detailsID = id
     }
 

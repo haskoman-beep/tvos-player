@@ -44,3 +44,22 @@ public actor AsyncLimiter {
         waiters.remove(at: i).c.resume(returning: false)
     }
 }
+
+/// Welle E-a Runde 2: Wartende einer geteilten Abfrage. Kacheln zählen einzeln; Detailseite, Hero und Folgenliste
+/// halten die Abfrage bis zum Ende fest (`pinned`), damit sie den Cache füllt.
+public struct FlightWaiters: Sendable, Equatable {
+    public private(set) var tiles = 0
+    public private(set) var pinned = false
+
+    public init(tile: Bool) { join(tile: tile) }
+
+    public mutating func join(tile: Bool) {
+        if tile { tiles += 1 } else { pinned = true }
+    }
+
+    /// Eine Kachel wartet nicht mehr; true = niemand mehr da, Abfrage abbrechen.
+    public mutating func leaveTile() -> Bool {
+        tiles = max(0, tiles - 1)
+        return tiles == 0 && !pinned
+    }
+}

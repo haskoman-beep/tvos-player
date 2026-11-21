@@ -12,11 +12,13 @@ struct TilePosterImage: View {
     var body: some View {
         let addonOn = model.profile.appearance.titles.addonImages
         RemoteImage(url: (addonOn ? loaded ?? model.cachedTilePoster(for: item) : nil) ?? item.poster)
-            .task(id: TaskKey(id: item.id, on: addonOn, addons: model.profile.addons.count)) {
+            .task(id: TaskKey(id: item.id, on: addonOn, profile: model.profile.id, addon: model.tileAddonURL(for: item))) {
                 guard addonOn else { loaded = nil; return }
-                if let p = await model.loadTilePoster(for: item), !Task.isCancelled { loaded = p }
+                // Runde 2: jedes nicht abgebrochene Ergebnis übernehmen, auch nil (Addon weg → TMDB-Poster).
+                let p = await model.loadTilePoster(for: item)
+                if !Task.isCancelled { loaded = p }
             }
     }
 
-    private struct TaskKey: Hashable { var id: String; var on: Bool; var addons: Int }
+    private struct TaskKey: Hashable { var id: String; var on: Bool; var profile: UUID; var addon: String? }
 }
