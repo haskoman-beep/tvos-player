@@ -2,8 +2,11 @@ import Foundation
 
 /// Einstellungen rund um Quellen und Extras (Welle C-d). Alle Felder mit Standardwert, alte Profile laden.
 public struct SourceSettings: Codable, Sendable, Equatable {
-    /// Quellenliste nach Sprache, Cache-Status, AV1-Dekoder und TorBox-Vorrang ordnen (Standard an).
-    public var smartOrder: Bool
+    /// Welle E-b: Anzeige der Quellenliste „Wie Addon“ (Standard) oder „Smart (App)“ (Ordnung aus Welle C-d).
+    /// Das frühere Feld `smartOrder` wird bewusst nicht übernommen: der Standard wechselt auf Wunsch des Nutzers.
+    public var order: StreamOrderMode
+    /// Welle E-b: eigene Plaketten in der Quellenliste (Standard kompakt: nur „sofort“ und Größe).
+    public var appBadges: StreamListBadgeMode
     /// Standbilder ungesehener Folgen weichzeichnen (Spoilerschutz, Standard aus).
     public var blurUnwatchedStills: Bool
     /// Adresse eines Bewertungs-Icon-Satzes (JSON `[{name, url}]`); nil = eingebaute Plaketten.
@@ -11,17 +14,20 @@ public struct SourceSettings: Codable, Sendable, Equatable {
     /// Kalender: Sendetag und -zeit aus TVmaze statt nur dem TMDB-Datum (Standard an).
     public var tvmazeAirtimes: Bool
 
-    public init(smartOrder: Bool = true, blurUnwatchedStills: Bool = false, ratingIconSetURL: String? = nil, tvmazeAirtimes: Bool = true) {
-        self.smartOrder = smartOrder; self.blurUnwatchedStills = blurUnwatchedStills; self.ratingIconSetURL = ratingIconSetURL
+    public init(order: StreamOrderMode = .addon, appBadges: StreamListBadgeMode = .compact, blurUnwatchedStills: Bool = false,
+                ratingIconSetURL: String? = nil, tvmazeAirtimes: Bool = true) {
+        self.order = order; self.appBadges = appBadges
+        self.blurUnwatchedStills = blurUnwatchedStills; self.ratingIconSetURL = ratingIconSetURL
         self.tvmazeAirtimes = tvmazeAirtimes
     }
 
-    enum CodingKeys: String, CodingKey { case smartOrder, blurUnwatchedStills, ratingIconSetURL, tvmazeAirtimes }
+    enum CodingKeys: String, CodingKey { case order, appBadges, blurUnwatchedStills, ratingIconSetURL, tvmazeAirtimes }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = SourceSettings()
-        smartOrder = (try? c.decodeIfPresent(Bool.self, forKey: .smartOrder)) ?? nil ?? d.smartOrder
+        order = (try? c.decodeIfPresent(StreamOrderMode.self, forKey: .order)) ?? nil ?? d.order
+        appBadges = (try? c.decodeIfPresent(StreamListBadgeMode.self, forKey: .appBadges)) ?? nil ?? d.appBadges
         blurUnwatchedStills = (try? c.decodeIfPresent(Bool.self, forKey: .blurUnwatchedStills)) ?? nil ?? d.blurUnwatchedStills
         ratingIconSetURL = (try? c.decodeIfPresent(String.self, forKey: .ratingIconSetURL)) ?? nil
         tvmazeAirtimes = (try? c.decodeIfPresent(Bool.self, forKey: .tvmazeAirtimes)) ?? nil ?? d.tvmazeAirtimes

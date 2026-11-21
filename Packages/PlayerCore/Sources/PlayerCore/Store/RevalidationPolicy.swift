@@ -152,9 +152,12 @@ extension StreamListMerge {
                                  from fresh: [(addon: String, stream: StreamItem)]) -> [(addon: String, stream: StreamItem)] {
         var seen = Set(existing.map { sourceKey(addon: $0.addon, stream: $0.stream) })
         var ids = Set(existing.map(\.stream.id))
+        let shown = Set(existing.flatMap { e in StreamDedupe.keys(e.stream).map { "\(e.addon)\u{1}\($0)" } })
         return fresh.filter { e in
             // Auch keine zweite Zeile mit gleicher `id` (die Liste nutzt sie als ForEach-Identität).
             seen.insert(sourceKey(addon: e.addon, stream: e.stream)).inserted && ids.insert(e.stream.id).inserted
+                // Welle E-b: auch keine Dublette einer gezeigten Zeile (gleiche Datei unter neuer Abspiel-Adresse).
+                && StreamDedupe.keys(e.stream).allSatisfy { !shown.contains("\(e.addon)\u{1}\($0)") }
         }
     }
 }

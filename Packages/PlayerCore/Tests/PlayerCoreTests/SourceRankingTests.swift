@@ -140,8 +140,8 @@ private let de = SourceRankContext(audioPriority: ["de", "en", "orig"], av1Hardw
     let old = #"{"id":"6F9619FF-8B86-D011-B42D-00CF4FC964FF","name":"Alt"}"#
     let p = try JSONDecoder().decode(Profile.self, from: Data(old.utf8))
     #expect(p.sources == SourceSettings())
-    #expect(p.sources.smartOrder)
-    var q = p; q.sources.smartOrder = false; q.sources.ratingIconSetURL = "https://i/set.json"
+    #expect(p.sources.order == .addon)   // Welle E-b: Standard „Wie Addon“
+    var q = p; q.sources.order = .smart; q.sources.ratingIconSetURL = "https://i/set.json"
     let back = try JSONDecoder().decode(Profile.self, from: JSONEncoder().encode(q))
     #expect(back.sources == q.sources)
 }

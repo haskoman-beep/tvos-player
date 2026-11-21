@@ -6,12 +6,8 @@ struct SourceSettingsRows: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
-        Toggle("Quellen klug ordnen", isOn: model.binding(\.sources.smartOrder))
-        if model.profile.sources.smartOrder {
-            Text("Gecachte Quellen und Quellen in der ersten Tonsprache zuerst; AV1 ab 1440p ohne Hardware-Dekoder und AV1 "
-                 + "bei Dolby Vision nach hinten; bei mehreren Diensten TorBox zuerst. Sonst bleibt die Reihenfolge der Addons.")
-                .font(.caption).foregroundStyle(.secondary)
-        }
+        StreamOrderSettingsRow()        // Welle E-b (eigene Datei StreamListSettingsRows.swift)
+        StreamListBadgeSettingsRow()    // Welle E-b
     }
 }
 

@@ -177,11 +177,31 @@ public struct StreamItem: Codable, Sendable, Equatable, Identifiable, Hashable {
     public var infoHash: String?
     public var externalUrl: String?
     public var behaviorHints: StreamBehaviorHints?
+    /// Welle E-b: Datei im Torrent (mit `infoHash` Teil des Dubletten-Schlüssels); nicht Teil von `id`.
+    public var fileIdx: Int?
 
     public init(name: String? = nil, title: String? = nil, description: String? = nil, url: String? = nil,
-                infoHash: String? = nil, externalUrl: String? = nil, behaviorHints: StreamBehaviorHints? = nil) {
+                infoHash: String? = nil, externalUrl: String? = nil, behaviorHints: StreamBehaviorHints? = nil,
+                fileIdx: Int? = nil) {
         self.name = name; self.title = title; self.description = description; self.url = url
         self.infoHash = infoHash; self.externalUrl = externalUrl; self.behaviorHints = behaviorHints
+        self.fileIdx = fileIdx
+    }
+
+    enum CodingKeys: String, CodingKey { case name, title, description, url, infoHash, externalUrl, behaviorHints, fileIdx }
+
+    /// Wie die synthetisierte Form; nur `fileIdx` nachsichtig (Zahl oder Text, sonst nil statt Fehler der ganzen Liste).
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decodeIfPresent(String.self, forKey: .name)
+        title = try c.decodeIfPresent(String.self, forKey: .title)
+        description = try c.decodeIfPresent(String.self, forKey: .description)
+        url = try c.decodeIfPresent(String.self, forKey: .url)
+        infoHash = try c.decodeIfPresent(String.self, forKey: .infoHash)
+        externalUrl = try c.decodeIfPresent(String.self, forKey: .externalUrl)
+        behaviorHints = try c.decodeIfPresent(StreamBehaviorHints.self, forKey: .behaviorHints)
+        fileIdx = ((try? c.decodeIfPresent(Int.self, forKey: .fileIdx)) ?? nil)
+            ?? ((try? c.decodeIfPresent(String.self, forKey: .fileIdx)) ?? nil).flatMap { Int($0.trimmingCharacters(in: .whitespaces)) }
     }
 
     public var id: String { (url ?? infoHash ?? "") + "|" + (name ?? "") + "|" + label }
