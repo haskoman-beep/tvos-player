@@ -93,16 +93,49 @@ public func playableStreams(_ s: [StreamItem]) -> [StreamItem] {
     }
 }
 
-/// Eine Tonspur, wie die Player-Engine sie meldet.
+/// Eine Ton- oder Untertitelspur, wie die Player-Engine sie meldet (beide Listen nutzen dieses Modell).
 public struct AudioTrackInfo: Equatable, Sendable {
     public var id: Int
     public var language: String?
     public var name: String?
     public var channels: Int?
-    /// libavcodec-Name, z. B. "eac3", "ac3", "dts", "truehd".
+    /// libavcodec-Name, z. B. "eac3", "ac3", "dts", "truehd"; bei Untertiteln "subrip", "ass", "pgssub".
     public var codec: String?
-    public init(id: Int, language: String?, name: String? = nil, channels: Int? = nil, codec: String? = nil) {
+    /// Container-Flag "Standard" (Ton und Untertitel).
+    public var isDefault: Bool
+    /// Erzwungene Untertitel (nur fremdsprachige Stellen/Schilder).
+    public var isForced: Bool
+    /// SDH / Untertitel für Hörgeschädigte.
+    public var isHearingImpaired: Bool
+    /// Kommentarspur (Ton und Untertitel); nie automatisch wählen.
+    public var isCommentary: Bool
+    /// Hörfilm / Audiodeskription.
+    public var isVisualImpaired: Bool
+    /// Vom Host nachgeladene externe Untertitel (z. B. Addon), synthetische ID.
+    public var isExternal: Bool
+    /// Bild-Untertitel (PGS/VobSub/DVB): als Bild zeichnen, nicht als Text.
+    public var isImage: Bool
+    /// libavcodec-Profil, z. B. "DTS-HD MA", "Dolby TrueHD + Dolby Atmos", "LC". Nur Ton.
+    public var profile: String?
+    /// Dolby Atmos (E-AC-3 JOC oder bestätigtes TrueHD-Atmos). Nur Ton.
+    public var isAtmos: Bool
+    /// DTS:X. Nur Ton.
+    public var isDTSX: Bool
+    /// libav-Kanallayout, z. B. "stereo", "5.1(side)", "7.1". Nur Ton.
+    public var channelLayout: String?
+    /// Untertitel, die das Wiedergabe-Backend selbst zeichnet (nicht über die Cue-Liste). Das eigene Overlay zeichnet sie nicht.
+    public var isNativelyRendered: Bool
+
+    public init(id: Int, language: String?, name: String? = nil, channels: Int? = nil, codec: String? = nil,
+                isDefault: Bool = false, isForced: Bool = false, isHearingImpaired: Bool = false, isCommentary: Bool = false,
+                isVisualImpaired: Bool = false, isExternal: Bool = false, isImage: Bool = false,
+                profile: String? = nil, isAtmos: Bool = false, isDTSX: Bool = false, channelLayout: String? = nil,
+                isNativelyRendered: Bool = false) {
         self.id = id; self.language = language; self.name = name; self.channels = channels; self.codec = codec
+        self.isDefault = isDefault; self.isForced = isForced; self.isHearingImpaired = isHearingImpaired
+        self.isCommentary = isCommentary; self.isVisualImpaired = isVisualImpaired; self.isExternal = isExternal
+        self.isImage = isImage; self.profile = profile; self.isAtmos = isAtmos; self.isDTSX = isDTSX
+        self.channelLayout = channelLayout; self.isNativelyRendered = isNativelyRendered
     }
 
     /// Über ARC unverändert durchreichbar (kein Umkodieren nötig).
@@ -117,15 +150,10 @@ func audioScore(_ t: AudioTrackInfo) -> Int {
 
 /// Sprache nach Vorrang ("de", "en", "orig" = erste Spur); bei gleicher Sprache die beste nach `audioScore`.
 public func preferredAudioTrack(_ tracks: [AudioTrackInfo], priority: [String]) -> AudioTrackInfo? {
-    func norm(_ l: String?) -> String? {
-        guard let l = l?.lowercased() else { return nil }
-        switch l { case "de", "deu", "ger", "german", "deutsch": return "de"
-        case "en", "eng", "english": return "en"
-        default: return String(l.prefix(2)) }
-    }
     for p in priority {
         if p == "orig" { return tracks.first }
-        let m = tracks.filter { norm($0.language) == p }
+        let want = MediaLabels.languageCode(p) ?? p
+        let m = tracks.filter { MediaLabels.languageCode($0.language) == want }
         if let best = m.max(by: { audioScore($0) < audioScore($1) }) { return best }
     }
     return tracks.first

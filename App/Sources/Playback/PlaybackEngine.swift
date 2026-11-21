@@ -29,10 +29,31 @@ protocol PlaybackEngine: ObservableObject {
     var stateText: String { get }
     func seek(_ seconds: Double) async
     func selectAudio(_ id: Int)
+    /// Wahl durch den Nutzer (Spur-Panel). Ab dann ändert keine Automatik mehr die Untertitel („Aus bleibt Aus“).
     func selectSubtitle(_ id: Int?)
+    /// Automatische Wahl (Start-Auswahl, nachgeladene Addon-Untertitel). Tut nichts und liefert false,
+    /// wenn der Nutzer in dieser Wiedergabe schon selbst gewählt hat.
+    @discardableResult func autoSelectSubtitle(_ id: Int?) -> Bool
+    /// true, sobald der Nutzer in dieser Wiedergabe selbst eine Untertitelspur (oder Aus) gewählt hat.
+    var subtitleChosenByUser: Bool { get }
+    /// Einstellungen für die automatische Wahl (aus dem Profil, vor dem Laden setzen). nil = keine Automatik.
+    var subtitlePreferences: SubtitlePreferences? { get set }
+    /// Automatische Wahl neu bewerten über die aktuelle `subtitleTracks` (auch später ergänzte, z. B. Addon).
+    /// Tut nichts nach einer Nutzerwahl oder ohne `subtitlePreferences`; schaltet nur, wenn das Ergebnis von
+    /// der aktiven Spur abweicht. `audioLanguage` nil = Sprache der aktiven Tonspur. Liefert die Wahl (nil = übersprungen).
+    @discardableResult func reconsiderSubtitles(audioLanguage: String?) -> SubtitlePick?
     func stop()
     associatedtype Surface: View
     func surface() -> Surface
+    /// Untertitel-Overlay für die aktive Spur (über der Surface, unter der Steuerleiste).
+    associatedtype SubtitleLayer: View
+    /// controlsInset: 0 = Steuerleiste verborgen, sonst ihre gemessene Höhe; die Untertitel stehen darüber.
+    func subtitleLayer(controlsInset: CGFloat) -> SubtitleLayer
+}
+
+extension PlaybackEngine {
+    /// Für spätere Spuren (Addon-Untertitel): nach dem Hinzufügen aufrufen, nicht `autoSelectSubtitle`.
+    @discardableResult func reconsiderSubtitles() -> SubtitlePick? { reconsiderSubtitles(audioLanguage: nil) }
 }
 
 /// Wünsche für das Laden, unabhängig vom Backend.
@@ -53,6 +74,9 @@ final class AetherBackend: PlaybackEngine {
     init() throws {
         engine = try AetherEngine()
         bag = engine.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        // Kein Untertitel-Versatz in der App: ohne Vorlauf-Reichweite liest die Engine eine Fernquelle
+        // nicht ein zweites Mal für Cues voraus (AetherEngine-Doku „Cue retention“, AE#1015).
+        engine.maximumSubtitleOffsetSeconds = 0
         Self.installEngineLog()
     }
 
@@ -82,11 +106,22 @@ final class AetherBackend: PlaybackEngine {
     var currentTime: Double { engine.clock.currentTime }
     var duration: Double { engine.duration }
     var audioTracks: [AudioTrackInfo] {
-        engine.audioTracks.map { AudioTrackInfo(id: $0.id, language: $0.language, name: $0.name, channels: $0.channels, codec: $0.codec) }
+        engine.audioTracks.map {
+            AudioTrackInfo(id: $0.id, language: $0.language, name: $0.name, channels: $0.channels, codec: $0.codec,
+                           isDefault: $0.isDefault, isCommentary: $0.isCommentary, isVisualImpaired: $0.isVisualImpaired,
+                           profile: $0.profile, isAtmos: $0.isAtmos || $0.trueHDAtmos == .atmos, isDTSX: $0.isDTSX,
+                           channelLayout: $0.channelLayout)
+        }
     }
     var activeAudioID: Int? { engine.activeAudioTrackIndex }
     var subtitleTracks: [AudioTrackInfo] {
-        engine.subtitleTracks.map { AudioTrackInfo(id: $0.id, language: $0.language, name: $0.name) }
+        engine.subtitleTracks.map {
+            AudioTrackInfo(id: $0.id, language: $0.language, name: $0.name, codec: $0.codec,
+                           isDefault: $0.isDefault, isForced: $0.isForced, isHearingImpaired: $0.isHearingImpaired,
+                           isCommentary: $0.isCommentary, isExternal: $0.isExternal,
+                           isImage: MediaLabels.isImageSubtitleCodec($0.codec),
+                           isNativelyRendered: $0.isNativelyRenderedSubtitle)
+        }
     }
     var activeSubtitleID: Int? { engine.activeSubtitleTrackIndex }
     var errorText: String? {
@@ -120,7 +155,30 @@ final class AetherBackend: PlaybackEngine {
     var stateText: String { "\(engine.state)" }
     func seek(_ seconds: Double) async { await engine.seek(to: max(0, seconds)) }
     func selectAudio(_ id: Int) { engine.selectAudioTrack(index: id) }
+    private(set) var subtitleChosenByUser = false
     func selectSubtitle(_ id: Int?) {
+        subtitleChosenByUser = true
+        applySubtitle(id)
+    }
+    @discardableResult func autoSelectSubtitle(_ id: Int?) -> Bool {
+        guard !subtitleChosenByUser else { return false }
+        applySubtitle(id)
+        return true
+    }
+    var subtitlePreferences: SubtitlePreferences?
+    @discardableResult func reconsiderSubtitles(audioLanguage: String?) -> SubtitlePick? {
+        guard let prefs = subtitlePreferences else { return nil }
+        let lang = audioLanguage ?? audioTracks.first(where: { $0.id == activeAudioID })?.language
+        let pick = SubtitlePicker.pick(subtitleTracks, preferences: prefs, audioLanguage: lang)
+        guard !subtitleChosenByUser else {
+            RemoteLog.info("player", "UT: Nutzerwahl bleibt (\(pick.logText))")
+            return nil
+        }
+        if pick.track?.id != activeSubtitleID { applySubtitle(pick.track?.id) }
+        RemoteLog.info("player", pick.logText)
+        return pick
+    }
+    private func applySubtitle(_ id: Int?) {
         if let id { engine.selectSubtitleTrack(index: id) } else { engine.clearSubtitle() }
     }
     func stop() { engine.stop() }

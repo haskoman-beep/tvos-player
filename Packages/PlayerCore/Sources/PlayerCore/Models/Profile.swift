@@ -5,13 +5,17 @@ public enum AppLanguage: String, Codable, Sendable, CaseIterable { case de, en }
 /// Wo Fortschritt/Gesehen als Hauptquelle liegt. Lokal wird immer mitgeschrieben.
 public enum ProgressSource: String, Codable, Sendable, CaseIterable { case local, trakt, simkl }
 
+/// Automatische Untertitel beim Start: aus, nur erzwungene (Schilder/fremdsprachige Stellen) oder immer.
+public enum SubtitleMode: String, Codable, Sendable, CaseIterable { case off, forcedOnly, always }
+
 public struct Profile: Codable, Sendable, Equatable, Identifiable {
     public var id: UUID
     public var name: String
     public var language: AppLanguage
     /// Sprachcodes in Vorrang-Reihenfolge; "orig" = Originalspur.
     public var audioPriority: [String]
-    public var subtitlesEnabled: Bool
+    /// Ersetzt das alte `subtitlesEnabled` (true → `.always`, sonst Standard `.forcedOnly`).
+    public var subtitleMode: SubtitleMode
     public var subtitleLanguage: String
     public var progressSource: ProgressSource
     public var addons: [InstalledAddon]
@@ -27,21 +31,23 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     public var appearance: Appearance
 
     public init(id: UUID = UUID(), name: String, language: AppLanguage = .de, audioPriority: [String] = ["de", "en", "orig"],
-                subtitlesEnabled: Bool = false, subtitleLanguage: String = "de", progressSource: ProgressSource = .local,
+                subtitleMode: SubtitleMode = .forcedOnly, subtitleLanguage: String = "de", progressSource: ProgressSource = .local,
                 addons: [InstalledAddon] = [], collections: [MediaCollection] = [], home: HomeLayout = HomeLayout(),
                 apiKeys: [String: String] = [:], autoplayNext: Bool = true, syncTokens: [String: SyncToken] = [:],
                 appearance: Appearance = Appearance()) {
         self.id = id; self.name = name; self.language = language; self.audioPriority = audioPriority
-        self.subtitlesEnabled = subtitlesEnabled; self.subtitleLanguage = subtitleLanguage
+        self.subtitleMode = subtitleMode; self.subtitleLanguage = subtitleLanguage
         self.progressSource = progressSource; self.addons = addons; self.collections = collections
         self.home = home; self.apiKeys = apiKeys; self.autoplayNext = autoplayNext
         self.syncTokens = syncTokens; self.appearance = appearance
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, language, audioPriority, subtitlesEnabled, subtitleLanguage, progressSource
+        case id, name, language, audioPriority, subtitleMode, subtitleLanguage, progressSource
         case addons, collections, home, apiKeys, autoplayNext, syncTokens, appearance
     }
+    /// Nur zum Lesen alter Profile.
+    private enum LegacyKeys: String, CodingKey { case subtitlesEnabled }
 
     /// Fehlende Felder (ältere Sicherungen, neue Einstellungen) bekommen Standardwerte statt das Profil zu verwerfen.
     public init(from decoder: Decoder) throws {
@@ -51,7 +57,13 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Profil"
         language = try c.decodeIfPresent(AppLanguage.self, forKey: .language) ?? d.language
         audioPriority = try c.decodeIfPresent([String].self, forKey: .audioPriority) ?? d.audioPriority
-        subtitlesEnabled = try c.decodeIfPresent(Bool.self, forKey: .subtitlesEnabled) ?? d.subtitlesEnabled
+        if let mode = try? c.decodeIfPresent(SubtitleMode.self, forKey: .subtitleMode) {
+            subtitleMode = mode
+        } else {
+            let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+            let wasOn = (try? legacy.decodeIfPresent(Bool.self, forKey: .subtitlesEnabled)) ?? nil
+            subtitleMode = wasOn == true ? .always : d.subtitleMode
+        }
         subtitleLanguage = try c.decodeIfPresent(String.self, forKey: .subtitleLanguage) ?? d.subtitleLanguage
         progressSource = try c.decodeIfPresent(ProgressSource.self, forKey: .progressSource) ?? d.progressSource
         addons = try c.decodeIfPresent([InstalledAddon].self, forKey: .addons) ?? []

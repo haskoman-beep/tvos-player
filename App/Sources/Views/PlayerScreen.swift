@@ -30,7 +30,8 @@ struct PlayerScreen: View {
                                                        checksPlaceholder: !isTrailer,
                                                        fallsBackOnLoadError: isTrailer,
                                                        prefs: LoadPrefs(audioLanguages: model.profile.audioPriority.filter { $0 != "orig" },
-                                                                        subtitleLanguages: model.profile.subtitlesEnabled ? [model.profile.subtitleLanguage] : [],
+                                                                        // Untertitel bewusst ohne Engine-Vorwahl: SubtitlePicker wählt nach dem Laden.
+                                                                        subtitleLanguages: [],
                                                                         headers: headers, nativeRemoteHLS: remoteHLS),
                                                        report: { pos, dur in if !isTrailer { model.recordProgress(request, position: pos, duration: dur) } },
                                                        onEnded: onEnded, onFallback: onFallback,
@@ -90,17 +91,23 @@ struct PlayerControls<E: PlaybackEngine>: View {
     @State private var lastToggle = Date.distantPast
     @State private var recoveries = 0
     @State private var lastGoodTime: Double = 0
+    /// Gemessene Höhe der Steuerleiste (nil = noch nicht gemessen), für das Untertitel-Overlay.
+    @State private var controlsHeight: CGFloat?
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         ZStack(alignment: .bottom) {
             Color.black.ignoresSafeArea()
             engine.surface().ignoresSafeArea()
+            engine.subtitleLayer(controlsInset: showOverlay ? (controlsHeight ?? SubtitleOverlayView.fallbackControlsInset) : 0)
             if engine.isLoading { ProgressView().scaleEffect(2) }
             if let e = loadError ?? engine.errorText {
                 Text("Fehler: \(e)").padding(30).background(.red.opacity(0.8), in: RoundedRectangle(cornerRadius: 16))
             }
-            if showOverlay { overlay.transition(.opacity) }
+            if showOverlay {
+                overlay.transition(.opacity)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { controlsHeight = $0 }
+            }
             if let n = upNext, let t = nextTitle { upNextCard(n, t).transition(.move(edge: .trailing).combined(with: .opacity)) }
         }
         .focusable()
@@ -156,15 +163,13 @@ struct PlayerControls<E: PlaybackEngine>: View {
                 RemoteLog.info("player", "Geladen · \(Int(engine.duration))s · \(engine.infoText) · Ton: " +
                     engine.audioTracks.map { "\($0.id):\($0.language ?? "?")/\($0.channels ?? 0)ch" }.joined(separator: " ") +
                     " · UT: \(engine.subtitleTracks.count)")
-                if let best = preferredAudioTrack(engine.audioTracks, priority: profile.audioPriority), best.id != engine.activeAudioID {
+                let best = preferredAudioTrack(engine.audioTracks, priority: profile.audioPriority)
+                if let best, best.id != engine.activeAudioID {
                     engine.selectAudio(best.id)
                 }
-                if profile.subtitlesEnabled,
-                   let sub = engine.subtitleTracks.first(where: { ($0.language ?? "").hasPrefix(profile.subtitleLanguage) }) {
-                    engine.selectSubtitle(sub.id)
-                } else {
-                    engine.selectSubtitle(nil)
-                }
+                // Tonwahl läuft asynchron: die Sprache der gewählten Spur direkt mitgeben.
+                engine.subtitlePreferences = SubtitlePreferences(profile: profile)
+                engine.reconsiderSubtitles(audioLanguage: (best ?? engine.audioTracks.first(where: { $0.id == engine.activeAudioID }))?.language)
                 RemoteLog.info("player", "Spielt · Tonspur \(engine.activeAudioID.map(String.init) ?? "-") · UT \(engine.activeSubtitleID.map(String.init) ?? "aus")")
                 engine.play()
                 poke()
@@ -270,12 +275,17 @@ struct PlayerControls<E: PlaybackEngine>: View {
         recoveries += 1
         let pos = lastGoodTime
         RemoteLog.info("player", "Neu laden an \(Int(pos))s nach: \(reason)")
+        // UT-Wahl VOR dem Abbau merken (danach ist sie weg) und nach dem Neuladen wieder setzen.
+        let sub = engine.activeSubtitleID, subByUser = engine.subtitleChosenByUser
         Task {
             do { try await engine.recover() }
             catch {
                 RemoteLog.error("player", "reloadAtCurrentPosition fehlgeschlagen: \(error) → load ab \(Int(pos))s")
                 do { try await engine.load(url, start: pos, prefs: prefs) }
                 catch { engine.stop(); onFallback("Wiedergabefehler: \(reason)"); return }
+            }
+            if engine.activeSubtitleID != sub {
+                if subByUser { engine.selectSubtitle(sub) } else { engine.autoSelectSubtitle(sub) }
             }
             engine.play()
         }
