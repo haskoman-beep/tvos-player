@@ -107,6 +107,9 @@ final class AetherBackend: PlaybackEngine {
         // nicht ein zweites Mal für Cues voraus (AetherEngine-Doku „Cue retention“, AE#1015).
         engine.maximumSubtitleOffsetSeconds = 0
         Self.installEngineLog()
+        // Eingebaute Zusatzteile (Trait DolbyVisionFelCurves setzt die CI ins Xcode-Projekt, build.yml).
+        let built = AetherEngine.OptionalComponent.allCases.filter(\.isBuiltIn).map(\.traitName)
+        RemoteLog.info("engine", "Zusatzteile: \(built.isEmpty ? "keine" : built.joined(separator: ", "))")
     }
 
     /// Engine-Meldungen (Muxer-Neustarts, Ton-Bridge, Sitzung) ins Fern-Log.
@@ -178,7 +181,7 @@ final class AetherBackend: PlaybackEngine {
         o.preferredSubtitleLanguages = prefs.subtitleLanguages
         o.httpHeaders = prefs.headers
         o.nativeRemoteHLS = prefs.nativeRemoteHLS
-        // Schnellerer Start bei Fernquellen (Werte wie NuvioTVOS): 8 MiB / 5 s statt 50 MB / 60 s.
+        // Schnellerer Start bei Fernquellen: kleinere Analyse, 8 MiB / 5 s statt 50 MB / 60 s.
         o.probesize = 8 * 1024 * 1024
         o.maxAnalyzeDuration = 5_000_000
         o.skipsContainerAttachments = true

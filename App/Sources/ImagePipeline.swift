@@ -4,7 +4,7 @@ import ImageIO
 import os
 import PlayerCore
 
-/// Bildlader nach Vorbild NuvioTVOS/VortX: Plattencache (URLCache), Speichercache nach Bytes,
+/// Bildlader: Plattencache (URLCache), Speichercache nach Bytes,
 /// Verkleinern per ImageIO abseits des Hauptthreads, gleiche Anfragen zusammengelegt, Fehler kurz gemerkt.
 /// Speichercache-Grenze nach freiem Prozess-Speicher (`ImageCacheBudget`), bei Speicherwarnung geleert,
 /// während der Wiedergabe klein (Meldung über `StreamPrefetcher.playerAppeared/Disappeared`).

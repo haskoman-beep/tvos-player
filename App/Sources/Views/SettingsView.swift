@@ -1,7 +1,7 @@
 import SwiftUI
 import PlayerCore
 
-/// Einstellungs-Kategorien (wie NuvioTVOS `SettingsCategory`).
+/// Einstellungs-Kategorien (linke Spalte der Einstellungen).
 enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
     case profile, addons, services, home, appearance, playback, about
 

@@ -1,0 +1,118 @@
+{
+  "activeProfileID" : "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+  "profiles" : [
+    {
+      "addons" : [
+        {
+          "manifest" : {
+            "catalogs" : [
+
+            ],
+            "id" : "org.example.streams",
+            "idPrefixes" : [
+              "tt"
+            ],
+            "name" : "Beispiel-Quellen",
+            "resources" : [
+              "stream"
+            ],
+            "types" : [
+              "movie",
+              "series"
+            ],
+            "version" : "1.2.3"
+          },
+          "manifestURL" : "https:\/\/addon.example\/manifest.json"
+        }
+      ],
+      "apiKeys" : {
+        "tmdb" : "TESTKEY-NOT-REAL"
+      },
+      "appearance" : {
+        "accent" : "green",
+        "cardSize" : "large",
+        "expandPosters" : false,
+        "heroEnabled" : false,
+        "heroRowID" : "11111111-2222-3333-4444-555555555555",
+        "navigation" : "top"
+      },
+      "audioPriority" : [
+        "en",
+        "orig",
+        "de"
+      ],
+      "autoplayNext" : false,
+      "collections" : [
+        {
+          "folders" : [
+            {
+              "id" : "f1",
+              "sources" : [
+                {
+                  "id" : "s1",
+                  "kind" : {
+                    "tmdbDiscover" : {
+                      "filters" : {
+                        "with_watch_providers" : "8|1796"
+                      }
+                    }
+                  },
+                  "mediaType" : "movie",
+                  "title" : "Neu"
+                }
+              ],
+              "title" : "Dienst A"
+            }
+          ],
+          "id" : "c1",
+          "title" : "Streaming"
+        }
+      ],
+      "home" : {
+        "rows" : [
+          {
+            "content" : {
+              "list" : {
+                "_0" : {
+                  "id" : "builtin.continue",
+                  "kind" : {
+                    "continueWatching" : {
+
+                    }
+                  },
+                  "mediaType" : "both",
+                  "title" : "Weiterschauen"
+                }
+              }
+            },
+            "id" : "11111111-2222-3333-4444-555555555555",
+            "style" : "landscape"
+          },
+          {
+            "content" : {
+              "collection" : {
+                "id" : "c1"
+              }
+            },
+            "id" : "D098547E-86AF-4577-BD4A-D6FF62D71BCE",
+            "style" : "collectionTiles"
+          }
+        ]
+      },
+      "id" : "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+      "language" : "en",
+      "name" : "Wohnzimmer",
+      "progressSource" : "trakt",
+      "subtitleLanguage" : "en",
+      "subtitlesEnabled" : true,
+      "syncTokens" : {
+        "trakt" : {
+          "accessToken" : "test-access",
+          "expiresAt" : 921692800,
+          "refreshToken" : "test-refresh"
+        }
+      }
+    }
+  ],
+  "schemaVersion" : 1
+}

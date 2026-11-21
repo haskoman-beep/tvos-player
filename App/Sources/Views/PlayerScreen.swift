@@ -158,7 +158,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
             engine.subtitleLayer(controlsInset: showOverlay ? (controlsHeight ?? SubtitleOverlayView.fallbackControlsInset) : 0)
             PlayerLoadingSteps(engine: engine)
             if let e = loadError ?? engine.errorText {
-                Text("Fehler: \(e)").padding(30).background(.red.opacity(0.8), in: RoundedRectangle(cornerRadius: 16))
+                // Auch auf dem Bildschirm ohne Schlüssel/volle Adressen (Fotos, Bildschirmfotos).
+                Text("Fehler: \(LogRedact.text(e))").padding(30).background(.red.opacity(0.8), in: RoundedRectangle(cornerRadius: 16))
             }
             if showOverlay {
                 // Höhe der Steuerleiste (Titel, Folge, Plaketten, Zeitleiste, Hinweis) → controlsInset der Untertitel.
@@ -278,7 +279,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
             // Abgebrochen, weil der Player verlassen wurde: kein Fehlertext, keine nächste Quelle.
             guard !Task.isCancelled, !leaving else { RemoteLog.info("player", "Laden abgebrochen (verlassen)"); return }
             RemoteLog.error("player", "Laden fehlgeschlagen: \(error)")
-            if fallsBackOnLoadError { engine.stop(); leave { onFallback("Laden fehlgeschlagen: \(error)") } } else { loadError = "\(error)" }
+            let shown = LogRedact.text("\(error)")
+            if fallsBackOnLoadError { engine.stop(); leave { onFallback("Laden fehlgeschlagen: \(shown)") } } else { loadError = shown }
         }
     }
 

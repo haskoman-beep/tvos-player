@@ -34,7 +34,7 @@ public struct YouTubeStream: Sendable, Equatable {
     public var headers: [String: String] = [:]
 }
 
-/// Trailer direkt im eigenen Player: Innertube-Player-API (Vorbild NuvioMobile `InAppYouTubeExtractor`).
+/// Trailer direkt im eigenen Player: über die Innertube-Player-API von YouTube.
 /// Kein API-Schlüssel nötig; ein Besucher-Token (`visitor_id`) reicht, damit der visionOS-Client ein HLS-Master
 /// liefert. Ohne HLS: progressive MP4 mit Ton (itag 18 o. ä.) mit direkter URL. Formate mit `signatureCipher`
 /// werden ausgelassen (keine Signatur-Entschlüsselung) – dann `nil`.

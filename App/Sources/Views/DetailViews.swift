@@ -402,7 +402,9 @@ struct StreamListView: View {
         }
         .onChange(of: playing) { _, s in
             guard let s else { return }
-            model.rememberSource(current ?? request, stream: s, addon: streams.first { $0.stream.id == s.id }?.addon ?? "")
+            // Addon aus der Liste, sonst das bei der nächsten Folge gemerkte (sonst „Addon nicht installiert“ beim Neuauflösen).
+            model.rememberSource(current ?? request, stream: s,
+                                 addon: streams.first { $0.stream.id == s.id }?.addon ?? autoNext.addons[s.id] ?? "")
         }
         .fullScreenCover(item: $playing) { s in
             if let u = s.url.flatMap(URL.init(string:)) { PlayerScreen(url: u, request: current ?? request,
@@ -439,6 +441,8 @@ extension StreamListView {
         RemoteLog.info("player", "Wechsel \(fallbacks)/3 auf: \(next.name ?? "") \(next.title?.prefix(60) ?? "")")
         Task {
             try? await Task.sleep(for: .milliseconds(900))
+            // Inzwischen von Hand eine Quelle gestartet: den laufenden Player nicht ersetzen.
+            guard playing == nil else { return }
             playing = next
         }
     }
@@ -469,6 +473,8 @@ extension StreamListView {
         let ref = autoNext.releaseProfile(stream, listAddon: streams.first { $0.stream.id == stream.id }?.addon)
         Task {
             let list = await model.streams(type: next.type, id: next.id)
+            // Während der Suche von Hand eine Quelle gestartet: Liste und Folge so lassen, nichts ersetzen.
+            guard playing == nil else { return }
             guard let s = nextEpisodeStream(list, matching: ref) else {
                 nextNote = "Keine Quelle für \(next.title) gefunden."; return
             }
@@ -478,7 +484,12 @@ extension StreamListView {
             if auto { autoNext.counter.autoStarted() }
             nextNote = nil
             current = next
+            // Liste zeigt jetzt die Quellen dieser Folge: Auswahl von Hand und Rückfall arbeiten auf ihr.
+            streams = list
+            failed = []
+            fallbacks = 0
             try? await Task.sleep(for: .milliseconds(800))
+            guard playing == nil else { return }
             playing = s
         }
     }

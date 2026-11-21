@@ -754,13 +754,12 @@ actor DiskCacheProxy {
         return nil
     }
 
-    /// nil = Verbindung zu oder Fehler.
+    /// nil = Verbindung zu, Fehler oder leere Lieferung. Leer ohne Ende zählt als Ende: sonst liefe
+    /// `readRequest` ohne neue Daten im Kreis; der Aufrufer schließt die Verbindung dann.
     nonisolated private static func receive(_ c: NWConnection) async -> Data? {
         await withCheckedContinuation { (k: CheckedContinuation<Data?, Never>) in
-            c.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, done, error in
-                if let data, !data.isEmpty { k.resume(returning: data) }
-                else if error != nil || done { k.resume(returning: nil) }
-                else { k.resume(returning: Data()) }
+            c.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, _, _ in
+                if let data, !data.isEmpty { k.resume(returning: data) } else { k.resume(returning: nil) }
             }
         }
     }

@@ -26,7 +26,7 @@ struct SubtitleOverlayView: View {
     static let outlineWidth: CGFloat = 2.5
     /// Abstand zum unteren Bildschirmrand ohne Steuerleiste.
     static let bottomMargin: CGFloat = 70
-    /// Ersatz für die Höhe der Steuerleiste, solange noch keine Messung da ist (Vorbild NuvioTVOS: 272).
+    /// Ersatz für die Höhe der Steuerleiste, solange noch keine Messung da ist (Schätzwert 272 pt).
     static let fallbackControlsInset: CGFloat = 272
     /// Abstand der Untertitel über der Oberkante der Steuerleiste.
     static let controlsGap: CGFloat = 24

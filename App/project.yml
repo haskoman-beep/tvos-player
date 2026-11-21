@@ -6,7 +6,9 @@ options:
 packages:
   AetherEngine:
     url: https://github.com/superuser404notfound/AetherEngine
-    from: 7.71.2
+    # Genau dieser Stand (öffentliches Release; alle Player-Regeln sind gegen 7.71.2 geprüft).
+    # Trait DolbyVisionFelCurves: XcodeGen kennt keine Traits, die CI trägt ihn ins pbxproj ein (build.yml).
+    exactVersion: 7.71.2
   PlayerCore:
     path: ../Packages/PlayerCore
 targets:
