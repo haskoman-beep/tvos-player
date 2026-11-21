@@ -9,7 +9,7 @@ LGPL-2.1, BSD-2-Clause, WTFPL, MIT, as listed).
 
 | Component | Version | Licence | How it is in the app |
 | --- | --- | --- | --- |
-| AetherEngine | tag 7.71.2 (exact pin in `App/project.yml`) | LGPL-3.0 with App Store / DRM exception | Statically linked Swift package |
+| AetherEngine | tag 7.71.2 (exact pin in `Packages/AetherFEL/Package.swift`) | LGPL-3.0 with App Store / DRM exception | Statically linked Swift package |
 | FFmpeg (libavcodec, libavformat, libavutil, libswresample, libswscale, libavfilter) | n8.1.3, built by FFmpegBuild 3.16.x | LGPL-2.1-or-later (no GPL parts) | Dynamic frameworks `Frameworks/AetherLib*.framework` |
 | libzvbi | 0.2.46, built by FFmpegBuild | LGPL-2.0-or-later (conveyed under LGPL-2.1), `ure.c` MIT | Dynamic framework `AetherLibzvbi` |
 | dav1d | 1.5.4, built by FFmpegBuild | BSD-2-Clause | Dynamic framework `AetherLibdav1d` |
@@ -18,10 +18,13 @@ LGPL-2.1, BSD-2-Clause, WTFPL, MIT, as listed).
 | Anime4K (Upscale CNN x2 S, Restore CNN S) | commit 7684e9586f8dcc738af08a1cdceb024cc184f426 | MIT | Compiled into AetherEngine as Metal source |
 
 Not in the binary: SwiftPM also resolves SMBClient (MIT) because AetherEngine declares it, but the app
-links only the `AetherEngine` product, not `AetherEngineSMB`, so none of its code is linked. LibTrueHD
+links only the `AetherEngine` product (through the local wrapper package `Packages/AetherFEL`), not `AetherEngineSMB`, so none of its code is linked. LibTrueHD
 comes in only through the engine trait `TrueHDObjectAudio`, which this app does not enable.
 
-No optional engine trait is enabled in this app.
+One optional engine trait is enabled: `DolbyVisionFelCurves` (Dolby Vision FEL curve fold), set in
+`Packages/AetherFEL/Package.swift`. It is AetherEngine's own code under the same LGPL-3.0 licence and links no
+further library. The engine notes that this component may be subject to third-party patent licensing and
+that an integrator who enables it is responsible for its own licensing. No other optional trait is enabled.
 
 ## AetherEngine
 

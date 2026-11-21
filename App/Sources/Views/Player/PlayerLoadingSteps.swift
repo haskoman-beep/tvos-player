@@ -1,5 +1,5 @@
 import SwiftUI
-import AetherEngine
+import AetherFEL
 import PlayerCore
 
 /// Standard für Backends ohne Startstand/Kapitel.

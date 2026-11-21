@@ -34,12 +34,42 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build > build.log 2>&1 || { grep -E 'error:|BUILD FAILED' build.log | head -80; exit 1; }
           tail -5 build.log
           /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' -c 'Print :PlayerBuildCommit' -c 'Print :PlayerBuildBranch' build/Build/Products/Release-appletvos/Player.app/Info.plist
+      - name: Nachweis Dolby Vision FEL
+        # Packages/AetherFEL schaltet den Engine-Trait DolbyVisionFelCurves ein. Harte Prüfung ist dort der
+        # Bauwächter FelBuildGuard.swift (ohne Trait kein FelCurveFoldResult, der Bau bricht ab); hier zusätzlich
+        # der Nachweis im Bau-Log: Wächter übersetzt und die Trait-Bedingung im Compileraufruf der Engine.
+        run: |
+          cd App
+          guard=$(grep -c 'FelBuildGuard.swift' build.log || true)
+          flag=$(grep -o -E -- '-D ?DolbyVisionFelCurves' build.log | sort | uniq -c | sed 's/^ *//' | tr '\n' ' ' | sed 's/ *$//' || true)
+          any=$(grep -c 'DolbyVisionFelCurves' build.log || true)
+          echo "FelBuildGuard.swift im Log: ${guard} · Trait-Bedingung: ${flag:-keine} · Trait-Name gesamt: ${any}"
+          # Xcode 26.3 schreibt die Bedingung als -DDolbyVisionFelCurves in die Compileraufrufe der Engine (Lauf 44940934903: 3×).
+          if [ "$guard" -eq 0 ]; then echo "::error title=FEL::Bauwächter FelBuildGuard.swift nicht im Build-Log"; exit 1; fi
+          if [ -z "$flag" ]; then echo "::error title=FEL::Trait-Bedingung -DDolbyVisionFelCurves nicht im Build-Log"; exit 1; fi
+          echo "::notice title=FEL::DolbyVisionFelCurves im Build (Wächter ${guard}x, Bedingung: ${flag})"
+      - name: Kein direkter Engine-Import
+        # Die App importiert die Engine nur über Packages/AetherFEL (dort ist der FEL-Trait gesetzt).
+        run: |
+          if grep -rn '^import AetherEngine' App/Sources; then echo "::error::Direkter 'import AetherEngine' in App/Sources – bitte 'import AetherFEL'"; exit 1; fi
       - name: Package IPA
         run: |
           mkdir -p Payload
           cp -R App/build/Build/Products/Release-appletvos/Player.app Payload/
           zip -qry Player.ipa Payload
           ls -la Player.ipa
+      - name: App-Inhalt prüfen
+        # Engine-Frameworks (FFmpeg, zvbi, dav1d, zimg aus FFmpegBuild) und das Ressourcen-Bündel der Engine.
+        run: |
+          app=Payload/Player.app
+          ls "$app/Frameworks" || true
+          ls -d "$app"/*.bundle || true
+          missing=0
+          for f in avcodec avformat avutil swresample swscale avfilter zvbi dav1d zimg; do
+            [ -d "$app/Frameworks/AetherLib$f.framework" ] || { echo "::error::Framework AetherLib$f.framework fehlt in $app/Frameworks"; missing=1; }
+          done
+          [ -d "$app/AetherEngine_AetherEngine.bundle" ] || { echo "::error::Ressourcen-Bündel AetherEngine_AetherEngine.bundle fehlt in $app"; missing=1; }
+          exit $missing
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure()
         with:

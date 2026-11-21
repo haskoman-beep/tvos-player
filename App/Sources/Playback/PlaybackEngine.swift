@@ -1,6 +1,6 @@
 import SwiftUI
 import Combine
-import AetherEngine
+import AetherFEL
 import PlayerCore
 
 /// Eigene Player-Schnittstelle (Spec §4): Die App kennt nur dieses Protokoll,
@@ -107,9 +107,12 @@ final class AetherBackend: PlaybackEngine {
         // nicht ein zweites Mal für Cues voraus (AetherEngine-Doku „Cue retention“, AE#1015).
         engine.maximumSubtitleOffsetSeconds = 0
         Self.installEngineLog()
-        // Eingebaute Zusatzteile der Engine (Paket-Traits); derzeit keine.
+        // Eingebaute Zusatzteile der Engine (Paket-Traits, gesetzt in Packages/AetherFEL); erwartet: DolbyVisionFelCurves.
         let built = AetherEngine.OptionalComponent.allCases.filter(\.isBuiltIn).map(\.traitName)
         RemoteLog.info("engine", "Zusatzteile: \(built.isEmpty ? "keine" : built.joined(separator: ", "))")
+        if !AetherEngine.OptionalComponent.dolbyVisionFelCurves.isBuiltIn {
+            RemoteLog.error("engine", "Dolby-Vision-FEL-Kurven fehlen im Build (Trait DolbyVisionFelCurves aus)")
+        }
     }
 
     /// Engine-Meldungen (Muxer-Neustarts, Ton-Bridge, Sitzung) ins Fern-Log.

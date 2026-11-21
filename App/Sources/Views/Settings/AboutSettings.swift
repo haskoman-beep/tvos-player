@@ -36,7 +36,7 @@ struct AboutSettings: View {
     private struct Credit { let name: String; let detail: String }
     private static let credits: [Credit] = [
         Credit(name: "Player (diese App)", detail: "App: MIT · die Komponenten unten behalten ihre eigenen Lizenzen"),
-        Credit(name: "AetherEngine 7.71.2", detail: "© 2026 Vincent Herbst · LGPL-3.0 mit App-Store-/DRM-Ausnahme · github.com/superuser404notfound/AetherEngine"),
+        Credit(name: "AetherEngine 7.71.2", detail: "© 2026 Vincent Herbst · LGPL-3.0 mit App-Store-/DRM-Ausnahme · github.com/superuser404notfound/AetherEngine · mit Zusatzteil Dolby-Vision-FEL-Kurven (DolbyVisionFelCurves)"),
         Credit(name: "FFmpeg n8.1.3 (FFmpegBuild 3.16)", detail: "© die FFmpeg-Entwickler · LGPL-2.1 oder neuer, als austauschbare dynamische Frameworks · Quelle: github.com/superuser404notfound/FFmpegBuild"),
         Credit(name: "libzvbi", detail: "LGPL-2.0 oder neuer (unter LGPL-2.1), ure.c MIT"),
         Credit(name: "dav1d", detail: "© 2018-2019 VideoLAN und die dav1d-Autoren · BSD-2-Clause"),
