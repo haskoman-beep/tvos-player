@@ -110,6 +110,9 @@ final class AetherBackend: PlaybackEngine {
         // Eingebaute Zusatzteile der Engine (Paket-Traits, gesetzt in Packages/AetherFEL); erwartet: DolbyVisionFelCurves.
         let built = AetherEngine.OptionalComponent.allCases.filter(\.isBuiltIn).map(\.traitName)
         RemoteLog.info("engine", "Zusatzteile: \(built.isEmpty ? "keine" : built.joined(separator: ", "))")
+        if !AetherEngine.OptionalComponent.dolbyVisionFelCurves.isBuiltIn {
+            RemoteLog.error("engine", "Dolby-Vision-FEL-Kurven fehlen im Build (Trait DolbyVisionFelCurves aus)")
+        }
     }
 
     /// Engine-Meldungen (Muxer-Neustarts, Ton-Bridge, Sitzung) ins Fern-Log.
