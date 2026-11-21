@@ -166,6 +166,7 @@ struct AddRowSheet: View {
     let options: [RowContent]
     let done: (RowContent?) -> Void
     @State private var importURL = ""
+    @State private var tmdbLink = ""
 
     var body: some View {
         NavigationStack {
@@ -182,11 +183,25 @@ struct AddRowSheet: View {
                         }
                     }
                 }
+                Section("Fertige Pakete") {
+                    ForEach(ReadyPackages.all.filter { pkg in !options.contains(.collection(id: pkg.id)) && model.collection(pkg.id) == nil }) { pkg in
+                        Button { model.addCollection(pkg); done(.collection(id: pkg.id)) } label: {
+                            HStack { Text(pkg.title); Spacer(); Text("\(pkg.folders.count) Ordner").foregroundStyle(.secondary) }
+                        }
+                    }
+                }
+                Section("TMDB-Liste, Filmreihe oder Studio") {
+                    TextField("Link, z. B. themoviedb.org/list/…", text: $tmdbLink)
+                    Button("Als Reihe hinzufügen") {
+                        if let s = TMDBLink.source(from: tmdbLink) { done(.list(s)) } else { model.lastError = "Link nicht erkannt: \(tmdbLink)" }
+                    }
+                    .disabled(tmdbLink.isEmpty)
+                }
                 Section("Neue Collection importieren") {
                     TextField("Nuvio-Export-URL (JSON)", text: $importURL)
                     Button("Importieren") { Task { await model.importNuvio(from: importURL); importURL = "" } }
                         .disabled(importURL.isEmpty)
-                    Text("Trakt-, MDBList- und TMDB-Listen folgen in P2.").foregroundStyle(.secondary)
+                    Text("Trakt- und MDBList-Listen folgen (brauchen Konto/Key).").foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("Reihe hinzufügen")

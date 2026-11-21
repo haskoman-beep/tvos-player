@@ -57,7 +57,10 @@ struct DetailView: View {
                         ProgressView()
                     } else if let imdb {
                         if isSeries { episodes(imdb) } else {
-                            Button("▶ Abspielen") { navigate(.streams(type: "movie", id: imdb, title: item.name)) }
+                            let resume = model.progress.resumePosition(for: imdb)
+                            Button(resume.map { "▶ Fortsetzen ab \(timeText($0))" } ?? "▶ Abspielen") {
+                                navigate(.streams(PlayRequest(type: "movie", id: imdb, title: item.name, item: progressItem(imdb))))
+                            }
                         }
                     } else {
                         Text("Keine IMDb-ID gefunden – Streams nicht abrufbar.").foregroundStyle(.secondary)
@@ -72,6 +75,13 @@ struct DetailView: View {
             season = seasons.first ?? 1
             loading = false
         }
+    }
+
+    /// Eintrag mit IMDb-ID, damit Weiterschauen direkt Cinemeta/Streams nutzen kann.
+    private func progressItem(_ imdb: String) -> MetaPreview {
+        MetaPreview(id: imdb, type: item.type, name: item.name, poster: meta?.poster ?? item.poster,
+                    background: meta?.background ?? item.background, logo: meta?.logo, description: meta?.description ?? item.description,
+                    releaseInfo: meta?.releaseInfo ?? item.releaseInfo, imdbRating: item.imdbRating)
     }
 
     private var seasons: [Int] {
@@ -94,12 +104,21 @@ struct DetailView: View {
             LazyVStack(alignment: .leading, spacing: 16) {
                 ForEach(eps) { v in
                     Button {
-                        navigate(.streams(type: "series", id: "\(imdb):\(season):\(v.episode ?? 0)", title: "\(item.name) S\(season)E\(v.episode ?? 0)"))
+                        let e = v.episode ?? 0
+                        navigate(.streams(PlayRequest(type: "series", id: "\(imdb):\(season):\(e)", title: "\(item.name) S\(season)E\(e)",
+                                                      item: progressItem(imdb), season: season, episode: e)))
                     } label: {
                         HStack(spacing: 24) {
                             RemoteImage(url: v.thumbnail).frame(width: 280, height: 158).clipped()
                             VStack(alignment: .leading, spacing: 6) {
-                                Text("\(v.episode ?? 0). \(v.name ?? v.title ?? "Folge")").font(.headline)
+                                HStack {
+                                    Text("\(v.episode ?? 0). \(v.name ?? v.title ?? "Folge")").font(.headline)
+                                    let key = "\(imdb):\(season):\(v.episode ?? 0)"
+                                    if model.progress.isWatched(key) { Image(systemName: "checkmark.circle.fill").foregroundStyle(.green) }
+                                    else if let p = model.progress.entries[key], p.position >= 60 {
+                                        ProgressView(value: p.fraction).frame(width: 120)
+                                    }
+                                }
                                 if let o = v.overview { Text(o).font(.caption).lineLimit(2).foregroundStyle(.secondary) }
                             }
                             Spacer()
@@ -114,9 +133,7 @@ struct DetailView: View {
 /// Quellenliste aller Addons (Reihenfolge von AIOStreams), mit Plaketten.
 struct StreamListView: View {
     @EnvironmentObject var model: AppModel
-    let type: String
-    let id: String
-    let title: String
+    let request: PlayRequest
     @State private var streams: [(addon: String, stream: StreamItem)] = []
     @State private var loading = true
     @State private var playing: StreamItem?
@@ -131,13 +148,13 @@ struct StreamListView: View {
                 Button { playing = entry.stream } label: { StreamRow(addon: entry.addon, stream: entry.stream) }
             }
         }
-        .navigationTitle(title)
+        .navigationTitle(request.title)
         .task {
-            streams = await model.streams(type: type, id: id)
+            streams = await model.streams(type: request.type, id: request.id)
             loading = false
         }
         .fullScreenCover(item: $playing) { s in
-            if let u = s.url.flatMap(URL.init(string:)) { PlayerScreen(url: u, title: title).environmentObject(model) }
+            if let u = s.url.flatMap(URL.init(string:)) { PlayerScreen(url: u, request: request).environmentObject(model) }
         }
     }
 }
@@ -169,5 +186,48 @@ struct Badge: View {
     init(_ text: String, _ color: Color) { self.text = text; self.color = color }
     var body: some View {
         Text(text).font(.caption.bold()).padding(.horizontal, 12).padding(.vertical, 4).background(color.opacity(0.7), in: Capsule())
+    }
+}
+
+func timeText(_ s: Double) -> String {
+    let t = Int(max(0, s)); return t >= 3600 ? String(format: "%d:%02d:%02d", t / 3600, t / 60 % 60, t % 60) : String(format: "%d:%02d", t / 60, t % 60)
+}
+
+/// Suche über TMDB (Filme + Serien).
+struct SearchView: View {
+    @EnvironmentObject var model: AppModel
+    @State private var query = ""
+    @State private var results: [MetaPreview] = []
+    @State private var searching = false
+
+    var body: some View {
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 30) {
+                TextField("Film oder Serie suchen", text: $query)
+                    .onSubmit { Task { await run() } }
+                    .padding(.horizontal, 60)
+                if model.tmdb == nil { Text("Für die Suche fehlt der TMDB-Key (Einstellungen → Dienste).").foregroundStyle(.secondary).padding(.leading, 60) }
+                if searching { ProgressView().padding(.leading, 60) }
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(240), spacing: 40), count: 6), alignment: .leading, spacing: 50) {
+                    ForEach(results) { m in
+                        NavigationLinkish(route: .detail(m), onActivate: { $0 }, label: PosterCard(item: m))
+                    }
+                }
+                .padding(.horizontal, 60)
+            }
+            .padding(.vertical, 40)
+        }
+        .task(id: query) {
+            // Tippen entprellen: erst nach kurzer Pause suchen.
+            try? await Task.sleep(for: .milliseconds(600))
+            if !Task.isCancelled { await run() }
+        }
+    }
+
+    private func run() async {
+        guard let tmdb = model.tmdb, query.count >= 2 else { results = []; return }
+        searching = true
+        results = (try? await tmdb.search(query)) ?? []
+        searching = false
     }
 }

@@ -20,7 +20,7 @@ struct HomeRowView: View {
             content
                 .disabled(!interactive)
         }
-        .task(id: row.content.key) {
+        .task(id: row.content.key + (row.content == .list(.continueWatching) ? "\(model.progress.entries.count)-\(model.progress.continueWatching().first?.updated.timeIntervalSince1970 ?? 0)" : "")) {
             guard case .list(let s) = row.content else { return }
             items = await model.items(s); loaded = true
         }
@@ -44,7 +44,7 @@ struct HomeRowView: View {
             }
         case .list:
             if loaded && items.isEmpty {
-                Text(model.tmdb == nil ? "TMDB-Key fehlt (Einstellungen)" : "Keine Einträge")
+                Text(row.content == .list(.continueWatching) ? "Noch nichts angefangen." : model.tmdb == nil ? "TMDB-Key fehlt (Einstellungen)" : "Keine Einträge")
                     .foregroundStyle(.secondary).padding(.leading, 60).frame(height: 120)
             } else {
                 Strip {

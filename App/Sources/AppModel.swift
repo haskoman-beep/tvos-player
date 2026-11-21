@@ -7,6 +7,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var stored: StoredProfiles
     @Published var lastError: String?
     let store: ProfileStore
+    let progressStore: ProgressStore
+    /// Fortschritt des aktiven Profils.
+    @Published private(set) var progress = ProgressBook()
     let addons = AddonClient()
     private var cache: [String: [MetaPreview]] = [:]
 
@@ -21,6 +24,15 @@ final class AppModel: ObservableObject {
             .appendingPathComponent("Player", isDirectory: true)
         store = ProfileStore(directory: dir)
         stored = store.load()
+        progressStore = ProgressStore(directory: dir)
+        progress = progressStore.load(profile: profile.id)
+    }
+
+    // MARK: Fortschritt
+
+    func recordProgress(_ r: PlayRequest, position: Double, duration: Double) {
+        progress.record(id: r.id, item: r.item, season: r.season, episode: r.episode, position: position, duration: duration)
+        do { try progressStore.save(progress, profile: profile.id) } catch { lastError = "Fortschritt nicht gespeichert: \(error)" }
     }
 
     var profile: Profile { stored.active ?? Profile.makeDefault() }
@@ -38,7 +50,10 @@ final class AppModel: ObservableObject {
 
     // MARK: Profile
 
-    func switchProfile(_ id: UUID) { stored.activeProfileID = id; cache.removeAll(); save() }
+    func switchProfile(_ id: UUID) {
+        stored.activeProfileID = id; cache.removeAll(); save()
+        progress = progressStore.load(profile: id)
+    }
 
     func addProfile(name: String) {
         let p = Profile.makeDefault(name: name)
@@ -82,6 +97,11 @@ final class AppModel: ObservableObject {
         } catch { lastError = "Import fehlgeschlagen: \(error)" }
     }
 
+    /// Fertiges Paket oder anderes Collection-Objekt ins Profil übernehmen (falls noch nicht da).
+    func addCollection(_ c: MediaCollection) {
+        update { p in if !p.collections.contains(where: { $0.id == c.id }) { p.collections.append(c) } }
+    }
+
     func collection(_ id: String) -> MediaCollection? { profile.collections.first { $0.id == id } }
 
     // MARK: Kataloge
@@ -92,6 +112,7 @@ final class AppModel: ObservableObject {
     }
 
     func items(_ source: CatalogSource) async -> [MetaPreview] {
+        if case .continueWatching = source.kind { return progress.continueWatching().map(\.item) }
         if let c = cache[source.id] { return c }
         var out: [MetaPreview] = []
         do {

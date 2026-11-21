@@ -17,13 +17,24 @@ enum Route: Hashable {
     case detail(MetaPreview)
     case folder(Folder)
     case collection(String)
-    case streams(type: String, id: String, title: String)
+    case streams(PlayRequest)
+}
+
+/// Was abgespielt werden soll: Stremio-ID ("tt…" oder "tt…:S:E") plus Anzeige-Eintrag für Weiterschauen.
+struct PlayRequest: Hashable {
+    var type: String
+    var id: String
+    var title: String
+    var item: MetaPreview
+    var season: Int?
+    var episode: Int?
 }
 
 struct RootView: View {
     @EnvironmentObject var model: AppModel
     @State private var path = NavigationPath()
     @State private var settingsPath = NavigationPath()
+    @State private var searchPath = NavigationPath()
     @State private var pickedProfile = false
 
     var body: some View {
@@ -38,6 +49,12 @@ struct RootView: View {
                     }
                     .environment(\.navigate, { path.append($0) })
                     .tabItem { Text("Start") }
+                    NavigationStack(path: $searchPath) {
+                        SearchView()
+                            .navigationDestination(for: Route.self) { RouteView(route: $0) }
+                    }
+                    .environment(\.navigate, { searchPath.append($0) })
+                    .tabItem { Text("Suche") }
                     NavigationStack(path: $settingsPath) {
                         SettingsView()
                             .navigationDestination(for: Route.self) { RouteView(route: $0) }
@@ -60,7 +77,7 @@ struct RouteView: View {
         case .detail(let m): DetailView(item: m)
         case .folder(let f): FolderView(folder: f)
         case .collection(let id): CollectionView(collectionID: id)
-        case .streams(let type, let id, let title): StreamListView(type: type, id: id, title: title)
+        case .streams(let r): StreamListView(request: r)
         }
     }
 }

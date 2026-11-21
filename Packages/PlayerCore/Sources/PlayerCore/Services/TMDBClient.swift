@@ -51,18 +51,27 @@ public struct TMDBClient: Sendable {
         }
     }
 
+    /// Suche über Filme und Serien (Personen werden ausgelassen).
+    public func search(_ query: String, page: Int = 1) async throws -> [MetaPreview] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return [] }
+        return try await results(url("/search/multi", ["query": q, "page": String(page), "include_adult": "false"]),
+                                 defaultType: .movie, skipPeople: true)
+    }
+
     public func imdbID(tmdbID: Int, type: MediaType) async throws -> String? {
         let u = try url("/\(type == .series ? "tv" : "movie")/\(tmdbID)/external_ids")
         let r = try JSONDecoder().decode(ExternalIDs.self, from: try await http.data(from: u))
         return r.imdb_id
     }
 
-    func results(_ u: URL, defaultType: MediaType, key: String = "results") async throws -> [MetaPreview] {
+    func results(_ u: URL, defaultType: MediaType, key: String = "results", skipPeople: Bool = false) async throws -> [MetaPreview] {
         let data = try await http.data(from: u)
         let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let arr = obj?[key] as? [[String: Any]] ?? []
         return arr.compactMap { r in
             guard let id = r["id"] as? Int else { return nil }
+            if skipPeople, let t = r["media_type"] as? String, t != "movie" && t != "tv" { return nil }
             let mt: MediaType = switch r["media_type"] as? String {
             case "tv": .series
             case "movie": .movie
