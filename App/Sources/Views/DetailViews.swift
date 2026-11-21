@@ -353,7 +353,6 @@ struct StreamListView: View {
         // Gerätefoto Build 28: farbiger Schimmer hinter der Liste (App-Akzent als Tönung der Zeilen/Glasflächen,
         // durchscheinender Hintergrund). Neutral: keine Akzent-Tönung, eigener dunkler, deckender Hintergrund.
         .tint(Color?.none)
-        .scrollContentBackground(.hidden)
         .background(Color(white: 0.07).ignoresSafeArea())
         .task {
             streams = await model.streams(type: request.type, id: request.id)
