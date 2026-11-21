@@ -92,7 +92,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
                 try await engine.load(url, start: start)
                 RemoteLog.info("player", "Geladen · \(Int(engine.duration))s · \(engine.infoText) · Ton: " +
                     engine.audioTracks.map { "\($0.id):\($0.language ?? "?")/\($0.channels ?? 0)ch" }.joined(separator: " ") +
-                    " · UT: \(engine.subtitleTracks.count)")                if let best = preferredAudioTrack(engine.audioTracks, priority: profile.audioPriority), best.id != engine.activeAudioID {
+                    " · UT: \(engine.subtitleTracks.count)")
+                if let best = preferredAudioTrack(engine.audioTracks, priority: profile.audioPriority), best.id != engine.activeAudioID {
                     engine.selectAudio(best.id)
                 }
                 if profile.subtitlesEnabled,
