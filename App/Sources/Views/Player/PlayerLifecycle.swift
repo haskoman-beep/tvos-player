@@ -79,7 +79,8 @@ extension PlayerControls {
                 return
             }
             guard !Task.isCancelled, !leaving else { return }
-            if !engine.isPlaying { engine.play() }
+            // Wie playUnlessHeld: ging die App während des Neuaufbaus wieder weg (TV aus), pausiert bleiben.
+            if life.holdsPlayback { engine.pause() } else if !engine.isPlaying { engine.play() }
             RemoteLog.info("player", "Nach Hintergrund neu aufgebaut · \(engine.stateText) bei \(Int(engine.currentTime))s")
             // Sicherheitsnetz: Addon-Untertitel gemerkt, aber keine externe Spur mehr da → neu holen.
             if !addonTrackURLs.isEmpty, !engine.subtitleTracks.contains(where: \.isExternal) {

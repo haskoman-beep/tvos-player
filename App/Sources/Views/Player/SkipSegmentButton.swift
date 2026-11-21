@@ -111,15 +111,16 @@ struct SkipSegmentButton<E: PlaybackEngine>: View {
     @ObservedObject var controller: SkipSegmentController
     let engine: E
     var lookup: (@MainActor () async -> IntroDBQuery?)?
-    /// Vor dem Sprung: gesammelten ±10-s-Sprung in PlayerControls verwerfen.
-    var onBeforeSkip: () -> Void = {}
+    /// Vor dem Sprung: gesammelten ±10-s-Sprung in PlayerControls verwerfen. false = Sprung gerade gesperrt
+    /// (nach dem Hintergrund bis Play), der Knopf tut dann nichts.
+    var onBeforeSkip: () -> Bool = { true }
     @FocusState private var focused: Bool
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             Color.clear
             if let s = controller.prompt, let title = s.buttonTitle {
-                Button { onBeforeSkip(); Task { await controller.skip(engine: engine) } } label: {
+                Button { guard onBeforeSkip() else { return }; Task { await controller.skip(engine: engine) } } label: {
                     Label(title, systemImage: "forward.end.fill").font(.headline)
                 }
                 .focused($focused)

@@ -166,7 +166,13 @@ struct PlayerControls<E: PlaybackEngine>: View {
             }
             if let n = upNext, let t = nextTitle { upNextCard(n, t).transition(.move(edge: .trailing).combined(with: .opacity)) }
             SkipSegmentButton(controller: skip, engine: engine, lookup: skipLookup,
-                              onBeforeSkip: { seekTask?.cancel(); pendingSeek = nil })
+                              onBeforeSkip: {
+                                  onUserInput()   // Klick auf den Knopf ist ein Tastendruck („Noch da?“)
+                                  seekTask?.cancel(); pendingSeek = nil
+                                  // Wie queueSeek: Bild nach dem Hintergrund freigegeben, erst Play baut neu auf.
+                                  guard !restorePending else { RemoteLog.info("player", "Überspringen gesperrt bis Play (nach Hintergrund)"); return false }
+                                  return true
+                              })
         }
         // Steht der Überspringen-Knopf, bekommt er den Fokus; Befehle unten erreichen die Fläche weiterhin.
         .focusable(skip.prompt == nil)
@@ -189,7 +195,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             poke()
         }
         .onExitCommand {
-            if skip.dismissPrompt() { return }   // Menü schließt zuerst den Überspringen-Knopf
+            if skip.dismissPrompt() { onUserInput(); return }   // Menü schließt zuerst den Überspringen-Knopf
             leave { saveProgress(); engine.stop(); dismiss() }
         }
         .onReceive(timer) { _ in
@@ -277,16 +283,20 @@ struct PlayerControls<E: PlaybackEngine>: View {
         exit()
     }
 
-    /// Up-next: 2 min vor Ende vorladen, 20 s vor Ende 10-s-Countdown, dann nächste Folge.
+    /// Up-next: Karte mit 10-s-Countdown ab Abspannbeginn (`skip.upNextAt`, Welle B-b), sonst 20 s vor Ende;
+    /// 2 min vor Ende bzw. 100 s vor der Karte vorladen, dann nächste Folge.
     private func upNextTick() {
         guard nextTitle != nil, engine.duration > 300, engine.errorText == nil else { return }
-        let rem = engine.duration - engine.currentTime
-        if rem < 120, !nextPrefetched { nextPrefetched = true; onNextSoon() }
+        let now = engine.currentTime, rem = engine.duration - now
+        // Abspann-Zeitpunkt bei jedem Takt neu lesen (Kapitel/IntroDB kommen später); nie später als die alte Regel.
+        let cardAt = min(skip.upNextAt ?? .greatestFiniteMagnitude, engine.duration - 20)
+        if rem < 120 || now >= cardAt - 100, !nextPrefetched { nextPrefetched = true; onNextSoon() }
         if let n = upNext {
-            if rem > 40 { withAnimation { upNext = nil } }   // zurückgespult
+            if now < cardAt - 20 { withAnimation { upNext = nil } }   // zurückgespult
             else if engine.isPlaying { if n <= 1 { startNext() } else { upNext = n - 1 } }
-        } else if rem <= 20, rem > 0, engine.isPlaying, !upNextCancelled {
-            RemoteLog.info("player", "Up-next: \(nextTitle ?? "")")
+        } else if now >= cardAt, rem > 0, engine.isPlaying, !upNextCancelled {
+            let fromCredits = cardAt < engine.duration - 20 ? " · ab Abspann \(Int(cardAt))s" : ""
+            RemoteLog.info("player", "Up-next: \(nextTitle ?? "")\(fromCredits)")
             withAnimation { upNext = 10 }
         }
     }
