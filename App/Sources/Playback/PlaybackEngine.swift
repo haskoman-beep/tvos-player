@@ -107,7 +107,7 @@ final class AetherBackend: PlaybackEngine {
         // nicht ein zweites Mal für Cues voraus (AetherEngine-Doku „Cue retention“, AE#1015).
         engine.maximumSubtitleOffsetSeconds = 0
         Self.installEngineLog()
-        // Eingebaute Zusatzteile (Trait DolbyVisionFelCurves setzt die CI ins Xcode-Projekt, build.yml).
+        // Eingebaute Zusatzteile der Engine (Paket-Traits); derzeit keine.
         let built = AetherEngine.OptionalComponent.allCases.filter(\.isBuiltIn).map(\.traitName)
         RemoteLog.info("engine", "Zusatzteile: \(built.isEmpty ? "keine" : built.joined(separator: ", "))")
     }

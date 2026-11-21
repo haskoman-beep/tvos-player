@@ -24,21 +24,6 @@ jobs:
           xcodebuild -showsdks | grep -i tvos
       - name: XcodeGen
         run: brew install xcodegen && cd App && xcodegen generate
-      - name: Engine-Trait DolbyVisionFelCurves
-        # XcodeGen kann keine Paket-Traits (verwirft `traits:`); laut Engine-Doku (installation.md,
-        # „Turning traits on“) die Liste nach dem Erzeugen in die XCRemoteSwiftPackageReference eintragen.
-        run: |
-          python3 - <<'PY'
-          import sys
-          p = "App/Player.xcodeproj/project.pbxproj"
-          s = open(p).read()
-          key = 'repositoryURL = "https://github.com/superuser404notfound/AetherEngine";'
-          if s.count(key) != 1:
-              sys.exit("AetherEngine-Paketreferenz nicht eindeutig gefunden")
-          s = s.replace(key, key + "\n\t\t\ttraits = (\n\t\t\t\tDolbyVisionFelCurves,\n\t\t\t);")
-          open(p, "w").write(s)
-          PY
-          grep -n -A4 'repositoryURL = "https://github.com/superuser404notfound/AetherEngine"' App/Player.xcodeproj/project.pbxproj
       - name: Build
         run: |
           set -o pipefail
@@ -48,9 +33,6 @@ jobs:
             CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" PLAYER_BUILD_COMMIT="$GITHUB_SHA" PLAYER_BUILD_BRANCH="$GITHUB_REF_NAME" \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build > build.log 2>&1 || { grep -E 'error:|BUILD FAILED' build.log | head -80; exit 1; }
           tail -5 build.log
-          # Trait muss beim Übersetzen der Engine ankommen (sonst still ohne FEL-Kurven gebaut).
-          grep -q -- 'DolbyVisionFelCurves' build.log || { echo "Trait DolbyVisionFelCurves nicht im Build"; exit 1; }
-          grep -o -m1 -- '-D DolbyVisionFelCurves\|-DDolbyVisionFelCurves' build.log || true
           /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' -c 'Print :PlayerBuildCommit' -c 'Print :PlayerBuildBranch' build/Build/Products/Release-appletvos/Player.app/Info.plist
       - name: Package IPA
         run: |

@@ -21,10 +21,7 @@ Not in the binary: SwiftPM also resolves SMBClient (MIT) because AetherEngine de
 links only the `AetherEngine` product, not `AetherEngineSMB`, so none of its code is linked. LibTrueHD
 comes in only through the engine trait `TrueHDObjectAudio`, which this app does not enable.
 
-Engine traits enabled in this app: `DolbyVisionFelCurves` (folds a Dolby Vision Profile 7 FEL enhancement
-layer into the Profile 8.1 RPU curves). It is AetherEngine code (LGPL-3.0, above) and uses libdovi (above);
-it adds no library and no licence of its own. The engine notes that such components may be subject to
-third-party patent licensing.
+No optional engine trait is enabled in this app.
 
 ## AetherEngine
 
