@@ -21,7 +21,8 @@ extension AppModel {
     func upcoming() async -> [UpcomingEpisode] {
         guard let tmdb else { return [] }
         let cache = UpcomingCache.shared
-        let key = "\(profile.id.uuidString):\(tmdb.language)"
+        let airtimes = profile.sources.tvmazeAirtimes
+        let key = "\(profile.id.uuidString):\(tmdb.language):\(airtimes)"
         let watchlist = await items(.watchlist)
         let ids = Upcoming.seriesIDs(continueWatching: progress.continueWatching(limit: 200), watchlist: watchlist)
         if let e = cache.entries[key], Date().timeIntervalSince(e.at) < e.ttl, Set(e.ids) == Set(ids) {
@@ -38,13 +39,13 @@ extension AppModel {
             await withTaskGroup(of: (String, Int?, [UpcomingEpisode]?).self) { g in
                 var queue = ids.makeIterator()
                 for _ in 0..<4 {
-                    if let id = queue.next() { g.addTask { await AppModel.fetchUpcoming(id, known: known[id], tmdb: tmdb, from: from, through: through) } }
+                    if let id = queue.next() { g.addTask { await AppModel.fetchUpcoming(id, known: known[id], tmdb: tmdb, from: from, through: through, airtimes: airtimes) } }
                 }
                 while let r = await g.next() {
                     let (id, n, eps) = r
                     if let n { cache.tmdbIDs[id] = n }
                     if let eps { out += eps } else { failed += 1 }
-                    if let id = queue.next() { g.addTask { await AppModel.fetchUpcoming(id, known: known[id], tmdb: tmdb, from: from, through: through) } }
+                    if let id = queue.next() { g.addTask { await AppModel.fetchUpcoming(id, known: known[id], tmdb: tmdb, from: from, through: through, airtimes: airtimes) } }
                 }
             }
             RemoteLog.info("kalender", "\(ids.count) Serien · \(out.count) Folgen · \(failed) Fehler")
@@ -60,7 +61,7 @@ extension AppModel {
     /// Eine Serie: TMDB-ID ermitteln (falls nötig), dann die Folgen holen.
     /// nil-Folgen = Abruf fehlgeschlagen (wird nicht 6 h gecacht); [] = Serie bei TMDB nicht gefunden.
     nonisolated static func fetchUpcoming(_ id: String, known: Int?, tmdb: TMDBClient,
-                                          from: String, through: String) async -> (String, Int?, [UpcomingEpisode]?) {
+                                          from: String, through: String, airtimes: Bool = false) async -> (String, Int?, [UpcomingEpisode]?) {
         var n = known
         if n == nil {
             if id.hasPrefix("tmdb:") { n = Int(id.dropFirst(5)) }
@@ -70,7 +71,7 @@ extension AppModel {
         }
         guard let n else { return (id, nil, []) }
         guard let eps = try? await tmdb.nextEpisodes(tmdbID: n, from: from, through: through) else { return (id, n, nil) }
-        return (id, n, eps.map { var e = $0; e.seriesID = id; return e })
+        return (id, n, await withAirtimes(eps.map { var e = $0; e.seriesID = id; return e }, id: id, enabled: airtimes))
     }
 
     /// Reihe „Heute neu“: heute erscheinende Folgen als Serienkacheln, die Folge steht in `releaseInfo` („S2 F5“).

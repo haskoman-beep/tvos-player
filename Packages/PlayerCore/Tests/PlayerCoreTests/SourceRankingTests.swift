@@ -224,3 +224,33 @@ private let de = SourceRankContext(audioPriority: ["de", "en", "orig"], av1Hardw
     let list = [st("A 1440p AV1"), st("B 1080p HEVC")]
     #expect(SourceRanking.order(list, context: de).map { String($0.name!.prefix(1)) } == ["B", "A"])
 }
+
+@Test func tvmazeAirstampMovesDayAndAddsTime() throws {
+    let data = Data(#"[{"season":1,"number":2,"airstamp":"2026-11-21T01:00:00+00:00"},{"season":1,"number":3,"airstamp":null},{"season":2,"number":1,"airstamp":"2026-12-30T20:00:00+00:00"}]"#.utf8)
+    let stamps = TVmazeClient.parseAirstamps(data)
+    #expect(stamps.count == 2)
+    var cal = Calendar(identifier: .gregorian)
+    cal.timeZone = try #require(TimeZone(identifier: "Europe/Berlin"))
+    let e1 = UpcomingEpisode(seriesID: "tt1", seriesName: "S", season: 1, episode: 2, airDate: "2026-11-20")
+    let e2 = UpcomingEpisode(seriesID: "tt1", seriesName: "S", season: 2, episode: 1, airDate: "2026-12-01")   // > 1 Tag daneben
+    let e3 = UpcomingEpisode(seriesID: "tt1", seriesName: "S", season: 1, episode: 3, airDate: "2026-11-27")
+    let out = TVmazeClient.apply([e1, e2, e3], stamps: stamps, calendar: cal)
+    #expect(out[0].airDate == "2026-11-21" && out[0].airTime == "02:00")
+    #expect(out[0].label == "02:00 · S1 F2")
+    #expect(out[1] == e2 && out[2] == e3)
+}
+
+@Test func tvmazeLookupAndCache() async throws {
+    let http = FakeSender([(200, #"{"id":42,"name":"S"}"#), (200, #"[{"season":1,"number":1,"airstamp":"2026-11-21T01:00:00+00:00"}]"#)])
+    let a = TVmazeAirtimes(client: TVmazeClient(http: http, sleep: { _ in }))
+    let s1 = await a.stamps(imdb: "tt123")
+    let s2 = await a.stamps(imdb: "tt123")
+    #expect(s1.count == 1 && s1 == s2)
+    #expect(http.sent.count == 2)
+    #expect(http.sent.first?.url.absoluteString == "https://api.tvmaze.com/lookup/shows?imdb=tt123")
+    #expect(http.sent.last?.url.absoluteString == "https://api.tvmaze.com/shows/42/episodes")
+    // Unbekannt (404) → leer, ohne weitere Abfrage der Folgen.
+    let http2 = FakeSender([(404, "")])
+    let b = TVmazeAirtimes(client: TVmazeClient(http: http2, sleep: { _ in }))
+    #expect(await b.stamps(imdb: "tt9").isEmpty && http2.sent.count == 1)
+}

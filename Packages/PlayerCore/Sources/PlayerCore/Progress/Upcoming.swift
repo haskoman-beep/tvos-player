@@ -15,6 +15,8 @@ public struct UpcomingEpisode: Sendable, Hashable, Identifiable {
     public var still: String?
     /// Hintergrund der Serie (Rückfall für die Querformat-Kachel).
     public var background: String?
+    /// Sendezeit in der Gerätezeitzone ("20:15", aus TVmaze); nil = nur das Datum bekannt.
+    public var airTime: String? = nil
 
     public init(seriesID: String, seriesName: String, poster: String? = nil, season: Int, episode: Int,
                 title: String? = nil, airDate: String, still: String? = nil, background: String? = nil) {
@@ -26,8 +28,8 @@ public struct UpcomingEpisode: Sendable, Hashable, Identifiable {
     public var id: String { "\(seriesID):\(season):\(episode)" }
     /// "S2 F5".
     public var episodeLabel: String { "S\(season) F\(episode)" }
-    /// "S2 F5 · Titel".
-    public var label: String { [episodeLabel, title].compactMap { $0 }.joined(separator: " · ") }
+    /// "S2 F5 · Titel", mit Sendezeit "20:15 · S2 F5 · Titel".
+    public var label: String { [airTime, episodeLabel, title].compactMap { $0 }.joined(separator: " · ") }
 }
 
 /// Kalenderlogik (Spec §7a.3): Serien aus Weiterschauen und Merkliste, Zeitraum gestern bis 14 Tage voraus.

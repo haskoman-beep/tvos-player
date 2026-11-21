@@ -59,6 +59,7 @@ struct AppearanceSettings: View {
                 Toggle(Self.badgeTypes[i].0, isOn: model.binding((\Profile.appearance.badges).appending(path: Self.badgeTypes[i].1)))
             }
         }
+        ExtrasSettingsSections()
     }
 
     /// Einzeln abschaltbare Plaketten-Typen (Quellenliste, Detailseite, Poster).
