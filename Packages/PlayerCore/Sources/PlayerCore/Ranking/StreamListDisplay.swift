@@ -35,16 +35,19 @@ public enum StreamListBadgeMode: String, Codable, Sendable, CaseIterable {
 /// wenn vorhanden). Zwei Einträge desselben Addons sind gleich, sobald einer ihrer Schlüssel übereinstimmt: AIOStreams
 /// verpackt dieselbe Datei aus mehreren Scrapern hinter verschiedenen, verschlüsselten Abspiel-Adressen; dort trifft
 /// erst Dateiname+Größe. Der erste Eintrag bleibt (Reihenfolge und `id` der übrigen unverändert).
+/// Review E-b I1: infoHash- und Datei-Schlüssel enthalten den Debrid-Dienst (TB, RD, …; unbekannt „-“). Dieselbe
+/// Datei bei zwei Diensten bleibt zwei Zeilen (Cache-Status kann je Dienst anders sein); die Adresse ist ohnehin je Dienst.
 public enum StreamDedupe {
     public static func keys(_ s: StreamItem) -> [String] {
         var out: [String] = []
+        let service = ReleaseName.service(s) ?? "-"
         if let h = s.infoHash?.trimmingCharacters(in: .whitespaces).lowercased(), !h.isEmpty {
-            out.append("h|\(h)|\(s.fileIdx.map(String.init) ?? "-")")
+            out.append("h|\(service)|\(h)|\(s.fileIdx.map(String.init) ?? "-")")
         }
         if let u = s.url?.trimmingCharacters(in: .whitespaces), !u.isEmpty { out.append("u|\(u)") }
         if let f = s.behaviorHints?.filename?.trimmingCharacters(in: .whitespaces), !f.isEmpty,
            let size = s.behaviorHints?.videoSize, size > 0 {
-            out.append("f|\(f.lowercased())|\(size)")
+            out.append("f|\(service)|\(f.lowercased())|\(size)")
         }
         return out
     }
@@ -58,6 +61,8 @@ public enum StreamDedupe {
             let k = keys(s)
             let dup = k.contains { seen[e.addon, default: []].contains($0) }
             // Auch die Schlüssel einer verworfenen Dublette merken (A~B über Datei, B~C über Adresse → C ist A).
+            // Alle Schlüssel einer Quelle tragen denselben Dienst (Adresse: dieselbe Abspiel-Verbindung), die Kette
+            // springt also nicht auf einen anderen Dienst über (Review E-b M4).
             seen[e.addon, default: []].formUnion(k)
             return ids.insert(s.id).inserted && !dup
         }
@@ -73,8 +78,13 @@ public enum StreamListOrder {
     /// Anzeige: Dubletten raus, dann je nach Einstellung Addon-Reihenfolge oder `SourceRanking`.
     public static func display(_ list: [(addon: String, stream: StreamItem)], mode: StreamOrderMode,
                                context: SourceRankContext) -> [(addon: String, stream: StreamItem)] {
-        let u = StreamDedupe.unique(list)
-        return mode == .smart && u.count > 1 ? SourceRanking.order(u, context: context) : u
+        ordered(StreamDedupe.unique(list), mode: mode, context: context)
+    }
+
+    /// Wie `display`, für eine schon von Dubletten befreite Liste (die App braucht sie auch fürs Log).
+    public static func ordered(_ unique: [(addon: String, stream: StreamItem)], mode: StreamOrderMode,
+                               context: SourceRankContext) -> [(addon: String, stream: StreamItem)] {
+        mode == .smart && unique.count > 1 ? SourceRanking.order(unique, context: context) : unique
     }
 
     /// Automatische Wahl (Weiterschauen, Rückfall, nächste Folge): immer `SourceRanking`, unabhängig von der Anzeige.

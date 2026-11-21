@@ -137,3 +137,28 @@ private let de = SourceRankContext(primaryLanguage: "de", av1Hardware: false)
     let added = StreamListMerge.additions(to: [("AIO", shown)], from: [("AIO", again), ("AIO", new)])
     #expect(added.map(\.stream.id) == [new.id])
 }
+
+@Test func dedupeKeepsSameFileOnDifferentServices() {
+    // Review E-b I1: dieselbe Datei bei TorBox und RealDebrid bleibt zwei Zeilen, je Dienst nur eine.
+    let tb = StreamItem(name: "[TB⚡] AIO", url: "https://aio/p/1", behaviorHints: hints(file: "f.mkv", size: 10))
+    let rd = StreamItem(name: "[RD⏳] AIO", url: "https://aio/p/2", behaviorHints: hints(file: "f.mkv", size: 10))
+    let tb2 = StreamItem(name: "[TB⚡] AIO", url: "https://aio/p/3", behaviorHints: hints(file: "f.mkv", size: 10))
+    #expect(StreamDedupe.unique([("A", tb), ("A", rd)]).count == 2)
+    #expect(StreamDedupe.unique([("A", tb), ("A", tb2)]).map(\.stream.id) == [tb.id])
+    // Gleicher infoHash: ebenso je Dienst.
+    let htb = StreamItem(name: "[TB+]", url: "https://h/1", infoHash: "abc", fileIdx: 0)
+    let hrd = StreamItem(name: "[RD+]", url: "https://h/2", infoHash: "ABC", fileIdx: 0)
+    let htb2 = StreamItem(name: "[TB+] x", url: "https://h/3", infoHash: "abc", fileIdx: 0)
+    #expect(StreamDedupe.unique([("A", htb), ("A", hrd), ("A", htb2)]).map(\.stream.id) == [htb.id, hrd.id])
+    // Übernahme der Erneuerung folgt: RD-Zeile kommt dazu, die zweite TB-Zeile nicht.
+    #expect(StreamListMerge.additions(to: [("A", tb)], from: [("A", tb2), ("A", rd)]).map(\.stream.id) == [rd.id])
+}
+
+@Test func dedupeChainDoesNotCrossServices() {
+    // Review E-b M4: Schlüssel einer verworfenen TB-Dublette entfernen keine RD-Zeile derselben Datei.
+    let a = StreamItem(name: "[TB⚡]", url: "https://u/a", behaviorHints: hints(file: "f.mkv", size: 10))
+    let b = StreamItem(name: "[TB⚡]", url: "https://u/b", infoHash: "h", behaviorHints: hints(file: "f.mkv", size: 10))
+    let c = StreamItem(name: "[RD⚡]", url: "https://u/c", infoHash: "h", behaviorHints: hints(file: "f.mkv", size: 10))
+    let d = StreamItem(name: "[RD⚡] 2", url: "https://u/d", behaviorHints: hints(file: "f.mkv", size: 10))
+    #expect(StreamDedupe.unique([("A", a), ("A", b), ("A", c), ("A", d)]).map(\.stream.id) == [a.id, c.id])
+}

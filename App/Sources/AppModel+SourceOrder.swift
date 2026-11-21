@@ -19,12 +19,13 @@ extension AppModel {
     func orderedStreams(_ list: [(addon: String, stream: StreamItem)]) -> [(addon: String, stream: StreamItem)] {
         let mode = profile.sources.order
         let ctx = sourceRankContext
-        let out = StreamListOrder.display(list, mode: mode, context: ctx)
-        if out.count < list.count {
-            RemoteLog.info("streams", "Dubletten entfernt: \(list.count - out.count) von \(list.count)")
+        let unique = StreamDedupe.unique(list)   // einmal berechnet, auch für die Log-Zeile (Review E-b M3)
+        let out = StreamListOrder.ordered(unique, mode: mode, context: ctx)
+        if unique.count < list.count {
+            RemoteLog.info("streams", "Dubletten entfernt: \(list.count - unique.count) von \(list.count)")
         }
         if mode == .smart {
-            let moved = zip(StreamDedupe.unique(list), out).filter { $0.0.stream.id != $0.1.stream.id }.count
+            let moved = zip(unique, out).filter { $0.0.stream.id != $0.1.stream.id }.count
             if moved > 0 {
                 RemoteLog.info("streams", "Sortiert: \(moved)/\(out.count) verschoben · Sprache \(ctx.primaryLanguage ?? "-") · AV1-HW \(ctx.av1Hardware ? "ja" : "nein")")
             }
