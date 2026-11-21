@@ -299,8 +299,12 @@ private let de = SourceRankContext(audioPriority: ["de", "en", "orig"], av1Hardw
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tvmaze-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     let file = dir.appendingPathComponent("tvmaze.json")
-    let http = FakeSender([(200, #"{"id":42}"#), (200, #"[{"season":1,"number":1,"airstamp":"2026-11-21T01:00:00+00:00"}]"#)])
-    _ = await TVmazeAirtimes(client: TVmazeClient(http: http, sleep: { _ in }), file: file).stamps(imdb: "tt5")
+    // Zeitpunkt im Kalenderfenster (Welle D-b: nur das Fenster wird gespeichert), Schreiben erst mit flush().
+    let soon = ISO8601DateFormatter().string(from: Date().addingTimeInterval(24 * 3600))
+    let http = FakeSender([(200, #"{"id":42}"#), (200, #"[{"season":1,"number":1,"airstamp":"\#(soon)"}]"#)])
+    let first = TVmazeAirtimes(client: TVmazeClient(http: http, sleep: { _ in }), file: file)
+    _ = await first.stamps(imdb: "tt5")
+    await first.flush()
     // Neuer Start: ID und Zeitpunkte von der Platte, kein Abruf.
     let http2 = FakeSender([])
     let s = await TVmazeAirtimes(client: TVmazeClient(http: http2, sleep: { _ in }), file: file).stamps(imdb: "tt5")

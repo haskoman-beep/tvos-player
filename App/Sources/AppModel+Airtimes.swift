@@ -25,17 +25,21 @@ extension AppModel {
                 if bySeries[e.seriesID] == nil { order.append(e.seriesID) }
                 bySeries[e.seriesID, default: []].append(e)
             }
-            var out: [UpcomingEpisode] = []
+            var done: [UpcomingEpisode] = []
             await withTaskGroup(of: [UpcomingEpisode].self) { g in
                 var queue = order.makeIterator()
                 for _ in 0..<4 {
                     if let id = queue.next(), let eps = bySeries[id] { g.addTask { await AppModel.withAirtimes(eps, id: id, enabled: true) } }
                 }
                 while let r = await g.next() {
-                    out += r
+                    done += r
                     if let id = queue.next(), let eps = bySeries[id] { g.addTask { await AppModel.withAirtimes(eps, id: id, enabled: true) } }
                 }
             }
+            // Welle D-b (N-M5): die TVmaze-Datei einmal je Durchgang schreiben, nicht je Serie.
+            await airtimes.flush()
+            // Welle D-b (N-M4): in die ursprüngliche Reihenfolge zurück, damit der Vergleich den Inhalt prüft.
+            let out = TVmazeClient.merged(episodes, updated: done)
             guard cache.entries[key]?.at == stamp, out != episodes else { return }
             cache.entries[key]?.episodes = out
             UpcomingRevision.shared.bump()

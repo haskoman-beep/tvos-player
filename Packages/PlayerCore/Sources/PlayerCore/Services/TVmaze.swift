@@ -49,6 +49,14 @@ public struct TVmazeClient: Sendable {
         return try await http.sendRespectingRateLimit(APIRequest(method: "GET", url: u, headers: [:], body: nil), sleep: sleep)
     }
 
+    /// Welle D-b (N-M4): Ergebnisse je Serie (in beliebiger Fertig-Reihenfolge) in die ursprüngliche Reihenfolge
+    /// zurücksetzen. So vergleicht `merged != original` den Inhalt und nicht die Reihenfolge, in der die Serien fertig wurden.
+    public static func merged(_ original: [UpcomingEpisode], updated: [UpcomingEpisode]) -> [UpcomingEpisode] {
+        var byKey: [String: UpcomingEpisode] = [:]
+        for e in updated { byKey["\(e.seriesID)|\(e.season)|\(e.episode)"] = e }
+        return original.map { byKey["\($0.seriesID)|\($0.season)|\($0.episode)"] ?? $0 }
+    }
+
     /// Folgen mit TVmaze-Zeitpunkt: Tag und Uhrzeit ("20:15") in `calendar`. Übernommen wird nur, wenn der Tag
     /// höchstens einen Tag neben dem TMDB-Datum liegt (sonst ist es vermutlich eine andere Zählung).
     public static func apply(_ eps: [UpcomingEpisode], stamps: [String: Date], calendar: Calendar) -> [UpcomingEpisode] {
@@ -86,10 +94,17 @@ public actor TVmazeGate {
 
 /// Zwischenspeicher, auf Platte wenn `file` gesetzt: TVmaze-ID je IMDb-ID (ändert sich nie, bleibt; „unbekannt“
 /// 7 Tage), Zeitpunkte je Serie 6 h, nach Fehlern 5 min. So fallen beim Kaltstart höchstens die Folgenlisten an.
+/// Welle D-b (N-M5): Je Serie bleiben nur die Zeitpunkte im Kalenderfenster (mit Puffer), und die Datei wird
+/// nicht bei jeder Abfrage geschrieben, sondern einmal je Durchgang über `flush()`. Beim Schreiben wird
+/// aufgeräumt: „unbekannt“ nach 7 Tagen, Zeitpunkte nach 7 Tagen, IDs über `maxIDs` nur noch die zuletzt genutzten.
 public actor TVmazeAirtimes {
     public static let lifetime: TimeInterval = 6 * 3600
     static let missingLifetime: TimeInterval = 7 * 24 * 3600
     static let failedLifetime: TimeInterval = 300
+    /// Kalenderfenster gestern bis +14 Tage, mit Puffer (6-h-Cache, Abweichung bis 1 Tag zum TMDB-Datum).
+    static let keepBehind: TimeInterval = 3 * 24 * 3600
+    static let keepAhead: TimeInterval = TimeInterval(Upcoming.daysAhead + 3) * 24 * 3600
+    static let maxIDs = 300
 
     struct StampEntry: Codable, Equatable { var at: Date; var ttl: TimeInterval; var value: [String: Date] }
     struct Disk: Codable, Equatable {
@@ -102,6 +117,7 @@ public actor TVmazeAirtimes {
     let file: URL?
     private var disk = Disk()
     private var loaded = false
+    private var dirty = false
 
     public init(client: TVmazeClient = TVmazeClient(), file: URL? = nil) { self.client = client; self.file = file }
 
@@ -114,17 +130,17 @@ public actor TVmazeAirtimes {
         else {
             do {
                 guard let found = try await client.showID(imdb: imdb) else {
-                    disk.missing[imdb] = now; save(); return [:]
+                    disk.missing[imdb] = now; dirty = true; return [:]
                 }
-                disk.ids[imdb] = found; disk.missing[imdb] = nil; id = found
+                disk.ids[imdb] = found; disk.missing[imdb] = nil; id = found; dirty = true
             } catch { return [:] }
         }
         let key = String(id)
         if let e = disk.stamps[key], now.timeIntervalSince(e.at) < e.ttl { return e.value }
         do {
-            let v = try await client.airstamps(showID: id)
+            let v = Self.window(try await client.airstamps(showID: id), now: now)
             disk.stamps[key] = StampEntry(at: now, ttl: Self.lifetime, value: v)
-            save()
+            dirty = true
             return v
         } catch {
             disk.stamps[key] = StampEntry(at: now, ttl: Self.failedLifetime, value: [:])
@@ -138,11 +154,29 @@ public actor TVmazeAirtimes {
         if let file, let d = try? Data(contentsOf: file), let x = try? JSONDecoder().decode(Disk.self, from: d) { disk = x }
     }
 
-    private func save() {
-        guard let file else { return }
-        // Alte Zeitpunkte nicht ewig mitschleppen.
-        let now = Date()
-        disk.stamps = disk.stamps.filter { now.timeIntervalSince($0.value.at) < 7 * 24 * 3600 }
+    /// Geänderten Stand einmal schreiben (nach einem Durchgang über alle Serien). Ohne Änderung nichts.
+    public func flush(now: Date = Date()) {
+        guard dirty, let file else { return }
+        dirty = false
+        disk = Self.tidy(disk, now: now)
         if let d = try? JSONEncoder().encode(disk) { try? d.write(to: file, options: .atomic) }
+    }
+
+    /// Nur Zeitpunkte im Kalenderfenster um `now` behalten.
+    static func window(_ stamps: [String: Date], now: Date) -> [String: Date] {
+        stamps.filter { let d = $0.value.timeIntervalSince(now); return d >= -keepBehind && d <= keepAhead }
+    }
+
+    /// Aufräumen vor dem Schreiben: alte Zeitpunkte und „unbekannt“ nach 7 Tagen raus; zu viele IDs → nur die,
+    /// deren Serie noch Zeitpunkte im Cache hat (zuletzt genutzt), höchstens `maxIDs`.
+    static func tidy(_ d: Disk, now: Date) -> Disk {
+        var d = d
+        d.stamps = d.stamps.filter { now.timeIntervalSince($0.value.at) < missingLifetime }
+        d.missing = d.missing.filter { now.timeIntervalSince($0.value) < missingLifetime }
+        if d.ids.count > maxIDs {
+            let used = d.ids.filter { d.stamps[String($0.value)] != nil }
+            d.ids = Dictionary(uniqueKeysWithValues: used.sorted { $0.key < $1.key }.prefix(maxIDs).map { ($0.key, $0.value) })
+        }
+        return d
     }
 }
