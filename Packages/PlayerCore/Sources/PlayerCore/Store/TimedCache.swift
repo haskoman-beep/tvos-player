@@ -1,0 +1,52 @@
+import Foundation
+
+/// Speicher-Cache mit Ablaufzeit nach dem Muster „alten Stand zeigen, im Hintergrund erneuern“.
+/// Abgelaufene Einträge bleiben lesbar; `needsRefresh` sagt, ob eine Erneuerung fällig ist.
+/// Nach einem Fehlschlag wird frühestens nach `retryAfter` erneut versucht.
+public struct TimedCache<Value: Sendable>: Sendable {
+    public struct Entry: Sendable {
+        public var value: Value
+        public var storedAt: Date
+        public var failedAt: Date?
+    }
+
+    public var lifetime: TimeInterval
+    public var retryAfter: TimeInterval
+    public private(set) var entries: [String: Entry] = [:]
+
+    public init(lifetime: TimeInterval = 24 * 3600, retryAfter: TimeInterval = 10 * 60) {
+        self.lifetime = lifetime; self.retryAfter = retryAfter
+    }
+
+    public subscript(key: String) -> Value? { entries[key]?.value }
+
+    public func storedAt(_ key: String) -> Date? { entries[key]?.storedAt }
+
+    public func isStale(_ key: String, now: Date = Date()) -> Bool {
+        guard let e = entries[key] else { return true }
+        return now.timeIntervalSince(e.storedAt) >= lifetime
+    }
+
+    /// Abgelaufen und nicht gerade erst fehlgeschlagen.
+    public func needsRefresh(_ key: String, now: Date = Date()) -> Bool {
+        guard let e = entries[key], isStale(key, now: now) else { return false }
+        if let f = e.failedAt, now.timeIntervalSince(f) < retryAfter { return false }
+        return true
+    }
+
+    /// Alle Schlüssel, deren Erneuerung fällig ist.
+    public func keysNeedingRefresh(now: Date = Date()) -> [String] {
+        entries.keys.filter { needsRefresh($0, now: now) }.sorted()
+    }
+
+    public mutating func store(_ value: Value, for key: String, now: Date = Date()) {
+        entries[key] = Entry(value: value, storedAt: now, failedAt: nil)
+    }
+
+    /// Erneuerung fehlgeschlagen: alten Wert behalten, später wieder versuchen.
+    public mutating func markFailed(_ key: String, now: Date = Date()) {
+        entries[key]?.failedAt = now
+    }
+
+    public mutating func removeAll() { entries.removeAll() }
+}

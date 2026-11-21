@@ -1,35 +1,54 @@
 import Foundation
 import PlayerCore
 
-/// tvOS: Application Support/Documents sind nicht dauerhaft beschreibbar (Code 513).
-/// Daher UserDefaults (bleibt erhalten, ~1 MB Grenze) mit LZFSE-Kompression,
-/// zusätzlich Kopie in Caches (darf das System löschen, hilft aber bei großen Daten).
+/// App-Ablage: kleine Blöcke LZFSE-komprimiert in UserDefaults (dauerhaft), große nur als Datei
+/// (Regeln in `TieredBlobStorage`). tvOS bricht die App ab, wenn die UserDefaults-Domäne ~1 MB übersteigt.
+/// Dateien: Application Support, falls dort wirklich schreibbar (tvOS verweigert es oft mit Code 513),
+/// sonst Caches/Player (darf das System bei Platzmangel leeren).
 struct DefaultsStorage: BlobStorage {
-    static let limit = 900_000
-    let caches = FileBlobStorage(directory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("Player", isDirectory: true))
+    let tiered: TieredBlobStorage
 
-    func key(_ name: String) -> String { "blob." + name }
-
-    func read(_ name: String) -> Data? {
-        if let z = UserDefaults.standard.data(forKey: key(name)),
-           let d = try? (z as NSData).decompressed(using: .lzfse) as Data { return d }
-        return caches.read(name)
+    /// Baut die Ablage, verschiebt einmalig zu große Alt-Einträge und loggt die Defaults-Größe.
+    @MainActor init() {
+        let fm = FileManager.default
+        let support = FileBlobStorage(directory: fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Player", isDirectory: true))
+        let caches = FileBlobStorage(directory: fm.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Player", isDirectory: true))
+        let supportOK = support.isWritable
+        tiered = TieredBlobStorage(defaults: UserDefaultsBlobs(), directories: supportOK ? [support, caches] : [caches],
+                                   compress: { try? ($0 as NSData).compressed(using: .lzfse) as Data },
+                                   decompress: { try? ($0 as NSData).decompressed(using: .lzfse) as Data })
+        let m = tiered.migrate()
+        if !m.moved.isEmpty || !m.failed.isEmpty {
+            RemoteLog.info("speicher", "Migration: verschoben \(m.moved) · behalten \(m.kept) · fehlgeschlagen \(m.failed)")
+        }
+        RemoteLog.info("speicher", Self.summary(tiered: tiered, filesIn: supportOK ? "Application Support" : "Caches"))
     }
 
-    func write(_ name: String, _ data: Data) throws {
-        try? caches.write(name, data)
-        let z = try (data as NSData).compressed(using: .lzfse) as Data
-        guard z.count < Self.limit else { throw StorageFull(bytes: z.count) }
-        UserDefaults.standard.set(z, forKey: key(name))
+    func read(_ name: String) -> Data? { tiered.read(name) }
+    func write(_ name: String, _ data: Data) throws { try tiered.write(name, data) }
+    func remove(_ name: String) { tiered.remove(name) }
+
+    /// Gesamtgröße der App-Domäne in UserDefaults (binäre Plist wie bei cfprefsd) plus die Blöcke einzeln.
+    static func summary(tiered: TieredBlobStorage, filesIn: String) -> String {
+        let domain = Bundle.main.bundleIdentifier.flatMap { UserDefaults.standard.persistentDomain(forName: $0) } ?? [:]
+        let total = (try? PropertyListSerialization.data(fromPropertyList: domain, format: .binary, options: 0).count) ?? 0
+        let blobs = tiered.defaultsSizes().sorted { $0.value > $1.value }
+            .map { "\($0.key) \(kb($0.value))" }.joined(separator: ", ")
+        return "Defaults \(kb(total)) (\(domain.count) Schlüssel) · Blöcke: \(blobs.isEmpty ? "keine" : blobs) · Dateien in \(filesIn)"
     }
 
-    func remove(_ name: String) {
-        UserDefaults.standard.removeObject(forKey: key(name)); caches.remove(name)
-    }
+    static func kb(_ b: Int) -> String { String(format: "%.1f KB", Double(b) / 1024) }
+}
 
-    struct StorageFull: Error, CustomStringConvertible {
-        let bytes: Int
-        var description: String { "Daten zu groß für den Apple-TV-Speicher (\(bytes / 1000) KB komprimiert)" }
+/// UserDefaults als Schlüssel-Wert-Ablage für `TieredBlobStorage`.
+struct UserDefaultsBlobs: KeyValueBlobs {
+    func data(forKey key: String) -> Data? { UserDefaults.standard.data(forKey: key) }
+    func set(_ data: Data, forKey key: String) { UserDefaults.standard.set(data, forKey: key) }
+    func remove(forKey key: String) { UserDefaults.standard.removeObject(forKey: key) }
+    func keys(withPrefix prefix: String) -> [String] {
+        guard let id = Bundle.main.bundleIdentifier, let d = UserDefaults.standard.persistentDomain(forName: id) else { return [] }
+        return d.keys.filter { $0.hasPrefix(prefix) }
     }
 }

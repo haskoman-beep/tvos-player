@@ -12,7 +12,13 @@ final class AppModel: ObservableObject {
     /// Fortschritt des aktiven Profils.
     @Published private(set) var progress = ProgressBook()
     let addons = AddonClient()
-    private var cache: [String: [MetaPreview]] = [:]
+    /// Katalog-Cache: 24 h frisch, danach alter Stand sichtbar + Erneuerung im Hintergrund (AppModel+CatalogCache).
+    var cache = TimedCache<[MetaPreview]>()
+    var catalogRefreshing: Set<String> = []
+    /// Zähler je Quelle nach einer Hintergrund-Erneuerung; Reihen laden dann neu.
+    @Published var catalogRevisions: [String: Int] = [:]
+    /// Erhöht beim Zurückkehren in die App, wenn Kataloge abgelaufen sind.
+    @Published var catalogWake = 0
 
     /// Cinemeta liefert Metadaten/Folgenlisten für IMDb-IDs (kostenlos, ohne Key).
     static let cinemeta = InstalledAddon(
@@ -28,6 +34,7 @@ final class AppModel: ObservableObject {
         progress = progressStore.load(profile: profile.id)
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         RemoteLog.info("start", "App \(v) · \(stored.profiles.count) Profil(e) · Addons \(profile.addons.map(\.manifest.name)) · Reihen \(profile.home.rows.count) · Quelle \(profile.progressSource.rawValue)")
+        observeCatalogWake()
     }
 
     // MARK: Fortschritt
@@ -265,10 +272,11 @@ final class AppModel: ObservableObject {
         return TMDBClient(apiKey: k, language: profile.language == .de ? "de-DE" : "en-US")
     }
 
-    func items(_ source: CatalogSource) async -> [MetaPreview] {
+    /// `refresh`: Cache überspringen (Hintergrund-Erneuerung, AppModel+CatalogCache).
+    func items(_ source: CatalogSource, refresh: Bool = false) async -> [MetaPreview] {
         if case .continueWatching = source.kind { return progress.continueWatching().map(\.item) }
         if case .upcoming = source.kind { return await upcomingToday() }   // eigener 6-h-Cache (AppModel+Upcoming)
-        if let c = cache[source.id] { return c }
+        if !refresh, let c = cache[source.id] { refreshCatalogIfStale(source); return c }
         var out: [MetaPreview] = []
         do {
             switch source.kind {
@@ -288,7 +296,8 @@ final class AppModel: ObservableObject {
             }
         } catch { RemoteLog.error("katalog", "\(source.title): \(error)"); return [] }
         RemoteLog.info("katalog", "\(source.title): \(out.count) Einträge")
-        cache[source.id] = out
+        // Erneuerung nach Profilwechsel/Leeren (Eintrag weg) nicht mehr ablegen.
+        if !refresh || cache[source.id] != nil { cache.store(out, for: source.id) }
         return out
     }
 

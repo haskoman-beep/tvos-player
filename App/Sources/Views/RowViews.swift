@@ -23,7 +23,7 @@ struct HomeRowView: View {
             content
                 .disabled(!interactive)
         }
-        .task(id: row.content.key + (row.content == .list(.continueWatching) ? "\(model.progress.entries.count)-\(model.progress.continueWatching().first?.updated.timeIntervalSince1970 ?? 0)" : "")) {
+        .task(id: row.content.key + (row.content == .list(.continueWatching) ? "\(model.progress.entries.count)-\(model.progress.continueWatching().first?.updated.timeIntervalSince1970 ?? 0)" : "") + model.catalogStamp(row.content)) {
             guard case .list(let s) = row.content else { return }
             items = await model.items(s); loaded = true
         }
