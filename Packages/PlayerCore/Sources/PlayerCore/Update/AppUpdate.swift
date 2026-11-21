@@ -196,6 +196,38 @@ public enum AtvloadlyAddress {
         return c.url
     }
 
+    /// Hinweis (nur Warnung, keine Sperre), wenn `isHomeNetwork` nein sagt.
+    public static let notHomeWarning = "Adresse ist nicht im Heimnetz"
+
+    /// Liegt der Rechner erkennbar im Heimnetz? `*.local`, Name ohne Punkt, IPv4 privat (RFC 1918)
+    /// oder link-local (169.254/16), IPv6 ULA (fc00::/7) oder link-local (fe80::/10).
+    public static func isHomeNetwork(_ base: URL) -> Bool {
+        guard var h = base.host?.lowercased(), !h.isEmpty else { return false }
+        if h.hasPrefix("[") && h.hasSuffix("]") { h = String(h.dropFirst().dropLast()) }
+        if let zone = h.firstIndex(of: "%") { h = String(h[..<zone]) }
+        while h.hasSuffix(".") { h.removeLast() }
+        if h.contains(":") {
+            guard let first = h.split(separator: ":", omittingEmptySubsequences: false).first, !first.isEmpty,
+                  first.count <= 4, let v = Int(first, radix: 16) else { return false }
+            return (v & 0xfe00) == 0xfc00 || (v & 0xffc0) == 0xfe80
+        }
+        let parts = h.split(separator: ".", omittingEmptySubsequences: false)
+        let octets = parts.compactMap { p -> Int? in
+            guard !p.isEmpty, p.count <= 3, p.allSatisfy(\.isASCII), let n = Int(p), (0...255).contains(n) else { return nil }
+            return n
+        }
+        if parts.count == 4 && octets.count == 4 {
+            switch (octets[0], octets[1]) {
+            case (10, _), (192, 168), (169, 254): return true
+            case (172, let b): return (16...31).contains(b)
+            default: return false
+            }
+        }
+        // Nur Ziffern, aber keine private IPv4-Adresse (auch „12345“ oder „300.1.1.1“): kein Name.
+        if parts.allSatisfy({ !$0.isEmpty && $0.allSatisfy { $0.isASCII && $0.isNumber } }) { return false }
+        return parts.count == 1 || h.hasSuffix(".local")
+    }
+
     /// Bonjour `_workstation._tcp`-Name („raspberrypi [aa:bb:…]“) → „raspberrypi.local“.
     public static func host(fromWorkstation name: String) -> String? {
         var n = name

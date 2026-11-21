@@ -167,12 +167,15 @@ final class AppUpdater: ObservableObject {
         return nil
     }
 
-    /// Eingetragene Adresse prüfen (Hinweis unter dem Feld).
+    /// Eingetragene Adresse prüfen (Hinweis unter dem Feld). Liegt sie nicht erkennbar im Heimnetz,
+    /// steht davor eine Warnung (keine Sperre).
     func verify(_ base: URL) {
-        addressNote = "Prüfe …"
+        let warn = AtvloadlyAddress.isHomeNetwork(base) ? "" : AtvloadlyAddress.notHomeWarning + ". "
+        if !warn.isEmpty { RemoteLog.info("update", "atvloadly-Adresse außerhalb des Heimnetzes eingetragen") }
+        addressNote = warn + "Prüfe …"
         Task {
-            if let v = await Self.probe(base) { addressNote = "atvloadly \(v) erreichbar" }
-            else { addressNote = "Unter dieser Adresse antwortet kein atvloadly." }
+            if let v = await Self.probe(base) { addressNote = warn + "atvloadly \(v) erreichbar" }
+            else { addressNote = warn + "Unter dieser Adresse antwortet kein atvloadly." }
         }
     }
 

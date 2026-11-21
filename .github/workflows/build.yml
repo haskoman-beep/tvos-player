@@ -67,6 +67,7 @@ jobs:
         with:
           name: Player-ipa
       - name: Release app-main
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -80,9 +81,19 @@ jobs:
               echo "Release hat schon Build $prev – nichts zu tun"
               exit 0
             fi
-            gh release upload app-main Player.ipa --clobber
+            # Erst der Text, dann das Paket: die Build-Nummer im Text hinkt dem Paket nie hinterher.
             gh release edit app-main --title "$title" --notes "$notes"
-            gh api -X PATCH "repos/$GH_REPO/git/refs/tags/app-main" -f sha="$GITHUB_SHA" -F force=true > /dev/null
+            gh release upload app-main Player.ipa --clobber
+            echo "move_tag=true" >> "$GITHUB_OUTPUT"
           else
             gh release create app-main Player.ipa --target "$GITHUB_SHA" --title "$title" --notes "$notes" --latest
           fi
+      - name: Tag app-main nachziehen
+        if: steps.release.outputs.move_tag == 'true'
+        # Darf scheitern: GITHUB_TOKEN darf Refs nicht immer ändern (z. B. wenn der Lauf den Workflow selbst
+        # geändert hat). Die App liest Build und Commit aus dem Release-Text, nicht aus dem Tag.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh api -X PATCH "repos/$GH_REPO/git/refs/tags/app-main" -f sha="$GITHUB_SHA" -F force=true > /dev/null

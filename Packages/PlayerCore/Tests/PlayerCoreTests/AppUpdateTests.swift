@@ -90,6 +90,20 @@ private func sse(_ json: String) -> String { "event: message\nid: X_0\ndata: \(j
     #expect(base.appendingPathComponent("api/version").absoluteString == "http://pi-name.local:5533/api/version")
 }
 
+@Test func atvloadlyHomeNetworkCheck() {
+    func home(_ s: String) -> Bool { AtvloadlyAddress.isHomeNetwork(AtvloadlyAddress.normalize(s)!) }
+    // Heimnetz: .local, Name ohne Punkt, RFC 1918, link-local, ULA.
+    for s in ["pi-name.local", "PI.Local.", "raspberrypi", "10.1.2.3", "172.16.0.9", "172.31.255.1", "192.168.0.2:8080",
+              "169.254.10.20", "http://[fd12:3456::1]:5533", "[fe80::1]", "[FC00::2]"] {
+        #expect(home(s), "\(s) sollte als Heimnetz gelten")
+    }
+    // Sonst nur Warnung (normalize lehnt nicht ab).
+    for s in ["https://atv.example.org/sub", "8.8.8.8", "172.32.0.1", "11.0.0.1", "192.169.0.1", "[2001:db8::1]", "[::1]", "300.1.1.1", "12345"] {
+        #expect(AtvloadlyAddress.normalize(s) != nil && !home(s), "\(s) sollte als nicht Heimnetz gelten")
+    }
+    #expect(AtvloadlyAddress.notHomeWarning == "Adresse ist nicht im Heimnetz")
+}
+
 @Test func bonjourWorkstationHosts() {
     #expect(AtvloadlyAddress.host(fromWorkstation: "raspberrypi [aa:bb:cc:dd:ee:ff]") == "raspberrypi.local")
     #expect(AtvloadlyAddress.host(fromWorkstation: "nas-2") == "nas-2.local")
