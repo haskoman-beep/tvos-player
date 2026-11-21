@@ -48,6 +48,7 @@ extension PlayerControls {
             // Kein Neuaufbau jetzt: AetherEngine spielt danach von selbst weiter. Erst Play baut neu auf
             // (restoreAndPlay); Fehlerzustand regelt recover bzw. die Fehlerkarte.
             restorePending = engine.errorText == nil && engine.needsForegroundVideoRestore
+            coverAfterBackground()   // 0,6 s schwarz (PlayerExit.swift)
             RemoteLog.info("player", "Zurück aus dem Hintergrund · Neuaufbau \(restorePending ? "beim nächsten Play" : "nicht nötig")")
         }
         // Zeitgeber nur für den Fall, dass die App im Hintergrund nicht ausgesetzt wird; sonst prüft die Rückkehr.
@@ -97,6 +98,6 @@ extension PlayerControls {
     private func closeAfterBackground() {
         guard !leaving else { return }
         RemoteLog.info("player", "Länger als \(Int(life.closeAfter / 60)) min im Hintergrund → Player schließt")
-        leave { saveProgress(); engine.stop(); dismiss() }
+        leaveWithModeSwitch()
     }
 }

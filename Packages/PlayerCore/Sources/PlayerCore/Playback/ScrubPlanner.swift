@@ -20,6 +20,9 @@ public struct ScrubPlanner: Sendable {
     public static let ringDwell: Double = 0.15
     /// Ruhen heißt: in der Wartezeit weniger als so viel Winkel bewegt (Bogenmaß).
     public static let ringDwellTolerance: Double = 0.35
+    /// Das Drehrad beginnt erst nach so viel Drehung (Bogenmaß): ein ruhender Finger am Rand vor einem
+    /// ◀/▶-Klick startet kein Spulen.
+    public static let wheelStartAngle: Double = 0.5
     /// Eine Umdrehung des Drehrads = so viele Sekunden (Feinsuche).
     public static let wheelSecondsPerTurn: Double = 24
     /// Nach einer Wischbewegung zählen ◀/▶ so lange nicht als ±10-s-Sprung (die Wischgeste löst sie mit aus).
@@ -46,6 +49,8 @@ public struct ScrubPlanner: Sendable {
     private var dwellAngle: Double = 0
     private var lastAngle: Double?
     public private(set) var wheelOn = false
+    /// Drehung seit `wheelOn`, solange das Spulen noch nicht begonnen hat.
+    private var wheelPending: Double = 0
 
     public init() {}
 
@@ -108,16 +113,20 @@ public struct ScrubPlanner: Sendable {
             guard let last = lastAngle else { return false }
             let d = Self.unwrap(angle - last)
             // Uhrzeigersinn = Winkel nimmt ab (y nach oben) = vorwärts.
-            let seconds = -d / (2 * .pi) * Self.wheelSecondsPerTurn
-            if !isActive { begin(position: position, duration: duration, now: now) }
-            return move(by: seconds, now: now, snaps: false)
+            var turn = d
+            if !isActive {
+                wheelPending += d
+                guard abs(wheelPending) >= Self.wheelStartAngle else { return false }
+                begin(position: position, duration: duration, now: now)
+                turn = wheelPending; wheelPending = 0
+            }
+            return move(by: -turn / (2 * .pi) * Self.wheelSecondsPerTurn, now: now, snaps: false)
         }
         if let since = dwellSince {
             if abs(Self.unwrap(angle - dwellAngle)) > Self.ringDwellTolerance {
                 dwellSince = now; dwellAngle = angle      // bewegt: Ruhe beginnt neu
             } else if now - since >= Self.ringDwell {
-                wheelOn = true
-                if !isActive { begin(position: position, duration: duration, now: now) }
+                wheelOn = true; wheelPending = 0
             }
         } else {
             dwellSince = now; dwellAngle = angle
@@ -127,7 +136,7 @@ public struct ScrubPlanner: Sendable {
 
     /// Finger weg oder in der Mitte: Drehrad aus (das Ziel bleibt bis Select/Menü).
     public mutating func touchEnded() {
-        dwellSince = nil; lastAngle = nil; wheelOn = false
+        dwellSince = nil; lastAngle = nil; wheelOn = false; wheelPending = 0
     }
 
     /// ◀/▶-Klick während des Spulens: Ziel um `seconds` verschieben (ohne Rasten).

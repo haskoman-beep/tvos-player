@@ -24,6 +24,9 @@ public struct AudioShapingSettings: Codable, Sendable, Equatable {
     /// Ton-Versatz in Millisekunden (positiv = Ton später).
     public var audioDelayMs: Int
     public var bridge: Bridge
+    /// „Stereo (sicher)“: jede Spur als Stereo (Engine-Kanalgrenze 2). Für Lautsprecher, die Surround falsch
+    /// oder gar nicht wiedergeben; dekodiert wie die Formung jede durchgereichte Spur.
+    public var safeStereo: Bool
 
     public static let dialogueChoices = [0, 3, 6, 9]
     public static let loudnessChoices = [0, -24, -20, -16]
@@ -35,12 +38,13 @@ public struct AudioShapingSettings: Codable, Sendable, Equatable {
     public static let maxDialogueDB = 12
 
     public init(nightMode: Bool = false, dialogueBoostDB: Int = 0, loudnessTargetLUFS: Int = 0,
-                audioDelayMs: Int = 0, bridge: Bridge = .surroundCompat) {
+                audioDelayMs: Int = 0, bridge: Bridge = .surroundCompat, safeStereo: Bool = false) {
         self.nightMode = nightMode; self.dialogueBoostDB = dialogueBoostDB
         self.loudnessTargetLUFS = loudnessTargetLUFS; self.audioDelayMs = audioDelayMs; self.bridge = bridge
+        self.safeStereo = safeStereo
     }
 
-    enum CodingKeys: String, CodingKey { case nightMode, dialogueBoostDB, loudnessTargetLUFS, audioDelayMs, bridge }
+    enum CodingKeys: String, CodingKey { case nightMode, dialogueBoostDB, loudnessTargetLUFS, audioDelayMs, bridge, safeStereo }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -51,6 +55,7 @@ public struct AudioShapingSettings: Codable, Sendable, Equatable {
         audioDelayMs = try c.decodeIfPresent(Int.self, forKey: .audioDelayMs) ?? d.audioDelayMs
         // Unbekannter Wert (neuere Version) → Standard statt Profil verwerfen.
         bridge = (try? c.decodeIfPresent(Bridge.self, forKey: .bridge)) ?? d.bridge
+        safeStereo = try c.decodeIfPresent(Bool.self, forKey: .safeStereo) ?? d.safeStereo
     }
 
     /// Dialog-Anhebung in dB, auf 0…12 begrenzt.
@@ -64,8 +69,17 @@ public struct AudioShapingSettings: Codable, Sendable, Equatable {
         Double(min(max(audioDelayMs, -Self.maxDelayMs), Self.maxDelayMs)) / 1000
     }
 
+    /// „eARC/AVR vorhanden“: Empfänger nimmt Mehrkanal-PCM, die Brücke liefert verlustfrei.
+    public var hasEARCReceiver: Bool {
+        get { bridge == .lossless }
+        set { bridge = newValue ? .lossless : .surroundCompat }
+    }
+
+    /// Kanalgrenze für die Engine (nil = Quelle unverändert).
+    public var maxChannels: Int? { safeStereo ? 2 : nil }
+
     /// true = die Engine formt den Ton (dekodiert dann jede durchgereichte Spur).
-    public var shapesAudio: Bool { nightMode || dialogueGain > 0 || loudnessTarget != nil }
+    public var shapesAudio: Bool { nightMode || dialogueGain > 0 || loudnessTarget != nil || safeStereo }
 
     /// Kurztext fürs Log.
     public var logText: String {
@@ -75,6 +89,7 @@ public struct AudioShapingSettings: Codable, Sendable, Equatable {
         if let l = loudnessTarget { parts.append("Lautheit \(Int(l)) LUFS") }
         if audioDelayMs != 0 { parts.append("Versatz \(Int(audioDelaySeconds * 1000)) ms") }
         if bridge != .surroundCompat { parts.append("Brücke \(bridge.rawValue)") }
+        if safeStereo { parts.append("Stereo (sicher)") }
         return parts.isEmpty ? "aus" : parts.joined(separator: ", ")
     }
 }

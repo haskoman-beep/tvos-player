@@ -31,6 +31,10 @@ protocol PlaybackEngine: ObservableObject {
     var startupStatus: StartupStatus? { get }
     /// Kapitel der Datei (für „Intro überspringen“); leer = keine. Umsetzung: PlayerLoadingSteps.swift.
     var chapterMarks: [ChapterMark] { get }
+    /// Spul-Vorschau nur aus schon geladenen Daten (keine zweite Verbindung); Umsetzung: PlayerScrub.swift.
+    var supportsScrubPreview: Bool { get }
+    func scrubPreview(at seconds: Double, refined: Bool, maxWidth: Int) async -> CGImage?
+    func endScrubPreview() async
 
     func load(_ url: URL, start: Double?, prefs: LoadPrefs) async throws
     /// Neue Sitzung an der aktuellen Stelle (frisches Fehlerbudget der Engine).
@@ -60,6 +64,8 @@ protocol PlaybackEngine: ObservableObject {
     @discardableResult
     func addExternalSubtitle(url: URL, name: String, language: String?, formatHint: String?) -> Int?
     func stop()
+    /// Stopp vor der nächsten Folge: HDMI-Modus bleibt stehen (PlayerAudioOptions.swift).
+    func stopKeepingDisplayMode()
     associatedtype Surface: View
     func surface() -> Surface
     /// Untertitel-Overlay für die aktive Spur (über der Surface, unter der Steuerleiste).
@@ -88,6 +94,10 @@ struct LoadPrefs {
     var nativeRemoteHLS = false
     /// Plattencache (Welle B-d); nil oder aus = direkte Adresse wie bisher.
     var diskCache: DiskCacheSettings? = nil
+    /// Ton-Formung, Versatz, Brücke (Welle C-c); nil = Engine-Standard (Trailer).
+    var audio: AudioShapingSettings? = nil
+    /// Bildmodus (Welle C-c); nil = Engine-Standard.
+    var display: DisplayModeSettings? = nil
 }
 
 /// AetherEngine-Backend.
@@ -96,9 +106,9 @@ final class AetherBackend: PlaybackEngine {
     let engine: AetherEngine
     private var bag: AnyCancellable?
     /// Plattencache-Sitzung dieser Wiedergabe (nil = direkt); stop() schließt sie.
-    private var cacheSession: String?
+    var cacheSession: String?
     /// stop() kam (z. B. Verlassen während der Cache-Probe): eine danach fertige Sitzung sofort schließen.
-    private var stopped = false
+    var stopped = false
 
     init() throws {
         engine = try AetherEngine()
@@ -185,6 +195,7 @@ final class AetherBackend: PlaybackEngine {
         o.probesize = 8 * 1024 * 1024
         o.maxAnalyzeDuration = 5_000_000
         o.skipsContainerAttachments = true
+        applyAudioOptions(prefs, to: &o)   // Ton/„Inhalt anpassen“ (PlayerAudioOptions.swift)
         stopped = false
         // Plattencache: nur die Adresse tauschen; jeder Fehler dort → direkte Adresse.
         let routed = await DiskCacheProxy.shared.route(url, headers: prefs.headers, settings: prefs.diskCache,
@@ -245,6 +256,7 @@ final class AetherBackend: PlaybackEngine {
     func stop() {
         stopped = true
         engine.stop()
+        Self.releaseKeptDisplayMode()   // gehaltener Modus einer vorigen Folge (PlayerAudioOptions.swift)
         if let s = cacheSession { cacheSession = nil; Task { await DiskCacheProxy.shared.close(s) } }
     }
     func surface() -> some View { AetherPlayerSurface(engine: engine) }

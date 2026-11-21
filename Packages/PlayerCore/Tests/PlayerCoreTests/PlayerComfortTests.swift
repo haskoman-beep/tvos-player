@@ -83,7 +83,7 @@ private func ok(_ b: Bool, sourceLocation: SourceLocation = #_sourceLocation) {
     p.touch(x: 0, y: 0.9, position: 500, duration: 7200, now: 1)
     #expect(!p.wheelOn)
     p.touch(x: 0, y: 0.9, position: 500, duration: 7200, now: 1.2)
-    #expect(p.wheelOn && p.isActive)
+    #expect(p.wheelOn && !p.isActive)   // ruhender Finger am Rand (z. B. vor einem ◀/▶-Klick) spult nicht
     // Viertel Umdrehung im Uhrzeigersinn (oben → rechts) = +6 s.
     ok(p.touch(x: 0.9, y: 0, position: 500, duration: 7200, now: 1.3))
     #expect(abs(p.target - 506) < 0.001)
@@ -106,6 +106,9 @@ private func ok(_ b: Bool, sourceLocation: SourceLocation = #_sourceLocation) {
     #expect(!p.wheelOn)
     p.touch(x: 0.9, y: 0.05, position: 0, duration: 600, now: 0.3)
     #expect(p.wheelOn)
+    // Kleine Drehung unter der Startschwelle: noch kein Spulen.
+    ok(!p.touch(x: 0.9, y: 0.3, position: 0, duration: 600, now: 0.4))
+    #expect(!p.isActive)
 }
 
 @Test func scrubPreviewCacheGridAndCapacity() {
@@ -145,6 +148,26 @@ private func ok(_ b: Bool, sourceLocation: SourceLocation = #_sourceLocation) {
     #expect(!AudioShapingSettings(audioDelayMs: 100).shapesAudio)
     #expect(AudioShapingSettings(loudnessTargetLUFS: -24).shapesAudio)
     #expect(AudioShapingSettings(nightMode: true, dialogueBoostDB: 3).logText == "Nacht, Dialog +3 dB")
+}
+
+@Test func audioOutputEARCAndSafeStereo() {
+    var s = AudioShapingSettings()
+    #expect(!s.hasEARCReceiver && s.maxChannels == nil)
+    s.hasEARCReceiver = true
+    #expect(s.bridge == .lossless && !s.shapesAudio)   // eARC ändert nur die Brücke, kein Dekodieren
+    s.hasEARCReceiver = false
+    #expect(s.bridge == .surroundCompat)
+    let st = AudioShapingSettings(safeStereo: true)
+    #expect(st.maxChannels == 2 && st.shapesAudio && st.logText == "Stereo (sicher)")
+}
+
+@Test func displayModeDefaultsAndDecoding() throws {
+    let d = DisplayModeSettings()
+    #expect(!d.panelPresentsDolbyVision && d.foldsDolbyVisionFEL && d.keepModeBetweenEpisodes && d.logText == "Standard")
+    let old = try JSONDecoder().decode(DisplayModeSettings.self, from: Data(#"{"panelPresentsDolbyVision":true}"#.utf8))
+    #expect(old.panelPresentsDolbyVision && old.foldsDolbyVisionFEL && old.keepModeBetweenEpisodes)
+    let p = try JSONDecoder().decode(Profile.self, from: Data(#"{"id":"\#(UUID().uuidString)","name":"x"}"#.utf8))
+    #expect(p.displayMode == DisplayModeSettings())
 }
 
 // MARK: Intro-Marken: Plattencache, Staffel-Schätzung, Zeitleiste
