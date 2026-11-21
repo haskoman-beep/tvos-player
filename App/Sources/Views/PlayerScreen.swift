@@ -26,6 +26,7 @@ struct PlayerScreen: View {
                                                        startFraction: isTrailer ? nil : model.progress.resumeFraction(for: request.id),
                                                        runtimeMinutes: request.runtimeMinutes,
                                                        checksPlaceholder: !isTrailer,
+                                                       fallsBackOnLoadError: isTrailer,
                                                        prefs: LoadPrefs(audioLanguages: model.profile.audioPriority.filter { $0 != "orig" },
                                                                         subtitleLanguages: model.profile.subtitlesEnabled ? [model.profile.subtitleLanguage] : [],
                                                                         headers: headers, nativeRemoteHLS: remoteHLS),
@@ -56,6 +57,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
     var runtimeMinutes: Double? = nil
     /// Trailer sind kurz: keine Platzhalter-Erkennung.
     var checksPlaceholder = true
+    /// Laden fehlgeschlagen → onFallback statt Fehlertext stehen lassen (Trailer: zurück zur Detailseite mit Hinweis).
+    var fallsBackOnLoadError = false
     var prefs = LoadPrefs()
     let report: (Double, Double) -> Void
     let onEnded: (Bool) -> Void
@@ -159,7 +162,10 @@ struct PlayerControls<E: PlaybackEngine>: View {
                 RemoteLog.info("player", "Spielt · Tonspur \(engine.activeAudioID.map(String.init) ?? "-") · UT \(engine.activeSubtitleID.map(String.init) ?? "aus")")
                 engine.play()
                 poke()
-            } catch { loadError = "\(error)"; RemoteLog.error("player", "Laden fehlgeschlagen: \(error)") }
+            } catch {
+                RemoteLog.error("player", "Laden fehlgeschlagen: \(error)")
+                if fallsBackOnLoadError { engine.stop(); onFallback("Laden fehlgeschlagen: \(error)") } else { loadError = "\(error)" }
+            }
         }
     }
 

@@ -48,6 +48,9 @@ import Testing
     #expect(r.status == "OK")
     #expect(r.hls?.url.absoluteString == "https://manifest.example/hls_playlist/index.m3u8" && r.hls?.isHLS == true)
     #expect(r.progressive.map(\.height) == [360])
+    // Client-User-Agent muss mit: googlevideo-Adressen sind an den Client gebunden.
+    let ua = try #require(YouTubeResolver.clients.first { $0.key == "visionos" }?.userAgent)
+    #expect(r.hls?.headers == ["User-Agent": ua] && r.progressive.first?.headers == ["User-Agent": ua])
 }
 
 @Test func youtubeProgressiveSkipsCipherAndOver1080() throws {
@@ -89,7 +92,28 @@ final class ScriptedPoster: HTTPPosting, @unchecked Sendable {
     ])
     let s = try #require(await YouTubeResolver(poster: poster).resolve(videoID: "aqz-KE-bpKQ"))
     #expect(s.client == "android" && !s.isHLS && s.height == 360)
+    #expect(s.headers["User-Agent"]?.hasPrefix("com.google.android.youtube/") == true)
     #expect(poster.calls.count == 4)
     #expect(poster.calls[1].1["X-Goog-Visitor-Id"] == "Vis==")
     #expect(poster.calls[1].0.path == "/youtubei/v1/player")
+}
+
+@Test func youtubeResolveStopsWhenCancelled() async {
+    let poster = ScriptedPoster([#"{"responseContext":{"visitorData":"V"}}"#])
+    let t = Task { () -> YouTubeStream? in
+        withUnsafeCurrentTask { $0?.cancel() }
+        return await YouTubeResolver(poster: poster).resolve(videoID: "aqz-KE-bpKQ")
+    }
+    let s = await t.value
+    #expect(s == nil && poster.calls.count <= 1)
+}
+
+@Test func textChunksSplitParagraphsAndLongOnes() {
+    let s = String(repeating: "Ein Satz mit etwas Text. ", count: 40)   // ~1000 Zeichen
+    let chunks = TextChunks.split("Kurz.\n\n" + s + "\nEnde!")
+    #expect(chunks.first == "Kurz." && chunks.last == "Ende!")
+    let mid = chunks.dropFirst().dropLast()
+    #expect(mid.count >= 3 && mid.allSatisfy { $0.count <= 400 && $0.hasSuffix(".") })
+    #expect(mid.joined(separator: " ") == s.trimmingCharacters(in: .whitespaces))
+    #expect(TextChunks.split("") == [])
 }

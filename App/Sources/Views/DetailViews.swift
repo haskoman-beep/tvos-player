@@ -44,6 +44,10 @@ struct DetailView: View {
     @State private var trailerLoading = false
     @State private var trailerNote: String?
     @State private var showFullText = false
+    @State private var trailerTask: Task<Void, Never>?
+    /// Startfokus auf der Hauptaktion, nicht auf der (darüber liegenden) Beschreibung.
+    enum Focus: Hashable { case play, episode(String) }
+    @FocusState private var focus: Focus?
 
     private var isSeries: Bool { item.type == "series" }
 
@@ -81,6 +85,7 @@ struct DetailView: View {
                                     navigate(.streams(PlayRequest(type: "movie", id: imdb, title: item.name, item: progressItem(imdb), runtimeMinutes: parseRuntimeMinutes(meta?.runtime),
                                                                   resumeLastSource: resume != nil)))
                                 }
+                                .focused($focus, equals: .play)
                                 if let k = extra?.trailerYouTube { trailerButton(k) }
                             }
                         }
@@ -92,6 +97,7 @@ struct DetailView: View {
                 }
                 .padding(80)
             }
+            .defaultFocus($focus, .play)
         }
         .task {
             imdb = await model.imdbID(for: item)
@@ -108,13 +114,18 @@ struct DetailView: View {
             }
             season = imdb.flatMap { model.progress.latest(forItem: $0)?.season } ?? seasons.first ?? 1
             loading = false
+            // Während des Ladens war die Beschreibung das einzige fokussierbare Element: Fokus auf die Hauptaktion holen.
+            try? await Task.sleep(for: .milliseconds(50))
+            focus = .play
             await translateSeason()
         }
         .onChange(of: season) { Task { await translateSeason() } }
+        .onDisappear { trailerTask?.cancel() }
         .sheet(isPresented: $showFullText) { FullTextSheet(title: item.name, text: overview) }
         .fullScreenCover(item: $trailer) { t in
             PlayerScreen(url: t.stream.url,
                          request: PlayRequest(type: item.type, id: "trailer:\(t.key)", title: "Trailer · \(item.name)", item: item),
+                         headers: t.stream.headers,
                          onEnded: { _ in trailer = nil },
                          onFallback: { reason in
                              trailer = nil
@@ -130,7 +141,7 @@ struct DetailView: View {
 
     private func trailerButton(_ key: String) -> some View {
         Button(trailerLoading ? "Trailer wird geladen …" : "🎬 Trailer") {
-            Task { await playTrailer(key) }
+            trailerTask = Task { await playTrailer(key) }
         }
     }
 
@@ -144,6 +155,7 @@ struct DetailView: View {
             Task { @MainActor in RemoteLog.info("trailer", line) }
         })
         trailerLoading = false
+        if Task.isCancelled { RemoteLog.info("trailer", "\(key): abgebrochen"); return }
         guard let s else {
             trailerNote = "Trailer nicht verfügbar"
             RemoteLog.info("trailer", "\(key): keine abspielbare Adresse")
@@ -186,6 +198,7 @@ struct DetailView: View {
             let eps = (meta?.videos ?? []).filter { $0.season == season }.sorted { ($0.episode ?? 0) < ($1.episode ?? 0) }
             LazyVStack(alignment: .leading, spacing: 16) {
                 ForEach(eps) { v in
+                    let isFirst = v.id == eps.first?.id
                     Button {
                         let e = v.episode ?? 0
                         navigate(.streams(PlayRequest(type: "series", id: "\(imdb):\(season):\(e)", title: "\(item.name) S\(season)E\(e)",
@@ -208,6 +221,7 @@ struct DetailView: View {
                             Spacer()
                         }
                     }
+                    .focused($focus, equals: isFirst ? .play : .episode(v.id))
                 }
             }
         }
@@ -238,10 +252,13 @@ struct FullTextSheet: View {
     let title: String
     let text: String
     var body: some View {
+        // tvOS scrollt nur von Fokus zu Fokus: Text in Absätze/Stücke teilen, jedes Stück fokussierbar.
         ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 30) {
+            VStack(alignment: .leading, spacing: 24) {
                 Text(title).font(.title2.bold())
-                Text(text).font(.body).focusable()
+                ForEach(Array(TextChunks.split(text).enumerated()), id: \.offset) { _, chunk in
+                    Text(chunk).font(.body).focusable()
+                }
             }
             .frame(maxWidth: 1300, alignment: .leading)
             .padding(60)

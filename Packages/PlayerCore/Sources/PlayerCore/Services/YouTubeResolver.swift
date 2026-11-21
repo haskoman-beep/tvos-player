@@ -11,7 +11,7 @@ public protocol HTTPPosting: Sendable {
 public struct URLSessionPoster: HTTPPosting {
     public init() {}
     public func post(_ url: URL, headers: [String: String], body: Data) async throws -> Data {
-        var r = URLRequest(url: url, timeoutInterval: 10)
+        var r = URLRequest(url: url, timeoutInterval: 6)
         r.httpMethod = "POST"
         r.httpBody = body
         for (k, v) in headers { r.setValue(v, forHTTPHeaderField: k) }
@@ -30,6 +30,8 @@ public struct YouTubeStream: Sendable, Equatable {
     public var height: Int?
     /// Innertube-Client, der die Adresse geliefert hat (fürs Log).
     public var client: String
+    /// Kopfzeilen für Manifest/Segmente: googlevideo-Adressen sind an den User-Agent des Clients gebunden.
+    public var headers: [String: String] = [:]
 }
 
 /// Trailer direkt im eigenen Player: Innertube-Player-API (Vorbild NuvioMobile `InAppYouTubeExtractor`).
@@ -79,6 +81,7 @@ public struct YouTubeResolver: Sendable {
         if visitor == nil { log("kein Besucher-Token") }
         var fallback: YouTubeStream?
         for c in Self.clients {
+            if Task.isCancelled { log("abgebrochen"); return nil }
             do {
                 let data = try await player(videoID: videoID, client: c, visitor: visitor)
                 let r = Self.parsePlayer(data, client: c.key)
@@ -89,7 +92,7 @@ public struct YouTubeResolver: Sendable {
                 log("\(c.key): \(error)")
             }
         }
-        return fallback
+        return Task.isCancelled ? nil : fallback
     }
 
     func visitorData() async -> String? {
@@ -130,8 +133,9 @@ public struct YouTubeResolver: Sendable {
         guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return PlayerResult(progressive: []) }
         let status = (obj["playabilityStatus"] as? [String: Any])?["status"] as? String
         guard status == "OK", let sd = obj["streamingData"] as? [String: Any] else { return PlayerResult(status: status, progressive: []) }
+        let headers = clients.first { $0.key == client }.map { ["User-Agent": $0.userAgent] } ?? [:]
         let hls = (sd["hlsManifestUrl"] as? String).flatMap(URL.init(string:))
-            .map { YouTubeStream(url: $0, isHLS: true, height: nil, client: client) }
+            .map { YouTubeStream(url: $0, isHLS: true, height: nil, client: client, headers: headers) }
         var prog: [(s: YouTubeStream, mp4: Bool)] = []
         for f in sd["formats"] as? [[String: Any]] ?? [] {
             // Nur direkte URLs; `signatureCipher`/`cipher` bräuchte Entschlüsselung.
@@ -140,7 +144,7 @@ public struct YouTubeResolver: Sendable {
             guard mime.isEmpty || mime.hasPrefix("video/") else { continue }
             let height = (f["height"] as? Int) ?? qualityHeight(f["qualityLabel"] as? String) ?? 0
             guard height <= maxHeight else { continue }
-            prog.append((YouTubeStream(url: u, isHLS: false, height: height, client: client), !mime.contains("webm")))
+            prog.append((YouTubeStream(url: u, isHLS: false, height: height, client: client, headers: headers), !mime.contains("webm")))
         }
         prog.sort { a, b in (a.s.height ?? 0) != (b.s.height ?? 0) ? (a.s.height ?? 0) > (b.s.height ?? 0) : (a.mp4 && !b.mp4) }
         return PlayerResult(status: status, hls: hls, progressive: prog.map(\.s))
