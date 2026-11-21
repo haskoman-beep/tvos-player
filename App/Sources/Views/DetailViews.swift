@@ -412,12 +412,20 @@ struct StreamListView: View {
                     RemoteLog.info("player", "Letzte Quelle nicht gefunden (\(last.fingerprint.prefix(60)))")
                 }
             }
-            // Welle D-b (M3): lückenhafter alter Stand → Erneuerung abwarten und übernehmen (nur diese Liste).
-            if model.partialNeedsRefresh(id: request.id) {
+            // Welle D-b (M3, Nacharbeit I2): lückenhafter alter Stand → Erneuerung abwarten und nur die neuen Quellen
+            // anhängen (bestehende Zeilen bleiben: Fokus, `failed`, Rückfall). Nicht, wenn inzwischen etwas spielt oder
+            // startet oder die Liste schon eine andere Folge zeigt.
+            if playing == nil, current == nil, model.partialNeedsRefresh(id: request.id) {
                 refreshingPartial = true
                 let fresh = await model.refreshedPartialStreams(type: request.type, id: request.id)
                 refreshingPartial = false
-                if let fresh, !Task.isCancelled { streams = model.orderedStreams(fresh) }
+                if let fresh, !Task.isCancelled, playing == nil, current == nil {
+                    let added = StreamListMerge.additions(to: streams, from: fresh)
+                    if !added.isEmpty {
+                        streams += model.orderedStreams(added)
+                        RemoteLog.info("streams", "\(request.id): \(added.count) nachgeladene Quellen an die Liste angehängt")
+                    }
+                }
             }
         }
         .onChange(of: playing) { _, s in

@@ -168,14 +168,16 @@ public actor TVmazeAirtimes {
     }
 
     /// Aufräumen vor dem Schreiben: alte Zeitpunkte und „unbekannt“ nach 7 Tagen raus; zu viele IDs → nur die,
-    /// deren Serie noch Zeitpunkte im Cache hat (zuletzt genutzt), höchstens `maxIDs`.
+    /// deren Serie noch Zeitpunkte im Cache hat, davon höchstens `maxIDs` mit dem jüngsten Abruf.
     static func tidy(_ d: Disk, now: Date) -> Disk {
         var d = d
         d.stamps = d.stamps.filter { now.timeIntervalSince($0.value.at) < missingLifetime }
         d.missing = d.missing.filter { now.timeIntervalSince($0.value) < missingLifetime }
         if d.ids.count > maxIDs {
-            let used = d.ids.filter { d.stamps[String($0.value)] != nil }
-            d.ids = Dictionary(uniqueKeysWithValues: used.sorted { $0.key < $1.key }.prefix(maxIDs).map { ($0.key, $0.value) })
+            // Nach echter letzter Nutzung: jüngster Abruf der Zeitpunkte zuerst (Gleichstand nach IMDb-ID).
+            let used = d.ids.compactMap { e in d.stamps[String(e.value)].map { (e.key, e.value, $0.at) } }
+            let kept = used.sorted { $0.2 != $1.2 ? $0.2 > $1.2 : $0.0 < $1.0 }.prefix(maxIDs)
+            d.ids = Dictionary(uniqueKeysWithValues: kept.map { ($0.0, $0.1) })
         }
         return d
     }

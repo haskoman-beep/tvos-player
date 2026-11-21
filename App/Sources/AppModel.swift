@@ -211,12 +211,15 @@ final class AppModel: ObservableObject {
     // MARK: Profile
 
     func switchProfile(_ id: UUID) {
+        // Welle D-b (Mi3): das schon aktive Profil erneut wählen ändert nichts (laufende Suchen bleiben gültig).
+        guard id != stored.activeProfileID else { return }
         stored.activeProfileID = id; cache.removeAll(); save()
         // Quellen des vorigen Profils (andere Addons) nicht ungefiltert als Cache-Treffer liefern.
         streamCache.removeAll(); streamAddonFetchedAt.removeAll()
         // Welle D-b (M1): laufende Suchen des alten Profils vergessen (sie legen nichts mehr ab, niemand wartet neu
         // auf sie), Leer-Pausen und Lückenmerker gelten nur für das Profil, in dem sie entstanden.
         streamTasks.reset(); streamEmptyUntil.removeAll(); streamsAllEmptyAt = nil; streamPartial.removeAll()
+        StreamSearchStatus.shared.reset(); StreamPrefetcher.shared.reset()
         restoreCatalogSnapshot()
         progress = progressStore.load(profile: id)
         Task { await syncRemoteProgress() }
@@ -388,10 +391,10 @@ final class AppModel: ObservableObject {
         }
         let task = Task { () -> [(addon: String, stream: StreamItem)] in
             // Welle C-a: Zeitgrenze und Status je Addon; `failed` = Addons mit Fehler oder Zeitüberschreitung.
-            let search = await searchAddons(type: type, id: id)
+            let search = await searchAddons(type: type, id: id, owner: owner, epoch: epoch)
             let all = search.results
             RemoteLog.info("streams", "\(type) \(id): " + all.map { "\($0.addon.manifest.name)=\($0.streams.count)" }.joined(separator: ", "))
-            guard profile.id == owner, streamTasks.isCurrent(epoch: epoch) else {
+            guard searchStillCurrent(owner: owner, epoch: epoch) else {
                 RemoteLog.info("streams", "\(id): Profil gewechselt, Ergebnis der alten Suche verworfen")
                 return []
             }
@@ -566,7 +569,7 @@ extension AppModel {
             streamAddonFetchedAt = streamAddonFetchedAt.filter { streamCache[$0.key] != nil }
             streamAddonFetchedAt[id] = fetchedAt
             streamPartial = streamPartial.filter { streamCache[$0] != nil }
-            if at != now { streamPartial.insert(id) } else { streamPartial.remove(id) }
+            if !failed.isEmpty { streamPartial.insert(id) } else { streamPartial.remove(id) }   // Mi1
             QualityBadgeCache.shared.streamsStored(id: id)
             return list
         }

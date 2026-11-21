@@ -193,3 +193,26 @@ private final class Counter: @unchecked Sendable {
     #expect(d.ids == ["tt1": 1, "tt2": 2] && d.stamps.count == 2)
     try? FileManager.default.removeItem(at: dir)
 }
+
+// MARK: Nacharbeit I2 – Erneuerung ergänzt die Liste, statt sie zu ersetzen
+
+@Test func refreshAddsOnlyNewSourcesKeepingRows() {
+    let a1 = StreamItem(name: "A", description: "👤 45 ⚡", url: "https://cdn.example/a1.mkv")
+    let a1New = StreamItem(name: "A", description: "👤 47 ⚡", url: "https://cdn.example/a1.mkv")   // nur Seeder anders
+    let h1 = StreamItem(name: "T", description: "x", infoHash: "ABC")
+    let h1New = StreamItem(name: "T", description: "y", infoHash: "abc")
+    let b1 = StreamItem(name: "B", description: "1080p", url: "https://cdn.example/b1.mkv")
+    let b2 = StreamItem(name: "B", description: "2160p", url: "https://cdn.example/b2.mkv")
+    #expect(a1.id != a1New.id)
+    let existing: [(addon: String, stream: StreamItem)] = [("A", a1), ("T", h1)]
+    let fresh: [(addon: String, stream: StreamItem)] = [("B", b2), ("A", a1New), ("T", h1New), ("B", b1), ("B", b2)]
+    let added = StreamListMerge.additions(to: existing, from: fresh)
+    // a1/h1 bleiben als bestehende Zeilen (gleiche Herkunft), nur B's Quellen kommen dazu, ohne Dublette.
+    #expect(added.map(\.stream.id) == [b2.id, b1.id])
+    // Gleiche Adresse bei einem anderen Addon ist eine eigene Quelle.
+    let c1 = StreamItem(name: "C", description: "👤 45 ⚡", url: "https://cdn.example/a1.mkv")
+    #expect(StreamListMerge.additions(to: existing, from: [("C", c1)]).count == 1)
+    // Gleiche `id` wie eine bestehende Zeile nie doppelt (ForEach-Identität).
+    #expect(StreamListMerge.additions(to: existing, from: [("C", a1)]).isEmpty)
+    #expect(StreamListMerge.additions(to: existing, from: []).isEmpty)
+}
