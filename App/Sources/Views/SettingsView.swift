@@ -1,84 +1,119 @@
 import SwiftUI
 import PlayerCore
 
+/// Einstellungs-Kategorien (wie NuvioTVOS `SettingsCategory`).
+enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
+    case profile, addons, services, home, appearance, playback, about
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .profile: "Profil"
+        case .addons: "Addons"
+        case .services: "Dienste & Schlüssel"
+        case .home: "Startseite"
+        case .appearance: "Aussehen"
+        case .playback: "Wiedergabe"
+        case .about: "Über"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .profile: "person.crop.circle"
+        case .addons: "puzzlepiece"
+        case .services: "key"
+        case .home: "house"
+        case .appearance: "paintpalette"
+        case .playback: "play.circle"
+        case .about: "info.circle"
+        }
+    }
+}
+
 /// Einstellungen des aktiven Profils (jedes Profil ist komplett eigenständig).
+/// Links die Kategorien, rechts der Inhalt der fokussierten Kategorie.
 struct SettingsView: View {
     @EnvironmentObject var model: AppModel
-    @State private var addonURL = ""
-    @State private var tmdbKey = ""
-    @State private var nuvioURL = ""
-    @State private var newProfile = ""
-    @State private var busy = false
+    @State private var selected: SettingsCategory = .profile
+    @FocusState private var focused: SettingsCategory?
 
     var body: some View {
-        List {
-            Section {
-                NavigationLink("📱 Am Handy eingeben (QR-Code)") { PhoneInputView() }
-            }
-            Section("Profil: \(model.profile.name)") {
-                ForEach(model.stored.profiles) { p in
-                    Button { model.switchProfile(p.id) } label: {
-                        HStack { Text(p.name); Spacer(); if p.id == model.profile.id { Image(systemName: "checkmark") } }
+        HStack(alignment: .top, spacing: 40) {
+            List {
+                NavigationLink {
+                    PhoneInputView()
+                } label: {
+                    Label("Am Handy eingeben (QR-Code)", systemImage: "qrcode")
+                }
+                ForEach(SettingsCategory.allCases) { c in
+                    Button { selected = c } label: {
+                        HStack {
+                            Label(c.title, systemImage: c.symbol)
+                            Spacer()
+                            if c == selected { Image(systemName: "chevron.right").foregroundStyle(.secondary) }
+                        }
                     }
-                }
-                TextField("Neues Profil (Name)", text: $newProfile)
-                Button("Profil anlegen") { model.addProfile(name: newProfile); newProfile = "" }.disabled(newProfile.isEmpty)
-                if model.hasMultipleProfiles {
-                    Button("Dieses Profil löschen", role: .destructive) { model.deleteProfile(model.profile.id) }
+                    .focused($focused, equals: c)
                 }
             }
+            .frame(width: 520)
+            .focusSection()
 
-            Section("Addons") {
-                ForEach(model.profile.addons) { a in
-                    Button("\(a.manifest.name) \(a.manifest.version) – entfernen", role: .destructive) {
-                        model.update { $0.addons.removeAll { $0.manifestURL == a.manifestURL } }
-                    }
+            List {
+                Section {
+                    Text(selected.title).font(.title2.bold())
                 }
-                TextField("Manifest-URL (z. B. AIOStreams)", text: $addonURL)
-                Button(busy ? "Lädt …" : "Addon hinzufügen") {
-                    busy = true
-                    Task { await model.installAddon(addonURL); addonURL = ""; busy = false }
-                }
-                .disabled(addonURL.isEmpty || busy)
+                content(selected)
             }
-
-            Section("Dienste") {
-                SecureField(model.profile.apiKeys["tmdb"].map { _ in "TMDB-Key (gespeichert)" } ?? "TMDB-API-Key", text: $tmdbKey)
-                Button("TMDB-Key speichern") { model.update { $0.apiKeys["tmdb"] = tmdbKey }; tmdbKey = "" }.disabled(tmdbKey.isEmpty)
-                ForEach(AppModel.syncServices, id: \.self) { s in
-                    let name = s == "trakt" ? "Trakt" : "Simkl"
-                    if !model.hasClient(s) {
-                        Text("\(name): Client ID über die Handy-Seite eintragen").foregroundStyle(.secondary)
-                    } else if model.isConnected(s) {
-                        Button("\(name) verbunden ✓ – abmelden", role: .destructive) { model.disconnect(s) }
-                    } else {
-                        NavigationLink("Mit \(name) verbinden") { SyncLoginView(service: s) }
-                    }
-                }
-            }
-
-            Section("Collections") {
-                Text("\(model.profile.collections.count) Collections · \(model.profile.home.rows.count) Reihen auf der Startseite")
-                TextField("Nuvio-Export-URL (JSON)", text: $nuvioURL)
-                Button("Importieren") { Task { await model.importNuvio(from: nuvioURL); nuvioURL = "" } }.disabled(nuvioURL.isEmpty)
-            }
-
-            Section("Wiedergabe") {
-                Picker("Sprache der App", selection: binding(\.language)) {
-                    Text("Deutsch").tag(AppLanguage.de); Text("English").tag(AppLanguage.en)
-                }
-                Text("Tonspur-Vorrang: " + model.profile.audioPriority.map { $0 == "orig" ? "Original" : $0.uppercased() }.joined(separator: " → "))
-                Toggle("Untertitel automatisch an", isOn: binding(\.subtitlesEnabled))
-                Toggle("Nächste Folge automatisch starten", isOn: binding(\.autoplayNext))
-                Picker("Fortschritt & Gesehen", selection: binding(\.progressSource)) {
-                    Text("Lokal").tag(ProgressSource.local); Text("Trakt").tag(ProgressSource.trakt); Text("Simkl").tag(ProgressSource.simkl)
-                }
-            }
+            .id(selected)
+            .focusSection()
         }
+        .onChange(of: focused) { _, f in if let f { selected = f } }
         .navigationTitle("Einstellungen")
     }
 
-    private func binding<T>(_ kp: WritableKeyPath<Profile, T>) -> Binding<T> {
-        Binding(get: { model.profile[keyPath: kp] }, set: { v in model.update { $0[keyPath: kp] = v } })
+    @ViewBuilder private func content(_ c: SettingsCategory) -> some View {
+        switch c {
+        case .profile: ProfileSettings()
+        case .addons: AddonSettings()
+        case .services: ServiceSettings()
+        case .home: HomeSettings()
+        case .appearance: AppearanceSettings()
+        case .playback: PlaybackSettings()
+        case .about: AboutSettings()
+        }
+    }
+}
+
+extension AppModel {
+    /// Bindung an ein Feld des aktiven Profils; Änderungen laufen über `update` (speichert sofort).
+    func binding<T>(_ kp: WritableKeyPath<Profile, T>) -> Binding<T> {
+        Binding(get: { self.profile[keyPath: kp] }, set: { v in self.update { $0[keyPath: kp] = v } })
+    }
+}
+
+extension AccentChoice {
+    var color: Color {
+        switch self {
+        case .blue: .blue
+        case .purple: .purple
+        case .pink: .pink
+        case .orange: .orange
+        case .green: .green
+        case .white: .white
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .blue: "Blau"
+        case .purple: "Lila"
+        case .pink: "Pink"
+        case .orange: "Orange"
+        case .green: "Grün"
+        case .white: "Weiß"
+        }
     }
 }

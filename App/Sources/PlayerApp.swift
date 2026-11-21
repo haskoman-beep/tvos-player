@@ -43,11 +43,17 @@ struct PlayRequest: Hashable {
     }
 }
 
+/// Tabs der Hauptnavigation.
+enum AppTab: Hashable { case home, search, library, calendar, settings }
+
 struct RootView: View {
     @EnvironmentObject var model: AppModel
+    @State private var tab: AppTab = .home
     @State private var path = NavigationPath()
-    @State private var settingsPath = NavigationPath()
     @State private var searchPath = NavigationPath()
+    @State private var libraryPath = NavigationPath()
+    @State private var calendarPath = NavigationPath()
+    @State private var settingsPath = NavigationPath()
     @State private var pickedProfile = false
 
     var body: some View {
@@ -55,31 +61,53 @@ struct RootView: View {
             if model.hasMultipleProfiles && !pickedProfile {
                 ProfilePickerView { pickedProfile = true }
             } else {
-                TabView {
-                    NavigationStack(path: $path) {
-                        HomeView()
-                            .navigationDestination(for: Route.self) { RouteView(route: $0) }
-                    }
-                    .environment(\.navigate, { path.append($0) })
-                    .tabItem { Text("Start") }
-                    NavigationStack(path: $searchPath) {
-                        SearchView()
-                            .navigationDestination(for: Route.self) { RouteView(route: $0) }
-                    }
-                    .environment(\.navigate, { searchPath.append($0) })
-                    .tabItem { Text("Suche") }
-                    NavigationStack(path: $settingsPath) {
-                        SettingsView()
-                            .navigationDestination(for: Route.self) { RouteView(route: $0) }
-                    }
-                    .environment(\.navigate, { settingsPath.append($0) })
-                    .tabItem { Text("Einstellungen") }
-                }
+                styled(tabs)
+                    .tint(model.profile.appearance.accent.color)
             }
         }
         .alert("Fehler", isPresented: Binding(get: { model.lastError != nil }, set: { if !$0 { model.lastError = nil } })) {
             Button("OK") { model.lastError = nil }
         } message: { Text(model.lastError ?? "") }
+    }
+
+    private var tabs: some View {
+        TabView(selection: $tab) {
+            Tab("Start", systemImage: "house", value: AppTab.home) {
+                stack($path) { HomeView() }
+            }
+            Tab("Suche", systemImage: "magnifyingglass", value: AppTab.search) {
+                stack($searchPath) { SearchView() }
+            }
+            Tab("Bibliothek", systemImage: "books.vertical", value: AppTab.library) {
+                stack($libraryPath) { LibraryView() }
+            }
+            Tab("Kalender", systemImage: "calendar", value: AppTab.calendar) {
+                stack($calendarPath) { CalendarView() }
+            }
+            Tab("Einstellungen", systemImage: "gearshape", value: AppTab.settings) {
+                stack($settingsPath) { SettingsView() }
+            }
+        }
+    }
+
+    /// Seitenleiste oder obere Leiste mit Uhr rechts oben.
+    @ViewBuilder private func styled<V: View>(_ v: V) -> some View {
+        if model.profile.appearance.navigation == .sidebar {
+            v.tabViewStyle(.sidebarAdaptable)
+        } else {
+            v.overlay(alignment: .topTrailing) {
+                ClockView().padding(.top, 40).padding(.trailing, 80)
+            }
+        }
+    }
+
+    /// Eigener Navigationspfad je Tab.
+    private func stack<V: View>(_ p: Binding<NavigationPath>, @ViewBuilder root: () -> V) -> some View {
+        let r = root()
+        return NavigationStack(path: p) {
+            r.navigationDestination(for: Route.self) { RouteView(route: $0) }
+        }
+        .environment(\.navigate, { p.wrappedValue.append($0) })
     }
 }
 
