@@ -27,6 +27,7 @@ struct PlayerScreen: View {
                                                        start: isTrailer ? nil : model.progress.resumePosition(for: request.id),
                                                        startFraction: isTrailer ? nil : model.progress.resumeFraction(for: request.id),
                                                        runtimeMinutes: request.runtimeMinutes,
+                                                       heading: PlayerHeading(request),
                                                        checksPlaceholder: !isTrailer,
                                                        fallsBackOnLoadError: isTrailer,
                                                        prefs: LoadPrefs(audioLanguages: model.profile.audioPriority.filter { $0 != "orig" },
@@ -62,6 +63,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
     let start: Double?
     var startFraction: Double? = nil
     var runtimeMinutes: Double? = nil
+    /// Kopfzeile der Steuerleiste (Serienname + Folge); nil = `title`.
+    var heading: PlayerHeading? = nil
     /// Trailer sind kurz: keine Platzhalter-Erkennung.
     var checksPlaceholder = true
     /// Laden fehlgeschlagen → onFallback statt Fehlertext stehen lassen (Trailer: zurück zur Detailseite mit Hinweis).
@@ -217,13 +220,18 @@ struct PlayerControls<E: PlaybackEngine>: View {
     private var overlay: some View {
         let _ = tick
         let d = max(engine.duration, 1)
+        let pos = pendingSeek ?? engine.currentTime
         return VStack(alignment: .leading, spacing: 14) {
-            Text(title).font(.title3.bold())
-            ProgressView(value: min(pendingSeek ?? engine.currentTime, d), total: d)
+            Text(heading?.title ?? title).font(.title3.bold())
+            if let ep = heading?.episodeLine { Text(ep).font(.callout).foregroundStyle(.secondary) }
+            PlayerInfoBadges(engine: engine)
+            ProgressView(value: min(pos, d), total: d)
             HStack {
-                Text(fmt(pendingSeek ?? engine.currentTime)); Spacer()
-                Text(engine.infoText).font(.caption).foregroundStyle(.secondary)
-                Spacer(); Text("-" + fmt(d - engine.currentTime))
+                Text(fmt(pos)); Spacer()
+                if engine.duration > 0, let end = MediaLabels.endTime(remaining: d - pos) {
+                    Text(end).foregroundStyle(.secondary)
+                }
+                Text("-" + fmt(d - pos))
             }
             .font(.caption.monospacedDigit())
             Text("◀▶ 10 s · ▼ Ton/Untertitel · ⏯ Pause · Zurück beenden").font(.caption2).foregroundStyle(.secondary)
