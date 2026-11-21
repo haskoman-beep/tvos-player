@@ -33,6 +33,7 @@ final class AppModel: ObservableObject {
         progressStore = ProgressStore(storage: storage)
         progress = progressStore.load(profile: profile.id)
         FusionKitStore.shared.attach(self)   // Welle A e: Kit-Reihen der Startseite (AppModel+FusionKit)
+        PlaybackStability.shared.attach(storage)   // Welle C-a: Netz, Ton-Route, fehlgeschlagene Quellen
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         RemoteLog.info("start", "App \(v) · \(stored.profiles.count) Profil(e) · Addons \(profile.addons.map(\.manifest.name)) · Reihen \(profile.home.rows.count) · Quelle \(profile.progressSource.rawValue)")
         observeCatalogWake()
@@ -366,7 +367,7 @@ final class AppModel: ObservableObject {
             return await t.value
         }
         let task = Task { () -> [(addon: String, stream: StreamItem)] in
-            let all = await addons.streams(from: profile.addons, type: type, id: id)
+            let all = await searchAddons(type: type, id: id).results   // Welle C-a: Zeitgrenze und Status je Addon
             RemoteLog.info("streams", "\(type) \(id): " + all.map { "\($0.addon.manifest.name)=\($0.streams.count)" }.joined(separator: ", "))
             // Rohergebnis aller Addons leer (fehlgeschlagene fehlen in `all`, zählen also als leer): vermutlich
             // Ratenbegrenzung → Vorladen pausiert. Bewusst vor dem Filtern auf abspielbare Quellen.
@@ -377,6 +378,7 @@ final class AppModel: ObservableObject {
         let list = await task.value
         streamTasks[id] = nil
         storeStreams(id: id, list: list)
+        streamCache[id] = shortenStreamCache(streamCache[id], partial: StreamSearchStatus.shared.progress[id]?.isPartial ?? false)   // Welle C-a
         return list
     }
 

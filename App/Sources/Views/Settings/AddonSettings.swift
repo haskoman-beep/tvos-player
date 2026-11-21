@@ -20,6 +20,7 @@ struct AddonSettings: View {
                 Task { await model.installAddon(addonURL); addonURL = ""; busy = false }
             }
             .disabled(addonURL.isEmpty || busy)
+            AddonTimeoutPicker()   // Welle C-a
         }
     }
 }

@@ -49,6 +49,10 @@ public enum PlaybackErrorClass: String, Sendable, CaseIterable {
     case storage
     /// Sonst (Quelle abgerissen, Dekoder): einmal neu laden, dann nächste Quelle (bisheriges Verhalten).
     case unknown
+    /// Gerät hat keinen Netzpfad (Systemmeldung): warten, bis das Netz zurück ist; nie weiterschalten.
+    case offline
+    /// Fehler kurz nach einem Ton-/HDMI-Routenwechsel: einmal an der Stelle neu laden statt weiterschalten.
+    case routeChange
 
     /// Deutsche Kurzbezeichnung für Hinweise.
     public var label: String {
@@ -63,6 +67,8 @@ public enum PlaybackErrorClass: String, Sendable, CaseIterable {
         case .certificate: "Zertifikat abgelehnt"
         case .storage: "Speicher voll"
         case .unknown: "Wiedergabefehler"
+        case .offline: "Keine Netzverbindung"
+        case .routeChange: "Tonausgabe gewechselt"
         }
     }
 }
@@ -77,6 +83,19 @@ public enum RecoveryStep: Equatable, Sendable {
     case nextSource
     /// Aufhören und eine klare Meldung zeigen (mit „Andere Quelle wählen“).
     case giveUp(message: String)
+    /// Kein Netz: Meldung zeigen und weitermachen, sobald das Netz zurück ist (`RecoveryPlanner.networkRestored`).
+    case waitForNetwork(message: String)
+}
+
+/// Umstände eines Fehlers, die die Engine nicht kennt (aus der App: Netzpfad, Ton-Route).
+public struct RecoveryContext: Equatable, Sendable {
+    /// Das System meldet keinen Netzpfad.
+    public var offline: Bool
+    /// Ein Routenwechsel (HDMI, Ton) liegt kurz zurück und wurde für diesen Fehler verbraucht (`RouteChangeWindow`).
+    public var routeChangedRecently: Bool
+    public init(offline: Bool = false, routeChangedRecently: Bool = false) {
+        self.offline = offline; self.routeChangedRecently = routeChangedRecently
+    }
 }
 
 public enum PlaybackErrorClassifier {
@@ -86,7 +105,22 @@ public enum PlaybackErrorClassifier {
         "masterPlaylistRejected", "audioBridgeProducedNoOutput", "sourceFabricatesRanges",
         "hlsPlaylistOnRawLivePath", "customSourceProbeFailed",
     ]
-    static let timeoutKinds: Set<String> = ["noPlayableTrackWithinBudget", "liveReloadNeverReady"]
+    static let timeoutKinds: Set<String> = ["noPlayableTrackWithinBudget", "liveReloadNeverReady",
+                                            LoadWatchdog.Verdict.start.kind, LoadWatchdog.Verdict.stall.kind,
+                                            LoadWatchdog.Verdict.seek.kind]
+    /// Ohne Netzpfad ist das die Ursache (nicht Link, Debrid oder Datei).
+    static let offlineOverridable: Set<PlaybackErrorClass> = [.network, .hostUnreachable, .timeout, .unknown, .linkExpired, .debrid]
+    /// Nach einem Routenwechsel: alles außer klaren Dienst-/Gerätegründen einmal neu laden (auch Ton-Bridge-Fehler).
+    static let routeOverridable: Set<PlaybackErrorClass> = [.network, .hostUnreachable, .timeout, .unknown, .unsupported,
+                                                            .debrid, .linkExpired]
+
+    /// Einordnung mit App-Umständen: ohne Netzpfad `.offline`, kurz nach einem Routenwechsel `.routeChange`.
+    public static func classify(_ f: PlaybackFailure, context: RecoveryContext) -> PlaybackErrorClass {
+        let base = classify(f)
+        if context.offline, offlineOverridable.contains(base) { return .offline }
+        if context.routeChangedRecently, routeOverridable.contains(base) { return .routeChange }
+        return base
+    }
     /// FFmpeg AVERROR_INVALIDDATA („Invalid data found when processing input“).
     static let ffmpegInvalidData = -1_094_995_529
 
@@ -151,8 +185,13 @@ public struct RecoveryPlanner: Sendable {
     public init(canReresolve: Bool = true) { self.canReresolve = canReresolve }
 
     /// Nächster Schritt für diesen Fehler.
-    public mutating func next(for failure: PlaybackFailure) -> (PlaybackErrorClass, RecoveryStep) {
-        let cls = PlaybackErrorClassifier.classify(failure)
+    public mutating func next(for failure: PlaybackFailure,
+                              context: RecoveryContext = RecoveryContext()) -> (PlaybackErrorClass, RecoveryStep) {
+        var cls = PlaybackErrorClassifier.classify(failure, context: context)
+        // Zweiter Routenwechsel in dieser Wiedergabe: nicht weiterschalten, sondern den Fehler selbst einordnen.
+        if cls == .routeChange, attempts[.routeChange, default: 0] >= 1 {
+            cls = PlaybackErrorClassifier.classify(failure, context: RecoveryContext(offline: context.offline))
+        }
         let n = attempts[cls, default: 0]
         var step = Self.ladder(cls, attempt: n, canReresolve: canReresolve)
         switch step {
@@ -163,9 +202,16 @@ public struct RecoveryPlanner: Sendable {
             } else {
                 attempts[cls] = n + 1; total += 1; playedSinceAttempt = 0
             }
-        case .nextSource, .giveUp: break
+        case .nextSource, .giveUp, .waitForNetwork: break
         }
         return (cls, step)
+    }
+
+    /// Netz ist zurück, nachdem die Leiter gewartet hat: an der Stelle neu laden. Zählt nicht zum Budget;
+    /// die Netz-Wartezeiten beginnen von vorn.
+    public mutating func networkRestored() -> RecoveryStep {
+        attempts[.network] = nil
+        return .retrySame(delay: 1)
     }
 
     /// Ein Takt laufender, fehlerfreier Wiedergabe (`seconds` = Taktlänge): nach genug Spielzeit neu beginnen.
@@ -196,6 +242,10 @@ public struct RecoveryPlanner: Sendable {
             return .giveUp(message: message(cls))
         case .unknown:
             return n < 1 ? .retrySame(delay: 0) : .nextSource
+        case .offline:
+            return .waitForNetwork(message: message(cls))
+        case .routeChange:
+            return n < 1 ? .retrySame(delay: 1) : .nextSource
         }
     }
 
@@ -206,6 +256,7 @@ public struct RecoveryPlanner: Sendable {
         case .rateLimited: "Der Dienst bremst gerade (zu viele Anfragen). Bitte kurz warten oder eine andere Quelle wählen."
         case .certificate: "Das Zertifikat der Quelle wird abgelehnt. Bitte eine andere Quelle wählen."
         case .storage: "Der Speicher des Apple TV ist voll. Bitte Speicher freigeben oder eine andere Quelle wählen."
+        case .offline: "Keine Netzverbindung. Die Wiedergabe geht weiter, sobald das Netz zurück ist."
         default: "\(cls.label). Bitte eine andere Quelle wählen."
         }
     }
