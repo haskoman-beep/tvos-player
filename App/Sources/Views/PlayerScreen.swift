@@ -189,7 +189,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
             if let n = upNext, let t = nextTitle { upNextCard(n, t).transition(.move(edge: .trailing).combined(with: .opacity)) }
             SkipSegmentButton(controller: skip, engine: engine, lookup: skipLookup,
                               onBeforeSkip: {
-                                  onUserInput()   // Klick auf den Knopf ist ein Tastendruck („Noch da?“)
+                                  guard !leaving else { return false }   // geordneter Ausstieg: kein Sprung auf die stoppende Engine
+                                  onUserInput()  // Klick auf den Knopf ist ein Tastendruck („Noch da?“)
                                   seekTask?.cancel(); pendingSeek = nil
                                   // Wie queueSeek: Bild nach dem Hintergrund freigegeben, erst Play baut neu auf.
                                   guard !restorePending, !restoring else { RemoteLog.info("player", "Überspringen gesperrt bis Play/Neuaufbau (nach Hintergrund)"); return false }
@@ -456,7 +457,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
         }
         RemoteLog.info("player", "Fehler eingeordnet: \(cls.rawValue) (\(failure.logText)) → \(step) · Versuch \(recoveryPlan.total)/\(recoveryPlan.maxAttempts) · bei \(Int(lastGoodTime))s")
         // Start hängt noch in engine.load (Lade-Wächter, Netz): abbrechen; neu gestartet wird unten bzw. nach dem Netz.
-        let startAborted = stab.loadInFlight
+        // Auch eine angesetzte, noch nicht begonnene Wiederholung (`startPending`, Wartezeit/frischer Link) zählt.
+        let startAborted = stab.loadInFlight || stab.startPending
         if startAborted { loadTask?.cancel(); stabilityLoadEnded() }
         switch step {
         case .nextSource:
@@ -474,6 +476,9 @@ struct PlayerControls<E: PlaybackEngine>: View {
         if stabilityResumes(startAborted: startAborted) {
             failureNotice = nil; loadError = nil
             recoverTask?.cancel()
+            // Bis loadAndStart beginnt (Wartezeit, frischer Link) gilt der Start als offen: ein zweiter Fehler in
+            // diesem Fenster wiederholt ebenfalls den ganzen Start statt nur neu zu laden.
+            stab.startPending = true
             loadTask = Task {
                 if case .retrySame(let delay) = step, delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
                 guard !Task.isCancelled, !leaving else { return }

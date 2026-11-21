@@ -276,6 +276,8 @@ struct RemoteImage: View {
     private struct LoadKey: Equatable {
         let url: String?
         let target: ImageTarget?
+        /// Weichzeichner an/aus (z. B. Spoilerschutz nach „gesehen“) lädt die passende Variante.
+        let blur: CGFloat
     }
 
     var body: some View {
@@ -293,7 +295,7 @@ struct RemoteImage: View {
             if let cap = maxPixels { t.width = min(t.width, cap); t.height = min(t.height, cap) }
             if t != target { target = t }
         }
-        .task(id: LoadKey(url: url, target: fixedTarget ?? target)) {
+        .task(id: LoadKey(url: url, target: fixedTarget ?? target, blur: blur)) {
             guard let s = url, let u = URL(string: s) else { image = nil; return }
             guard let target = fixedTarget ?? target else { return }   // Größe noch unbekannt: nicht winzig dekodieren
             let blurPx = Int((blur * displayScale).rounded())

@@ -212,6 +212,8 @@ final class AppModel: ObservableObject {
 
     func switchProfile(_ id: UUID) {
         stored.activeProfileID = id; cache.removeAll(); save()
+        // Quellen des vorigen Profils (andere Addons) nicht ungefiltert als Cache-Treffer liefern.
+        streamCache.removeAll(); streamAddonFetchedAt.removeAll()
         restoreCatalogSnapshot()
         progress = progressStore.load(profile: id)
         Task { await syncRemoteProgress() }

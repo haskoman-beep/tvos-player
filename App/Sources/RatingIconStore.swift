@@ -16,12 +16,16 @@ final class RatingIconStore: ObservableObject {
     /// Nach einem Fehler: dieselbe Adresse erst nach 5 min erneut versuchen.
     private var failedURL: String?
     private var failedUntil = Date.distantPast
+    private var failedText: String?
 
     /// Satz für `url` bereitstellen (nil/ungültig = eingebaute Textplaketten).
     func ensure(_ url: String?) {
         let url = url?.trimmingCharacters(in: .whitespaces)
-        guard url != loadedURL else { return }
-        if let url, url == failedURL, Date() < failedUntil { return }
+        // Gleiche Adresse: nichts tun, außer die Sperre nach einem Fehler ist abgelaufen (neuer Versuch).
+        let retryDue = url != nil && url == failedURL && Date() >= failedUntil
+        guard url != loadedURL || retryDue else { return }
+        // Wechsel (auch auf „eingebaut“ oder zurück auf eine gescheiterte Adresse): Icons und Status gehören danach
+        // immer zur neuen Wahl.
         loadedURL = url
         running?.cancel()
         guard let url, RatingIconSet.isValidSetURL(url), let u = URL(string: url) else { icons = [:]; status = nil; return }
@@ -32,6 +36,10 @@ final class RatingIconStore: ObservableObject {
         } else {
             icons = [:]   // keine Icons eines früheren Satzes stehen lassen
             status = nil
+        }
+        if url == failedURL, Date() < failedUntil {   // gesperrt: kein neuer Abruf, letzter Fehler bleibt sichtbar
+            status = failedText
+            return
         }
         running = Task {
             do {
@@ -46,6 +54,7 @@ final class RatingIconStore: ObservableObject {
                 }
                 let set = RatingIconSet.parse(data)
                 icons = set
+                if failedURL == url { failedURL = nil }
                 status = set.isEmpty ? "Keine Icons erkannt" : "\(set.count) Icons"
                 RemoteLog.info("bewertung", "Icon-Satz: \(set.keys.sorted().joined(separator: ","))")
                 if let d = try? JSONEncoder().encode(Cached(url: url, at: Date(), icons: set)) { try? d.write(to: file, options: .atomic) }
@@ -59,8 +68,8 @@ final class RatingIconStore: ObservableObject {
 
     private func fail(_ url: String, _ text: String) {
         status = text
-        failedURL = url; failedUntil = Date().addingTimeInterval(300)
-        loadedURL = nil   // nach der Sperre neuer Versuch beim nächsten Anzeigen
+        failedURL = url; failedUntil = Date().addingTimeInterval(300); failedText = text
+        // loadedURL bleibt: nach der Sperre versucht `ensure` dieselbe Adresse erneut (retryDue).
     }
 }
 

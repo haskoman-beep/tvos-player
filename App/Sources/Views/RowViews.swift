@@ -16,6 +16,8 @@ struct HomeRowView: View {
     @FocusState private var focusedRoute: Route?
     /// Welle C-b (#19): Fokus-Gedächtnis je Reihe (nil außerhalb der Startseite).
     @Environment(\.homeRowFocusMemory) private var focusMemory
+    /// Welle C-d: nachgezogene Sendezeiten (TVmaze) → Reihe „Heute neu“ lädt aus dem Kalender-Cache neu.
+    @ObservedObject private var upcomingRevision = UpcomingRevision.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -27,7 +29,8 @@ struct HomeRowView: View {
                 .focusSection()
                 .defaultFocus($focusedRoute, rememberedRoute, priority: .userInitiated)
         }
-        .task(id: row.content.key + (row.content == .list(.continueWatching) ? "\(model.progress.entries.count)-\(model.progress.continueWatching().first?.updated.timeIntervalSince1970 ?? 0)" : "") + model.catalogStamp(row.content)) {
+        .task(id: row.content.key + (row.content == .list(.continueWatching) ? "\(model.progress.entries.count)-\(model.progress.continueWatching().first?.updated.timeIntervalSince1970 ?? 0)" : "") + model.catalogStamp(row.content)
+               + (row.content == .list(.upcoming) ? "|r\(upcomingRevision.value)" : "")) {
             guard case .list(let s) = row.content else { return }
             items = await model.items(s); loaded = true
         }

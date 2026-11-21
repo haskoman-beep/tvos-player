@@ -1,5 +1,5 @@
 import SwiftUI
-import AetherEngine
+import AetherFEL
 import PlayerCore
 
 /// Welle C-a: Was der Lade-Wächter von der Engine braucht.
@@ -45,6 +45,7 @@ extension PlayerControls {
     /// Start beginnt (loadAndStart): Zeitstempel t1, Wächter frisch.
     func stabilityLoadBegins() {
         stab.loadInFlight = true
+        stab.startPending = false     // Wiederholung hat begonnen (recover setzt es bis hierher)
         stab.firstFrameSeen = false   // wiederholter Start: t2 und Routenfenster neu
         stab.watchdog.reset()
         PlaybackStability.shared.timing.markResolved()

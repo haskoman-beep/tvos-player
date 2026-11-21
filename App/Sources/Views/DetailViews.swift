@@ -279,8 +279,10 @@ struct DetailView: View {
                                                       episodes: EpisodeRef.list(from: meta?.videos ?? []))))
                     } label: {
                         HStack(spacing: 24) {
-                            RemoteImage(url: v.thumbnail, maxPixels: 560).frame(width: 280, height: 158).clipped()
-                                .spoilerBlur(model.profile.sources.blurUnwatchedStills && !model.progress.isWatched("\(imdb):\(season):\(v.episode ?? 0)"))
+                            let spoiler = model.profile.sources.blurUnwatchedStills && !model.progress.isWatched("\(imdb):\(season):\(v.episode ?? 0)")
+                            RemoteImage(url: v.thumbnail, maxPixels: 560, blur: spoiler ? SpoilerStill.blurRadius : 0)
+                                .frame(width: 280, height: 158).clipped()
+                                .spoilerMark(spoiler)
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack {
                                     Text("\(v.episode ?? 0). \(v.name ?? v.title ?? "Folge")").font(.headline)
