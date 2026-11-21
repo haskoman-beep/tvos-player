@@ -29,6 +29,9 @@ struct SubtitleOverlayView: View {
     static let controlsLift: CGFloat = 272
 
     @State private var active: [SubtitleCue] = []
+    /// Sichtbare Zeilen, die im neuesten Cue-Fenster fehlen: bleiben bis zu ihrem Ende stehen (kein Flackern).
+    @State private var carry: [SubtitleCue] = []
+    @State private var trackID: Int?
     @State private var nativeRendered = false
 
     var body: some View {
@@ -60,9 +63,18 @@ struct SubtitleOverlayView: View {
         .ignoresSafeArea()
         .allowsHitTesting(false)
         .accessibilityHidden(true)
-        .onReceive(engine.clock.$sourceTime) { t in refresh(cues: engine.subtitleCues, at: t) }
-        .onReceive(engine.$subtitleCues) { cues in refresh(cues: cues, at: engine.clock.sourceTime) }
+        // @Published-Senken laufen in willSet: immer den übergebenen Wert nehmen, nicht die Eigenschaft.
+        .onReceive(engine.clock.$sourceTime) { t in refresh(window: engine.subtitleCues, carry: carry, at: t) }
+        .onReceive(engine.$subtitleCues) { cues in
+            var held: [SubtitleCue] = []
+            if !trackChanged(to: engine.activeSubtitleTrackIndex) {
+                held = SubtitleCueHold.carry(visible: active + carry, newWindow: cues, at: time(engine.clock.sourceTime),
+                                             id: \.id, start: \.startTime, end: \.endTime)
+            }
+            refresh(window: cues, carry: held, at: engine.clock.sourceTime)
+        }
         .onReceive(engine.$activeSubtitleTrackIndex) { id in
+            if trackChanged(to: id) { refresh(window: [], carry: [], at: engine.clock.sourceTime) }
             let track = engine.subtitleTracks.first { $0.id == id }
             nativeRendered = track?.isNativelyRenderedSubtitle ?? false
         }
@@ -70,11 +82,20 @@ struct SubtitleOverlayView: View {
 
     // MARK: Zeit
 
-    private func refresh(cues: [SubtitleCue], at sourceTime: Double) {
-        let t = sourceTime - engine.softwareSubtitleDelaySeconds
-        let now = cues.filter { SubtitleGeometry.isActive(start: $0.startTime, end: $0.endTime, at: t) }
-            .sorted { ($0.startTime, $0.id) < ($1.startTime, $1.id) }
-        if now != active { active = now }
+    private func time(_ sourceTime: Double) -> Double { sourceTime - engine.softwareSubtitleDelaySeconds }
+
+    /// Spurwechsel oder Aus: nichts halten, alte Zeilen sofort weg.
+    private func trackChanged(to id: Int?) -> Bool {
+        guard id != trackID else { return false }
+        trackID = id
+        return true
+    }
+
+    private func refresh(window: [SubtitleCue], carry held: [SubtitleCue], at sourceTime: Double) {
+        let r = SubtitleCueHold.active(window: window, carry: held, at: time(sourceTime),
+                                       id: \.id, start: \.startTime, end: \.endTime)
+        if r.carry != carry { carry = r.carry }
+        if r.active != active { active = r.active }
     }
 
     private var bitmapCues: [SubtitleCue] { active.filter { Self.isImage($0) } }
@@ -133,10 +154,10 @@ struct SubtitleOverlayView: View {
     private func textBody(_ cue: SubtitleCue, alignment: TextAlignment) -> some View {
         switch cue.body {
         case .text(let s):
-            let parts = [Part(text: s)]
+            let parts = [Part(text: SubtitleText.clean(s))]
             outlined(fill: Self.attributed(parts, outline: false), stroke: Self.attributed(parts, outline: true), alignment: alignment)
         case .richText(let runs):
-            let parts = runs.map { Part(text: $0.text, color: $0.color, bold: $0.isBold, italic: $0.isItalic,
+            let parts = runs.map { Part(text: SubtitleText.clean($0.text, trim: false), color: $0.color, bold: $0.isBold, italic: $0.isItalic,
                                         underline: $0.isUnderlined, strike: $0.isStruckThrough) }
             outlined(fill: Self.attributed(parts, outline: false), stroke: Self.attributed(parts, outline: true), alignment: alignment)
         case .image:
@@ -170,7 +191,7 @@ struct SubtitleOverlayView: View {
     private static func attributed(_ parts: [Part], outline: Bool) -> AttributedString {
         var out = AttributedString()
         for p in parts {
-            var a = AttributedString(p.text.replacingOccurrences(of: "\r\n", with: "\n"))
+            var a = AttributedString(p.text)
             var font = Font.system(size: fontSize, weight: p.bold ? .bold : .semibold)
             if p.italic { font = font.italic() }
             a.font = font

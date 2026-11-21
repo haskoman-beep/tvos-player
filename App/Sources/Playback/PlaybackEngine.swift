@@ -29,7 +29,13 @@ protocol PlaybackEngine: ObservableObject {
     var stateText: String { get }
     func seek(_ seconds: Double) async
     func selectAudio(_ id: Int)
+    /// Wahl durch den Nutzer (Spur-Panel). Ab dann ändert keine Automatik mehr die Untertitel („Aus bleibt Aus“).
     func selectSubtitle(_ id: Int?)
+    /// Automatische Wahl (Start-Auswahl, nachgeladene Addon-Untertitel). Tut nichts und liefert false,
+    /// wenn der Nutzer in dieser Wiedergabe schon selbst gewählt hat.
+    @discardableResult func autoSelectSubtitle(_ id: Int?) -> Bool
+    /// true, sobald der Nutzer in dieser Wiedergabe selbst eine Untertitelspur (oder Aus) gewählt hat.
+    var subtitleChosenByUser: Bool { get }
     func stop()
     associatedtype Surface: View
     func surface() -> Surface
@@ -137,7 +143,17 @@ final class AetherBackend: PlaybackEngine {
     var stateText: String { "\(engine.state)" }
     func seek(_ seconds: Double) async { await engine.seek(to: max(0, seconds)) }
     func selectAudio(_ id: Int) { engine.selectAudioTrack(index: id) }
+    private(set) var subtitleChosenByUser = false
     func selectSubtitle(_ id: Int?) {
+        subtitleChosenByUser = true
+        applySubtitle(id)
+    }
+    @discardableResult func autoSelectSubtitle(_ id: Int?) -> Bool {
+        guard !subtitleChosenByUser else { return false }
+        applySubtitle(id)
+        return true
+    }
+    private func applySubtitle(_ id: Int?) {
         if let id { engine.selectSubtitleTrack(index: id) } else { engine.clearSubtitle() }
     }
     func stop() { engine.stop() }

@@ -161,8 +161,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
                                                   audioLanguage: (best ?? engine.audioTracks.first(where: { $0.id == engine.activeAudioID }))?.language,
                                                   secondaryLanguages: SubtitlePicker.secondaryLanguages(preferred: profile.subtitleLanguage,
                                                                                                         audioPriority: profile.audioPriority))
-                engine.selectSubtitle(subPick.track?.id)
-                RemoteLog.info("player", subPick.logText)
+                if engine.autoSelectSubtitle(subPick.track?.id) { RemoteLog.info("player", subPick.logText) }
+                else { RemoteLog.info("player", "UT: Nutzerwahl bleibt (\(subPick.logText))") }
                 RemoteLog.info("player", "Spielt · Tonspur \(engine.activeAudioID.map(String.init) ?? "-") · UT \(engine.activeSubtitleID.map(String.init) ?? "aus")")
                 engine.play()
                 poke()
@@ -275,7 +275,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                 let sub = engine.activeSubtitleID   // Laden ohne Engine-Vorwahl: Untertitelwahl übernehmen
                 do { try await engine.load(url, start: pos, prefs: prefs) }
                 catch { engine.stop(); onFallback("Wiedergabefehler: \(reason)"); return }
-                engine.selectSubtitle(sub)
+                if engine.subtitleChosenByUser { engine.selectSubtitle(sub) } else { engine.autoSelectSubtitle(sub) }
             }
             engine.play()
         }

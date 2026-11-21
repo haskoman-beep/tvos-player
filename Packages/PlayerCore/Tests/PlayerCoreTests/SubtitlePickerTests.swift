@@ -231,3 +231,39 @@ private func profileJSON(_ extra: String) -> Data {
     #expect(!SubtitleGeometry.isActive(start: 10, end: 12, at: 12))
     #expect(!SubtitleGeometry.isActive(start: 10, end: 12, at: 9.9))
 }
+
+// MARK: Zeile halten, Text bereinigen
+
+private struct Cue: Equatable { var id: Int; var start: Double; var end: Double }
+
+@Test func holdKeepsVisibleLineMissingFromNewWindow() {
+    let visible = [Cue(id: 1, start: 10, end: 14)]
+    let carry = SubtitleCueHold.carry(visible: visible, newWindow: [Cue(id: 2, start: 20, end: 22)], at: 12,
+                                      id: \.id, start: \.start, end: \.end)
+    #expect(carry == visible)
+    let r = SubtitleCueHold.active(window: [Cue(id: 2, start: 20, end: 22)], carry: carry, at: 12,
+                                   id: \.id, start: \.start, end: \.end)
+    #expect(r.active.map(\.id) == [1])
+    // Abgelaufen: fällt aus Halt und Anzeige.
+    let later = SubtitleCueHold.active(window: [Cue(id: 2, start: 20, end: 22)], carry: r.carry, at: 14.5,
+                                       id: \.id, start: \.start, end: \.end)
+    #expect(later.active.isEmpty && later.carry.isEmpty)
+}
+
+@Test func holdNoDuplicatesWhenLineStillInWindow() {
+    let c = Cue(id: 1, start: 10, end: 14)
+    let carry = SubtitleCueHold.carry(visible: [c, c], newWindow: [c], at: 12, id: \.id, start: \.start, end: \.end)
+    #expect(carry.isEmpty)
+    let carry2 = SubtitleCueHold.carry(visible: [c, c], newWindow: [], at: 12, id: \.id, start: \.start, end: \.end)
+    #expect(carry2 == [c])
+    let r = SubtitleCueHold.active(window: [c, Cue(id: 0, start: 11, end: 13)], carry: [c], at: 12,
+                                   id: \.id, start: \.start, end: \.end)
+    #expect(r.active.map(\.id) == [1, 0])   // nach Start sortiert, ohne Doppelte
+}
+
+@Test func cleanStripsASSLeftovers() {
+    #expect(SubtitleText.clean("{\\an8}Oben\\NZweite Zeile") == "Oben\nZweite Zeile")
+    #expect(SubtitleText.clean("A\\hB\r\nC  ") == "A\u{00A0}B\nC")
+    #expect(SubtitleText.clean("Hallo ", trim: false) == "Hallo ")
+    #expect(SubtitleText.clean("{nicht ASS} bleibt") == "{nicht ASS} bleibt")
+}

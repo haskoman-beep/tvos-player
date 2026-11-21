@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(CoreGraphics)
+import CoreGraphics
+#endif
 
 /// Lage von Untertiteln auf dem Bildschirm (reine Rechnung, für das Overlay).
 public enum SubtitleGeometry {
@@ -32,11 +35,15 @@ public enum SubtitleGeometry {
         let scale = coded.width / canvasSize.width
         let mappedHeight = canvasSize.height * scale
         let originY = (coded.height - mappedHeight) / 2
-        let inCoded = CGRect(x: position.minX * coded.width, y: originY + position.minY * mappedHeight,
-                             width: position.width * coded.width, height: position.height * mappedHeight)
-        let sx = videoRect.width / coded.width, sy = videoRect.height / coded.height
-        return CGRect(x: videoRect.minX + inCoded.minX * sx, y: videoRect.minY + inCoded.minY * sy,
-                      width: inCoded.width * sx, height: inCoded.height * sy)
+        let codedX: CGFloat = position.minX * coded.width
+        let codedY: CGFloat = originY + position.minY * mappedHeight
+        let codedW: CGFloat = position.width * coded.width
+        let codedH: CGFloat = position.height * mappedHeight
+        let sx: CGFloat = videoRect.width / coded.width
+        let sy: CGFloat = videoRect.height / coded.height
+        let x: CGFloat = videoRect.minX + codedX * sx
+        let y: CGFloat = videoRect.minY + codedY * sy
+        return CGRect(x: x, y: y, width: codedW * sx, height: codedH * sy)
     }
 
     /// ASS-Ziffernblock (1 unten links … 9 oben rechts) als Anker: x 0/0.5/1, y von oben 0/0.5/1.
