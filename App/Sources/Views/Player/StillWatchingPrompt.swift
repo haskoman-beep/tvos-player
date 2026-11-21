@@ -10,7 +10,7 @@ struct AutoNextState {
     var ask: StillWatchingAsk?
 
     /// Tastendruck: Zähler auf 0. Nur schreiben, wenn sich etwas ändert (sonst zeichnet jede Taste die Liste neu).
-    static func userInput(_ s: Binding<AutoNextState>) {
+    @MainActor static func userInput(_ s: Binding<AutoNextState>) {
         guard s.wrappedValue.counter.autoStarts > 0 else { return }
         s.wrappedValue.counter.userInput()
         RemoteLog.info("player", "Noch da?: Tastendruck, Zähler zurückgesetzt")
