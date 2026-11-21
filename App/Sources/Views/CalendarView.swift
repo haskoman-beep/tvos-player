@@ -6,19 +6,27 @@ struct CalendarView: View {
     @EnvironmentObject var model: AppModel
     @State private var episodes: [UpcomingEpisode] = []
     @State private var loaded = false
+    @FocusState private var tile: String?
 
     var body: some View {
         let days = Upcoming.days(episodes, today: Date(), calendar: Upcoming.localCalendar)
+        let showTiles = model.tmdb != nil && loaded && !days.isEmpty
         ScrollView(.vertical) {
             LazyVStack(alignment: .leading, spacing: 50) {
-                Text("Kalender").font(.title2.bold()).padding(.leading, 60)
-                if model.tmdb == nil {
-                    CalendarHint(text: "TMDB-Key fehlt (Einstellungen → Dienste & Schlüssel).")
-                } else if !loaded {
-                    ProgressView().padding(.leading, 60)
-                } else if days.isEmpty {
-                    CalendarHint(text: "Keine neuen Folgen in den nächsten 14 Tagen")
-                } else {
+                // Kopfzeile mit Titel und Lade-/Hinweiszeile = festes Fokusziel der Seite (bleibt in allen Zuständen
+                // dasselbe). Ohne Fokussierbares im Inhalt (Laden, Hinweis) schlösse Zurück sonst die App.
+                VStack(alignment: .leading, spacing: 50) {
+                    Text("Kalender").font(.title2.bold()).foregroundStyle(.primary).padding(.leading, 60)
+                    if model.tmdb == nil {
+                        CalendarHint(text: "TMDB-Key fehlt (Einstellungen → Dienste & Schlüssel).")
+                    } else if !loaded {
+                        ProgressView().padding(.leading, 60)
+                    } else if days.isEmpty {
+                        CalendarHint(text: "Keine neuen Folgen in den nächsten 14 Tagen")
+                    }
+                }
+                .quietFocusTarget()
+                if showTiles {
                     ForEach(days, id: \.label) { day in
                         VStack(alignment: .leading, spacing: 18) {
                             Text(day.label).font(.title3.bold()).padding(.leading, 60)
@@ -26,6 +34,7 @@ struct CalendarView: View {
                                 ForEach(day.items) { e in
                                     NavigationLinkish(route: .detail(e.seriesPreview), onActivate: { $0 },
                                                       label: CalendarTile(episode: e))
+                                        .focused($tile, equals: e.id)
                                 }
                             }
                         }
@@ -34,6 +43,8 @@ struct CalendarView: View {
             }
             .padding(.vertical, 40)
         }
+        // Mit Kacheln führt der Weg aus der Seitenleiste auf die erste Kachel, nicht auf die Kopfzeile.
+        .defaultFocus($tile, showTiles ? days.first?.items.first?.id : nil, priority: .userInitiated)
         .task(id: model.profile.id) {
             episodes = await model.upcoming()
             loaded = true
@@ -41,29 +52,12 @@ struct CalendarView: View {
     }
 }
 
-/// Hinweis statt Kacheln (kein TMDB-Key, keine Folgen). Ist zugleich das Fokusziel der Seite, sonst gäbe es
-/// im Inhalt nichts Fokussierbares und Zurück schlösse die App statt in die Seitenleiste zu führen.
+/// Hinweis statt Kacheln (kein TMDB-Key, keine Folgen); wird hell, solange die Kopfzeile den Fokus hat.
 private struct CalendarHint: View {
     let text: String
     var body: some View {
-        Text(text).foregroundStyle(.secondary).frame(height: 120).padding(.leading, 60)
-            .quietFocusTarget()
+        Text(text).quietHintStyle().frame(height: 120).padding(.leading, 60)
     }
-}
-
-extension View {
-    /// Fokusziel ohne sichtbare Hervorhebung für Seiten, die nur einen Hinweis zeigen.
-    /// Ohne Fokusziel im Inhalt landet der Fokus nirgends (oder bleibt in der Seitenleiste), und tvOS wertet
-    /// Zurück als „App verlassen“. Mit diesem Ziel führt Zurück wie in den anderen Bereichen in die Seitenleiste.
-    func quietFocusTarget() -> some View {
-        Button {} label: { self.frame(maxWidth: .infinity, alignment: .leading) }
-            .buttonStyle(QuietFocusStyle())
-    }
-}
-
-/// Zeigt nur das Label: kein Fokusrahmen, kein Anheben, keine Akzentfarbe.
-private struct QuietFocusStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View { configuration.label }
 }
 
 /// Querformat-Kachel: Standbild der Folge (sonst Serienhintergrund bzw. Poster), Serie und „S2 F5 · Titel“.

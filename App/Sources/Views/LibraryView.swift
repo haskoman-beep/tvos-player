@@ -19,11 +19,9 @@ struct LibraryView: View {
                 HomeRowView(row: continueRow, onActivate: { $0 }, onLongPress: {})
                 if watchlist {
                     HomeRowView(row: watchlistRow, onActivate: { $0 }, onLongPress: {})
-                } else if nothingToFocus {
-                    LibraryHint(title: "Merkliste", text: "Die Merkliste kommt aus Trakt oder Simkl (Einstellungen → Dienste & Schlüssel).")
-                        .quietFocusTarget()
                 } else {
                     LibraryHint(title: "Merkliste", text: "Die Merkliste kommt aus Trakt oder Simkl (Einstellungen → Dienste & Schlüssel).")
+                        .quietFocusTarget(nothingToFocus)
                 }
                 HistoryRow()
             }
@@ -61,7 +59,7 @@ private struct LibraryHint: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text(title).font(.title3.bold())
-            Text(text).foregroundStyle(.secondary).frame(height: 120)
+            Text(text).quietHintStyle().frame(height: 120)
         }
         .padding(.leading, 60)
     }

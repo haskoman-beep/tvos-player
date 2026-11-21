@@ -82,6 +82,8 @@ struct HomeView: View {
                 .foregroundStyle(.secondary)
         }
         Button("Startseite bearbeiten") { startEditing(nil) }
+            // Keine Akzentfarbe (RootView .tint) auf der Startseite: normaler tvOS-Knopf wie Abspielen/Details.
+            .tint(Color?.none)
             .padding(.top, 20)
     }
 

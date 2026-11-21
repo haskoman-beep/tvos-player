@@ -278,30 +278,34 @@ struct HeroButtons: View {
         .defaultFocus($field, .play, priority: .userInitiated)
         // Die App-Akzentfarbe (RootView .tint) färbte beide Knöpfe blau: wie auf der Detailseite normale tvOS-Knöpfe.
         .tint(Color?.none)
-        .onChange(of: field) { _, f in
+        .onChange(of: field) { old, f in
             if f != nil { focus.leaveRows() }
+            // Fokus verlässt die Knopfzeile (Nutzer drückt weg): Startfokus nie wieder erzwingen.
+            if old != nil, f == nil, LaunchFocus.deadline != nil { LaunchFocus.finish("Fokus hat die Knopfzeile verlassen") }
         }
         .task { await claimLaunchFocus() }
     }
 
-    /// Kaltstart: „Abspielen“ holt sich den ersten Fokus selbst (siehe `LaunchFocus`) und fasst bis zum Ende
-    /// des Startfensters nach, falls die Seitenleiste ihn wieder an sich zieht. Sobald der Fokus in den Reihen
-    /// war oder das Fenster vorbei ist, greift die Knopfzeile nie mehr ein.
+    /// Kaltstart: „Abspielen“ holt sich den ersten Fokus selbst (siehe `LaunchFocus`), bis er ~300 ms sitzt.
+    /// Danach, sobald der Fokus die Knopfzeile wieder verlässt, in den Reihen war oder das Startfenster vorbei ist,
+    /// greift die Knopfzeile nie mehr ein.
     private func claimLaunchFocus() async {
         guard !LaunchFocus.done else { return }
         let deadline = LaunchFocus.deadline ?? ContinuousClock.now + LaunchFocus.window
         LaunchFocus.deadline = deadline
+        var heldSince: ContinuousClock.Instant?
         while !Task.isCancelled, !LaunchFocus.done, ContinuousClock.now < deadline {
-            if focus.inRows { LaunchFocus.done = true; return }
+            if focus.inRows { LaunchFocus.finish("Fokus in den Reihen"); return }
             if field == nil {
                 field = .play
-            } else if !LaunchFocus.logged {
-                LaunchFocus.logged = true
-                RemoteLog.info("fokus", "Start: Abspielen hat den Fokus")
+            } else {
+                let since = heldSince ?? ContinuousClock.now
+                heldSince = since
+                if ContinuousClock.now - since >= LaunchFocus.hold { LaunchFocus.finish("Abspielen hält den Fokus"); return }
             }
-            try? await Task.sleep(for: .milliseconds(150))
+            try? await Task.sleep(for: .milliseconds(100))
         }
-        if ContinuousClock.now >= deadline { LaunchFocus.done = true }
+        if !LaunchFocus.done, ContinuousClock.now >= deadline { LaunchFocus.finish("Startfenster vorbei") }
     }
 
     private func play() {
@@ -326,7 +330,14 @@ struct HeroButtons: View {
 /// einen Neuaufbau der Startseite in dieser Zeit.
 @MainActor enum LaunchFocus {
     static let window: Duration = .milliseconds(2500)
+    /// So lange muss „Abspielen“ den Fokus halten, dann gilt der Start als erledigt.
+    static let hold: Duration = .milliseconds(300)
     static var deadline: ContinuousClock.Instant?
-    static var done = false
-    static var logged = false
+    private(set) static var done = false
+
+    static func finish(_ reason: String) {
+        guard !done else { return }
+        done = true
+        RemoteLog.info("fokus", "Start: \(reason)")
+    }
 }
