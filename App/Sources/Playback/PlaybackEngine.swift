@@ -31,6 +31,8 @@ protocol PlaybackEngine: ObservableObject {
     var startupStatus: StartupStatus? { get }
     /// Kapitel der Datei (für „Intro überspringen“); leer = keine. Umsetzung: PlayerLoadingSteps.swift.
     var chapterMarks: [ChapterMark] { get }
+    /// Erstes Bild, Nachpuffern, Sprung für den Lade-Wächter (Welle C-a). Umsetzung: PlayerStability.swift.
+    var loadActivity: LoadActivity { get }
 
     func load(_ url: URL, start: Double?, prefs: LoadPrefs) async throws
     /// Neue Sitzung an der aktuellen Stelle (frisches Fehlerbudget der Engine).

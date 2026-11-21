@@ -20,6 +20,8 @@ struct PlayerScreen: View {
     var onUserInput: () -> Void = {}
     /// „Noch da?“ steht an: kein Up-next-Countdown, die Abfrage kommt nach dem Ende.
     var holdsUpNext = false
+    /// Welle C-a: Urteil über die laufende Quelle (fehlgeschlagen / Platzhalter / stabil) für das 8-h-Gedächtnis.
+    var onSourceVerdict: (SourceVerdict) -> Void = { _ in }
     @State private var backend: AetherBackend?
     @State private var initError: String?
     /// Kennzeichen beim Vorladen: solange ein Player offen ist, keine Vorlade-Abfragen.
@@ -55,7 +57,8 @@ struct PlayerScreen: View {
                                                        onTracksShown: { tracksOpen = $0 },
                                                        reresolve: { isTrailer ? nil : await model.freshStream(for: request) },
                                                        skipLookup: { isTrailer ? nil : await model.introDBQuery(for: request) },
-                                                       onUserInput: onUserInput) }
+                                                       onUserInput: onUserInput,
+                                                       onSourceVerdict: isTrailer ? { _ in } : onSourceVerdict) }
             else { Text(initError ?? "Player wird gestartet …") }
         }
         .onDisappear {
@@ -122,6 +125,10 @@ struct PlayerControls<E: PlaybackEngine>: View {
     @FocusState private var surfaceFocused: Bool
     /// Jeder Tastendruck („Noch da?“-Zähler).
     var onUserInput: () -> Void = {}
+    /// Welle C-a: Urteil über die Quelle (PlayerStability.swift); Lade-Wächter, Netz-Warten, Startzeiten.
+    var onSourceVerdict: (SourceVerdict) -> Void = { _ in }
+    @State var stab = PlayerStabilityState()
+    @ObservedObject var stability = PlaybackStability.shared
     /// Laufende Addon-UT-Abfrage; abgebrochen beim Verlassen und vor dem Neuladen.
     @State var addonSubTask: Task<Void, Never>?
     /// Laufendes Neuladen nach einem Fehler; abgebrochen beim Verlassen.
@@ -157,6 +164,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             engine.surface().ignoresSafeArea()
             engine.subtitleLayer(controlsInset: showOverlay ? (controlsHeight ?? SubtitleOverlayView.fallbackControlsInset) : 0)
             PlayerLoadingSteps(engine: engine)
+            PlayerNetworkBanner(text: stab.networkNotice)
             if let e = loadError ?? engine.errorText {
                 // Auch auf dem Bildschirm ohne Schlüssel/volle Adressen (Fotos, Bildschirmfotos).
                 Text("Fehler: \(LogRedact.text(e))").padding(30).background(.red.opacity(0.8), in: RoundedRectangle(cornerRadius: 16))
@@ -209,7 +217,10 @@ struct PlayerControls<E: PlaybackEngine>: View {
             if engine.isPlaying, engine.errorText == nil { lastGoodTime = engine.currentTime; recoveryPlan.notePlaying() }
             if tick % 10 == 0 && engine.isPlaying { saveProgress() }
             upNextTick()
+            stabilityTick(blocked: failureNotice != nil || loadError != nil)
         }
+        .onChange(of: engine.loadActivity.hasFirstFrame) { _, f in if f { stabilityFirstFrame() } }
+        .onChange(of: stability.isOnline) { _, on in stabilityNetworkChanged(on) }
         .onAppear {
             surfaceFocused = true
             guard loadTask == nil else { return }
@@ -243,7 +254,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
         .onChange(of: showTracks) { _, open in onTracksShown(open) }
         .fullScreenCover(isPresented: $showTracks) { PlayerTrackPanel(engine: engine, profile: profile, sourceURL: url, audioLocked: restorePending) }
         // Play von außen (Siri, Kontrollzentrum) nach dem Hintergrund: erst neu aufbauen.
-        .onChange(of: engine.isPlaying) { _, p in if p, restorePending { restoreAndPlay() } }
+        .onChange(of: engine.isPlaying) { _, p in if p { stabilityPlaying() }; if p, restorePending { restoreAndPlay() } }
         .onPlayerLifecycle { handlePhase($0) }
         .playbackErrorAlert($failureNotice, chooseOther: { leave { saveProgress(); engine.stop(); dismiss() } },
                             retry: { recoveryPlan.reset(); life.userResumed(); recover("Erneut versuchen", manual: true) })
@@ -253,11 +264,14 @@ struct PlayerControls<E: PlaybackEngine>: View {
     private func loadAndStart() async {
         do {
             RemoteLog.info("player", "Laden \(title) · Start \(start.map { Int($0) } ?? 0)s · \(url.host ?? "?")")
+            stabilityLoadBegins()
             try await engine.load(url, start: start, prefs: prefs)
-            // Während des Ladens verlassen: nicht mehr wählen und nicht starten.
+            // Während des Ladens verlassen (oder Start vom Lade-Wächter abgebrochen): nicht mehr wählen und nicht starten.
             guard !Task.isCancelled, !leaving else { return }
+            stabilityLoadEnded()
             if checksPlaceholder, isPlaceholderVideo(duration: engine.duration, expectedRuntimeMinutes: runtimeMinutes) {
                 RemoteLog.info("player", "Platzhalter erkannt (\(Int(engine.duration))s, erwartet \(runtimeMinutes.map { Int($0) } ?? 0) min) → nächste Quelle")
+                onSourceVerdict(.placeholder)
                 engine.stop(); leave { onFallback("Quelle noch nicht bereit (Platzhalter)") }; return
             }
             RemoteLog.info("player", "Geladen · \(Int(engine.duration))s · \(engine.infoText) · Ton: " +
@@ -277,7 +291,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
             poke()
         } catch {
             // Abgebrochen, weil der Player verlassen wurde: kein Fehlertext, keine nächste Quelle.
-            guard !Task.isCancelled, !leaving else { RemoteLog.info("player", "Laden abgebrochen (verlassen)"); return }
+            guard !Task.isCancelled, !leaving else { RemoteLog.info("player", "Laden abgebrochen (verlassen oder Neustart)"); return }
+            stabilityLoadEnded()
             RemoteLog.error("player", "Laden fehlgeschlagen: \(error)")
             let shown = LogRedact.text("\(error)")
             if fallsBackOnLoadError { engine.stop(); leave { onFallback("Laden fehlgeschlagen: \(shown)") } } else { loadError = shown }
@@ -393,24 +408,45 @@ struct PlayerControls<E: PlaybackEngine>: View {
 
     /// Fehler: einordnen (PlayerCore `RecoveryPlanner`) und je Klasse gleiche Quelle neu laden, Link neu auflösen,
     /// nächste Quelle oder Meldung. `manual`: Nutzer will es erneut versuchen, auch wo die Leiter aufgeben würde.
-    func recover(_ reason: String, manual: Bool = false) {
+    /// `failure`: eigener Fehler (Lade-Wächter); `networkBack`: Netz zurück nach `.waitForNetwork` (Welle C-a).
+    func recover(_ reason: String, manual: Bool = false, failure given: PlaybackFailure? = nil, networkBack: Bool = false) {
         guard !leaving else { return }
         addonSubTask?.cancel()
         recoveryPlan.canReresolve = reresolve != nil
-        let failure = engine.playbackFailure ?? PlaybackFailure(message: reason)
-        let (cls, planned) = recoveryPlan.next(for: failure)
+        let failure = given ?? engine.playbackFailure ?? PlaybackFailure(message: reason)
+        let (cls, planned) = networkBack ? (PlaybackErrorClass.offline, recoveryPlan.networkRestored())
+                                         : recoveryPlan.next(for: failure, context: stabilityContext())
         var step = planned
         if case .giveUp = planned {
             // Trailer: nie stehen bleiben (zurück zur Detailseite mit Hinweis); Nutzerwunsch: trotzdem versuchen.
             if fallsBackOnLoadError { step = .nextSource } else if manual { step = .retrySame(delay: 0) }
         }
         RemoteLog.info("player", "Fehler eingeordnet: \(cls.rawValue) (\(failure.logText)) → \(step) · Versuch \(recoveryPlan.total)/\(recoveryPlan.maxAttempts) · bei \(Int(lastGoodTime))s")
+        // Start hängt noch in engine.load (Lade-Wächter, Netz): abbrechen; neu gestartet wird unten bzw. nach dem Netz.
+        let startAborted = stab.loadInFlight
+        if startAborted { loadTask?.cancel(); stabilityLoadEnded() }
         switch step {
         case .nextSource:
+            onSourceVerdict(.failed(cls))
             saveProgress(); engine.stop(); leave { onFallback("\(cls.label): \(reason)") }; return
         case .giveUp(let message):
+            if startAborted { stab.startPending = true }   // „Erneut versuchen“ wiederholt dann den ganzen Start
             saveProgress(); failureNotice = message; return
+        case .waitForNetwork(let message):
+            saveProgress(); stabilityWaitForNetwork(message, startAborted: startAborted); return
         case .retrySame, .reresolve: break
+        }
+        // Start war nicht fertig: ganzen Start wiederholen (Ton-/UT-Wahl, Platzhalter-Prüfung), nicht nur neu laden.
+        if stabilityResumes(startAborted: startAborted), case .retrySame(let delay) = step {
+            failureNotice = nil; loadError = nil
+            recoverTask?.cancel()
+            loadTask = Task {
+                if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+                guard !Task.isCancelled, !leaving else { return }
+                RemoteLog.info("player", "Start wird wiederholt")
+                await loadAndStart()
+            }
+            return
         }
         failureNotice = nil
         // Neu laden baut die Sitzung ohnehin neu auf.
@@ -437,6 +473,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                 guard !Task.isCancelled, !leaving else { return }
                 guard let fresh else {
                     RemoteLog.info("player", "Kein frischer Link → nächste Quelle")
+                    onSourceVerdict(.failed(cls))
                     saveProgress(); engine.stop(); leave { onFallback("\(cls.label): \(reason)") }; return
                 }
                 RemoteLog.info("player", "Frischer Link · load ab \(Int(pos))s")

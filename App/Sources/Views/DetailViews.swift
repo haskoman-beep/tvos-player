@@ -361,15 +361,18 @@ struct StreamListView: View {
             Section {
                 if let nextNote { Text(nextNote).foregroundStyle(.secondary) }
                 if loading { ProgressView("Quellen werden geladen …") }
+                AddonSearchStatusLine(id: (current ?? request).id)
                 if !loading && streams.isEmpty {
                     Text(model.profile.addons.isEmpty ? "Kein Addon installiert (Einstellungen → Addons)." : "Keine abspielbaren Quellen.")
                 }
                 ForEach(streams, id: \.stream.id) { entry in
                     Button {
                         fallbacks = 0; AutoNextState.userInput($autoNext); autoNext.ask = nil
+                        PlaybackStability.shared.timing.markTap()
                         playing = entry.stream
                     } label: {
                         StreamRow(addon: entry.addon, stream: entry.stream).opacity(failed.contains(entry.stream.id) ? 0.4 : 1)
+                            .recentlyFailedMark(entry.stream, title: (current ?? request).id)
                     }
                 }
             } header: {
@@ -382,6 +385,7 @@ struct StreamListView: View {
         // durchscheinender Hintergrund). Neutral: keine Akzent-Tönung, eigener dunkler, deckender Hintergrund.
         .tint(Color?.none)
         .background(Color(white: 0.07).ignoresSafeArea())
+        .streamSearchPartials(id: request.id, loading: loading && current == nil) { streams = $0 }
         .task {
             streams = await model.streams(type: request.type, id: request.id)
             loading = false
@@ -391,11 +395,12 @@ struct StreamListView: View {
                 if current == nil { var r = request; r.episodes = eps; current = r }
             }
             if request.resumeLastSource, playing == nil, let last = model.progress.lastSource(for: request.id) {
-                if let s = last.match(in: streams) {
+                let pick = Self.resumeCandidate(last, in: streams, title: request.id)   // nie eine zuletzt fehlgeschlagene
+                if let s = pick.stream {
                     RemoteLog.info("player", "Weiterschauen mit letzter Quelle: \(s.name ?? "") \(s.label.prefix(60))")
                     playing = s
                 } else {
-                    nextNote = "Letzte Quelle nicht mehr verfügbar – bitte wählen."
+                    nextNote = pick.note
                     RemoteLog.info("player", "Letzte Quelle nicht gefunden (\(last.fingerprint.prefix(60)))")
                 }
             }
@@ -411,7 +416,8 @@ struct StreamListView: View {
                                                                              headers: s.behaviorHints?.proxyHeaders?.request ?? [:],
                                                                              onEnded: { ended(s, autoplay: $0) }, onFallback: { fallback(from: s, reason: $0) },
                                                                              onUserInput: { AutoNextState.userInput($autoNext) },
-                                                                             holdsUpNext: autoNext.promptDue(model.profile)).environmentObject(model) }
+                                                                             holdsUpNext: autoNext.promptDue(model.profile),
+                                                                             onSourceVerdict: { [id = (current ?? request).id] in PlaybackStability.shared.apply($0, stream: s, title: id) }).environmentObject(model) }
         }
         .modifier(StillWatchingAlert(state: $autoNext, note: $nextNote) { startNext($0.next, after: $0.stream, auto: false) })
     }
@@ -421,7 +427,8 @@ extension StreamListView {
     /// Nächste Quelle: zuerst gecachte (⚡) unterhalb, dann gecachte oberhalb, zuletzt unbekannte; nie sicher ungecachte (🎫/⏳).
     func fallbackCandidate(after i: Int, in list: [StreamItem]) -> StreamItem? {
         let order = Array(list[(i + 1)...]) + Array(list[..<i])
-        let open = order.filter { !failed.contains($0.id) && $0.url != nil }
+        let open = order.filter { !failed.contains($0.id) && $0.url != nil
+            && !PlaybackStability.shared.isRecentlyFailed($0, title: (current ?? request).id) }   // Welle C-a: 8-h-Gedächtnis
         return open.first { StreamTraits.parse($0).cached == true } ?? open.first { StreamTraits.parse($0).cached == nil }
     }
 
@@ -475,7 +482,7 @@ extension StreamListView {
             let list = await model.streams(type: next.type, id: next.id)
             // Während der Suche von Hand eine Quelle gestartet: Liste und Folge so lassen, nichts ersetzen.
             guard playing == nil else { nextNote = nil; return }
-            guard let s = nextEpisodeStream(list, matching: ref) else {
+            guard let s = nextEpisodeStream(PlaybackStability.shared.autoCandidates(list, title: next.id), matching: ref) else {
                 nextNote = "Keine Quelle für \(next.title) gefunden."; return
             }
             let addon = list.first { $0.stream.id == s.id }?.addon
