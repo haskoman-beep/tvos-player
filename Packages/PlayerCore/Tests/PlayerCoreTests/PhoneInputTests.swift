@@ -173,3 +173,17 @@ private func state() -> PhoneHomeState {
     let old = try JSONDecoder().decode(Profile.self, from: Data(#"{"id":"00000000-0000-0000-0000-000000000001","name":"Alt"}"#.utf8))
     #expect(old.hiddenRows.isEmpty && old.name == "Alt")
 }
+
+// Welle F-a (E7): Icon-Satz-Adresse nur noch am Handy, im Abschnitt „System“.
+@Test func phoneIconSetFieldBecomesCommand() {
+    let page = PhoneInputPage(token: "tok")
+    let (_, cmds) = page.handle(post("/submit?t=tok", "icon_set=+https%3A%2F%2Fexample.com%2Ficons.json+"), profileName: "Ich") { Data() }
+    #expect(cmds == [.setRatingIconSet("https://example.com/icons.json")])
+    let (_, none) = page.handle(post("/submit?t=tok", "icon_set=+"), profileName: "Ich") { Data() }
+    #expect(none.isEmpty)
+    let html = page.page(profileName: "Ich", note: nil)
+    let system = html.range(of: "id=system>")?.lowerBound
+    let field = html.range(of: "name=icon_set")?.lowerBound
+    #expect(system != nil && field != nil && field! > system!)
+    #expect(!PhoneCommand.setRatingIconSet("https://x").isHomeEdit)
+}

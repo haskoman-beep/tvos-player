@@ -3,43 +3,40 @@ import AVKit
 import AVFoundation
 import PlayerCore
 
-/// Welle C-d: Geräte-Check („Apple TV richtig eingestellt?“) und eine feste Tabelle, was wie abgespielt wird.
-/// Liest nur Systemwerte, ändert nichts.
-struct DeviceCheckSettings: View {
+/// Welle C-d / F-a: Unterseite „System › Gerätecheck“ („Apple TV richtig eingestellt?“) und eine feste Tabelle,
+/// was wie abgespielt wird. Liest nur Systemwerte, ändert nichts.
+struct DeviceCheckPage: View {
     @State private var check: DeviceCheck?
 
+    private let tint = SettingsCategory.system.tint
+
     var body: some View {
-        Section("Geräte-Check") {
-            if let check {
-                ForEach(check.rows) { r in
-                    // Knöpfe ohne Aktion: so erreicht der Fokus jede Zeile und die Liste scrollt mit.
-                    Button {} label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Image(systemName: Self.icon(r.ok).name).foregroundStyle(Self.icon(r.ok).color)
-                                Text(r.title)
-                                Spacer()
-                                Text(r.value).foregroundStyle(.secondary)
-                            }
-                            if let hint = r.hint { Text(hint).font(.caption).foregroundStyle(.secondary) }
-                        }
+        SettingsSubpage(title: "Gerätecheck", summary: summary) {
+            SettingsSection {
+                if let check {
+                    ForEach(check.rows) { r in
+                        let icon = Self.icon(r.ok)
+                        SettingsInfoRow(symbol: icon.name, tint: icon.color, title: r.title, detail: r.hint,
+                                        value: r.value, detailAlwaysVisible: r.hint != nil)
                     }
+                } else {
+                    ProgressView()
                 }
-            } else {
-                ProgressView()
+            }
+            SettingsSection("Was spielt wie") {
+                ForEach(Self.formats, id: \.0) { f in
+                    SettingsInfoRow(symbol: "play.rectangle", tint: tint, title: f.0, detail: f.1, detailAlwaysVisible: true)
+                }
             }
         }
         .task { check = DeviceCheck.read() }
-        Section("Was spielt wie") {
-            ForEach(Self.formats, id: \.0) { f in
-                Button {} label: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(f.0)
-                        Text(f.1).font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
+    }
+
+    /// „Alles passt“ bzw. „2 Hinweise“.
+    private var summary: String {
+        guard let check else { return "Wird geprüft …" }
+        let warn = check.rows.filter { $0.ok == false }.count
+        return warn == 0 ? "Alles passt" : (warn == 1 ? "1 Hinweis" : "\(warn) Hinweise")
     }
 
     static func icon(_ ok: Bool?) -> (name: String, color: Color) {

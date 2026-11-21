@@ -263,24 +263,37 @@ enum AddonSubtitleFiles {
 
 // MARK: Einstellungen
 
-/// Einstellungs-Zeilen (Kategorie Wiedergabe): Spur-Gedächtnis und Bildschirmschoner.
+/// Einstellungs-Zeilen (Kategorie Wiedergabe & Bild): Spur-Gedächtnis (Abschnitt Folgen) und Bildschirmschoner.
 struct PlayerComfortSettingsRows: View {
+    enum Part { case tracks, screensaver }
+
+    var part: Part
     @EnvironmentObject var model: AppModel
     @State private var cleared = false
 
+    let tint = SettingsCategory.playback.tint
+
     var body: some View {
-        Toggle("Spur-Wahl je Serie merken", isOn: model.binding(\.player.rememberTracks))
-        if model.profile.player.rememberTracks {
-            Text("Merkt Tonsprache, Untertitel und Untertitel-Versatz aus dem Spur-Panel je Serie bzw. Film und nimmt sie beim nächsten Start, wenn die Spur da ist.")
-                .font(.caption).foregroundStyle(.secondary)
-            Button(cleared ? "Gemerkte Spur-Wahl gelöscht" : "Gemerkte Spur-Wahl löschen") {
-                PlayerMemory.shared.clearTrackMemory(profile: model.profile.id)
-                cleared = true
+        switch part {
+        case .tracks:
+            SettingsToggleRow(symbol: "text.bubble", tint: tint, title: "Spur-Wahl je Serie merken",
+                              detail: "Merkt Tonsprache, Untertitel und Untertitel-Versatz aus dem Spur-Panel je Serie bzw. Film "
+                                  + "und nimmt sie beim nächsten Start, wenn die Spur da ist.",
+                              reserveDetailSpace: false, isOn: model.binding(\.player.rememberTracks))
+            if model.profile.player.rememberTracks {
+                SettingsRow(symbol: "trash", tint: tint, title: cleared ? "Gemerkte Spur-Wahl gelöscht" : "Gemerkte Spur-Wahl löschen",
+                            reserveDetailSpace: false) {
+                    PlayerMemory.shared.clearTrackMemory(profile: model.profile.id)
+                    RemoteLog.info("einstellung", "Gemerkte Spur-Wahl gelöscht")
+                    cleared = true
+                }
+                .disabled(cleared)
             }
-            .disabled(cleared)
-        }
-        Picker("Bildschirmschoner in der Pause sperren", selection: model.binding(\.player.screensaverPauseMinutes)) {
-            ForEach(IdleTimerPolicy.pauseChoices, id: \.self) { Text(IdleTimerPolicy.choiceLabel($0)).tag($0) }
+        case .screensaver:
+            SettingsChoiceRow(symbol: "moon.zzz", tint: tint, title: "Bildschirmschoner in der Pause",
+                              detail: "So lange bleibt der Bildschirmschoner in der Pause gesperrt.",
+                              options: IdleTimerPolicy.pauseChoices, selection: model.binding(\.player.screensaverPauseMinutes),
+                              label: IdleTimerPolicy.choiceLabel)
         }
     }
 }

@@ -1,68 +1,59 @@
 import SwiftUI
 import PlayerCore
 
-/// Welle C-d: Einstellungen zur Quellenliste und zu Extras (Teil der Kategorie „Wiedergabe“).
-struct SourceSettingsRows: View {
-    @EnvironmentObject var model: AppModel
-
-    var body: some View {
-        StreamOrderSettingsRow()        // Welle E-b (eigene Datei StreamListSettingsRows.swift)
-        StreamListBadgeSettingsRow()    // Welle E-b
-    }
-}
-
-/// Welle C-d: Spoilerschutz für Folgenbilder (Teil der Kategorie „Aussehen“).
+/// Welle C-d: Spoilerschutz für Folgenbilder (Aussehen › Karten).
 struct SpoilerSettingsRow: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
-        Toggle("Bilder ungesehener Folgen weichzeichnen", isOn: model.binding(\.sources.blurUnwatchedStills))
+        SettingsToggleRow(symbol: "eye.slash", tint: SettingsCategory.appearance.tint,
+                          title: "Bilder ungesehener Folgen weichzeichnen",
+                          detail: "Schützt vor Spoilern in Folgenbildern.",
+                          reserveDetailSpace: false, isOn: model.binding(\.sources.blurUnwatchedStills))
     }
 }
 
-/// Welle C-d: weitere Abschnitte der Kategorie „Aussehen“ (Kalender, Bewertungs-Icons).
-struct ExtrasSettingsSections: View {
-    @EnvironmentObject var model: AppModel
-
-    var body: some View {
-        Section("Kalender") {
-            Toggle("Sendezeiten von TVmaze", isOn: model.binding(\.sources.tvmazeAirtimes))
-            Text("Zeigt Uhrzeit und den Tag in deiner Zeitzone (US-Abendfolgen stehen sonst einen Tag zu früh). "
-                 + "Sendedaten von TVmaze.com, Lizenz CC BY-SA 4.0.")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-        RatingIconSettings()
-    }
-}
-
-/// Welle C-d: Adresse eines eigenen Bewertungs-Icon-Satzes (JSON, wird nur zur Laufzeit geladen).
-struct RatingIconSettings: View {
+/// Welle C-d/F-a: eigener Bewertungs-Icon-Satz (JSON, wird nur zur Laufzeit geladen).
+/// E7: Die Adresse kommt nur noch von der Handy-Seite (Feld „icon_set“, Abschnitt System); hier Status und
+/// „Eingebaute Plaketten verwenden“. Erreichbar über Aussehen › Plaketten und System › Erweitert.
+struct RatingIconSettingsPage: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var store = RatingIconStore.shared
-    @State private var text = ""
 
-    var body: some View {
-        Section("Bewertungs-Icons") {
-            TextField("https://…/icons.json", text: $text)
-                .textInputAutocapitalization(.never).autocorrectionDisabled()
-                .onSubmit { save(text) }
-            if let current = model.profile.sources.ratingIconSetURL {
-                HStack { Text("Aktiv"); Spacer(); Text(store.status ?? "lädt …").foregroundStyle(.secondary) }
-                Text(current).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                Button("Eingebaute Plaketten verwenden") { save("") }
-            }
-            Text("JSON wie {\"imdb\": \"https://…/imdb.png\", \"tomatoes\": \"https://…\"} oder [{\"name\", \"url\"}]. "
-                 + "Nur https, Bilder als PNG/JPG/WebP/HEIC (kein SVG), höchstens 50 Einträge; fehlt oder scheitert ein Icon, bleibt der Text.")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-        .task(id: model.profile.sources.ratingIconSetURL) { store.ensure(model.profile.sources.ratingIconSetURL) }
+    private let tint = SettingsCategory.appearance.tint
+
+    /// Wert der Zeile: „Eingebaut“ oder Ladestand des eigenen Satzes.
+    static func value(_ url: String?, status: String?) -> String {
+        url == nil ? "Eingebaut" : (status ?? "lädt …")
     }
 
-    private func save(_ s: String) {
+    var body: some View {
+        let current = model.profile.sources.ratingIconSetURL
+        SettingsSubpage(title: "Bewertungs-Icon-Satz", summary: current == nil ? "Eingebaute Plaketten" : "Eigener Satz aktiv") {
+            SettingsSection {
+                SettingsInfoRow(symbol: "photo.on.rectangle", tint: tint, title: "Status",
+                                detail: current.flatMap { URL(string: $0)?.host },
+                                value: Self.value(current, status: store.status))
+                if current != nil {
+                    SettingsRow(symbol: "arrow.uturn.backward", tint: tint, title: "Eingebaute Plaketten verwenden",
+                                reserveDetailSpace: false) { model.setRatingIconSet("") }
+                }
+                PhoneLinkRow(section: .system, symbol: "iphone", tint: tint, title: "Adresse am Handy eintragen",
+                             detail: "Feld „Eigener Bewertungs-Icon-Satz“ im Abschnitt System.")
+            }
+            SettingsFootnote("JSON wie {\"imdb\": \"https://…/imdb.png\", \"tomatoes\": \"https://…\"} oder [{\"name\", \"url\"}]. "
+                             + "Nur https, Bilder als PNG/JPG/WebP/HEIC (kein SVG), höchstens 50 Einträge; fehlt oder scheitert ein Icon, bleibt der Text.")
+        }
+        .task(id: current) { store.ensure(current) }
+    }
+}
+
+extension AppModel {
+    /// Welle F-a: Icon-Satz setzen (Handy-Seite, `PhoneCommand.setRatingIconSet`) oder leeren („Eingebaute verwenden“).
+    func setRatingIconSet(_ s: String) {
         let v = s.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !v.isEmpty, !RatingIconSet.isValidSetURL(v) { model.lastError = "Icon-Satz: nur https-Adressen"; return }
-        model.update { $0.sources.ratingIconSetURL = v.isEmpty ? nil : v }
-        text = ""
+        if !v.isEmpty, !RatingIconSet.isValidSetURL(v) { lastError = "Icon-Satz: nur https-Adressen"; return }
+        update { $0.sources.ratingIconSetURL = v.isEmpty ? nil : v }
         RemoteLog.info("bewertung", v.isEmpty ? "Icon-Satz aus" : "Icon-Satz gesetzt")
     }
 }

@@ -1,11 +1,13 @@
 import SwiftUI
 import PlayerCore
 
-/// Abschnitt „App aktualisieren“ (in „Über“): neuesten main-Build suchen und über atvloadly am Pi installieren.
-struct UpdateSettings: View {
+/// Unterseite „App aktualisieren“ (System): neuesten main-Build suchen und über atvloadly am Pi installieren.
+/// E7: Die Adresse kommt von der Bonjour-Suche oder der Handy-Seite (#system), kein Textfeld am Fernseher.
+struct UpdatePage: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var updater = AppUpdater.shared
-    @State private var addressInput = ""
+
+    private let tint = SettingsCategory.system.tint
 
     /// Adresse aus dem aktiven Profil, sonst aus irgendeinem Profil (die Handy-Seite speichert pro Profil).
     private var savedAddress: String? {
@@ -15,66 +17,57 @@ struct UpdateSettings: View {
 
     private var base: URL? { savedAddress.flatMap { AtvloadlyAddress.normalize($0) } }
 
-    private var checkTitle: String { updater.phase == .checking ? "Suche läuft …" : "Nach Update suchen" }
-    private var searchTitle: String { updater.searching ? "Suche läuft …" : "Pi im Netz suchen" }
-
     var body: some View {
-        Section("App aktualisieren") {
-            HStack { Text("Installiert"); Spacer(); Text("Build " + updater.current.buildLabel).foregroundStyle(.secondary) }
-            status
-            Button(checkTitle) { updater.check() }
+        SettingsSubpage(title: "App aktualisieren", summary: "Installiert: Build " + updater.current.buildLabel) {
+            SettingsSection {
+                SettingsRow(symbol: "arrow.clockwise", tint: tint,
+                            title: updater.phase == .checking ? "Suche läuft …" : "Nach Update suchen",
+                            detail: statusText, detailAlwaysVisible: statusText != nil, reserveDetailSpace: false) {
+                    updater.check()
+                }
                 .disabled(updater.busy)
-            if case .checked(.available(let release, _)) = updater.phase {
-                if let base {
-                    Button("Build " + Self.num(release.number) + " installieren") { updater.install(release, base: base) }
+                if case .checked(.available(let release, _)) = updater.phase {
+                    if let base {
+                        SettingsRow(symbol: "arrow.down.app", tint: tint, title: "Build " + Self.num(release.number) + " installieren",
+                                    detail: "Die App wird beim Installieren beendet und muss danach neu geöffnet werden.",
+                                    detailAlwaysVisible: true, reserveDetailSpace: false) {
+                            updater.install(release, base: base)
+                        }
                         .disabled(updater.busy)
-                    Text("Die App wird beim Installieren beendet und muss danach neu geöffnet werden.")
-                        .font(.caption).foregroundStyle(.secondary)
-                } else {
-                    Text("Zum Installieren zuerst die atvloadly-Adresse eintragen (unten oder über die Handy-Seite).")
-                        .foregroundStyle(.secondary)
+                    } else {
+                        SettingsFootnote("Zum Installieren zuerst die atvloadly-Adresse eintragen (Pi suchen oder am Handy).")
+                    }
                 }
             }
-        }
-        Section("atvloadly (Pi)") {
-            HStack { Text("Adresse"); Spacer(); Text(base?.absoluteString ?? "nicht eingetragen").foregroundStyle(.secondary) }
-            Button(searchTitle) {
-                Task { if let u = await updater.discover() { save(u) } }
-            }
-            .disabled(updater.searching)
-            TextField("Adresse, z. B. http://pi-name.local:5533", text: $addressInput)
-            Button("Adresse speichern") {
-                if let u = AtvloadlyAddress.normalize(addressInput) {
-                    save(u)
-                    addressInput = ""
-                    updater.verify(u)
+            SettingsSection("atvloadly (Pi)") {
+                SettingsInfoRow(symbol: "server.rack", tint: tint, title: "Adresse",
+                                value: base?.absoluteString ?? "nicht eingetragen")
+                SettingsRow(symbol: "magnifyingglass", tint: tint, title: updater.searching ? "Suche läuft …" : "Pi im Netz suchen",
+                            detail: "Findet atvloadly über Bonjour im Heimnetz und speichert die Adresse.",
+                            reserveDetailSpace: false) {
+                    Task { if let u = await updater.discover() { save(u) } }
                 }
+                .disabled(updater.searching)
+                PhoneLinkRow(section: .system, symbol: "iphone", tint: tint, title: "Adresse am Handy eintragen",
+                             detail: "Feld atvloadly im Abschnitt System.")
+                if let note = updater.addressNote { SettingsFootnote(note) }
             }
-            .disabled(AtvloadlyAddress.normalize(addressInput) == nil)
-            if let note = updater.addressNote { Text(note).font(.caption).foregroundStyle(.secondary) }
         }
     }
 
-    @ViewBuilder private var status: some View {
+    private var statusText: String? {
         switch updater.phase {
-        case .idle:
-            EmptyView()
-        case .checking:
-            HStack { ProgressView(); Text("Frage GitHub nach dem neuesten main-Build …").foregroundStyle(.secondary) }
-        case .checked(let state):
-            Text(Self.describe(state)).foregroundStyle(.secondary)
-        case .starting:
-            HStack { ProgressView(); Text("Auftrag an atvloadly …").foregroundStyle(.secondary) }
-        case .installing(let m):
-            HStack { ProgressView(); Text(m).foregroundStyle(.secondary) }
-        case .done(let m), .failed(let m):
-            Text(m).foregroundStyle(.secondary)
+        case .idle: nil
+        case .checking: "Frage GitHub nach dem neuesten main-Build …"
+        case .checked(let state): Self.describe(state)
+        case .starting: "Auftrag an atvloadly …"
+        case .installing(let m), .done(let m), .failed(let m): m
         }
     }
 
     private static func num(_ n: Int?) -> String { n.map { String($0) } ?? "?" }
 
-    private static func describe(_ s: UpdateState) -> String {
+    static func describe(_ s: UpdateState) -> String {
         switch s {
         case .upToDate(let b):
             return "Aktuell – neuester main-Build ist \(b.number) (\(b.shortCommit))."

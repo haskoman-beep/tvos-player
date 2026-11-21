@@ -162,19 +162,18 @@ extension StreamListView {
     }
 }
 
-/// Einstellung „Zeitgrenze je Addon“ (Einstellungen → Addons).
+/// Einstellung „Zeitgrenze je Addon“ (Einstellungen › System › Erweitert).
 struct AddonTimeoutPicker: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
-        let stored = model.binding(\.addonTimeout)
-        // Alte/fremde Werte auf die nächstliegende Auswahl abbilden, sonst zeigt der Picker nichts an.
-        let selection = Binding(get: { AddonSearch.nearestChoice(stored.wrappedValue) }, set: { stored.wrappedValue = $0 })
-        Picker("Zeitgrenze je Addon", selection: selection) {
-            ForEach(AddonSearch.timeoutChoices, id: \.self) { Text("\(Int($0)) s").tag($0) }
-        }
-        Text("So lange wartet die Quellensuche auf jedes Addon. Schnelle Addons erscheinen sofort; "
-             + "ein zu langsames wird als „Zeitüberschreitung“ angezeigt.")
-            .font(.caption).foregroundStyle(.secondary)
+        // Alte/fremde Werte auf die nächstliegende Auswahl abbilden (Welle F-a: Auswahlzeile statt Picker).
+        SettingsChoiceRow(symbol: "timer", tint: SettingsCategory.system.tint, title: "Zeitgrenze je Addon",
+                          detail: "So lange wartet die Quellensuche auf jedes Addon. Schnelle Addons erscheinen sofort; "
+                              + "ein zu langsames wird als „Zeitüberschreitung“ angezeigt.",
+                          options: AddonSearch.timeoutChoices,
+                          selection: Binding(get: { AddonSearch.nearestChoice(model.profile.addonTimeout) },
+                                             set: { v in model.update { $0.addonTimeout = v } }),
+                          label: { "\(Int($0)) s" })
     }
 }

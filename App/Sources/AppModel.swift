@@ -465,6 +465,7 @@ final class AppModel: ObservableObject {
             case .importBackup: return "backup"
             case .importFusionURL: return "kit-url"
             case .moveRow, .removeRow, .restoreRow, .addRow: return "startseite"
+            case .setRatingIconSet: return "icon-satz"   // Welle F-a
             }
         }.joined(separator: ", "))
         for c in commands {
@@ -488,6 +489,7 @@ final class AppModel: ObservableObject {
                 } catch { lastError = "Sicherung ungültig: \(error)" }
             case .importFusionURL(let u): await importFusionKit(from: u)
             case .moveRow, .removeRow, .restoreRow, .addRow: applyHome([c])   // Welle F-e; PhoneServer übernimmt sie sonst schon vorab
+            case .setRatingIconSet(let u): setRatingIconSet(u)   // Welle F-a (Views/Settings/SourceSettingsRows.swift)
             }
         }
         if lastError == nil { notice = "\(commands.count) Eingabe(n) vom Handy übernommen." }

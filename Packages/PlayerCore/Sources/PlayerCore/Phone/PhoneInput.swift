@@ -85,6 +85,8 @@ public enum PhoneCommand: Equatable, Sendable {
     case restoreRow(UUID)
     /// Weitere Reihe aus den Angeboten (`RowContent.key`) hinzufügen, kommt ans Ende.
     case addRow(key: String)
+    /// Welle F-a (E7): Adresse eines eigenen Bewertungs-Icon-Satzes (JSON); am Fernseher gibt es kein Feld mehr.
+    case setRatingIconSet(String)
 }
 
 /// Seitenlogik ohne Netzwerk: Token prüfen, Formular lesen, Befehle erzeugen.
@@ -131,6 +133,7 @@ public struct PhoneInputPage: Sendable {
             if let l = val("tmdb_link") { cmds.append(.addTMDBLink(l)) }
             if let b = val("backup_json") { cmds.append(.importBackup(Data(b.utf8))) }
             if let k = val("kit_url") { cmds.append(.importFusionURL(k)) }
+            if let i = val("icon_set") { cmds.append(.setRatingIconSet(i)) }
             let note = cmds.isEmpty ? "leer" : "\(cmds.count)"
             // Rückmeldung zum Schnell-Import immer mitgeben; „Nichts ausgefüllt“ entfällt, wenn nur er etwas meldet.
             var loc = "/?t=\(token)"
@@ -176,6 +179,7 @@ public struct PhoneInputPage: Sendable {
         <p><a href="\(FusionKitCatalog.siteURL)">Kit-Katalog öffnen</a></p>
         \(orderSection(home, note: note))</section>
         <section id=\(PhoneSection.system.rawValue)>\(head(.system))\(field("key_atvloadly", "App-Update: atvloadly-Adresse (Pi)", "http://pi-name.local:5533"))
+        \(field("icon_set", "Eigener Bewertungs-Icon-Satz (JSON-Adresse, nur https)", "https://…/icons.json"))
         <h3>Sicherung</h3><p><a href="/export?t=\(token)">Alle Profile herunterladen (JSON)</a></p>
         \(field("backup_json", "Sicherung wiederherstellen (ersetzt alle Profile!)", "{…}", area: true))</section>
         <button>An den Fernseher senden</button>

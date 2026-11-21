@@ -1,40 +1,75 @@
 import SwiftUI
 import PlayerCore
 
-/// Kategorie „Über“: Version, Build, Addons, Log-Hinweis, darunter „App aktualisieren“ und die Lizenzen.
-struct AboutSettings: View {
+/// Kategorie 7 „System“ (§2.2): Status mit Version und Update, darunter App aktualisieren ›, Gerätecheck ›,
+/// Erweitert ›, Lizenzen ›.
+struct SystemSettings: View {
     @EnvironmentObject var model: AppModel
+    @ObservedObject private var updater = AppUpdater.shared
+
+    private let tint = SettingsCategory.system.tint
 
     private var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?" }
 
+    private var checked: UpdateState? {
+        if case .checked(let s) = updater.phase { return s }
+        return nil
+    }
+
     var body: some View {
-        Section("Über") {
-            HStack { Text("Version"); Spacer(); Text(version).foregroundStyle(.secondary) }
-            HStack { Text("Build"); Spacer(); Text(AppUpdater.shared.current.buildLabel).foregroundStyle(.secondary) }
-            HStack { Text("Addons"); Spacer(); Text("\(model.profile.addons.count)").foregroundStyle(.secondary) }
-            HStack { Text("Profile"); Spacer(); Text("\(model.stored.profiles.count)").foregroundStyle(.secondary) }
-            Text("Das Ereignis-Log geht automatisch an ein Log-Programm im Heimnetz (Bonjour `_playerlog._tcp`). Ohne Empfänger bleiben die letzten 500 Zeilen im Speicher.")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-        UpdateSettings()
-        DiagnosticsSettings()   // Welle C-b
-        DeviceCheckSettings()
-        Section("Danksagungen / Lizenzen") {
-            // Zeilen als Knöpfe ohne Aktion: so erreicht der Fokus sie und die Liste scrollt bis ans Ende.
-            ForEach(Self.credits, id: \.name) { c in
-                Button {} label: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(c.name)
-                        Text(c.detail).font(.caption).foregroundStyle(.secondary)
-                    }
+        let status = SettingsSummary.UpdateStatus.of(checked)
+        CategoryPage(.system, summary: SettingsSummary.system(build: updater.current.build, update: status)) {
+            StatusCard(leading: .symbol("gearshape.2", tint), title: "Player \(version)",
+                       subtitle: "Build " + updater.current.buildLabel,
+                       metrics: [updateMetric(status),
+                                 StatusCard.Metric(text: DesignText.metaLine([SettingsSummary.addons(model.profile.addons.count),
+                                                                              SettingsSummary.profiles(model.stored.profiles.count)]))],
+                       action: updater.busy ? nil : StatusCard.Action(title: "Nach Update suchen", symbol: "arrow.down.circle") {
+                           updater.check()
+                       })
+            SettingsSection {
+                SettingsLinkRow(symbol: "arrow.down.app", tint: tint, title: "App aktualisieren",
+                                detail: "Neuesten Build suchen und über atvloadly installieren.",
+                                value: updateValue(status)) {
+                    UpdatePage()
+                }
+                SettingsLinkRow(symbol: "checkmark.seal", tint: tint, title: "Gerätecheck",
+                                detail: "Ist das Apple TV richtig eingestellt? Und was spielt wie?") {
+                    DeviceCheckPage()
+                }
+                SettingsLinkRow(symbol: "wrench.and.screwdriver", tint: tint, title: "Erweitert",
+                                detail: "Diagnose, Zeitgrenze je Addon, Dolby Vision, Zwischenspeicher.") {
+                    AdvancedSettingsPage()
+                }
+                SettingsLinkRow(symbol: "doc.text", tint: tint, title: "Lizenzen",
+                                detail: "Mitgelieferte Komponenten und ihre Lizenzen.") {
+                    LicensesPage()
                 }
             }
-            Text("Die vollständigen Lizenztexte stehen in THIRD_PARTY_NOTICES.md im Quellcode-Repository; jedes Release verweist darauf.")
-                .font(.caption).foregroundStyle(.secondary)
         }
     }
 
-    /// Mitgelieferte Fremdkomponenten (Stand Engine 7.71.2); Volltexte in THIRD_PARTY_NOTICES.md.
+    private func updateMetric(_ s: SettingsSummary.UpdateStatus) -> StatusCard.Metric {
+        switch s {
+        case .unknown: StatusCard.Metric(text: "Update nicht geprüft")
+        case .upToDate: StatusCard.Metric(text: "Aktuell", tone: .ok)
+        case .available(let n): StatusCard.Metric(text: "Update: Build " + (n.map(String.init) ?? "?"), tone: .warn)
+        case .newerInstalled: StatusCard.Metric(text: "Neuer als main")
+        }
+    }
+
+    private func updateValue(_ s: SettingsSummary.UpdateStatus) -> String? {
+        switch s {
+        case .unknown: nil
+        case .upToDate: "Aktuell"
+        case .available(let n): "Build " + (n.map(String.init) ?? "?")
+        case .newerInstalled: "Neuer als main"
+        }
+    }
+}
+
+/// Unterseite „Lizenzen“: mitgelieferte Fremdkomponenten (Stand Engine 7.71.2); Volltexte in THIRD_PARTY_NOTICES.md.
+struct LicensesPage: View {
     private struct Credit { let name: String; let detail: String }
     private static let credits: [Credit] = [
         Credit(name: "Player (diese App)", detail: "App: MIT · die Komponenten unten behalten ihre eigenen Lizenzen"),
@@ -46,4 +81,14 @@ struct AboutSettings: View {
         Credit(name: "libdovi (dovi_tool)", detail: "© quietvoid und Mitwirkende · MIT"),
         Credit(name: "Anime4K", detail: "© 2019-2021 bloc97 · MIT"),
     ]
+
+    var body: some View {
+        SettingsSubpage(title: "Lizenzen", summary: "\(Self.credits.count) Komponenten") {
+            ForEach(Self.credits, id: \.name) { c in
+                SettingsInfoRow(symbol: "doc.text", tint: SettingsCategory.system.tint, title: c.name,
+                                detail: c.detail, detailAlwaysVisible: true)
+            }
+            SettingsFootnote("Die vollständigen Lizenztexte stehen in THIRD_PARTY_NOTICES.md im Quellcode-Repository; jedes Release verweist darauf.")
+        }
+    }
 }
