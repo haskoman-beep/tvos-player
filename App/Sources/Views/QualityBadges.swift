@@ -198,7 +198,7 @@ struct PosterQualityBadges: View {
     private var topInset: CGFloat {
         guard let st = model.progress.cardState(itemID: item.id) else { return 10 * scale }
         let occupied = st.watched || st.episode != nil || st.remainingSeconds != nil
-        return occupied ? 56 : 10 * scale
+        return occupied ? 56 * scale : 10 * scale
     }
 }
 

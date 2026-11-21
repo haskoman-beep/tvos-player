@@ -9,9 +9,16 @@ public enum MetaImageChoice {
         addons.first { $0.manifest.id != "com.linvo.cinemeta" && $0.manifest.supports("meta", type: type, id: id) }
     }
 
-    /// Ob überhaupt ein Addon im Profil Metadaten liefert (für die Einstellungszeile).
+    /// Ob ein Addon im Profil Metadaten für IMDb-IDs liefert (für die Einstellungszeile), wie `metadataAddon`:
+    /// ID-Präfixe der Ressource, sonst des Manifests; ohne Präfixe gilt jede ID. Reine `tmdb:`-Addons zählen nicht.
     public static func hasMetadataAddon(_ addons: [InstalledAddon]) -> Bool {
-        addons.contains { $0.manifest.id != "com.linvo.cinemeta" && $0.manifest.resources.contains { $0.name == "meta" } }
+        addons.contains { a in
+            a.manifest.id != "com.linvo.cinemeta" && a.manifest.resources.contains { r in
+                guard r.name == "meta" else { return false }
+                guard let p = r.idPrefixes ?? a.manifest.idPrefixes, !p.isEmpty else { return true }
+                return p.contains { "tt".hasPrefix($0) || $0.hasPrefix("tt") }
+            }
+        }
     }
 
     /// Ein Bild wählen: Addon zuerst (wenn gewünscht und vorhanden), dann TMDB, dann die Grundlage.

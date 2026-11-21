@@ -221,6 +221,8 @@ final class AppModel: ObservableObject {
         // auf sie), Leer-Pausen und Lückenmerker gelten nur für das Profil, in dem sie entstanden.
         streamTasks.reset(); streamEmptyUntil.removeAll(); streamsAllEmptyAt = nil; streamPartial.removeAll()
         StreamSearchStatus.shared.reset(); StreamPrefetcher.shared.reset()
+        // Welle E-a (I3): Addon-Bilder/-Bewertungen des alten Profils nicht weiter zeigen.
+        HeroDetailsCache.all.removeAll(); AddonMetaCache.reset()
         restoreCatalogSnapshot()
         progress = progressStore.load(profile: id)
         Task { await syncRemoteProgress() }
@@ -336,6 +338,13 @@ final class AppModel: ObservableObject {
 
     /// TMDB-ID → IMDb-ID (ändert sich nicht; spart die Nachfrage bei jedem Vorladen/Öffnen).
     private var imdbCache: [String: String] = [:]
+
+    /// Welle E-a: IMDb-ID ohne Netzabfrage (IMDb-ID selbst oder schon nachgeschlagen), sonst nil.
+    func cachedIMDbID(for m: MetaPreview) -> String? {
+        if m.id.hasPrefix("tt") { return m.id }
+        guard m.id.hasPrefix("tmdb:"), let n = Int(m.id.dropFirst(5)) else { return nil }
+        return imdbCache["\(m.type):\(n)"]
+    }
 
     /// Welle E-a: Cinemeta + Metadaten-Addon (Bilder, Bewertung) + TMDB-Texte, zusammengeführt in AppModel+MetaAddon.
     func meta(type: String, imdb: String) async -> MetaDetail? { await mergedMeta(type: type, imdb: imdb) }

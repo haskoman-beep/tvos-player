@@ -190,7 +190,7 @@ struct PosterCard: View {
         // Welle E-a: Plaketten nie unten auf dem Bild; bei „Unten“ sitzen sie im Streifen darunter (PosterBadgeBand).
         VStack(spacing: 0) {
             ZStack(alignment: .leading) {
-                RemoteImage(url: item.poster)
+                TilePosterImage(item: item)
                     .frame(width: 240 * scale, height: h).clipped()
                 if expanded { ExpandedPoster(item: item).transition(.opacity) }
             }

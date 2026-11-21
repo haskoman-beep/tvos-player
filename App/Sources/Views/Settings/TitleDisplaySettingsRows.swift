@@ -33,6 +33,7 @@ struct RatingChoiceSettingRow: View {
                 get: { model.profile.appearance.titles.shows(rating: s.source) },
                 set: { on in
                     model.update { $0.appearance.titles.set(rating: s.source, on) }
+                    model.titleImagesChanged()
                     RemoteLog.info("einstellung", "Bewertung \(s.source) \(on ? "an" : "aus")")
                 }))
         }
@@ -47,10 +48,16 @@ struct MetadataAddonImagesSettingRow: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
-        Toggle("Bilder vom Metadaten-Addon", isOn: model.binding(\.appearance.titles.addonImages))
+        Toggle("Bilder vom Metadaten-Addon", isOn: Binding(
+            get: { model.profile.appearance.titles.addonImages },
+            set: { on in
+                model.update { $0.appearance.titles.addonImages = on }
+                model.titleImagesChanged()
+                RemoteLog.info("einstellung", "Bilder vom Metadaten-Addon \(on ? "an" : "aus")")
+            }))
             .disabled(!model.hasMetadataAddon)
         Text(model.hasMetadataAddon
-             ? "Poster, Hintergrund und Logo des Metadaten-Addons (z. B. dort eingerichtete Bewertungs-Poster) vor den TMDB-Bildern."
+             ? "Poster, Hintergrund und Logo des Metadaten-Addons (z. B. dort eingerichtete Bewertungs-Poster) vor den TMDB-Bildern, auch auf Kacheln der TMDB-Reihen."
              : "Kein Addon mit Metadaten installiert.")
             .font(.caption).foregroundStyle(.secondary)
     }

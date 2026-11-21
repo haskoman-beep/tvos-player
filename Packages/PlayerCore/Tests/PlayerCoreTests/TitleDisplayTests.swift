@@ -119,7 +119,8 @@ private func meta(_ json: String) throws -> MetaDetail {
     let cinemeta = addon("com.linvo.cinemeta", resources: [AddonResource(name: "meta")])
     #expect(MetaImageChoice.metadataAddon(in: [streams, cinemeta, tmdbOnly, aio], type: "movie", id: "tt123")?.manifest.id == "aiometa")
     #expect(MetaImageChoice.metadataAddon(in: [streams, cinemeta], type: "movie", id: "tt123") == nil)
-    #expect(MetaImageChoice.hasMetadataAddon([streams, tmdbOnly]))
+    #expect(!MetaImageChoice.hasMetadataAddon([streams, tmdbOnly]))
+    #expect(MetaImageChoice.hasMetadataAddon([streams, aio]))
     #expect(!MetaImageChoice.hasMetadataAddon([streams, cinemeta]))
 }
 
