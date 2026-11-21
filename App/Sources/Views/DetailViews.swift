@@ -41,11 +41,11 @@ struct DetailView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            RemoteImage(url: meta?.background ?? item.background).ignoresSafeArea().overlay(Color.black.opacity(0.55))
+            RemoteImage(url: meta?.background ?? item.background, maxPixels: 1920).ignoresSafeArea().overlay(Color.black.opacity(0.55))
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 28) {
                     if let logo = meta?.logo {
-                        RemoteImage(url: logo).scaledToFit().frame(maxWidth: 700, maxHeight: 200, alignment: .leading)
+                        RemoteImage(url: logo, maxPixels: 1400, fit: true).frame(maxWidth: 700, maxHeight: 200, alignment: .leading)
                     } else {
                         Text(item.name).font(.system(size: 70, weight: .heavy))
                     }
@@ -111,7 +111,7 @@ struct DetailView: View {
                                                       episodes: EpisodeRef.list(from: meta?.videos ?? []))))
                     } label: {
                         HStack(spacing: 24) {
-                            RemoteImage(url: v.thumbnail).frame(width: 280, height: 158).clipped()
+                            RemoteImage(url: v.thumbnail, maxPixels: 560).frame(width: 280, height: 158).clipped()
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack {
                                     Text("\(v.episode ?? 0). \(v.name ?? v.title ?? "Folge")").font(.headline)

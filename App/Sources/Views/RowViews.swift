@@ -113,14 +113,6 @@ struct Strip<C: View>: View {
     }
 }
 
-struct RemoteImage: View {
-    let url: String?
-    var body: some View {
-        AsyncImage(url: url.flatMap(URL.init(string:))) { phase in
-            if let img = phase.image { img.resizable().scaledToFill() } else { Color.white.opacity(0.08) }
-        }
-    }
-}
 
 struct PosterCard: View {
     let item: MetaPreview
@@ -136,7 +128,7 @@ struct PosterCard: View {
 struct LandscapeCard: View {
     let item: MetaPreview
     var body: some View {
-        RemoteImage(url: item.background ?? item.poster)
+        RemoteImage(url: item.background ?? item.poster, maxPixels: 900)
             .frame(width: 440, height: 248).clipped()
             .overlay(alignment: .bottomLeading) {
                 Text(item.name).font(.headline).shadow(radius: 6).padding(14)
@@ -148,7 +140,7 @@ struct HeroCard: View {
     let item: MetaPreview
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            RemoteImage(url: item.background ?? item.poster).frame(width: 1600, height: 620).clipped()
+            RemoteImage(url: item.background ?? item.poster, maxPixels: 1920).frame(width: 1600, height: 620).clipped()
             LinearGradient(colors: [.black.opacity(0.85), .clear], startPoint: .bottom, endPoint: .center)
             VStack(alignment: .leading, spacing: 12) {
                 Text(item.name).font(.system(size: 64, weight: .heavy))
@@ -181,7 +173,7 @@ struct FolderTile: View {
         if logoStyle {
             ZStack {
                 Color.white.opacity(0.08)
-                if let l = folder.logo { RemoteImage(url: l).scaledToFit().padding(30) } else { Text(folder.title).font(.headline) }
+                if let l = folder.logo { RemoteImage(url: l, maxPixels: 800, fit: true).padding(30) } else { Text(folder.title).font(.headline) }
             }
             .frame(width: 320, height: 180)
         } else {
