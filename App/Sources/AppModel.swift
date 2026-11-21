@@ -33,6 +33,9 @@ final class AppModel: ObservableObject {
 
     func recordProgress(_ r: PlayRequest, position: Double, duration: Double) {
         progress.record(id: r.id, item: r.item, season: r.season, episode: r.episode, position: position, duration: duration)
+        if progress.isWatched(r.id), let n = r.nextRequest, let s = n.season, let e = n.episode {
+            progress.recordNextUp(id: n.id, item: n.item, season: s, episode: e)
+        }
         do { try progressStore.save(progress, profile: profile.id) } catch { lastError = "Fortschritt nicht gespeichert: \(error)" }
     }
 

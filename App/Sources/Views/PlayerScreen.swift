@@ -7,6 +7,7 @@ struct PlayerScreen: View {
     @EnvironmentObject var model: AppModel
     let url: URL
     let request: PlayRequest
+    var onEnded: () -> Void = {}
     @State private var backend: AetherBackend?
     @State private var initError: String?
 
@@ -14,7 +15,8 @@ struct PlayerScreen: View {
         Group {
             if let backend { PlayerControls(engine: backend, url: url, title: request.title, profile: model.profile,
                                                        start: model.progress.resumePosition(for: request.id),
-                                                       report: { pos, dur in model.recordProgress(request, position: pos, duration: dur) }) }
+                                                       report: { pos, dur in model.recordProgress(request, position: pos, duration: dur) },
+                                                       onEnded: onEnded) }
             else { Text(initError ?? "Player wird gestartet …") }
         }
         .onAppear {
@@ -30,6 +32,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
     let profile: Profile
     let start: Double?
     let report: (Double, Double) -> Void
+    let onEnded: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var showOverlay = true
     @State private var showTracks = false
@@ -65,6 +68,12 @@ struct PlayerControls<E: PlaybackEngine>: View {
             if tick % 10 == 0 && engine.isPlaying { saveProgress() }
         }
         .onDisappear { saveProgress() }
+        .onChange(of: engine.isEnded) { _, ended in
+            guard ended else { return }
+            if engine.duration > 0 { report(engine.duration, engine.duration) }
+            engine.stop()
+            onEnded()
+        }
         .sheet(isPresented: $showTracks) { TrackSheet(engine: engine) }
         .task {
             do {

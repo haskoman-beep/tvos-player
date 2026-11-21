@@ -72,7 +72,7 @@ struct DetailView: View {
         .task {
             imdb = await model.imdbID(for: item)
             if let imdb { meta = await model.meta(type: isSeries ? "series" : "movie", imdb: imdb) }
-            season = seasons.first ?? 1
+            season = imdb.flatMap { model.progress.latest(forItem: $0)?.season } ?? seasons.first ?? 1
             loading = false
         }
     }
@@ -106,7 +106,8 @@ struct DetailView: View {
                     Button {
                         let e = v.episode ?? 0
                         navigate(.streams(PlayRequest(type: "series", id: "\(imdb):\(season):\(e)", title: "\(item.name) S\(season)E\(e)",
-                                                      item: progressItem(imdb), season: season, episode: e)))
+                                                      item: progressItem(imdb), season: season, episode: e,
+                                                      episodes: EpisodeRef.list(from: meta?.videos ?? []))))
                     } label: {
                         HStack(spacing: 24) {
                             RemoteImage(url: v.thumbnail).frame(width: 280, height: 158).clipped()
@@ -134,12 +135,16 @@ struct DetailView: View {
 struct StreamListView: View {
     @EnvironmentObject var model: AppModel
     let request: PlayRequest
+    /// Bei Autoplay die gerade laufende Folge.
+    @State private var current: PlayRequest?
+    @State private var nextNote: String?
     @State private var streams: [(addon: String, stream: StreamItem)] = []
     @State private var loading = true
     @State private var playing: StreamItem?
 
     var body: some View {
         List {
+            if let nextNote { Text(nextNote).foregroundStyle(.secondary) }
             if loading { ProgressView("Quellen werden geladen …") }
             if !loading && streams.isEmpty {
                 Text(model.profile.addons.isEmpty ? "Kein Addon installiert (Einstellungen → Addons)." : "Keine abspielbaren Quellen.")
@@ -154,7 +159,26 @@ struct StreamListView: View {
             loading = false
         }
         .fullScreenCover(item: $playing) { s in
-            if let u = s.url.flatMap(URL.init(string:)) { PlayerScreen(url: u, request: request).environmentObject(model) }
+            if let u = s.url.flatMap(URL.init(string:)) { PlayerScreen(url: u, request: current ?? request, onEnded: { ended(s) }).environmentObject(model) }
+        }
+    }
+}
+
+extension StreamListView {
+    /// Folge zu Ende → nächste Folge mit gleicher bingeGroup starten (Spec §6 Player: nächste Folge).
+    func ended(_ stream: StreamItem) {
+        playing = nil
+        guard let next = (current ?? request).nextRequest else { return }
+        nextNote = "Nächste Folge wird gesucht: \(next.title) …"
+        Task {
+            let list = await model.streams(type: next.type, id: next.id).map(\.stream)
+            guard let s = nextEpisodeStream(list, bingeGroup: stream.behaviorHints?.bingeGroup) else {
+                nextNote = "Keine Quelle für \(next.title) gefunden."; return
+            }
+            nextNote = nil
+            current = next
+            try? await Task.sleep(for: .milliseconds(800))
+            playing = s
         }
     }
 }

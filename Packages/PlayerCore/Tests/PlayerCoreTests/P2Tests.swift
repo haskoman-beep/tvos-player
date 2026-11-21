@@ -71,3 +71,34 @@ private let serie = MetaPreview(id: "tt9", type: "series", name: "Serie")
     #expect(s.load(profile: p) == b)
     #expect(s.load(profile: UUID()).entries.isEmpty)
 }
+
+@Test func episodeOrderAndNext() {
+    let vids = [MetaVideo(id: "a", season: 2, episode: 1), MetaVideo(id: "b", season: 1, episode: 2),
+                MetaVideo(id: "c", season: 0, episode: 1), MetaVideo(id: "d", season: 1, episode: 1),
+                MetaVideo(id: "e", season: 1, episode: 2)]
+    let l = EpisodeRef.list(from: vids)
+    #expect(l.map { [$0.season, $0.episode] } == [[1, 1], [1, 2], [2, 1]])
+    #expect(EpisodeRef.next(after: 1, 2, in: l) == EpisodeRef(season: 2, episode: 1))
+    #expect(EpisodeRef.next(after: 2, 1, in: l) == nil)
+}
+
+@Test func nextStreamPrefersBingeGroup() {
+    func s(_ u: String, _ g: String?) -> StreamItem { StreamItem(name: u, url: u, behaviorHints: g.map { StreamBehaviorHints(bingeGroup: $0) }) }
+    let list = [StreamItem(name: "t", infoHash: "x"), s("https://a", "g1"), s("https://b", "g2")]
+    #expect(nextEpisodeStream(list, bingeGroup: "g2")?.url == "https://b")
+    #expect(nextEpisodeStream(list, bingeGroup: "nix")?.url == "https://a")
+    #expect(nextEpisodeStream([], bingeGroup: nil) == nil)
+}
+
+@Test func nextUpShowsInContinueButKeepsRealProgress() {
+    var b = ProgressBook()
+    let t0 = Date(timeIntervalSince1970: 1000)
+    b.record(id: "tt9:1:1", item: serie, season: 1, episode: 1, position: 2300, duration: 2400, now: t0)
+    b.recordNextUp(id: "tt9:1:2", item: serie, season: 1, episode: 2, now: t0.addingTimeInterval(1))
+    #expect(b.continueWatching().map(\.id) == ["tt9:1:2"])
+    #expect(b.resumePosition(for: "tt9:1:2") == nil)
+    #expect(b.latest(forItem: "tt9")?.season == 1 && b.latest(forItem: "tt9")?.episode == 2)
+    b.record(id: "tt9:1:2", item: serie, season: 1, episode: 2, position: 500, duration: 2400, now: t0.addingTimeInterval(2))
+    b.recordNextUp(id: "tt9:1:2", item: serie, season: 1, episode: 2, now: t0.addingTimeInterval(3))
+    #expect(b.resumePosition(for: "tt9:1:2") == 500 && b.entries["tt9:1:2"]?.nextUp == nil)
+}

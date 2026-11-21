@@ -28,6 +28,15 @@ struct PlayRequest: Hashable {
     var item: MetaPreview
     var season: Int?
     var episode: Int?
+    /// Alle Folgen der Serie (für die nächste Folge).
+    var episodes: [EpisodeRef] = []
+
+    var nextRequest: PlayRequest? {
+        guard let s = season, let e = episode, let n = EpisodeRef.next(after: s, e, in: episodes),
+              let base = id.split(separator: ":").first else { return nil }
+        return PlayRequest(type: type, id: "\(base):\(n.season):\(n.episode)", title: "\(item.name) S\(n.season)E\(n.episode)",
+                           item: item, season: n.season, episode: n.episode, episodes: episodes)
+    }
 }
 
 struct RootView: View {

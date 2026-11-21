@@ -9,6 +9,7 @@ import PlayerCore
 protocol PlaybackEngine: ObservableObject {
     var isPlaying: Bool { get }
     var isLoading: Bool { get }
+    var isEnded: Bool { get }
     var currentTime: Double { get }
     var duration: Double { get }
     var audioTracks: [AudioTrackInfo] { get }
@@ -42,6 +43,7 @@ final class AetherBackend: PlaybackEngine {
 
     var isPlaying: Bool { engine.state == .playing }
     var isLoading: Bool { engine.state == .loading || engine.state == .seeking }
+    var isEnded: Bool { engine.state == .ended }
     var currentTime: Double { engine.clock.currentTime }
     var duration: Double { engine.duration }
     var audioTracks: [AudioTrackInfo] {

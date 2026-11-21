@@ -12,11 +12,14 @@ public struct WatchProgress: Codable, Sendable, Hashable, Identifiable {
     public var duration: Double
     public var updated: Date
     public var finished: Bool
+    /// Nächste Folge nach einer gesehenen: erscheint in Weiterschauen, obwohl noch nicht gestartet.
+    public var nextUp: Bool?
 
     public init(id: String, item: MetaPreview, season: Int? = nil, episode: Int? = nil,
-                position: Double, duration: Double, updated: Date = Date(), finished: Bool = false) {
+                position: Double, duration: Double, updated: Date = Date(), finished: Bool = false, nextUp: Bool? = nil) {
         self.id = id; self.item = item; self.season = season; self.episode = episode
         self.position = position; self.duration = duration; self.updated = updated; self.finished = finished
+        self.nextUp = nextUp
     }
 
     public var fraction: Double { duration > 0 ? position / duration : 0 }
@@ -39,6 +42,13 @@ public struct ProgressBook: Codable, Sendable, Equatable {
                                     position: done ? 0 : position, duration: duration, updated: now, finished: done)
     }
 
+    /// Merkt die nächste Folge vor (überschreibt keinen echten Fortschritt).
+    public mutating func recordNextUp(id: String, item: MetaPreview, season: Int, episode: Int, now: Date = Date()) {
+        if let e = entries[id], e.finished || e.position >= Self.minimumSeconds { return }
+        entries[id] = WatchProgress(id: id, item: item, season: season, episode: episode,
+                                    position: 0, duration: 0, updated: now, finished: false, nextUp: true)
+    }
+
     /// Wo weitermachen? nil = von vorn (nie gestartet, < 1 min oder gesehen).
     public func resumePosition(for id: String) -> Double? {
         guard let e = entries[id], !e.finished, e.position >= Self.minimumSeconds else { return nil }
@@ -49,10 +59,15 @@ public struct ProgressBook: Codable, Sendable, Equatable {
     public func continueWatching(limit: Int = 30) -> [WatchProgress] {
         var seen = Set<String>()
         return entries.values
-            .filter { !$0.finished && $0.position >= Self.minimumSeconds }
+            .filter { !$0.finished && ($0.position >= Self.minimumSeconds || $0.nextUp == true) }
             .sorted { $0.updated > $1.updated }
             .filter { seen.insert($0.item.id).inserted }
             .prefix(limit).map { $0 }
+    }
+
+    /// Neuester Eintrag einer Serie (für die Staffelauswahl auf der Detailseite).
+    public func latest(forItem itemID: String) -> WatchProgress? {
+        entries.values.filter { $0.item.id == itemID }.max { $0.updated < $1.updated }
     }
 
     public func isWatched(_ id: String) -> Bool { entries[id]?.finished == true }
