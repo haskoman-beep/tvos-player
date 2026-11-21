@@ -12,6 +12,7 @@ struct AddonSettings: View {
             ForEach(model.profile.addons) { a in
                 Button("\(a.manifest.name) \(a.manifest.version) – entfernen", role: .destructive) {
                     model.update { $0.addons.removeAll { $0.manifestURL == a.manifestURL } }
+                    model.clearCatalogCache()   // Reihen des Addons nicht aus dem Plattencache zurückholen
                 }
             }
             TextField("Manifest-URL (z. B. AIOStreams)", text: $addonURL)

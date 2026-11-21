@@ -55,6 +55,8 @@ enum MainThreadWatchdog {
             let mb = ImagePipeline.footprint().map { Int($0 / UInt64(ImageCacheBudget.mb)) }
             RemoteLog.info("ruckler", HitchDetector.text(h, note: lastNote, footprintMB: mb))
         }
-        if activity == .beforeWaiting { detector.willSleep() }
+        if activity == .beforeWaiting, let h = detector.willSleep(at: now) {
+            RemoteLog.info("ruckler", HitchDetector.text(h, note: lastNote, footprintMB: nil))
+        }
     }
 }

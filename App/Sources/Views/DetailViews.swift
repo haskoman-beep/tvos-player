@@ -383,7 +383,9 @@ struct StreamListView: View {
         .tint(Color?.none)
         .background(Color(white: 0.07).ignoresSafeArea())
         .task {
-            streams = await model.streams(type: request.type, id: request.id)
+            streams = request.resumeLastSource && playing == nil
+                ? await model.streamsForAutoplay(type: request.type, id: request.id)
+                : await model.streams(type: request.type, id: request.id)
             loading = false
             if request.type == "series", request.episodes.isEmpty, let base = request.id.split(separator: ":").first {
                 // Aus Weiterschauen: Folgenliste nachladen, damit die nächste Folge automatisch kommt.
@@ -472,7 +474,7 @@ extension StreamListView {
         nextNote = "Nächste Folge wird gesucht: \(next.title) …"
         let ref = autoNext.releaseProfile(stream, listAddon: streams.first { $0.stream.id == stream.id }?.addon)
         Task {
-            let list = await model.streams(type: next.type, id: next.id)
+            let list = await model.streamsForAutoplay(type: next.type, id: next.id)
             // Während der Suche von Hand eine Quelle gestartet: Liste und Folge so lassen, nichts ersetzen.
             guard playing == nil else { nextNote = nil; return }
             guard let s = nextEpisodeStream(list, matching: ref) else {

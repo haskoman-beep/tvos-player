@@ -29,10 +29,10 @@ public struct CatalogSnapshot: Codable, Sendable, Equatable {
     }
 
     /// Aus den Cache-Einträgen: leere Reihen weglassen, Einträge kürzen, höchstens `maxRows` (jüngste zuerst).
-    public init(entries: [String: TimedCache<[MetaPreview]>.Entry], itemsPerRow: Int = maxItemsPerRow) {
+    public init(entries: [String: TimedCache<[MetaPreview]>.Entry], itemsPerRow: Int = CatalogSnapshot.maxItemsPerRow, maxRows: Int = CatalogSnapshot.maxRows) {
         let kept = entries.filter { !$0.value.value.isEmpty }
             .sorted { $0.value.storedAt == $1.value.storedAt ? $0.key < $1.key : $0.value.storedAt > $1.value.storedAt }
-            .prefix(Self.maxRows)
+            .prefix(maxRows)
         var rows: [String: Row] = [:]
         for (k, e) in kept { rows[k] = Row(items: Array(e.value.prefix(itemsPerRow)), storedAt: e.storedAt) }
         self.init(rows: rows)
@@ -40,16 +40,18 @@ public struct CatalogSnapshot: Codable, Sendable, Equatable {
 
     public static func fileName(profile: UUID) -> String { "catalog-\(profile.uuidString).json" }
 
-    /// JSON-Daten; ist das Ergebnis zu groß, werden die Reihen schrittweise gekürzt. nil = nichts zu schreiben.
+    /// JSON-Daten; ist das Ergebnis zu groß, werden erst die Einträge je Reihe, dann die Zahl der Reihen
+    /// halbiert. nil = nichts (Passendes) zu schreiben; der Aufrufer entfernt dann die alte Datei.
     public static func encode(entries: [String: TimedCache<[MetaPreview]>.Entry], maxBytes: Int = maxBytes) -> Data? {
         let enc = JSONEncoder()
         enc.dateEncodingStrategy = .secondsSince1970
         var perRow = maxItemsPerRow
-        while perRow >= 10 {
-            let snap = CatalogSnapshot(entries: entries, itemsPerRow: perRow)
+        var rows = Self.maxRows
+        while rows >= 1 {
+            let snap = CatalogSnapshot(entries: entries, itemsPerRow: perRow, maxRows: rows)
             guard !snap.rows.isEmpty else { return nil }
             if let d = try? enc.encode(snap), d.count <= maxBytes { return d }
-            perRow /= 2
+            if perRow / 2 >= 10 { perRow /= 2 } else { rows /= 2 }
         }
         return nil
     }

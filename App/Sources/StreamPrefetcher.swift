@@ -43,7 +43,7 @@ final class StreamPrefetcher {
     /// Cache-Eintrag dieser ID stammt (noch) vom Vorladen.
     func wasPrefetched(_ id: String) -> Bool {
         guard let at = prefetched[id] else { return false }
-        return Date().timeIntervalSince(at) < 600
+        return Date().timeIntervalSince(at) < RevalidationPolicy.streams.usableFor
     }
 
     func playerAppeared(_ token: UUID) {
@@ -141,7 +141,7 @@ final class StreamPrefetcher {
     /// Wie der Quellen-Cache: abgelaufene raus, höchstens 40, älteste zuerst raus.
     private func markPrefetched(_ id: String) {
         let now = Date()
-        prefetched = prefetched.filter { now.timeIntervalSince($0.value) < 600 }
+        prefetched = prefetched.filter { now.timeIntervalSince($0.value) < RevalidationPolicy.streams.usableFor }
         prefetched[id] = now
         if prefetched.count > Self.cacheLimit {
             for (k, _) in prefetched.sorted(by: { $0.value < $1.value }).prefix(prefetched.count - Self.cacheLimit) {

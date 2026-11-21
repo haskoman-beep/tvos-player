@@ -39,9 +39,10 @@ public struct TimedCache<Value: Sendable>: Sendable {
         return true
     }
 
-    /// Alle Schlüssel, deren Erneuerung fällig ist.
-    public func keysNeedingRefresh(now: Date = Date()) -> [String] {
-        entries.keys.filter { needsRefresh($0, now: now) }.sorted()
+    /// Alle Schlüssel, deren Erneuerung fällig ist. `includingRestored: false` lässt Einträge aus dem
+    /// Plattencache weg, die noch nie gezeigt wurden (die erneuern sich beim ersten Zeigen ohnehin).
+    public func keysNeedingRefresh(now: Date = Date(), includingRestored: Bool = true) -> [String] {
+        entries.keys.filter { (includingRestored || entries[$0]?.restored != true) && needsRefresh($0, now: now) }.sorted()
     }
 
     public mutating func store(_ value: Value, for key: String, now: Date = Date()) {

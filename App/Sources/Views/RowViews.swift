@@ -216,10 +216,12 @@ struct PosterCard: View {
 /// deshalb wird das Bild auch erst dann angefordert.
 private struct ExpandedPoster: View {
     let item: MetaPreview
+    @Environment(\.displayScale) private var displayScale
     var body: some View {
         GeometryReader { g in
             ZStack(alignment: .bottomLeading) {
-                RemoteImage(url: item.background ?? item.poster)
+                // Gleiche Variante wie der Vollbild-Hintergrund (gleiche Adresse): ein Download, ein Bitmap.
+                RemoteImage(url: item.background ?? item.poster, fixedTarget: .fullScreen(scale: displayScale))
                     .frame(width: g.size.width, height: g.size.height).clipped()
                 LinearGradient(colors: [.black.opacity(0.75), .clear], startPoint: .bottom, endPoint: .center)
                 Group {

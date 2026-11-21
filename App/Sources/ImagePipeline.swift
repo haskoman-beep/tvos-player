@@ -17,7 +17,8 @@ actor ImagePipeline {
 
     private let session: URLSession
     private let urlCache: URLCache
-    private let memory = NSCache<NSString, UIImage>()
+    /// NSCache ist threadsicher: `cachedImage` liest ohne Umweg über den Actor (Bild ohne Überblendung zeigen).
+    nonisolated(unsafe) private let memory = NSCache<NSString, UIImage>()
     /// Belegung des Speichercaches (Verdrängen meldet NSCache über den Delegate).
     private let tracker = CacheCostTracker()
     private var costLimit = ImageCacheBudget.maximum
@@ -56,7 +57,7 @@ actor ImagePipeline {
     /// Adressen bekannter Bilddienste werden auf die passende Größenvariante umgeschrieben (#23), mit der
     /// Original-Adresse als Ersatz. `blur` > 0: einmal vorberechneter Weichzeichner (Radius in Pixeln, #34).
     func image(_ url: URL, target: ImageTarget, blur: Int = 0) async -> UIImage? {
-        let key = "\(url.absoluteString)#\(target.cacheKey)\(blur > 0 ? "#b\(blur)" : "")"
+        let key = Self.memoryKey(url, target: target, blur: blur)
         if let img = memory.object(forKey: key as NSString) { return img }
         if let t = failed[key], Date().timeIntervalSince(t) < 300 { return nil }
         if let running = inFlight[key] { return await running.value }
@@ -71,6 +72,15 @@ actor ImagePipeline {
             updateBudget()
         } else { failed[key] = Date() }
         return img
+    }
+
+    nonisolated static func memoryKey(_ url: URL, target: ImageTarget, blur: Int) -> String {
+        "\(url.absoluteString)#\(target.cacheKey)\(blur > 0 ? "#b\(blur)" : "")"
+    }
+
+    /// Nur der Speichercache, synchron: Treffer erscheinen sofort ohne Überblendung (kein Aufploppen, kein Grau).
+    nonisolated func cachedImage(_ url: URL, target: ImageTarget, blur: Int = 0) -> UIImage? {
+        memory.object(forKey: Self.memoryKey(url, target: target, blur: blur) as NSString)
     }
 
     /// Wiedergabe beginnt/endet: Speichercache leeren und klein halten bzw. wieder freigeben.
@@ -252,12 +262,13 @@ struct RemoteImage: View {
     var fit = false
     /// Vorberechneter Weichzeichner in Punkten (0 = aus); kein Live-Effekt je Bild (#34).
     var blur: CGFloat = 0
+    /// Feste Zielgröße statt der gezeichneten (aufgeklappte Karte nutzt die Variante des Vollbild-Hintergrunds:
+    /// ein Download, ein Bitmap im Speichercache für beide).
+    var fixedTarget: ImageTarget? = nil
     @Environment(\.displayScale) private var displayScale
     @State private var image: UIImage?
     @State private var loadedURL: String?
     @State private var target: ImageTarget?
-    /// Beim Verschwinden freigegeben: beim Wiederkommen ohne Überblendung zeigen.
-    @State private var released = false
 
     /// Ab dieser Bitmap-Größe gibt die Ansicht beim Verschwinden frei (≈ 2560×1600 und größer).
     static let releaseBytes = 16 << 20
@@ -277,28 +288,29 @@ struct RemoteImage: View {
             }
         }
         .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
+            guard fixedTarget == nil else { return }
             guard var t = ImageTarget(points: size.width, size.height, scale: displayScale, fit: fit) else { return }
             if let cap = maxPixels { t.width = min(t.width, cap); t.height = min(t.height, cap) }
             if t != target { target = t }
         }
-        .task(id: LoadKey(url: url, target: target)) {
+        .task(id: LoadKey(url: url, target: fixedTarget ?? target)) {
             guard let s = url, let u = URL(string: s) else { image = nil; return }
-            guard let target else { return }   // Größe noch unbekannt: nicht winzig dekodieren
-            if loadedURL != s { image = nil }
-            let img = await ImagePipeline.shared.image(u, target: target, blur: Int((blur * displayScale).rounded()))
-            guard !Task.isCancelled else { return }
-            if released {
-                released = false
-                image = img; loadedURL = s
-            } else {
-                withAnimation(.easeOut(duration: 0.2)) { image = img; loadedURL = s }
+            guard let target = fixedTarget ?? target else { return }   // Größe noch unbekannt: nicht winzig dekodieren
+            let blurPx = Int((blur * displayScale).rounded())
+            // Speichercache-Treffer (auch nach dem Freigeben beim Zurückkehren): sofort, ohne Überblendung.
+            if let hit = ImagePipeline.shared.cachedImage(u, target: target, blur: blurPx) {
+                image = hit; loadedURL = s
+                return
             }
+            if loadedURL != s { image = nil }
+            let img = await ImagePipeline.shared.image(u, target: target, blur: blurPx)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.2)) { image = img; loadedURL = s }
         }
         .onDisappear {
             guard let image, ImagePipeline.cost(image) >= Self.releaseBytes else { return }
             self.image = nil
             loadedURL = nil
-            released = true
         }
     }
 }

@@ -91,7 +91,7 @@ final class AppModel: ObservableObject {
     func hasClient(_ s: String) -> Bool { s == "trakt" ? trakt != nil : simkl != nil }
     func isConnected(_ s: String) -> Bool { profile.syncTokens[s] != nil && hasClient(s) }
 
-    func disconnect(_ s: String) { update { $0.syncTokens[s] = nil }; cache.removeAll() }
+    func disconnect(_ s: String) { update { $0.syncTokens[s] = nil }; clearCatalogCache() }
 
     func startLogin(_ s: String) async throws -> DeviceCode {
         if s == "trakt", let trakt { return try await trakt.deviceCode() }
@@ -111,7 +111,7 @@ final class AppModel: ObservableObject {
         RemoteLog.info("sync", "\(s) Login: \(String(describing: r).prefix(while: { $0 != "(" }))")
         if case .success(let t) = r {
             update { $0.syncTokens[s] = t }
-            cache.removeAll()
+            clearCatalogCache()
             await syncRemoteProgress()
         }
         return r
@@ -225,8 +225,9 @@ final class AppModel: ObservableObject {
     func deleteProfile(_ id: UUID) {
         guard stored.profiles.count > 1 else { return }
         stored.profiles.removeAll { $0.id == id }
-        if stored.activeProfileID == id { stored.activeProfileID = stored.profiles.first?.id }
-        save()
+        removeCatalogFile(profile: id)
+        // Aktives Profil gelöscht: über den Profilwechsel (Cache leeren, Stand des neuen Profils lesen).
+        if stored.activeProfileID == id, let next = stored.profiles.first?.id { switchProfile(next) } else { save() }
     }
 
     // MARK: Addons
@@ -238,7 +239,7 @@ final class AppModel: ObservableObject {
                 p.addons.removeAll { $0.manifestURL == a.manifestURL }
                 p.addons.append(a)
             }
-            cache.removeAll()
+            clearCatalogCache()
         } catch { lastError = "Addon nicht geladen: \(error)" }
     }
 
@@ -379,7 +380,8 @@ final class AppModel: ObservableObject {
             // Rohergebnis aller Addons leer (fehlgeschlagene fehlen in `all`, zählen also als leer): vermutlich
             // Ratenbegrenzung → Vorladen pausiert. Bewusst vor dem Filtern auf abspielbare Quellen.
             if !profile.addons.isEmpty, all.allSatisfy({ $0.streams.isEmpty }) { streamsAllEmptyAt = Date() }
-            return all.flatMap { r in playableStreams(r.streams).map { (r.addon.manifest.name, $0) } }
+            let list = all.flatMap { r in playableStreams(r.streams).map { (r.addon.manifest.name, $0) } }
+            return keepingFailedAddonStreams(id: id, answered: all.map { $0.addon.manifest.name }, list: list)
         }
         streamTasks[id] = task
         let list = await task.value
@@ -398,7 +400,7 @@ final class AppModel: ObservableObject {
     var streamCache: [String: (at: Date, list: [(addon: String, stream: StreamItem)])] = [:]
     var streamTasks: [String: Task<[(addon: String, stream: StreamItem)], Never>] = [:]
     /// Leeres/fehlgeschlagenes Ergebnis: bis dahin kein Vorladen dieser ID (die Detailseite fragt trotzdem).
-    private var streamEmptyUntil: [String: Date] = [:]
+    private(set) var streamEmptyUntil: [String: Date] = [:]
     /// Letztes Ergebnis, bei dem alle Addons leer blieben (vermutlich Ratenbegrenzung): Vorladen pausiert.
     private(set) var streamsAllEmptyAt: Date?
 
@@ -430,7 +432,7 @@ final class AppModel: ObservableObject {
             case .setKey(let s, let v):
                 update { $0.apiKeys[s] = v }
                 // Pi-Adresse für „App aktualisieren“ betrifft keine Katalog-/Quellendaten.
-                if s != AtvloadlyAddress.key { cache.removeAll() }
+                if s != AtvloadlyAddress.key { clearCatalogCache() }
             case .importNuvioURL(let u): await importNuvio(from: u)
             case .importNuvioJSON(let d): importNuvio(data: d)
             case .addTMDBLink(let l):
@@ -438,7 +440,7 @@ final class AppModel: ObservableObject {
                 else { lastError = "Link nicht erkannt: \(l)" }
             case .importBackup(let d):
                 do {
-                    stored = try store.importData(d); save(); cache.removeAll()
+                    stored = try store.importData(d); save(); clearCatalogCache()
                     progress = progressStore.load(profile: profile.id)
                 } catch { lastError = "Sicherung ungültig: \(error)" }
             case .importFusionURL(let u): await importFusionKit(from: u)

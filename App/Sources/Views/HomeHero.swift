@@ -156,8 +156,20 @@ struct HeroBackdrop: View {
                 return
             }
             if shown?.url == s { return }
-            guard let img = await ImagePipeline.shared.image(u, target: .fullScreen(scale: displayScale)), !Task.isCancelled else { return }
+            let target = ImageTarget.fullScreen(scale: displayScale)
+            // Speichercache-Treffer nach dem Freigeben (Rückkehr): sofort, ohne Überblendung.
+            if shown == nil, let hit = ImagePipeline.shared.cachedImage(u, target: target) {
+                shown = Shown(url: s, image: hit)
+                return
+            }
+            guard let img = await ImagePipeline.shared.image(u, target: target), !Task.isCancelled else { return }
             withAnimation(.easeInOut(duration: 0.6)) { shown = Shown(url: s, image: img) }
+        }
+        // Verdeckt (Detailseite, Wiedergabe): Vollbild-Bitmap nicht außerhalb des Cache-Budgets halten.
+        // Beim Wiederkommen startet `.task(id:)` neu und holt es aus dem Speicher- oder Plattencache.
+        .onDisappear {
+            guard let img = shown?.image, ImagePipeline.cost(img) >= RemoteImage.releaseBytes else { return }
+            shown = nil
         }
     }
 }

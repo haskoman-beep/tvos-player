@@ -234,3 +234,72 @@ private func entries(_ rows: [String: (count: Int, at: Date)]) -> [String: Timed
     for i in 100..<(100 + RowFocusMemory.maxRows - 1) { m.record(row: "r\(i)", item: "x") }
     #expect(m.remembered(row: "r3") == "y")
 }
+
+// MARK: Nacharbeiten (Review C-b)
+
+@Test func streamMergeKeepsOldEntriesOfFailedAddons() {
+    let old: [(addon: String, stream: String)] = [("A", "a1"), ("B", "b1"), ("B", "b2"), ("C", "c1")]
+    let fresh: [(addon: String, stream: String)] = [("A", "a2")]
+    // B hat nicht geantwortet → b1, b2 bleiben (hinten, alte Reihenfolge); C ist nicht mehr eingerichtet → weg.
+    let m = StreamListMerge.keepingFailed(fresh: fresh, previous: old, answered: ["A"], configured: ["A", "B"])
+    #expect(m.map(\.stream) == ["a2", "b1", "b2"])
+    // A hat geantwortet, aber nichts geliefert: A-Einträge fallen weg, das ist eine echte Antwort.
+    let m2 = StreamListMerge.keepingFailed(fresh: [], previous: old, answered: ["A", "B"], configured: ["A", "B", "C"])
+    #expect(m2.map(\.stream) == ["c1"])
+    // Niemand hat geantwortet: Ergebnis unverändert (leer → alter Stand bleibt über storeStreams).
+    let m3 = StreamListMerge.keepingFailed(fresh: fresh, previous: old, answered: [], configured: ["A", "B"])
+    #expect(m3.map(\.stream) == ["a2"])
+    let m4 = StreamListMerge.keepingFailed(fresh: fresh, previous: nil, answered: ["A"], configured: ["A", "B"])
+    #expect(m4.map(\.stream) == ["a2"])
+}
+
+@Test func revalidationBacksOffAfterEmptyAnswers() {
+    let now = Date()
+    #expect(RevalidationPolicy.revalidationAllowed(emptyUntil: nil, allEmptyAt: nil, pause: 300, now: now))
+    #expect(!RevalidationPolicy.revalidationAllowed(emptyUntil: now.addingTimeInterval(60), allEmptyAt: nil, pause: 300, now: now))
+    #expect(RevalidationPolicy.revalidationAllowed(emptyUntil: now.addingTimeInterval(-1), allEmptyAt: nil, pause: 300, now: now))
+    #expect(!RevalidationPolicy.revalidationAllowed(emptyUntil: nil, allEmptyAt: now.addingTimeInterval(-100), pause: 300, now: now))
+    #expect(RevalidationPolicy.revalidationAllowed(emptyUntil: nil, allEmptyAt: now.addingTimeInterval(-400), pause: 300, now: now))
+}
+
+@Test func keysNeedingRefreshCanSkipRestored() {
+    let now = Date()
+    var c = TimedCache<[MetaPreview]>(lifetime: 100)
+    c.restore([meta("r")], for: "restored", storedAt: now, generation: c.generation)
+    c.store([meta("s")], for: "stale", now: now.addingTimeInterval(-200))
+    c.store([meta("f")], for: "fresh", now: now)
+    #expect(c.keysNeedingRefresh(now: now) == ["restored", "stale"])
+    #expect(c.keysNeedingRefresh(now: now, includingRestored: false) == ["stale"])
+}
+
+@Test func hitchDetectorFlushesSuppressedOnSleep() {
+    var d = HitchDetector(threshold: 0.25, minInterval: 2)
+    _ = d.step(at: 0)
+    let first = d.step(at: 0.3)
+    #expect(first?.milliseconds == 300)
+    let v1 = d.step(at: 0.9)
+    #expect(v1 == nil)                                  // unterdrückt (600 ms)
+    let early = d.willSleep(at: 1.0)
+    #expect(early == nil)                               // minInterval noch nicht um
+    _ = d.step(at: 5)
+    let v2 = d.step(at: 5.1)
+    #expect(v2 == nil)
+    let flush = d.willSleep(at: 5.2)
+    #expect(flush == HitchDetector.Hitch(milliseconds: 0, suppressed: 1, suppressedMax: 600))
+    #expect(HitchDetector.text(flush!, note: nil, footprintMB: nil) == "Hauptthread: Nachtrag · dazu 1 weitere (bis 600 ms)")
+    let again = d.willSleep(at: 9)
+    #expect(again == nil)                               // nichts mehr offen
+}
+
+@Test func catalogSnapshotDropsRowsWhenItemsAlreadyMinimal() throws {
+    let now = Date()
+    var rows: [String: (count: Int, at: Date)] = [:]
+    for i in 0..<40 { rows["r\(i)"] = (12, now.addingTimeInterval(Double(-i))) }
+    let e = entries(rows)
+    let full = try #require(CatalogSnapshot.encode(entries: e))
+    // Passt selbst mit 12 Einträgen je Reihe nicht: dann weniger Reihen statt gar keiner Datei.
+    let small = try #require(CatalogSnapshot.encode(entries: e, maxBytes: full.count / 4))
+    let snap = try #require(CatalogSnapshot.decode(small, now: now))
+    #expect(snap.rows.count < 40)
+    #expect(snap.rows["r0"] != nil)                     // jüngste Reihe bleibt
+}
