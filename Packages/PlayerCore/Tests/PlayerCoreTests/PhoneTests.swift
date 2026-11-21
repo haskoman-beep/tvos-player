@@ -48,3 +48,20 @@ private func req(_ s: String) -> HTTPRequest {
     #expect(raw.hasPrefix("HTTP/1.1 200 OK\r\n") && raw.contains("Content-Length: 7\r\n") && raw.hasSuffix("\r\n\r\n{\"a\":1}"))
     #expect(PhoneInputPage.randomToken().count == 10)
 }
+
+@Test func sharedImportFieldDetects() {
+    #expect(PhoneImportDetect.detect(" https://a.example/x/manifest.json ") == .command(.addAddon("https://a.example/x/manifest.json")))
+    #expect(PhoneImportDetect.detect("stremio://a.example/manifest.json") == .command(.addAddon("https://a.example/manifest.json")))
+    #expect(PhoneImportDetect.detect("https://www.themoviedb.org/list/5") == .command(.addTMDBLink("https://www.themoviedb.org/list/5")))
+    #expect(PhoneImportDetect.detect("https://raw.githubusercontent.com/u/fusion-kit/main/json/a.json") == .command(.importFusionURL("https://raw.githubusercontent.com/u/fusion-kit/main/json/a.json")))
+    #expect(PhoneImportDetect.detect("https://x.example/nuvio-collections.json") == .command(.importNuvioURL("https://x.example/nuvio-collections.json")))
+    let nuvio = #"[{"title":"A","folders":[]}]"#
+    #expect(PhoneImportDetect.detect(nuvio) == .command(.importNuvioJSON(Data(nuvio.utf8))))
+    if case .refused = PhoneImportDetect.detect(#"{"profiles":[]}"#) {} else { Issue.record("Sicherung darf nicht importiert werden") }
+    #expect(PhoneImportDetect.detect("hallo") == .unknown)
+    // Über die Seite: unerkannt → eigene Rückmeldung, kein Befehl.
+    let page = PhoneInputPage(token: "tok")
+    let body = "import=hallo"
+    let (resp, cmds) = page.handle(req("POST /submit?t=tok HTTP/1.1\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)"), profileName: "Ich") { Data() }
+    #expect(cmds.isEmpty && resp.extraHeaders["Location"] == "/?t=tok&ok=unerkannt")
+}
