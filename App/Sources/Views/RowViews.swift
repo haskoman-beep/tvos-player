@@ -130,13 +130,16 @@ struct Strip<C: View>: View {
                 .scrollTargetLayout()
                 .padding(.vertical, 30 * s)
         }
-        .contentMargins(.horizontal, 60, for: .scrollContent)
+        .contentMargins(.leading, 60, for: .scrollContent)
+        // Platz rechts, damit auch die letzten Karten aufgeklappt (640·s) an den linken Rand rücken können.
+        .contentMargins(.trailing, a.expandPosters ? max(60, 1920 - 60 - 640 * s) : 60, for: .scrollContent)
         .scrollPosition(id: $anchorID, anchor: .leading)
         .environment(\.cardScale, s)
         .environment(\.expandPosters, a.expandPosters)
+        // Ohne eigene Animation: läuft in der Transaktion des Aufklappens mit, damit nur eine Bewegung entsteht.
         .environment(\.anchorFocusedCard, { id in
             guard anchorID != id else { return }
-            withAnimation(.easeInOut(duration: 0.25)) { anchorID = id }
+            anchorID = id
         })
     }
 }
@@ -163,7 +166,6 @@ struct PosterCard: View {
             if item.poster == nil && !expanded { Text(item.name).font(.caption).padding(10) }
         }
         .overlay { CardStateOverlay(itemID: item.id) }
-        .onChange(of: focused) { _, f in if f && expandable { anchor(item.id) } }
         .task(id: focused && expandable) {
             guard focused && expandable else {
                 if expanded { withAnimation(.easeInOut(duration: 0.25)) { expanded = false } }
@@ -172,19 +174,20 @@ struct PosterCard: View {
             // Schnelles Durchscrollen bricht hier ab: kein Aufklappen, keine Bildanforderung.
             try? await Task.sleep(for: .milliseconds(350))
             guard !Task.isCancelled else { return }
-            withAnimation(.easeInOut(duration: 0.25)) { expanded = true }
+            // Verankern nur zusammen mit dem Aufklappen: schnelles Durchscrollen löst kein Programm-Scrollen aus.
+            withAnimation(.easeInOut(duration: 0.25)) { expanded = true; anchor(item.id) }
         }
     }
 }
 
-/// Aufgeklappter Inhalt: Hintergrundbild + Logo (oder Titel). Existiert erst nach der Ruhezeit,
+/// Aufgeklappter Inhalt: Hintergrundbild (1920 px wie der Hero → ein Download) + Logo (oder Titel). Existiert erst nach der Ruhezeit,
 /// deshalb wird das Bild auch erst dann angefordert.
 private struct ExpandedPoster: View {
     let item: MetaPreview
     var body: some View {
         GeometryReader { g in
             ZStack(alignment: .bottomLeading) {
-                RemoteImage(url: item.background ?? item.poster, maxPixels: 900)
+                RemoteImage(url: item.background ?? item.poster, maxPixels: 1920)
                     .frame(width: g.size.width, height: g.size.height).clipped()
                 LinearGradient(colors: [.black.opacity(0.75), .clear], startPoint: .bottom, endPoint: .center)
                 Group {
