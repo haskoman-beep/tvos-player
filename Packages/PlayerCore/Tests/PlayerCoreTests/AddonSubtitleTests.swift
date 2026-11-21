@@ -114,6 +114,39 @@ private struct SlowHTTP: HTTPFetching {
     #expect(!AddonSubtitlePlan.hasEmbeddedTrack(in: nil, tracks: byName))
 }
 
+@Test func externalRestoreOnlyForExternalTracks() {
+    #expect(ExternalSubtitleRestore(track: nil, url: "u", byUser: true) == nil)
+    #expect(ExternalSubtitleRestore(track: AudioTrackInfo(id: 1, language: "ger", name: "Deutsch"), url: nil, byUser: true) == nil)
+    let r = ExternalSubtitleRestore(track: AudioTrackInfo(id: 9, language: "ger", name: "Deutsch · OpenSubtitles", isExternal: true),
+                                    url: "https://x/de2.srt", byUser: true)
+    #expect(r?.name == "Deutsch · OpenSubtitles" && r?.url == "https://x/de2.srt" && r?.byUser == true)
+}
+
+@Test func externalRestoreMatchesURLBeforeName() {
+    let r = ExternalSubtitleRestore(track: AudioTrackInfo(id: 9, language: "ger", name: "Deutsch · OpenSubtitles", isExternal: true),
+                                    url: "https://x/de2.srt", byUser: false)!
+    // Addon liefert die Liste anders sortiert: gleicher Name, andere URL → die URL gewinnt.
+    let reordered: [ExternalSubtitleRestore.Candidate] = [
+        (id: 20, url: "https://x/de1.srt", name: "Deutsch · OpenSubtitles", language: "de"),
+        (id: 21, url: "https://x/de2.srt", name: "Deutsch · OpenSubtitles 2", language: "de"),
+    ]
+    #expect(r.match(reordered) == 21)
+    // Ohne URL-Treffer: Name und Sprache (Sprachcode normalisiert).
+    let other: [ExternalSubtitleRestore.Candidate] = [
+        (id: 30, url: "https://y/a.srt", name: "Deutsch · OpenSubtitles", language: "en"),
+        (id: 31, url: "https://y/b.srt", name: "Deutsch · OpenSubtitles", language: "deu"),
+    ]
+    #expect(r.match(other) == 31)
+    #expect(r.match([(id: 40, url: nil, name: "Englisch · OpenSubtitles", language: "en")]) == nil)
+    #expect(r.match([]) == nil)
+}
+
+@Test func externalRestoreWithoutURLUsesName() {
+    let r = ExternalSubtitleRestore(track: AudioTrackInfo(id: 9, language: "eng", name: "Englisch · OS", isExternal: true),
+                                    url: nil, byUser: true)!
+    #expect(r.match([(id: 50, url: "https://z/e.srt", name: "Englisch · OS", language: "en")]) == 50)
+}
+
 @Test func openSubtitlesHashSumsLittleEndianWithOverflow() {
     let n = OpenSubtitlesHash.chunkSize
     let zeros = Data(count: n)

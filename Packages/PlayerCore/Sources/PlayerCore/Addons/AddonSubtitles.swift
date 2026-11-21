@@ -185,6 +185,32 @@ public enum AddonSubtitlePlan {
     }
 }
 
+/// Vor einem Neuladen gemerkte externe (Addon-)UT-Spur. Die Spur-ID wird beim Neuanlegen neu vergeben,
+/// darum zählt zuerst die Addon-URL, nur ohne URL-Treffer Name und Sprache.
+public struct ExternalSubtitleRestore: Equatable, Sendable {
+    /// Eine bekannte Spur: ID, Addon-URL (falls bekannt), Spurname, Sprache.
+    public typealias Candidate = (id: Int, url: String?, name: String?, language: String?)
+
+    public let url: String?
+    public let name: String?
+    public let language: String?
+    public let byUser: Bool
+
+    /// nil, wenn keine oder keine externe Spur aktiv war. `url` ist die Addon-URL der Spur, falls bekannt.
+    public init?(track: AudioTrackInfo?, url: String?, byUser: Bool) {
+        guard let track, track.isExternal else { return nil }
+        self.url = url; name = track.name; language = track.language; self.byUser = byUser
+    }
+
+    /// ID der passenden Spur: erst gleiche URL, sonst gleicher Name und gleiche Sprache; nil ohne Treffer.
+    public func match(_ candidates: [Candidate]) -> Int? {
+        if let url, let hit = candidates.first(where: { $0.url == url }) { return hit.id }
+        guard let name else { return nil }
+        let want = MediaLabels.languageCode(language)
+        return candidates.first { $0.name == name && MediaLabels.languageCode($0.language) == want }?.id
+    }
+}
+
 /// OpenSubtitles-Datei-Hash: Dateigröße plus Summe der ersten und letzten 64 KiB als Little-Endian-UInt64
 /// (Überlauf erlaubt), 16 Hex-Zeichen. Als Stremio-Extra `videoHash`/`videoSize` sortiert OpenSubtitles v3
 /// die zur Veröffentlichung passenden Untertitel nach vorn.

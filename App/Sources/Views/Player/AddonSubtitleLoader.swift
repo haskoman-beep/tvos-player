@@ -75,55 +75,43 @@ enum VideoHash {
     }
 }
 
-/// Vor einem Neuladen gemerkte externe (Addon-)UT-Spur. Die Spur-ID wird beim Neuanlegen neu vergeben,
-/// darum zählen Name und Sprache (die Addon-Spur trägt keine URL in `AudioTrackInfo`).
-struct ExternalSubtitleRestore {
-    let name: String?
-    let language: String?
-    let byUser: Bool
-
-    /// nil, wenn keine oder keine externe Spur aktiv war.
-    init?(track: AudioTrackInfo?, byUser: Bool) {
-        guard let track, track.isExternal else { return nil }
-        name = track.name; language = track.language; self.byUser = byUser
-    }
-
-    func matches(name: String, language: String?) -> Bool {
-        self.name == name && MediaLabels.languageCode(self.language) == MediaLabels.languageCode(language)
-    }
-}
-
 extension PlayerControls {
     /// Nach dem Laden im Hintergrund: Addon-Untertitel in UT-Sprache, Tonsprache und Englisch (je höchstens 3) anhängen.
     /// Außer bei „Aus“ und ohne volle eingebettete Spur in der Wunschsprache wird die Wahl danach nach den
     /// Player-1-Regeln (`reconsiderSubtitles`, also `SubtitlePicker`) über alle Spuren neu bewertet; nach einer
     /// Nutzerwahl werden Spuren nur hinzugefügt. `audioLanguage` ist die Sprache der Start-Tonspur (die Tonwahl
     /// läuft asynchron). Mit `restore` (nach einem Neuladen) wird die zuvor aktive Addon-Spur wieder gewählt.
+    /// Schon angelegte Addon-Spuren (gleiche URL, Spur noch da) werden nicht doppelt angelegt.
     func loadAddonSubtitles(audioLanguage: String?, restore: ExternalSubtitleRestore? = nil) async {
         guard let addonSubtitles else { return }
         let embedded = engine.subtitleTracks
         guard let found = await addonSubtitles(), !Task.isCancelled else { return }
         let languages = AddonSubtitlePlan.languages(subtitleLanguage: profile.subtitleLanguage, audioLanguage: audioLanguage)
         let picked = AddonSubtitlePlan.select(found, languages: languages)
-        var added: [(sub: AddonSubtitle, id: Int)] = []
-        var restoredID: Int?
-        for (sub, name) in zip(picked, AddonSubtitlePlan.trackNames(picked)) {
+        let present = engine.subtitleTracks.filter(\.isExternal)
+        let presentURLs = Set(present.compactMap { addonTrackURLs[$0.id] })
+        var added: [(sub: AddonSubtitle, id: Int, name: String)] = []
+        for (sub, name) in zip(picked, AddonSubtitlePlan.trackNames(picked)) where !presentURLs.contains(sub.url) {
             guard !Task.isCancelled else { return }
             guard let url = URL(string: sub.url),
                   let id = engine.addExternalSubtitle(url: url, name: name, language: sub.languageCode, formatHint: sub.formatHint)
             else { continue }
-            added.append((sub, id))
-            if restoredID == nil, restore?.matches(name: name, language: sub.languageCode) == true { restoredID = id }
+            addonTrackURLs[id] = sub.url
+            added.append((sub, id, name))
         }
         var addedLanguages: [String] = []
         for a in added { if let c = a.sub.languageCode, !addedLanguages.contains(c) { addedLanguages.append(c) } }
-        RemoteLog.info("player", "Addon-UT: \(found.count) gefunden, \(added.count) hinzugefügt (Sprachen " +
+        RemoteLog.info("player", "Addon-UT: \(found.count) gefunden, \(added.count) hinzugefügt, \(presentURLs.count) schon da (Sprachen " +
             "\(addedLanguages.isEmpty ? "-" : addedLanguages.joined(separator: ", ")); gesucht \(languages.joined(separator: ", ")))")
-        // Nach dem Neuladen: die vorher aktive Addon-Spur wieder setzen (Nutzerwahl bleibt Nutzerwahl).
+        // Nach dem Neuladen: die vorher aktive Addon-Spur wieder setzen, erst nach URL, sonst nach Name und
+        // Sprache (Nutzerwahl bleibt Nutzerwahl).
         if let restore, !Task.isCancelled {
-            if let restoredID {
-                if restore.byUser { engine.selectSubtitle(restoredID) } else { engine.autoSelectSubtitle(restoredID) }
-                RemoteLog.info("player", "Addon-UT nach Neuladen wieder gewählt: \(restoredID) · \(restore.name ?? "?")")
+            var candidates: [ExternalSubtitleRestore.Candidate] = []
+            for a in added { candidates.append((id: a.id, url: a.sub.url, name: a.name, language: a.sub.languageCode)) }
+            for t in present { candidates.append((id: t.id, url: addonTrackURLs[t.id], name: t.name, language: t.language)) }
+            if let id = restore.match(candidates) {
+                if restore.byUser { engine.selectSubtitle(id) } else { engine.autoSelectSubtitle(id) }
+                RemoteLog.info("player", "Addon-UT nach Neuladen wieder gewählt: \(id) · \(restore.name ?? "?")")
                 return
             }
             RemoteLog.info("player", "Addon-UT nach Neuladen nicht wiedergefunden: \(restore.name ?? "?")")
