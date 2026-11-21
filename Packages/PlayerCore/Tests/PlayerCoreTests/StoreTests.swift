@@ -11,7 +11,7 @@ func tempDir() -> URL {
 @Test func saveThenLoad() throws {
     let store = ProfileStore(directory: tempDir())
     var s = StoredProfiles.makeDefault()
-    s.profiles[0].name = "Max"
+    s.profiles[0].name = "Test"
     try store.save(s)
     #expect(store.load() == s)
 }

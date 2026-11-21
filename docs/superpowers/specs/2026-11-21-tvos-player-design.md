@@ -60,8 +60,8 @@ Remux mit Dolby Vision und hört 5.1 aus der Z906, und "Weiterschauen" stimmt mi
 
 ## 3. Rahmenbedingungen
 
-- Kein Mac, kein Entwicklerkonto. Apple TV 4K, tvOS 26.6, <Apple-TV-Adresse>. [N]
-- Signieren + Installieren: atvloadly auf dem Pi (http://<Pi-Adresse>:5533), Apple-ID-Signierung,
+- Kein Mac, kein Entwicklerkonto. Apple TV 4K, tvOS 26.6 (Heimnetz). [N]
+- Signieren + Installieren: atvloadly auf dem Pi (Heimnetz), Apple-ID-Signierung,
   7-Tage-Refresh automatisch. [N] Freie Apple-ID: begrenzte Zahl gleichzeitiger Apps (VortX belegt
   schon einen Platz).
 - Build: GitHub Actions macOS (privates Repo `haskoman-beep/…`). macOS-Minuten zählen in privaten
