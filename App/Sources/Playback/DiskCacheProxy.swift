@@ -85,8 +85,10 @@ final class DiskCacheOriginFetcher: NSObject, URLSessionDataDelegate, @unchecked
         session = URLSession(configuration: c, delegate: self, delegateQueue: q)
     }
 
-    func fetch(_ url: URL, headers: [String: String], range: ClosedRange<Int64>, timeout: TimeInterval) async throws -> Answer {
-        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
+    /// `idle`: Leerlauf-Grenze (URLRequest). `hardLimit`: Grenze für den ganzen Abruf, nil = keine (Vorlauf).
+    func fetch(_ url: URL, headers: [String: String], range: ClosedRange<Int64>, idle: TimeInterval,
+               hardLimit: TimeInterval?) async throws -> Answer {
+        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: idle)
         for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
         req.setValue("bytes=\(range.lowerBound)-\(range.upperBound)", forHTTPHeaderField: "Range")
         req.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
@@ -97,7 +99,9 @@ final class DiskCacheOriginFetcher: NSObject, URLSessionDataDelegate, @unchecked
                 lock.withLock { pending[task.taskIdentifier] = Pending(continuation: k, limit: limit) }
                 task.resume()
                 // Harte Grenze für den ganzen Abruf (timeoutInterval zählt nur Leerlauf).
-                DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [weak task] in task?.cancel() }
+                if let hardLimit {
+                    DispatchQueue.global().asyncAfter(deadline: .now() + hardLimit) { [weak task] in task?.cancel() }
+                }
             }
         } onCancel: {
             task.cancel()
@@ -156,6 +160,10 @@ actor DiskCacheSession {
     private var parallel: Int
     /// Blöcke, auf die gerade ein Leser wartet: ein laufender Vorlauf-Abruf wiederholt dann nicht mehr.
     private var readerWaiting: [Int: Int] = [:]
+    /// Laufende Abrufe für einen wartenden Leser (kein Vorlauf): solange startet kein neuer Vorlauf.
+    private var readerFetches = 0
+    /// Gemessene Geschwindigkeit des Ursprungs (gleitendes Mittel).
+    private var rate = DiskCacheRate()
     private var closed = false
     private var writeProblemLogged = false
     private(set) var passthrough = false
@@ -173,7 +181,8 @@ actor DiskCacheSession {
     /// Erster Block als Probe: Größe aus `Content-Range`, Range-Unterstützung, Inhaltstyp.
     static func open(token: String, origin: URL, headers: [String: String], decision: DiskCacheSource.Decision,
                      budget: Int64, dir: URL, policy: DiskCachePolicy, fetcher: DiskCacheOriginFetcher) async throws -> DiskCacheSession {
-        let a = try await fetcher.fetch(origin, headers: headers, range: 0...(policy.blockSize - 1), timeout: 8)
+        let a = try await fetcher.fetch(origin, headers: headers, range: 0...(policy.blockSize - 1),
+                                      idle: policy.originIdleTimeout, hardLimit: policy.probeHardLimit)
         guard a.status == 206, let cr = a.contentRange, let total = cr.total, total > 0,
               cr.range == 0...(min(policy.blockSize, total) - 1) else {
             throw DiskCacheError.noRangeSupport(a.status)
@@ -204,6 +213,7 @@ actor DiskCacheSession {
 
     /// Daten eines Blocks: von der Platte, aus einem laufenden Abruf oder frisch vom Ursprung.
     func block(_ i: Int) async throws -> Data {
+        let started = Date()
         if index.contains(i) {
             if let d = readBlockFile(i) { stats.hits += 1; return d }
             // Datei fehlt (tvOS darf Caches/ leeren) oder ist kaputt: neu holen.
@@ -211,8 +221,14 @@ actor DiskCacheSession {
         }
         if let t = inflight[i] {
             readerWaiting[i, default: 0] += 1
-            defer { readerWaiting[i, default: 1] -= 1; if readerWaiting[i] == 0 { readerWaiting[i] = nil } }
-            return try await t.value
+            defer {
+                readerWaiting[i, default: 1] -= 1
+                if readerWaiting[i] == 0 { readerWaiting[i] = nil }
+                pump()
+            }
+            // Auf den laufenden Vorlauf warten, aber nur bis zur Lesergrenze; der Vorlauf läuft weiter.
+            let left = policy.readerHardLimit - Date().timeIntervalSince(started)
+            return try await Self.value(of: t, within: max(0.5, left))
         }
         stats.misses += 1
         return try await startFetch(i, prefetch: false).value
@@ -240,17 +256,31 @@ actor DiskCacheSession {
         try? FileManager.default.removeItem(at: dir)
     }
 
+    /// Ergebnis eines Abruf-Tasks, höchstens `seconds` lang (der Task selbst wird nicht abgebrochen).
+    private static func value(of t: Task<Data, Error>, within seconds: TimeInterval) async throws -> Data {
+        try await withThrowingTaskGroup(of: Data.self) { g in
+            g.addTask { try await t.value }
+            g.addTask {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                throw DiskCacheError.badAnswer("Vorlauf-Block nicht in \(Int(seconds)) s")
+            }
+            defer { g.cancelAll() }
+            guard let d = try await g.next() else { throw CancellationError() }
+            return d
+        }
+    }
+
     private func startFetch(_ i: Int, prefetch: Bool) -> Task<Data, Error> {
         let t = Task { try await self.fetchBlock(i, prefetch: prefetch) }
         inflight[i] = t
-        if prefetch { prefetchCount += 1 }
+        if prefetch { prefetchCount += 1 } else { readerFetches += 1 }
         return t
     }
 
     private func fetchBlock(_ i: Int, prefetch: Bool) async throws -> Data {
         defer {
             inflight[i] = nil
-            if prefetch { prefetchCount -= 1 }
+            if prefetch { prefetchCount -= 1 } else { readerFetches -= 1 }
             pump()
         }
         let r = plan.range(of: i)
@@ -261,7 +291,9 @@ actor DiskCacheSession {
             // Wartet die Engine auf diesen Block, kein zweiter Versuch: lieber gleich 307 als die Lesegrenze reißen.
             if attempt > 0, readerWaiting[i] != nil { break }
             do {
-                let a = try await fetcher.fetch(origin, headers: headers, range: r, timeout: policy.originTimeout)
+                let t0 = Date()
+                let a = try await fetcher.fetch(origin, headers: headers, range: r, idle: policy.originIdleTimeout,
+                                                hardLimit: prefetch ? nil : policy.readerHardLimit)
                 if DiskCachePolicy.isThrottle(status: a.status) { throw DiskCacheError.throttled(a.status) }
                 guard a.status == 206, a.contentRange?.range == r, a.contentRange?.total == plan.totalLength,
                       Int64(a.data.count) == Int64(r.count) else {
@@ -271,6 +303,7 @@ actor DiskCacheSession {
                 if prefetch { stats.prefetched += 1 }
                 failures = 0
                 store(i, a.data)
+                noteRate(bytes: Int64(a.data.count), seconds: Date().timeIntervalSince(t0))
                 return a.data
             } catch {
                 lastError = error
@@ -292,6 +325,24 @@ actor DiskCacheSession {
             cacheError("Ursprung antwortet nicht verlässlich (\(short(lastError))) → Umleitung auf die direkte Adresse")
         }
         throw lastError
+    }
+
+    /// Geschwindigkeit nachführen: zu langsam → erst weniger parallel, bei einem Abruf Umleitung (fail open).
+    private func noteRate(bytes: Int64, seconds: TimeInterval) {
+        rate.note(bytes: bytes, seconds: seconds)
+        let perBlock = rate.secondsPerBlock(policy.blockSize).map { String(format: "%.1f s je Block", $0) } ?? "?"
+        switch policy.slowAction(rate: rate, parallel: parallel) {
+        case .none:
+            break
+        case .lowerParallel:
+            parallel -= 1
+            rate = DiskCacheRate()
+            cacheLog("Ursprung langsam (\(perBlock)) → Vorlauf mit \(parallel) Abruf(en)")
+        case .passthrough:
+            guard !passthrough else { return }
+            passthrough = true
+            cacheError("Ursprung zu langsam für den Cache (\(perBlock)) → Umleitung auf die direkte Adresse")
+        }
     }
 
     private func readBlockFile(_ i: Int) -> Data? {
@@ -332,7 +383,8 @@ actor DiskCacheSession {
 
     /// Vorlauf: fehlende Blöcke ab der Leseposition, höchstens `parallelPrefetches` gleichzeitig.
     private func pump() {
-        guard !closed, !passthrough, Date() >= prefetchPausedUntil else { return }
+        // Wartet ein Leser (eigener Abruf oder auf einen Vorlauf-Block), keinen neuen Vorlauf starten.
+        guard !closed, !passthrough, Date() >= prefetchPausedUntil, readerWaiting.isEmpty, readerFetches == 0 else { return }
         while prefetchCount < parallel,
               let b = index.nextPrefetch(readPosition: readPosition, aheadBytes: aheadBytes, excluding: Set(inflight.keys)) {
             _ = startFetch(b, prefetch: true)
@@ -353,11 +405,13 @@ actor DiskCacheProxy {
     private var lastPort: NWEndpoint.Port?
     /// Port in der Adresse, die die Engine für die laufende Sitzung bekommen hat.
     private var sessionPort: UInt16?
+    /// Laufender Listener-Start: ein zweiter Aufruf wartet darauf, statt parallel einen zweiten zu starten.
+    private var listenerStart: Task<UInt16?, Never>?
     private var session: DiskCacheSession?
     /// Quellen, die in dieser App-Sitzung schon am Cache gescheitert sind: direkt.
     private var failedOrigins: Set<URL> = []
 
-    private init() { fetcher = DiskCacheOriginFetcher(timeout: DiskCachePolicy().originTimeout) }
+    private init() { fetcher = DiskCacheOriginFetcher(timeout: DiskCachePolicy().originIdleTimeout) }
 
     static var root: URL {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("DiskCache", isDirectory: true)
@@ -496,7 +550,16 @@ actor DiskCacheProxy {
     /// Läuft der Listener (nach Ruhezustand kann er tot sein), sonst neu auf 127.0.0.1 mit freiem Port.
     private func ensureListener() async -> UInt16? {
         if let l = listener, case .ready = l.state, let p = l.port?.rawValue, p != 0 { return p }
+        if let running = listenerStart { return await running.value }
         listener?.cancel(); listener = nil
+        let t = Task { await self.startListenerPreferringLastPort() }
+        listenerStart = t
+        let p = await t.value
+        listenerStart = nil
+        return p
+    }
+
+    private func startListenerPreferringLastPort() async -> UInt16? {
         if let last = lastPort, let p = await startListener(port: last) { return p }
         return await startListener(port: .any)
     }
@@ -505,6 +568,7 @@ actor DiskCacheProxy {
         let params = NWParameters.tcp
         params.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: port)
         params.acceptLocalOnly = true
+        params.allowLocalEndpointReuse = true
         let l: NWListener
         do { l = try NWListener(using: params) } catch {
             cacheError("Listener: \(short(error))")

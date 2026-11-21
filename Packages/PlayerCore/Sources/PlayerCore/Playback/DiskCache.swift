@@ -137,20 +137,58 @@ public struct DiskCachePolicy: Equatable, Sendable {
     public var minimumBudgetBytes: Int64 = 64 * 1024 * 1024
     /// Fehlgeschlagene Abrufe in Folge, ab denen die Sitzung nur noch auf den Ursprung umleitet.
     public var failuresUntilPassthrough = 3
-    /// Harte Zeitgrenze je Abruf beim Ursprung (ganzer Block, nicht nur Leerlauf).
-    public var originTimeout: TimeInterval = 8
-    /// Versuche je Block: Vorlauf darf wiederholen, ein Block, auf den die Engine wartet, nicht – so bleibt der
-    /// Weg bis zur Antwort (Abruf oder 307) klar unter der 20-s-Lesegrenze der Engine.
+    /// Leerlauf-Grenze je Abruf beim Ursprung (keine Daten so lange → Abbruch).
+    public var originIdleTimeout: TimeInterval = 6
+    /// Harte Grenze für einen Block, auf den die Engine wartet (eigener Abruf oder Warten auf den Vorlauf):
+    /// danach 307 bzw. Verbindung zu – klar unter der 20-s-Lesegrenze der Engine.
+    public var readerHardLimit: TimeInterval = 14
+    /// Harte Grenze für die Probe (Block 0) vor dem Start.
+    public var probeHardLimit: TimeInterval = 13
+    /// Versuche je Block: Vorlauf darf wiederholen (ohne harte Grenze, nur Leerlauf), der Leser nicht.
     public var prefetchAttempts = 2
     public var readerAttempts = 1
+    /// Braucht ein Block im gleitenden Mittel länger, ist der Ursprung zu langsam: erst weniger parallel,
+    /// bei einem Abruf Umleitung auf die direkte Adresse.
+    public var slowBlockSeconds: TimeInterval = 10
+    /// Messungen, bevor die Geschwindigkeit zählt.
+    public var minimumRateSamples = 2
 
     /// Ursprung drosselt (429/503): weniger parallele Abrufe statt Fehler zählen.
     public static func isThrottle(status: Int) -> Bool { status == 429 || status == 503 }
 
     public init() {}
 
+    /// Was bei der gemessenen Geschwindigkeit zu tun ist.
+    public func slowAction(rate: DiskCacheRate, parallel: Int) -> DiskCacheSlowAction {
+        guard rate.samples >= minimumRateSamples, let s = rate.secondsPerBlock(blockSize), s > slowBlockSeconds else { return .none }
+        return parallel > 1 ? .lowerParallel : .passthrough
+    }
+
     /// Vorlauf für ein Budget: nie mehr als die Hälfte, mindestens ein Block.
     public func readAhead(budget: Int64) -> Int64 { max(blockSize, min(readAheadBytes, budget / 2)) }
+}
+
+public enum DiskCacheSlowAction: Equatable, Sendable { case none, lowerParallel, passthrough }
+
+/// Gleitendes Mittel der Abrufdauer je Byte (über die Zeit gemittelt, nicht über die Rate: ein schneller
+/// Ausreißer kippt ein langsames Mittel nicht sofort).
+public struct DiskCacheRate: Equatable, Sendable {
+    public private(set) var secondsPerByte: Double?
+    public private(set) var samples = 0
+    public var alpha = 0.3
+
+    public init() {}
+
+    public var bytesPerSecond: Double? { secondsPerByte.flatMap { $0 > 0 ? 1 / $0 : nil } }
+
+    public mutating func note(bytes: Int64, seconds: TimeInterval) {
+        guard bytes > 0 else { return }
+        let v = max(seconds, 0) / Double(bytes)
+        secondsPerByte = secondsPerByte.map { $0 + alpha * (v - $0) } ?? v
+        samples += 1
+    }
+
+    public func secondsPerBlock(_ blockSize: Int64) -> Double? { secondsPerByte.map { $0 * Double(blockSize) } }
 }
 
 /// Wie viel der Cache belegen darf.
@@ -239,7 +277,8 @@ public enum DiskCacheSource {
     /// einen anderen Host verlöre die Anmeldedaten (die Engine verwirft sie bei Host-Wechsel).
     public static func needsCredentials(_ url: URL, headers: [String: String]) -> Bool {
         if url.user != nil || url.password != nil { return true }
-        let secret: Set<String> = ["authorization", "cookie", "proxy-authorization"]
+        let secret: Set<String> = ["authorization", "cookie", "proxy-authorization",
+                                   "x-emby-token", "x-emby-authorization", "x-mediabrowser-token"]
         return headers.keys.contains { secret.contains($0.lowercased()) }
     }
 

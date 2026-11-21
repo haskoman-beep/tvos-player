@@ -207,6 +207,9 @@ import Testing
     #expect(DiskCacheSource.needsCredentials(u, headers: ["Authorization": "Bearer t"]))
     #expect(DiskCacheSource.needsCredentials(u, headers: ["cookie": "a=b"]))
     #expect(DiskCacheSource.needsCredentials(u, headers: ["Proxy-Authorization": "x"]))
+    #expect(DiskCacheSource.needsCredentials(u, headers: ["X-Emby-Token": "x"]))
+    #expect(DiskCacheSource.needsCredentials(u, headers: ["X-Emby-Authorization": "x"]))
+    #expect(DiskCacheSource.needsCredentials(u, headers: ["X-MediaBrowser-Token": "x"]))
     #expect(DiskCacheSource.needsCredentials(URL(string: "https://u:p@cdn.example.com/a.mkv")!, headers: [:]))
 }
 
@@ -239,6 +242,27 @@ import Testing
     #expect(!DiskCachePolicy.isThrottle(status: 500) && !DiskCachePolicy.isThrottle(status: 404))
     let p = DiskCachePolicy()
     // Leser: ein Versuch mit harter Grenze, klar unter der 20-s-Lesegrenze der Engine; Vorlauf zwei.
-    #expect(Double(p.readerAttempts) * p.originTimeout < 20)
-    #expect(Double(p.prefetchAttempts) * p.originTimeout + 0.4 < 20)
+    #expect(p.readerAttempts == 1 && p.readerHardLimit < 15)
+    #expect(p.probeHardLimit < 15 && p.originIdleTimeout < p.readerHardLimit)
+}
+
+@Test func diskCacheRateAndSlowOrigin() {
+    var r = DiskCacheRate()
+    #expect(r.secondsPerBlock(4_000_000) == nil)
+    r.note(bytes: 4_000_000, seconds: 2)            // 2 MB/s → 2 s je Block
+    #expect(r.secondsPerBlock(4_000_000) == 2)
+    r.note(bytes: 0, seconds: 1)                    // zählt nicht
+    #expect(r.samples == 1)
+    var p = DiskCachePolicy(); p.blockSize = 4_000_000
+    #expect(p.slowAction(rate: r, parallel: 1) == .none)   // zu wenige Messungen
+    r.note(bytes: 4_000_000, seconds: 2)
+    #expect(p.slowAction(rate: r, parallel: 1) == .none)   // schnell genug
+    var slow = DiskCacheRate()
+    slow.note(bytes: 4_000_000, seconds: 20); slow.note(bytes: 4_000_000, seconds: 15)
+    #expect((slow.secondsPerBlock(4_000_000) ?? 0) > 10)
+    #expect(p.slowAction(rate: slow, parallel: 2) == .lowerParallel)
+    #expect(p.slowAction(rate: slow, parallel: 1) == .passthrough)
+    // Gleitendes Mittel: ein schneller Ausreißer kippt ein langsames Mittel nicht sofort.
+    slow.note(bytes: 4_000_000, seconds: 1)
+    #expect(p.slowAction(rate: slow, parallel: 1) == .passthrough)
 }
