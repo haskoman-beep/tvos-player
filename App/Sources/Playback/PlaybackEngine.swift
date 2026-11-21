@@ -19,6 +19,10 @@ protocol PlaybackEngine: ObservableObject {
     var errorText: String? { get }
     var infoText: String { get }
     var errorDetail: String { get }
+    /// Bildbreite der Quelle in Pixeln (für die Auflösungs-Plakette); nil vor dem Laden oder ohne Video.
+    var sourceVideoWidth: Int? { get }
+    /// Name des Dynamik-Formats der Quelle ("sdr", "hdr10", "hdr10Plus", "dolbyVision", "hlg"); nil = unbekannt.
+    var sourceVideoFormatName: String? { get }
 
     func load(_ url: URL, start: Double?, prefs: LoadPrefs) async throws
     /// Neue Sitzung an der aktuellen Stelle (frisches Fehlerbudget der Engine).
@@ -107,6 +111,9 @@ final class AetherBackend: PlaybackEngine {
         let dv = engine.sourceDVProfile.map { "DV P\($0)" } ?? "\(engine.sourceVideoFormat)"
         return "\(engine.sourceVideoCodecName ?? "?") · \(dv) → \(engine.videoFormat) · Ton \(engine.activeAudioDecoder ?? "-") (\(engine.audioDelivery))"
     }
+    var sourceVideoWidth: Int? { engine.sourceVideoWidth > 0 ? Int(engine.sourceVideoWidth) : nil }
+    /// Quellformat (nicht das auf das Panel geklemmte `videoFormat`): Plakette zeigt, was die Datei ist.
+    var sourceVideoFormatName: String? { "\(engine.sourceVideoFormat)" }
 
     var errorDetail: String { engine.errorInfo.map { String(describing: $0) } ?? "-" }
 
