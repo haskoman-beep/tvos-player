@@ -142,7 +142,9 @@ struct QualityBadgeView: View {
     }
 }
 
-/// Kleine Plaketten unten am Poster (beste Auflösung, DV/HDR, Atmos) – nur aus dem Quellen-Cache, keine Netzabfrage.
+/// Kleine Plaketten am Poster (beste Auflösung, DV/HDR, Atmos) – nur aus dem Quellen-Cache, keine Netzabfrage.
+/// Welle E-a: Lage nach „Qualität auf Postern“ (Standard aus). Nie unten auf dem Bild: dort tragen viele Poster
+/// (Bewertungs-Poster) eine Genre-/Bewertungszeile. „Unten“ = eigener Streifen unter dem Bild (`PosterBadgeBand`).
 struct PosterQualityBadges: View {
     @EnvironmentObject var model: AppModel
     let item: MetaPreview
@@ -150,41 +152,68 @@ struct PosterQualityBadges: View {
     @State private var best: BestQuality?
     /// Plakettenhöhe bei Kartengröße „Mittel“. Logos einzeilig (fett), damit sie auf dem Poster lesbar bleiben.
     static let badgeHeight: CGFloat = 38
+    /// Innenabstand im Streifen unter dem Bild (oben und unten).
+    static let bandPadding: CGFloat = 8
+    /// Höhe des Streifens unter dem Bild bei „Unten“ (bei Kartengröße „Mittel“).
+    static var bandHeight: CGFloat { badgeHeight + 2 * bandPadding }
     private func row(_ badges: [QualityBadge]) -> some View {
         HStack(spacing: 6 * scale) {
             ForEach(badges) { QualityBadgeView(badge: $0, height: Self.badgeHeight * scale, surface: .image, compactLogo: true) }
         }
     }
 
-    /// Höchstbreite links neben den Plaketten (aufgeklapptes Poster: Logo/Titel), als Anteil der Breite.
+    /// Höchstbreite links neben dem Inhalt (aufgeklapptes Poster: Logo/Titel), als Anteil der Breite.
     static let leadingContentMaxFraction: CGFloat = 0.55
 
     var body: some View {
         let settings = model.profile.appearance.badges
-        let list = best.map { QualityBadges.poster($0, settings: settings) } ?? []
-        ZStack(alignment: .bottomTrailing) {
+        let placement = model.profile.appearance.titles.posterBadges
+        let list = best.map { QualityBadges.poster($0, settings: settings, placement: placement) } ?? []
+        let bottom = placement == .bottom
+        ZStack(alignment: bottom ? .bottomLeading : .topTrailing) {
             Color.clear
             if !list.isEmpty {
-                // Fortschrittsbalken (CardStateOverlay) sitzt ganz unten: Plaketten darüber.
-                let lifted = (model.progress.cardState(itemID: item.id)?.fraction ?? 0) > 0
                 // Passt die Reihe nicht in die Posterbreite (Text-Stil), entfallen Plaketten von hinten.
                 ViewThatFits(in: .horizontal) {
                     row(list)
                     row(Array(list.prefix(2)))
                     row(Array(list.prefix(1)))
                 }
-                .padding(.trailing, 10 * scale)
-                .padding(.bottom, (lifted ? 24 : 10) * scale)
+                .padding(bottom ? .leading : .trailing, 10 * scale)
+                .padding(bottom ? .bottom : .top, bottom ? Self.bandPadding * scale : topInset)
                 .transition(.opacity)
             }
         }
         .allowsHitTesting(false)
-        .task(id: "\(item.id)|\(settings.onPosters)") {
-            best = settings.onPosters ? QualityBadgeCache.shared.best(for: item, model: model) : nil
+        .task(id: "\(item.id)|\(placement.rawValue)") {
+            best = placement != .off ? QualityBadgeCache.shared.best(for: item, model: model) : nil
         }
         .onReceive(QualityBadgeCache.shared.stored) { id in
-            guard settings.onPosters, model.streamCacheKey(for: item) == id else { return }
+            guard placement != .off, model.streamCacheKey(for: item) == id else { return }
             withAnimation(.easeOut(duration: 0.2)) { best = QualityBadgeCache.shared.best(id: id, model: model) }
+        }
+    }
+
+    /// Oben rechts: unter Haken bzw. Folgen-/Restzeit-Kapsel (CardStateOverlay), sonst direkt an der Kante.
+    private var topInset: CGFloat {
+        guard let st = model.progress.cardState(itemID: item.id) else { return 10 * scale }
+        let occupied = st.watched || st.episode != nil || st.remainingSeconds != nil
+        return occupied ? 56 * scale : 10 * scale
+    }
+}
+
+/// Welle E-a: Streifen unter dem Posterbild für „Qualität auf Postern: Unten“. Immer da, solange die Einstellung
+/// gilt (auch ohne Plaketten), damit alle Karten einer Reihe gleich hoch bleiben. Eigene View, damit nur sie
+/// (nicht die ganze Karte) auf Profiländerungen reagiert.
+struct PosterBadgeBand: View {
+    @EnvironmentObject var model: AppModel
+    /// Breite des Bildes darüber (in Reihen ist die angebotene Breite unbegrenzt).
+    let width: CGFloat
+    var scale: CGFloat = 1
+
+    var body: some View {
+        if model.profile.appearance.titles.posterBadges == .bottom {
+            Color.black.opacity(0.55).frame(width: width, height: PosterQualityBadges.bandHeight * scale)
         }
     }
 }

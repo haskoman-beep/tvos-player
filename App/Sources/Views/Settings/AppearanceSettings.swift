@@ -54,11 +54,12 @@ struct AppearanceSettings: View {
                 Text("Logo").tag(BadgeStyle.logo)
                 Text("Text").tag(BadgeStyle.text)
             }
-            Toggle("Plaketten auf Postern", isOn: model.binding(\.appearance.badges.onPosters))
+            PosterQualitySettingRow()
             ForEach(Self.badgeTypes.indices, id: \.self) { i in
                 Toggle(Self.badgeTypes[i].0, isOn: model.binding((\Profile.appearance.badges).appending(path: Self.badgeTypes[i].1)))
             }
         }
+        TitleDisplaySettingsSections()
         ExtrasSettingsSections()
     }
 

@@ -187,19 +187,20 @@ struct PosterCard: View {
 
     var body: some View {
         let h = 360 * scale
-        ZStack(alignment: .leading) {
-            RemoteImage(url: item.poster)
-                .frame(width: 240 * scale, height: h).clipped()
-            if expanded { ExpandedPoster(item: item).transition(.opacity) }
-        }
-        .frame(width: (expanded ? h * 16 / 9 : 240 * scale), height: h, alignment: .leading).clipped()
-        .overlay(alignment: .bottomLeading) {
-            // Über der Plakettenzone (PosterQualityBadges unten rechts), damit nichts darunter läuft.
-            if item.poster == nil && !expanded {
-                Text(item.name).font(.caption).padding(10).padding(.bottom, (PosterQualityBadges.badgeHeight + 10) * scale)
+        // Welle E-a: Plaketten nie unten auf dem Bild; bei „Unten“ sitzen sie im Streifen darunter (PosterBadgeBand).
+        VStack(spacing: 0) {
+            ZStack(alignment: .leading) {
+                TilePosterImage(item: item)
+                    .frame(width: 240 * scale, height: h).clipped()
+                if expanded { ExpandedPoster(item: item).transition(.opacity) }
             }
+            .frame(width: (expanded ? h * 16 / 9 : 240 * scale), height: h, alignment: .leading).clipped()
+            .overlay(alignment: .bottomLeading) {
+                if item.poster == nil && !expanded { Text(item.name).font(.caption).padding(10) }
+            }
+            .overlay { CardStateOverlay(itemID: item.id) }
+            PosterBadgeBand(width: expanded ? h * 16 / 9 : 240 * scale, scale: scale)
         }
-        .overlay { CardStateOverlay(itemID: item.id) }
         .overlay { PosterQualityBadges(item: item, scale: scale) }
         .task(id: focused && expandable) {
             guard focused && expandable else {
@@ -230,7 +231,7 @@ private struct ExpandedPoster: View {
                     .frame(width: g.size.width, height: g.size.height).clipped()
                 LinearGradient(colors: [.black.opacity(0.75), .clear], startPoint: .bottom, endPoint: .center)
                 Group {
-                    // Breite begrenzt: rechts unten sitzen die Qualitäts-Plaketten (PosterQualityBadges).
+                    // Breite begrenzt (rechts bleibt Platz für Bild und Plaketten oben rechts).
                     let maxW = g.size.width * PosterQualityBadges.leadingContentMaxFraction
                     if let logo = item.logo {
                         RemoteImage(url: logo, maxPixels: 600, fit: true)

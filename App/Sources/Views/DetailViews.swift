@@ -37,8 +37,8 @@ struct DetailView: View {
     @State private var season = 1
     @State private var loading = true
     @State private var ratings: ExternalRatings?
-    /// Beste Technik-Werte über die Quellen (Plaketten nach Einstellungen in `techBadges`).
-    @State private var best: BestQuality?
+    /// Beste Technik-Werte über die Quellen (Qualitätszeile nach Einstellungen in `techBadges`, Welle E-a).
+    @State private var best: DetailQuality?
     @State private var certification: String?
     @State private var extra: LocalizedMeta?
     @State private var trailer: TrailerPlay?
@@ -69,9 +69,11 @@ struct DetailView: View {
                     } else {
                         Text(item.name).font(.system(size: 70, weight: .heavy))
                     }
-                    Text([meta?.releaseInfo ?? item.releaseInfo, meta?.runtime, meta?.genres?.prefix(3).joined(separator: ", ")]
+                    // Welle E-a: FSK steht in der Textzeile („2018 · 97 min · FSK 0 · Genre“), nicht als Plakette.
+                    Text([meta?.releaseInfo ?? item.releaseInfo, meta?.runtime, certification ?? ratings?.certification,
+                          meta?.genres?.prefix(3).joined(separator: ", ")]
                         .compactMap { $0 }.joined(separator: " · ")).foregroundStyle(.secondary)
-                    InfoBadges(ratings: ratings, tech: techBadges, certification: certification ?? ratings?.certification)
+                    InfoBadges(ratings: model.ratingBadges(imdbRating: meta?.imdbRating, mdblist: ratings), tech: techBadges)
                     if let t = extra?.tagline { Text(t).italic().foregroundStyle(.secondary) }
                     if !overview.isEmpty {
                         // Kurz halten; Klick zeigt den ganzen Text.
@@ -113,7 +115,7 @@ struct DetailView: View {
             if appeared == nil { appeared = Date() }
             // Quellen schon im Cache (z. B. zweiter Besuch): Technik-Plaketten im ersten Bild, nicht erst nach dem Laden.
             let id = imdb ?? (item.id.hasPrefix("tt") ? item.id : nil)
-            if best == nil, !isSeries, let id, let b = QualityBadgeCache.shared.best(id: id, model: model) {
+            if best == nil, !isSeries, let id, let b = detailQuality(id) {
                 best = b
                 logFirstBadges("Technik aus Cache")
             }
@@ -123,7 +125,7 @@ struct DetailView: View {
             let opened = appeared ?? Date()
             imdb = await model.imdbID(for: item)
             if let imdb {
-                if !isSeries, best == nil, let b = QualityBadgeCache.shared.best(id: imdb, model: model) {
+                if !isSeries, best == nil, let b = detailQuality(imdb) {
                     best = b
                     logFirstBadges("Technik aus Cache")
                 } else if !isSeries, best == nil {
@@ -131,7 +133,7 @@ struct DetailView: View {
                     let id = imdb
                     Task {
                         let list = await model.streams(type: "movie", id: id)
-                        best = QualityBadgeCache.shared.best(id: id, model: model)
+                        best = detailQuality(id)
                         if !techBadges.isEmpty { logFirstBadges("Technik") }
                         RemoteLog.info("detail", "Plaketten nach \(Int(Date().timeIntervalSince(opened) * 1000)) ms (\(list.count) Quellen)")
                     }
@@ -142,7 +144,8 @@ struct DetailView: View {
                 certification = extra?.certification
                 if certification != nil { logFirstBadges("Altersfreigabe") }
                 ratings = await r
-                if certification != nil || ratings?.certification != nil || !(ratings.map(MDBList.badges) ?? []).isEmpty {
+                if certification != nil || ratings?.certification != nil
+                    || !model.ratingBadges(imdbRating: meta?.imdbRating, mdblist: ratings).isEmpty {
                     logFirstBadges("Bewertungen")
                 }
             }
@@ -192,8 +195,14 @@ struct DetailView: View {
 
     private var overview: String { meta?.description ?? item.description ?? "" }
 
+    /// Welle E-a: eine Zeile, höchstens 5 (Auflösung, DV/HDR, Atmos, Ton + Kanäle, Remux).
     private var techBadges: [QualityBadge] {
-        best.map { QualityBadges.detail($0, settings: model.profile.appearance.badges) } ?? []
+        best.map { QualityBadges.detailRow($0, settings: model.profile.appearance.badges) } ?? []
+    }
+
+    /// Technik-Werte aus dem Quellen-Cache (keine Abfrage); nil ohne gecachte Quellen.
+    private func detailQuality(_ id: String) -> DetailQuality? {
+        model.cachedStreams(id: id).flatMap { DetailQuality.from($0.map(\.stream)) }
     }
 
     private func trailerButton(_ key: String) -> some View {
@@ -621,28 +630,25 @@ struct SearchView: View {
     }
 }
 
-/// Infozeile der Detailseite: Technik als Glas-Plaketten, Bewertungen/Freigabe mit Rahmen (Zwei-Stil-Regel nach Swiftfin).
+/// Infozeile der Detailseite: Technik als Glas-Plaketten, Bewertungen mit Rahmen (Zwei-Stil-Regel).
 /// Alle Plaketten einzeilig, gleich hoch; passt die Zeile nicht, bricht sie um (FlowLayout), statt abzuschneiden.
 struct InfoBadges: View {
-    let ratings: ExternalRatings?
+    /// Welle E-a: schon nach der Bewertungsauswahl gefiltert (`AppModel.ratingBadges`).
+    let ratings: [RatingBadge]
+    /// Höchstens 5 (`QualityBadges.detailRow`); die Altersfreigabe steht in der Textzeile darüber.
     let tech: [QualityBadge]
-    var certification: String?
     static let height: CGFloat = 44
 
     var body: some View {
-        let rated = ratings.map(MDBList.badges) ?? []
+        let rated = ratings
         // Immer vorhandener Platzhalter hält die Zeilenhöhe, auch bevor die erste Plakette kommt.
         ZStack(alignment: .leading) {
           Color.clear.frame(height: Self.height)
-          if !rated.isEmpty || !tech.isEmpty || certification != nil {
+          if !rated.isEmpty || !tech.isEmpty {
             FlowLayout(spacing: 14, lineSpacing: 14) {
                 // Neutrales Glas wie in der Quellenliste (Task 8); Bewertungen behalten ihre Markenfarben.
+                // Technik zuerst: sie passt immer in die erste Zeile, nur gewählte Bewertungen können umbrechen.
                 ForEach(tech) { QualityBadgeView(badge: $0, height: Self.height, surface: .dark) }
-                if let c = certification {
-                    Text(c)
-                        .modifier(BadgeShape())
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.6), lineWidth: 2))
-                }
                 ForEach(rated) { b in
                     HStack(spacing: 6) {
                         RatingIconLabel(source: b.source) { Text(b.label).foregroundStyle(labelColor(b.source)) }

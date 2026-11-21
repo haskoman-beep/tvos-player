@@ -181,6 +181,8 @@ struct HeroDetails {
     var certification: String?
     var overview: String?
     var ratings: ExternalRatings?
+    /// Welle E-a: IMDb-Wertung aus den Metadaten (Addon/Cinemeta), geht MDBList vor.
+    var imdbRating: String?
 }
 
 /// Je Titel einmal laden (die Quellen sind ohnehin gecacht, das spart die Wege dorthin).
@@ -213,7 +215,7 @@ struct HeroInfo: View {
             let line = [item.releaseInfo, d?.runtime, d?.certification].compactMap { $0 }.filter { !$0.isEmpty }
             Text(line.joined(separator: " · ")).font(.headline).foregroundStyle(.secondary)
                 .frame(height: 30, alignment: .leading)
-            InfoBadges(ratings: d?.ratings, tech: [])
+            InfoBadges(ratings: d.map { model.ratingBadges(imdbRating: $0.imdbRating, mdblist: $0.ratings) } ?? [], tech: [])
                 .frame(height: InfoBadges.height, alignment: .leading)
             Text(d?.overview ?? item.description ?? "").font(.callout).lineLimit(2)
                 .frame(maxWidth: 1100, alignment: .leading)
@@ -239,9 +241,10 @@ struct HeroInfo: View {
         let loc = await model.localized(imdb: imdb, series: series)
         let d = HeroDetails(logo: meta?.logo ?? loc?.logo, runtime: Self.runtimeText(meta?.runtime),
                             certification: loc?.certification, overview: meta?.description ?? loc?.overview,
-                            ratings: await r)
+                            ratings: await r, imdbRating: meta?.imdbRating)
         guard !Task.isCancelled else { return }
-        HeroDetailsCache.all[id] = d
+        // Welle E-a Runde 2: Addon-Antwort noch offen (3-s-Grenze) → nicht merken, nächster Besuch holt sie aus dem Cache.
+        if !model.addonMetaPending(type: series ? "series" : "movie", imdb: imdb) { HeroDetailsCache.all[id] = d }
         details = d; detailsID = id
     }
 
