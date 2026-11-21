@@ -1,8 +1,8 @@
-# Design-Umbau (NuvioTVOS-Vorbild) Implementation Plan
+# Design-Umbau (im Stil gängiger tvOS-Streaming-Apps) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Umbau von Navigation, Startseite, Einstellungen und Aussehen nach NuvioTVOS-Vorbild. Dazu zwei neue Tabs: Bibliothek und Kalender.
+**Goal:** Umbau von Navigation, Startseite, Einstellungen und Aussehen im Stil gängiger tvOS-Streaming-Apps. Dazu zwei neue Tabs: Bibliothek und Kalender.
 
 **Architecture:**
 - Navigation und Einstellungen nutzen SwiftUI-Systembausteine:

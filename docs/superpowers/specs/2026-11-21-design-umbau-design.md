@@ -1,4 +1,4 @@
-# Design-Umbau nach NuvioTVOS-Vorbild – Design
+# Design-Umbau im Stil gängiger tvOS-Streaming-Apps – Design
 
 Stand 21.11.2026. Kennzeichnung: **[N]** = Nutzerentscheidung, **[C]** = Entscheidung von Claude (korrigierbar).
 

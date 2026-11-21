@@ -474,7 +474,7 @@ extension StreamListView {
         Task {
             let list = await model.streams(type: next.type, id: next.id)
             // Während der Suche von Hand eine Quelle gestartet: Liste und Folge so lassen, nichts ersetzen.
-            guard playing == nil else { return }
+            guard playing == nil else { nextNote = nil; return }
             guard let s = nextEpisodeStream(list, matching: ref) else {
                 nextNote = "Keine Quelle für \(next.title) gefunden."; return
             }

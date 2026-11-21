@@ -38,7 +38,9 @@ No optional engine trait is enabled in this app.
 - libzvbi: Copyright (c) the libzvbi authors. LGPL-2.0-or-later, conveyed under LGPL-2.1; its three GPL-2
   source files are left out of the build. `src/ure.c` / `src/ure.h`: Copyright 1997, 1998, 1999
   Computing Research Labs, New Mexico State University, MIT (notice below).
-- dav1d: Copyright (c) 2018-2019, VideoLAN and dav1d authors. BSD-2-Clause.
+- dav1d: Copyright (c) 2018-2019, VideoLAN and dav1d authors. BSD-2-Clause. The engine's port of the dav1d
+  film grain synthesis (`AV1FilmGrain*.swift`) also carries Copyright (c) 2018, Niklas Haas and
+  Copyright (c) 2018, Two Orioles, LLC (same BSD-2-Clause text below).
 - zimg: WTFPL Version 2.
 - Packaging and build: FFmpegBuild, LGPL-2.1-or-later.
 - Source of the build (build script, local FFmpeg patches, licence files):
@@ -1510,6 +1512,8 @@ verbatim from src/ure.c of libzvbi v0.2.44.
 
 ```text
 Copyright © 2018-2019, VideoLAN and dav1d authors
+Copyright © 2018, Niklas Haas
+Copyright © 2018, Two Orioles, LLC
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
