@@ -11,6 +11,11 @@ public struct StreamTraits: Equatable, Sendable {
     public var cached: Bool?
     /// "7.1" / "5.1" / "2.0" laut Name.
     public var channels: String?
+    /// "REMUX", "BluRay", "WEB-DL", "WEBRip", "HDTV".
+    public var source: String?
+    /// "HEVC", "AV1", "H.264".
+    public var videoCodec: String?
+    public var tenBit = false
 
     public static func parse(_ s: StreamItem) -> StreamTraits {
         let text = [s.name, s.title, s.description, s.behaviorHints?.filename].compactMap { $0 }.joined(separator: " ")
@@ -24,15 +29,25 @@ public struct StreamTraits: Equatable, Sendable {
         if up.contains("HDR10+") || up.contains("HDR10PLUS") { t.hdr.append("HDR10+") }
         else if containsToken(up, "HDR10") { t.hdr.append("HDR10") }
         else if containsToken(up, "HDR") { t.hdr.append("HDR") }
+        if containsToken(up, "HLG") { t.hdr.append("HLG") }
 
         if up.contains("ATMOS") { t.audio.append("Atmos") }
         if up.contains("TRUEHD") { t.audio.append("TrueHD") }
         if up.contains("DTS-HD") || up.contains("DTS HD") || up.contains("DTSHD") { t.audio.append("DTS-HD MA") }
-        else if up.contains("DTS:X") || containsToken(up, "DTS") { t.audio.append("DTS") }
+        else if up.contains("DTS:X") || up.contains("DTS-X") || containsToken(up, "DTSX") { t.audio.append("DTS:X") }
+        else if containsToken(up, "DTS") { t.audio.append("DTS") }
         if up.contains("DDP") || up.contains("DD+") || up.contains("EAC3") || up.contains("E-AC-3") { t.audio.append("DD+") }
-        else if containsToken(up, "DD") || up.contains("AC3") { t.audio.append("DD") }
+        else if containsToken(up, "DD") || up.contains("DD5") || up.contains("AC3") { t.audio.append("DD") }
         if containsToken(up, "AAC") { t.audio.append("AAC") }
-        for ch in ["7.1", "5.1", "2.0"] where t.channels == nil && containsToken(up, ch) { t.channels = ch }
+        for ch in ["7.1", "5.1", "2.0"] where t.channels == nil && (containsToken(up, ch) || up.contains("DDP\(ch)") || up.contains("DD\(ch)")) { t.channels = ch }
+        for (keys, label) in [(["REMUX"], "REMUX"), (["BLURAY", "BLU-RAY", "BDRIP", "BRRIP"], "BluRay"), (["WEB-DL", "WEBDL"], "WEB-DL"),
+                              (["WEBRIP", "WEB-RIP"], "WEBRip"), (["HDTV"], "HDTV")]
+        where t.source == nil && keys.contains(where: { containsToken(up, $0) }) { t.source = label }
+        if t.source == nil && containsToken(up, "WEB") { t.source = "WEB-DL" }
+        if containsToken(up, "AV1") { t.videoCodec = "AV1" }
+        else if containsToken(up, "HEVC") || containsToken(up, "X265") || containsToken(up, "H265") || containsToken(up, "H.265") { t.videoCodec = "HEVC" }
+        else if containsToken(up, "AVC") || containsToken(up, "X264") || containsToken(up, "H264") || containsToken(up, "H.264") { t.videoCodec = "H.264" }
+        t.tenBit = containsToken(up, "10BIT") || containsToken(up, "10-BIT") || containsToken(up, "HI10")
 
         for (flag, code) in [("🇩🇪", "de"), ("🇬🇧", "en"), ("🇺🇸", "en"), ("🇯🇵", "ja"), ("🇫🇷", "fr"), ("🇪🇸", "es"), ("🇮🇹", "it")]
         where text.contains(flag) && !t.languages.contains(code) { t.languages.append(code) }

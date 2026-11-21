@@ -50,3 +50,13 @@ import Testing
     #expect(b.cardState(itemID: "tt2") == CardState(fraction: 0.25, remainingSeconds: 1800, episode: "S1 F3"))
     #expect(b.cardState(itemID: "tt9") == nil)
 }
+
+@Test func extendedStreamTraits() {
+    let a = StreamTraits.parse(StreamItem(name: "⚡ 4K", title: "Film.2160p.UHD.BluRay.REMUX.DV.HDR10.HEVC.10bit.DTS-X.7.1", url: "https://a"))
+    #expect(a.source == "REMUX"); #expect(a.videoCodec == "HEVC"); #expect(a.tenBit)
+    #expect(a.audio == ["DTS:X"]); #expect(a.channels == "7.1"); #expect(a.hdr == ["DV", "HDR10"])
+    let b = StreamTraits.parse(StreamItem(name: "1080p", title: "Show.S01E01.1080p.WEB-DL.DDP5.1.H.264", url: "https://b"))
+    #expect(b.source == "WEB-DL"); #expect(b.videoCodec == "H.264"); #expect(b.channels == "5.1"); #expect(b.audio == ["DD+"])
+    let c = StreamTraits.parse(StreamItem(name: "720p", title: "Film.HDRip.x264", url: "https://c"))
+    #expect(c.hdr.isEmpty); #expect(c.videoCodec == "H.264")
+}

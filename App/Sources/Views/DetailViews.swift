@@ -256,7 +256,10 @@ struct StreamRow: View {
             HStack(spacing: 10) {
                 if let r = t.resolution { Badge(r, .blue) }
                 ForEach(t.hdr, id: \.self) { Badge($0, $0 == "DV" ? .purple : .orange) }
+                if let s = t.source { Badge(s, s == "REMUX" ? .indigo : .gray) }
+                if let c = t.videoCodec { Badge(t.tenBit ? "\(c) 10-bit" : c, .gray) }
                 ForEach(t.audio, id: \.self) { Badge($0, .gray) }
+                if let ch = t.channels { Badge(ch, .gray) }
                 ForEach(t.languages, id: \.self) { Badge($0.uppercased(), .teal) }
                 if let s = t.sizeBytes { Badge(ByteCountFormatter.string(fromByteCount: s, countStyle: .file), .gray) }
                 if t.cached == true { Badge("⚡ sofort", .green) } else if t.cached == false { Badge("lädt erst", .red) }
