@@ -105,3 +105,7 @@ import Testing
     var b2 = book; b2.rememberSource(old, addon: "AIO", for: "tt1:1:2")
     #expect(b2.lastSource(for: "tt1")?.contentID == "tt1:1:2")
 }
+
+@Test func ticketMeansUncached() {
+    #expect(StreamTraits.parse(StreamItem(name: "🎫 1080p", title: "Film", url: "https://x")).cached == false)
+}

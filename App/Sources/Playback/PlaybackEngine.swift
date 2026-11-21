@@ -60,11 +60,17 @@ final class AetherBackend: PlaybackEngine {
         guard !logInstalled else { return }
         logInstalled = true
         EngineLog.structuredHandler = { line, cat, _ in
+            // Nur Wichtiges: Lebenszyklus, Ton-Bridge, Muxer; aus Sitzung/Demux nur Fehler und Neustarts.
+            let l = line.lowercased()
+            let important = ["fail", "error", "revive", "restart", "cannot", "unrecoverable", "budget", "timeout"].contains { l.contains($0) }
+            let noisy = ["accesslog", "audioroute", "memprobe", "cpuprobe", "ledger", "march-rate"].contains { l.contains($0) }
             switch cat {
-            case .engine, .session, .muxer, .audioBridge, .demux:
-                Task { @MainActor in RemoteLog.info("engine.\(cat.rawValue)", line) }
-            default: break
+            case .audioBridge, .muxer: break
+            case .engine: if noisy && !important { return }
+            case .session, .demux: if !important || l.contains("restarted=false") { return }
+            default: return
             }
+            Task { @MainActor in RemoteLog.info("engine.\(cat.rawValue)", line) }
         }
     }
 

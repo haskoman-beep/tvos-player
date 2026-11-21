@@ -191,13 +191,20 @@ struct StreamListView: View {
 }
 
 extension StreamListView {
+    /// Nächste Quelle: zuerst gecachte (⚡) unterhalb, dann gecachte oberhalb, zuletzt unbekannte; nie sicher ungecachte (🎫/⏳).
+    func fallbackCandidate(after i: Int, in list: [StreamItem]) -> StreamItem? {
+        let order = Array(list[(i + 1)...]) + Array(list[..<i])
+        let open = order.filter { !failed.contains($0.id) && $0.url != nil }
+        return open.first { StreamTraits.parse($0).cached == true } ?? open.first { StreamTraits.parse($0).cached == nil }
+    }
+
     /// Quelle versagt → nächste noch nicht gescheiterte Quelle darunter, höchstens 3 automatische Wechsel.
     func fallback(from s: StreamItem, reason: String) {
         failed.insert(s.id)
         playing = nil
         let list = streams.map(\.stream)
         guard fallbacks < 3, let i = list.firstIndex(where: { $0.id == s.id }),
-              let next = list[(i + 1)...].first(where: { !failed.contains($0.id) && $0.url != nil }) else {
+              let next = fallbackCandidate(after: i, in: list) else {
             nextNote = "\(reason). Bitte eine andere Quelle wählen."
             RemoteLog.info("player", "Kein automatischer Wechsel mehr (\(fallbacks) versucht)")
             return

@@ -39,7 +39,7 @@ public struct StreamTraits: Equatable, Sendable {
         t.sizeBytes = s.behaviorHints?.videoSize ?? parseSize(up)
 
         if text.contains("⚡") || up.contains("[TB+]") || up.contains("[RD+]") || up.contains("CACHED") { t.cached = true }
-        else if text.contains("⏳") || up.contains("DOWNLOAD") || up.contains("UNCACHED") { t.cached = false }
+        else if text.contains("⏳") || text.contains("🎫") || up.contains("DOWNLOAD") || up.contains("UNCACHED") { t.cached = false }
         return t
     }
 
