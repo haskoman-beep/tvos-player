@@ -15,7 +15,8 @@ final class StreamPrefetcher {
     static let maxStartsPerMinute = 8
     static let allEmptyPause: TimeInterval = 300
     static let playerGrace: TimeInterval = 2
-    static let prefetchedLimit = 40
+    /// Höchstzahl Einträge im Quellen-Cache (AppModel) und in `prefetched` – eine gemeinsame Grenze.
+    static let cacheLimit = 40
 
     private struct Job { let type: String; let id: String }
     private var running = Set<String>()
@@ -26,6 +27,7 @@ final class StreamPrefetcher {
     private var prefetched: [String: Date] = [:]
     /// Offene Player (je Bildschirm ein Kennzeichen, damit doppelte onAppear nichts verklemmen).
     private var players = Set<UUID>()
+    /// Letztes Öffnen oder Schließen eines Players (2-s-Schonfrist).
     private var lastPlayerAppeared: Date?
     /// Zählt Ruhe-Kacheln; eine späte TMDB-Nachschlage-Antwort gilt nur, solange keine neuere Kachel ruht.
     private var generation = 0
@@ -51,6 +53,7 @@ final class StreamPrefetcher {
 
     func playerDisappeared(_ token: UUID) {
         players.remove(token)
+        lastPlayerAppeared = Date()   // auch nach dem Schließen 2 s Ruhe
     }
 
     /// Ruhe-Kachel: Ziel bestimmen und einreihen. Ohne IMDb-ID oder bei Serien ohne bekannte Folge: nichts.
@@ -98,8 +101,10 @@ final class StreamPrefetcher {
         guard allowed(model), model.streamCacheState(id: job.id) == .missing,
               !running.contains(job.id) else { return }
         waiting.removeAll { $0.id == job.id }
-        // Eimer voll (Wartende mitgezählt): verwerfen, nicht einreihen.
-        guard freeStarts() - waiting.count > 0 else { return }
+        // Eimer voll: verwerfen, nicht einreihen. Bei vollem Laufplatz zählen die Wartenden mit, außer dem Platz,
+        // den die neue Kachel gleich durch Verdrängen der ältesten wartenden bekommt (die neue gewinnt).
+        let reserved = running.count < Self.maxRunning ? 0 : min(waiting.count, Self.maxWaiting - 1)
+        guard freeStarts() - reserved > 0 else { return }
         if running.count < Self.maxRunning {
             start(job, model: model)
         } else {
@@ -127,8 +132,8 @@ final class StreamPrefetcher {
         let now = Date()
         prefetched = prefetched.filter { now.timeIntervalSince($0.value) < 600 }
         prefetched[id] = now
-        if prefetched.count > Self.prefetchedLimit {
-            for (k, _) in prefetched.sorted(by: { $0.value < $1.value }).prefix(prefetched.count - Self.prefetchedLimit) {
+        if prefetched.count > Self.cacheLimit {
+            for (k, _) in prefetched.sorted(by: { $0.value < $1.value }).prefix(prefetched.count - Self.cacheLimit) {
                 prefetched[k] = nil
             }
         }
@@ -137,6 +142,8 @@ final class StreamPrefetcher {
     /// Freier Platz: die jüngste wartende Kachel zuerst (der Fokus ist meist noch dort).
     private func startNext(model: AppModel) {
         guard allowed(model) else { waiting.removeAll(); return }
+        // Eimer leer: Überschuss verwerfen statt ihn später nachzuholen.
+        guard freeStarts() > 0 else { waiting.removeAll(); return }
         while running.count < Self.maxRunning, freeStarts() > 0, let job = waiting.popLast() {
             guard model.streamCacheState(id: job.id) == .missing, !running.contains(job.id) else { continue }
             start(job, model: model)

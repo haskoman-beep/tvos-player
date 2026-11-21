@@ -355,12 +355,15 @@ final class AppModel: ObservableObject {
         let task = Task { () -> [(addon: String, stream: StreamItem)] in
             let all = await addons.streams(from: profile.addons, type: type, id: id)
             RemoteLog.info("streams", "\(type) \(id): " + all.map { "\($0.addon.manifest.name)=\($0.streams.count)" }.joined(separator: ", "))
+            // Rohergebnis aller Addons leer (fehlgeschlagene fehlen in `all`, zählen also als leer): vermutlich
+            // Ratenbegrenzung → Vorladen pausiert. Bewusst vor dem Filtern auf abspielbare Quellen.
+            if !profile.addons.isEmpty, all.allSatisfy({ $0.streams.isEmpty }) { streamsAllEmptyAt = Date() }
             return all.flatMap { r in playableStreams(r.streams).map { (r.addon.manifest.name, $0) } }
         }
         streamTasks[id] = task
         let list = await task.value
         streamTasks[id] = nil
-        storeStreams(id: id, list: list, addonCount: profile.addons.count)
+        storeStreams(id: id, list: list)
         return list
     }
 
@@ -467,24 +470,23 @@ extension AppModel {
     }
 
     /// Ergebnis ablegen: Treffer in den 10-min-Cache (abgelaufene raus, höchstens 40, älteste zuerst raus),
-    /// leere Ergebnisse 120 s als „leer“ merken; alle Addons leer → Vorladen pausiert (Ratenbegrenzung).
-    fileprivate func storeStreams(id: String, list: [(addon: String, stream: StreamItem)], addonCount: Int) {
+    /// leere Ergebnisse 120 s als „leer“ merken. Ein Treffer hebt die Pause nach „alle Addons leer“ auf.
+    fileprivate func storeStreams(id: String, list: [(addon: String, stream: StreamItem)]) {
         let now = Date()
         streamEmptyUntil = streamEmptyUntil.filter { $0.value > now }
         if list.isEmpty {
             streamEmptyUntil[id] = now.addingTimeInterval(Self.emptyStreamsTTL)
-            if addonCount > 0 { streamsAllEmptyAt = now }
             return
         }
         streamEmptyUntil[id] = nil
+        streamsAllEmptyAt = nil
         streamCache = streamCache.filter { now.timeIntervalSince($0.value.at) < 600 }
         streamCache[id] = (now, list)
-        if streamCache.count > Self.streamCacheLimit {
-            let drop = streamCache.sorted { $0.value.at < $1.value.at }.prefix(streamCache.count - Self.streamCacheLimit)
+        if streamCache.count > StreamPrefetcher.cacheLimit {
+            let drop = streamCache.sorted { $0.value.at < $1.value.at }.prefix(streamCache.count - StreamPrefetcher.cacheLimit)
             for (k, _) in drop { streamCache[k] = nil }
         }
     }
 
-    static let streamCacheLimit = 40
     static let emptyStreamsTTL: TimeInterval = 120
 }
