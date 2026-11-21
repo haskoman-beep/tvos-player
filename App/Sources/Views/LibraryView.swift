@@ -24,6 +24,7 @@ struct LibraryView: View {
                         .quietFocusTarget(nothingToFocus)
                 }
                 HistoryRow()
+                TorBoxFilesRow()
             }
             .padding(.vertical, 40)
         }

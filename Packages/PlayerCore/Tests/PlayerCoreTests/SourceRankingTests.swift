@@ -254,3 +254,18 @@ private let de = SourceRankContext(audioPriority: ["de", "en", "orig"], av1Hardw
     let b = TVmazeAirtimes(client: TVmazeClient(http: http2, sleep: { _ in }))
     #expect(await b.stamps(imdb: "tt9").isEmpty && http2.sent.count == 1)
 }
+
+@Test func torboxFilesAndLink() async throws {
+    let list = #"{"success":true,"data":[{"id":7,"name":"Film.2020.2160p","download_finished":true,"created_at":"2026-11-20T10:00:00Z","files":[{"id":0,"short_name":"Film.2020.2160p.mkv","size":20000000000},{"id":1,"short_name":"sample.mkv","size":1},{"id":2,"short_name":"info.nfo","size":1}]},{"id":8,"name":"halb","download_finished":false,"files":[{"id":0,"short_name":"x.mkv"}]}]}"#
+    let http = FakeSender([(200, list), (500, ""), (200, #"{"data":[]}"#), (200, #"{"success":true,"data":"https://cdn.example/x.mkv"}"#)])
+    let c = TorBoxClient(apiKey: "K", http: http, sleep: { _ in })
+    let files = try await c.files()
+    #expect(files.count == 1)
+    let f = try #require(files.first)
+    #expect(f.name == "Film.2020.2160p.mkv" && f.kind == .torrent && f.itemID == 7 && f.sizeLabel == "20,0 GB")
+    #expect(http.sent[0].headers["Authorization"] == "Bearer K")
+    #expect(http.sent[0].url.path == "/v1/api/torrents/mylist")
+    #expect(try await c.link(for: f).absoluteString == "https://cdn.example/x.mkv")
+    let q = URLComponents(url: http.sent[3].url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+    #expect(q.contains(URLQueryItem(name: "torrent_id", value: "7")) && q.contains(URLQueryItem(name: "file_id", value: "0")))
+}
