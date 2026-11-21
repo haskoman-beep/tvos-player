@@ -27,6 +27,8 @@ final class FusionKitStore: ObservableObject {
     /// Sichtbare Kit-Collections (ohne Trakt-Kacheln, wenn die Client ID fehlt), beim Abgleich berechnet.
     private var visible: [String: MediaCollection] = [:]
     private var loggedHidden = false
+    /// Laufendes Laden je Quellen-Schlüssel.
+    private var inflight: [String: Task<Void, Never>] = [:]
     private let disk = FileBlobStorage(directory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("fusionkit"))
 
@@ -110,9 +112,7 @@ final class FusionKitStore: ObservableObject {
         settings = UserDefaults.standard.data(forKey: settingsKey(id))
             .flatMap { try? JSONDecoder().decode(FusionKitSettings.self, from: $0) } ?? FusionKitSettings()
         for s in settings.sources where contents[s.id] == nil {
-            if let d = disk.read(contentFile(s.id)), let c = try? FusionImport.parse(d, sourceKey: s.id, title: s.title) {
-                contents[s.id] = c
-            }
+            if let c = cached(s) { contents[s.id] = c }
         }
         if !first { Task { await refresh() } }
     }
@@ -134,17 +134,23 @@ final class FusionKitStore: ObservableObject {
         sync()
     }
 
+    /// Lädt eine Kit-Datei; läuft für dieselbe Quelle schon ein Laden, wird darauf gewartet (kein zweiter Abruf).
     private func load(_ src: FusionKitSource, force: Bool) async {
         if !force, isFresh(contentFile(src.id)) {
             if contents[src.id] != nil { return }
-            if let d = disk.read(contentFile(src.id)), let c = try? FusionImport.parse(d, sourceKey: src.id, title: src.title) {
-                contents[src.id] = c; return
-            }
+            if let c = cached(src) { contents[src.id] = c; return }
         }
-        guard !loading.contains(src.id) else { return }
+        if let running = inflight[src.id] { await running.value; return }
         guard let url = URL(string: src.url) else { errors[src.id] = "URL ungültig"; return }
+        let task = Task { await self.fetch(src, url: url) }
+        inflight[src.id] = task
         loading.insert(src.id)
-        defer { loading.remove(src.id) }
+        await task.value
+        inflight[src.id] = nil
+        loading.remove(src.id)
+    }
+
+    private func fetch(_ src: FusionKitSource, url: URL) async {
         do {
             let data = try await URLSessionFetcher().data(from: url)
             let key = src.id, title = src.title
@@ -155,9 +161,17 @@ final class FusionKitStore: ObservableObject {
             let w = c.warnings.sorted { $0.key < $1.key }.map { "\($0.key) ×\($0.value)" }.joined(separator: ", ")
             RemoteLog.info("kit", "\(src.title): \(c.rows.count) Reihen" + (w.isEmpty ? "" : " · \(w)"))
         } catch {
-            errors[src.id] = "\(error)"
-            RemoteLog.error("kit", "\(src.title): \(error)")
+            // Netz weg oder Datei kaputt: alter Stand von der Platte, wie beim Katalog.
+            if contents[src.id] == nil, let c = cached(src) { contents[src.id] = c }
+            let old = contents[src.id] != nil
+            errors[src.id] = "\(error)" + (old ? " (alter Stand)" : "")
+            RemoteLog.error("kit", "\(src.title): \(error)" + (old ? " · alter Stand" : ""))
         }
+    }
+
+    /// Zwischengespeicherte Fassung, auch wenn sie älter als 24 h ist.
+    private func cached(_ src: FusionKitSource) -> FusionKitContent? {
+        disk.read(contentFile(src.id)).flatMap { try? FusionImport.parse($0, sourceKey: src.id, title: src.title) }
     }
 
     private func loadListing(force: Bool) async {

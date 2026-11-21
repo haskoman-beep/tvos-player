@@ -257,3 +257,53 @@ private func ids(_ l: HomeLayout) -> [String] { l.rows.map { FusionImport.kitID(
     #expect(http.sent[1].url.absoluteString == "https://api.trakt.tv/users/someone/lists/popular-1980s-movies/items")
     #expect(http.sent[1].headers["trakt-api-key"] == "C" && http.sent[1].headers["Authorization"] == nil)
 }
+
+// MARK: Nachtrag: robuste Datei, sichere Trakt-Namen
+
+@Test func fusionBrokenEntriesCostOnlyThemselves() throws {
+    // Reihe 2 hat einen Titel als Zahl, Kachel 2 ein kaputtes Bild-Feld, Quelle 2 eine kaputte Nutzlast.
+    let json = #"""
+    {"exportType":"fusionWidgets","widgets":[
+     {"id":"ok","title":"Gut","type":"row.classic","dataSource":{"kind":"traktList","payload":{"username":"u","listSlug":"a"}}},
+     {"id":"bad","title":5,"type":"row.classic","dataSource":{"kind":"traktList","payload":{"username":"u","listSlug":"b"}}},
+     {"id":"col","title":"Kacheln","type":"collection.row","dataSource":{"kind":"collection","payload":{"items":[
+       {"id":"k1","title":"Eins","dataSources":[{"kind":"traktList","payload":{"username":"u","listSlug":"c"}},
+                                              {"kind":"tmdbDiscover","payload":{"includeGenres":"kaputt"}}]},
+       {"id":"k2","title":"Zwei","imageURL":{"x":1},"dataSources":[{"kind":"traktList","payload":{"username":"u","listSlug":"d"}}]}]}}},
+     "keine Reihe"
+    ]}
+    """#
+    let c = try FusionImport.parse(Data(json.utf8), sourceKey: "s")
+    #expect(c.rows.map(\.id) == ["fusion.s.ok", "fusion.s.col"])
+    #expect(c.warnings["Reihe unlesbar"] == 2 && c.warnings["Kachel unlesbar"] == 1 && c.warnings["Quelle unlesbar"] == 1)
+    guard case .collection(let col) = c.rows[1].body else { Issue.record("keine Collection"); return }
+    #expect(col.folders.map(\.title) == ["Eins"] && col.folders[0].sources.count == 1)
+
+    // `widgets` keine Liste: leer mit Hinweis statt Fehler; flache Liste mit kaputtem Eintrag ebenso.
+    let w = try FusionImport.parse(Data(#"{"exportType":"fusionWidgets","widgets":{"a":1}}"#.utf8), sourceKey: "s")
+    #expect(w.rows.isEmpty && w.warnings["widgets unlesbar"] == 1)
+    let flat = #"[{"id":"A","name":7},{"id":"B","name":"Gut","dataSources":[{"kind":"traktList","payload":{"username":"u","listSlug":"x"}}]}]"#
+    let f = try FusionImport.parse(Data(flat.utf8), sourceKey: "s", title: "T")
+    #expect(f.rows.count == 1 && f.warnings["Kachel unlesbar"] == 1)
+}
+
+@Test func fusionAndTraktRejectUnsafeNames() async throws {
+    let json = #"""
+    {"exportType":"fusionWidgets","widgets":[
+     {"id":"a","title":"A","dataSource":{"kind":"traktList","payload":{"username":"u/../x","listSlug":"l"}}},
+     {"id":"b","title":"B","dataSource":{"kind":"traktList","payload":{"username":"u","listSlug":"l?x=1"}}},
+     {"id":"c","title":"C","dataSource":{"kind":"traktList","payload":{"username":"..","listSlug":"l"}}},
+     {"id":"d","title":"D","dataSource":{"kind":"traktList","payload":{"username":"Some_User.1","listSlug":"top-10_list.v2"}}}
+    ]}
+    """#
+    let c = try FusionImport.parse(Data(json.utf8), sourceKey: "s")
+    #expect(c.rows.map(\.id) == ["fusion.s.d"] && c.warnings["Trakt-Liste mit ungültigem Namen"] == 3)
+
+    #expect(TraktClient.isSafeName("abc-1.x_y") && !TraktClient.isSafeName("") && !TraktClient.isSafeName("..")
+            && !TraktClient.isSafeName("a b") && !TraktClient.isSafeName("ä") && !TraktClient.isSafeName("a/b"))
+    let http = FakeSender([])
+    let t = TraktClient(clientID: "C", clientSecret: "", http: http)
+    await #expect(throws: TraktNameError(name: "x/../y")) { try await t.list(user: "x/../y", slug: "l", token: nil) }
+    await #expect(throws: TraktNameError(name: "l#a")) { try await t.list(user: "u", slug: "l#a", token: nil) }
+    #expect(http.sent.isEmpty)
+}

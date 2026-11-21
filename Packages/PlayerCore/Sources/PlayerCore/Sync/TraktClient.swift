@@ -155,11 +155,21 @@ public struct TraktClient: Sendable {
         return Self.items(arr)
     }
 
+    /// Trakt-Nutzer- und Listennamen: nur `[A-Za-z0-9._-]`, nicht nur Punkte (kein Pfad über fremde Kit-Dateien).
+    public static func isSafeName(_ s: String) -> Bool {
+        !s.isEmpty && !s.allSatisfy { $0 == "." } && s.unicodeScalars.allSatisfy { c in
+            ("a"..."z").contains(c) || ("A"..."Z").contains(c) || ("0"..."9").contains(c) || c == "." || c == "_" || c == "-"
+        }
+    }
+
     /// Öffentliche oder eigene Liste. `user` nil = angemeldeter Nutzer ("me").
     public func list(user: String?, slug: String, token: SyncToken?) async throws -> [MetaPreview] {
+        let isWatchlist = slug == "watchlist" || slug == "watchlist/movies" || slug == "watchlist/shows"
+        if let user, !Self.isSafeName(user) { throw TraktNameError(name: user) }
+        if !isWatchlist, !Self.isSafeName(slug) { throw TraktNameError(name: slug) }
         let path: String
         // Merkliste, auch nach Typ (`watchlist/movies`, `watchlist/shows` – Fusion-Kit).
-        if slug == "watchlist" || slug == "watchlist/movies" || slug == "watchlist/shows" { path = "/users/\(user ?? "me")/\(slug)" }
+        if isWatchlist { path = "/users/\(user ?? "me")/\(slug)" }
         else if user == nil, Int(slug) != nil { path = "/lists/\(slug)/items" }   // Listen-ID (z. B. aus Nuvio)
         else { path = "/users/\(user ?? "me")/lists/\(slug)/items" }
         let arr = try await json(request("GET", path, token: token), token: token) as? [[String: Any]] ?? []
@@ -185,6 +195,12 @@ public struct TraktClient: Sendable {
         let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return f.date(from: s) ?? ISO8601DateFormatter().date(from: s)
     }
+}
+
+/// Trakt-Nutzer oder -Liste mit unzulässigen Zeichen; es wird nichts gesendet.
+public struct TraktNameError: Error, Equatable, CustomStringConvertible {
+    public let name: String
+    public var description: String { "ungültiger Trakt-Name „\(name)“" }
 }
 
 /// Trakt-Listen-Link → Quelle: trakt.tv/users/NAME/lists/SLUG oder trakt.tv/users/NAME/watchlist.

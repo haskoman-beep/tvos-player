@@ -146,9 +146,12 @@ public enum FusionImport {
         if let obj = any as? [String: Any] {
             guard obj["exportType"] as? String == "fusionWidgets" || obj["widgets"] != nil else { throw FusionImportError.unknownFormat }
             if let v = obj["exportVersion"] as? Int, v != 1 { warn("exportVersion \(v) unbekannt") }
+            // Reihe für Reihe: eine kaputte Reihe kostet nur sich selbst, nie die ganze Datei.
             let export = try JSONDecoder().decode(RawExport.self, from: data)
+            if export.widgetsUnreadable { warn("widgets unlesbar") }
+            for _ in 0..<(export.widgets?.failed ?? 0) { warn("Reihe unlesbar") }
             var seen = Set<String>()
-            for (i, w) in (export.widgets ?? []).enumerated() {
+            for (i, w) in (export.widgets?.items ?? []).enumerated() {
                 let rowID = idPrefix + sourceKey + "." + (w.id ?? "w\(i)")
                 guard seen.insert(rowID).inserted else { warn("doppelte Reihe"); continue }
                 if let r = row(w, id: rowID, ctx: ctx) { rows.append(r) }
@@ -157,7 +160,9 @@ public enum FusionImport {
             if let first = arr.first, first["url"] != nil, first["dataSources"] == nil, first["dataSource"] == nil {
                 throw FusionImportError.iconPack
             }
-            let items = try JSONDecoder().decode([RawItem].self, from: data)
+            let list = try JSONDecoder().decode(LossyList<RawItem>.self, from: data)
+            for _ in 0..<list.failed { warn("Kachel unlesbar") }
+            let items = list.items
             let rowID = idPrefix + sourceKey + ".collection"
             let folders = folders(items, rowID: rowID, ctx: ctx)
             if folders.isEmpty { warn("Collection ohne Kacheln mit Quellen") } else {
@@ -181,7 +186,8 @@ public enum FusionImport {
         let title = germanTitle(w.title ?? "?")
         guard let ds = w.dataSource else { ctx.warn("Reihe ohne Quelle"); return nil }
         if ds.kind == "collection" {
-            let items = ds.payload?.items ?? []
+            for _ in 0..<(ds.payload?.items?.failed ?? 0) { ctx.warn("Kachel unlesbar") }
+            let items = ds.payload?.items?.items ?? []
             let folders = folders(items, rowID: id, ctx: ctx)
             guard !folders.isEmpty else { ctx.warn("Collection ohne Kacheln mit Quellen"); return nil }
             return FusionKitRow(id: id, title: title, style: .collectionTiles,
@@ -204,7 +210,8 @@ public enum FusionImport {
             let fid = rowID + "." + (it.id ?? "i\(j)")
             guard seen.insert(fid).inserted else { ctx.warn("doppelte Kachel"); continue }
             let ftitle = it.title ?? it.name ?? "?"
-            let raw = it.dataSources ?? it.dataSource.map { [$0] } ?? []
+            for _ in 0..<(it.dataSources?.failed ?? 0) { ctx.warn("Quelle unlesbar") }
+            let raw = it.dataSources?.items ?? it.dataSource.map { [$0] } ?? []
             var sources: [CatalogSource] = []
             for (k, s) in raw.enumerated() {
                 if let c = source(s, id: "\(fid).\(k)", title: s.payload?.listName ?? ftitle, ctx: ctx) { sources.append(c) }
@@ -239,6 +246,7 @@ public enum FusionImport {
                 ctx.warn("Trakt-Liste ohne Nutzer/Slug"); return nil
             }
             guard user == "__me__" else {
+                guard TraktClient.isSafeName(user), TraktClient.isSafeName(slug) else { ctx.warn("Trakt-Liste mit ungültigem Namen"); return nil }
                 return CatalogSource(id: id, title: title, kind: .trakt(user: user, list: slug), mediaType: .both)
             }
             // Eigene Merkliste des angemeldeten Nutzers (Fusion: `__me__` + `__watchlist_*__`).
@@ -304,18 +312,45 @@ public enum FusionImport {
 
     // MARK: Roh-Format (nur die Felder, die wir brauchen; Rest wird ignoriert)
 
-    struct RawExport: Decodable { var widgets: [RawWidget]? }
+    struct RawExport: Decodable {
+        var widgets: LossyList<RawWidget>?
+        /// `widgets` da, aber keine Liste.
+        var widgetsUnreadable = false
+        enum CodingKeys: String, CodingKey { case widgets }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            do { widgets = try c.decodeIfPresent(LossyList<RawWidget>.self, forKey: .widgets) } catch { widgetsUnreadable = true }
+        }
+    }
     struct RawWidget: Decodable { var id: String?; var title: String?; var type: String?; var dataSource: RawSource? }
     struct RawSource: Decodable { var kind: String?; var payload: RawPayload? }
     struct RawPayload: Decodable {
         var username: String?; var listSlug: String?; var listName: String?
         var type: String?; var includeGenres: [Int]?; var excludeGenres: [Int]?; var sortBy: String?
         var releaseChannel: String?; var releaseStatus: String?
-        var items: [RawItem]?
+        var items: LossyList<RawItem>?
     }
     struct RawItem: Decodable {
         var id: String?; var title: String?; var name: String?
         var imageURL: String?; var backgroundImageURL: String?; var imageAspect: String?; var layout: String?
-        var dataSources: [RawSource]?; var dataSource: RawSource?
+        var dataSources: LossyList<RawSource>?; var dataSource: RawSource?
+    }
+}
+
+/// Liste, die unlesbare Einträge überspringt und zählt (statt die ganze Datei abzulehnen).
+struct LossyList<T: Decodable>: Decodable {
+    var items: [T] = []
+    var failed = 0
+
+    private struct Skip: Decodable { init(from decoder: Decoder) throws {} }
+
+    init(from decoder: Decoder) throws {
+        var c = try decoder.unkeyedContainer()
+        while !c.isAtEnd {
+            if let v = try? c.decode(T.self) { items.append(v); continue }
+            failed += 1
+            // Ein fehlgeschlagenes decode rückt nicht weiter; Skip verbraucht den Eintrag.
+            guard (try? c.decode(Skip.self)) != nil else { break }
+        }
     }
 }
