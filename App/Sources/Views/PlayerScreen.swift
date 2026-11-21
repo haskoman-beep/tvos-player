@@ -20,6 +20,8 @@ struct PlayerScreen: View {
     @State private var initError: String?
     /// Kennzeichen beim Vorladen: solange ein Player offen ist, keine Vorlade-Abfragen.
     @State private var prefetchToken = UUID()
+    /// Spur-Panel (fullScreenCover) offen: ein onDisappear dabei ist kein Verlassen des Players.
+    @State private var tracksOpen = false
 
     var body: some View {
         Group {
@@ -42,12 +44,14 @@ struct PlayerScreen: View {
                                                            guard let n = request.nextRequest else { return }
                                                            Task { _ = await model.streams(type: n.type, id: n.id) }
                                                        },
-                                                       addonSubtitles: { await model.addonSubtitles(for: request, media: url, headers: headers, enabled: !isTrailer) }) }
+                                                       addonSubtitles: { await model.addonSubtitles(for: request, media: url, headers: headers, enabled: !isTrailer) },
+                                                       onTracksShown: { tracksOpen = $0 }) }
             else { Text(initError ?? "Player wird gestartet …") }
         }
         .onDisappear {
             StreamPrefetcher.shared.playerDisappeared(prefetchToken)
-            if !isTrailer { model.endPlayback(request) }
+            // Öffnet das Spur-Panel (fullScreenCover) und löst onDisappear aus: kein Wiedergabe-Ende melden.
+            if !isTrailer && !tracksOpen { model.endPlayback(request) }
         }
         .onAppear {
             // Beim Vorlader immer anmelden (onDisappear meldet ab), das Backend aber nur einmal anlegen.
@@ -83,8 +87,12 @@ struct PlayerControls<E: PlaybackEngine>: View {
     var onNextSoon: () -> Void = {}
     /// Untertitel aus Addons holen (nil = keine; Ergebnis nil = kein Untertitel-Addon installiert).
     var addonSubtitles: (@MainActor () async -> [AddonSubtitle]?)? = nil
+    /// Spur-Panel auf/zu (für PlayerScreen: onDisappear bei offenem Panel ist kein Verlassen).
+    var onTracksShown: (Bool) -> Void = { _ in }
     /// Laufende Addon-UT-Abfrage; abgebrochen beim Verlassen und vor dem Neuladen.
     @State var addonSubTask: Task<Void, Never>?
+    /// Laufendes Neuladen nach einem Fehler; abgebrochen beim Verlassen.
+    @State private var recoverTask: Task<Void, Never>?
     @State private var upNext: Int?
     @State private var upNextCancelled = false
     @State private var nextPrefetched = false
@@ -144,7 +152,13 @@ struct PlayerControls<E: PlaybackEngine>: View {
             if tick % 10 == 0 && engine.isPlaying { saveProgress() }
             upNextTick()
         }
-        .onDisappear { addonSubTask?.cancel(); saveProgress(); RemoteLog.info("player", "Verlassen") }
+        .onDisappear {
+            saveProgress()
+            // Das Spur-Panel (fullScreenCover) kann onDisappear auslösen: dann laufen Abfrage und Neuladen weiter.
+            RemoteLog.info("player", "Verlassen (Panel \(showTracks ? "offen" : "zu"))")
+            guard !showTracks else { return }
+            addonSubTask?.cancel(); recoverTask?.cancel()
+        }
         .onChange(of: engine.errorText) { _, e in
             guard let e else { return }
             RemoteLog.error("player", "Engine: \(e) · \(engine.infoText) · \(engine.errorDetail) · bei \(Int(lastGoodTime))s")
@@ -162,6 +176,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             engine.stop()
             onEnded(!upNextCancelled)
         }
+        .onChange(of: showTracks) { _, open in onTracksShown(open) }
         .fullScreenCover(isPresented: $showTracks) { PlayerTrackPanel(engine: engine, profile: profile, sourceURL: url) }
         .task {
             do {
@@ -178,10 +193,11 @@ struct PlayerControls<E: PlaybackEngine>: View {
                 if let best, best.id != engine.activeAudioID {
                     engine.selectAudio(best.id)
                 }
-                // Tonwahl läuft asynchron: die Sprache der gewählten Spur direkt mitgeben.
+                // Tonwahl läuft asynchron: die Sprache der gewählten Spur direkt mitgeben (auch an die Addon-UT).
+                let startAudio = (best ?? engine.audioTracks.first(where: { $0.id == engine.activeAudioID }))?.language
                 engine.subtitlePreferences = SubtitlePreferences(profile: profile)
-                engine.reconsiderSubtitles(audioLanguage: (best ?? engine.audioTracks.first(where: { $0.id == engine.activeAudioID }))?.language)
-                addonSubTask = Task { await loadAddonSubtitles() }
+                engine.reconsiderSubtitles(audioLanguage: startAudio)
+                addonSubTask = Task { await loadAddonSubtitles(audioLanguage: startAudio) }
                 RemoteLog.info("player", "Spielt · Tonspur \(engine.activeAudioID.map(String.init) ?? "-") · UT \(engine.activeSubtitleID.map(String.init) ?? "aus") · \(engine.infoText)")
                 engine.play()
                 poke()
@@ -293,22 +309,33 @@ struct PlayerControls<E: PlaybackEngine>: View {
         recoveries += 1
         let pos = lastGoodTime
         RemoteLog.info("player", "Neu laden an \(Int(pos))s nach: \(reason)")
-        // UT-Wahl VOR dem Abbau merken (danach ist sie weg) und nach dem Neuladen wieder setzen.
+        // UT-Wahl VOR dem Abbau merken (danach ist sie weg) und nach dem Neuladen wieder setzen. Eine Addon-Spur
+        // zusätzlich nach Name und Sprache: nach dem Ersatz-Laden fehlt sie und bekommt beim Neuanlegen eine neue ID.
         let sub = engine.activeSubtitleID, subByUser = engine.subtitleChosenByUser
-        Task {
+        let external = ExternalSubtitleRestore(track: engine.subtitleTracks.first { $0.id == sub }, byUser: subByUser)
+        let audioLanguage = engine.audioTracks.first { $0.id == engine.activeAudioID }?.language
+        recoverTask?.cancel()
+        recoverTask = Task {
+            var reloaded = false
             do { try await engine.recover() }
             catch {
                 RemoteLog.error("player", "reloadAtCurrentPosition fehlgeschlagen: \(error) → load ab \(Int(pos))s")
-                do { try await engine.load(url, start: pos, prefs: prefs) }
+                do { try await engine.load(url, start: pos, prefs: prefs); reloaded = true }
                 catch { engine.stop(); onFallback("Wiedergabefehler: \(reason)"); return }
             }
-            if engine.activeSubtitleID != sub {
+            // Player inzwischen verlassen: nichts mehr wählen, keine Addon-Abfrage starten, nicht weiterspielen.
+            guard !Task.isCancelled else { return }
+            // Externe Spur nach dem Ersatz-Laden (oder wenn sie fehlt) nicht per alter ID setzen: das macht
+            // loadAddonSubtitles mit `restore` nach dem Neuanlegen.
+            let externalGone = external != nil
+                && (reloaded || !engine.subtitleTracks.contains(where: { $0.id == sub && $0.isExternal }))
+            if engine.activeSubtitleID != sub, !externalGone {
                 if subByUser { engine.selectSubtitle(sub) } else { engine.autoSelectSubtitle(sub) }
             }
             // Addon-UT neu holen, wenn keine externe Spur mehr da ist (Fallback-load verliert sie, oder die
             // Abfrage wurde oben abgebrochen, bevor sie fertig war); reloadAtCurrentPosition behält sie.
             if !engine.subtitleTracks.contains(where: \.isExternal) {
-                addonSubTask = Task { await loadAddonSubtitles() }
+                addonSubTask = Task { await loadAddonSubtitles(audioLanguage: audioLanguage, restore: externalGone ? external : nil) }
             }
             engine.play()
         }

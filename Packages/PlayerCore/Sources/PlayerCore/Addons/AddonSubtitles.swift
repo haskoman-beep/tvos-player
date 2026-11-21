@@ -168,20 +168,20 @@ public enum AddonSubtitlePlan {
     }
 
     /// Ob eine eingebettete, vollständige Spur (nicht erzwungen, kein Kommentar, nicht extern) in `language` existiert.
+    /// Erzwungen/Kommentar wie bei `SubtitlePicker`, also auch nach Spurname ("Forced", "Commentary").
     public static func hasEmbeddedTrack(in language: String?, tracks: [AudioTrackInfo]) -> Bool {
         guard let want = MediaLabels.languageCode(language) else { return false }
         return tracks.contains {
-            !$0.isExternal && !$0.isForced && !$0.isCommentary && MediaLabels.languageCode($0.language) == want
+            !$0.isExternal && !SubtitlePicker.isForced($0) && !SubtitlePicker.isCommentary($0)
+                && MediaLabels.languageCode($0.language) == want
         }
     }
 
-    /// Erste Addon-Spur in der Wunschsprache, die automatisch gewählt werden soll, oder nil
-    /// (Untertitel nicht gewünscht oder eingebettete Spur vorhanden).
-    public static func autoSelect(_ added: [AddonSubtitle], subtitlesWanted: Bool, wishLanguage: String?,
-                                  embedded: [AudioTrackInfo]) -> AddonSubtitle? {
-        guard subtitlesWanted, let want = MediaLabels.languageCode(wishLanguage),
-              !hasEmbeddedTrack(in: want, tracks: embedded) else { return nil }
-        return added.first { $0.languageCode == want }
+    /// Ob die automatische Wahl nach dem Hinzufügen von Addon-Spuren neu bewertet werden soll
+    /// (`reconsiderSubtitles`, die Entscheidung trifft dann `SubtitlePicker`). Nicht bei „Aus“ und nicht,
+    /// wenn eine volle eingebettete Spur in der Wunschsprache da ist: die bleibt vor jeder Addon-Spur.
+    public static func shouldReconsider(mode: SubtitleMode, wishLanguage: String?, embedded: [AudioTrackInfo]) -> Bool {
+        mode != .off && !hasEmbeddedTrack(in: wishLanguage, tracks: embedded)
     }
 }
 

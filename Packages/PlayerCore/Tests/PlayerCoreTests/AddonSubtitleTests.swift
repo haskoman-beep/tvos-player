@@ -83,17 +83,35 @@ private struct SlowHTTP: HTTPFetching {
     #expect(AddonSubtitlePlan.trackNames(s) == ["Deutsch · OpenSubtitles", "Deutsch · OpenSubtitles 2", "Englisch · OpenSubtitles"])
 }
 
-@Test func planAutoSelect() {
-    let added = [AddonSubtitle(id: "e", url: "ue", lang: "eng", addonName: "OS"),
-                 AddonSubtitle(id: "d", url: "ud", lang: "ger", addonName: "OS")]
+@Test func planShouldReconsiderForcedOnlyWithoutFullEmbedded() {
+    // „Nur erzwungene“, fremder Ton (Englisch), eingebettet nur Englisch und deutsche Forced: neu bewerten,
+    // SubtitlePicker wählt dann die volle deutsche Addon-Spur.
+    let embedded = [AudioTrackInfo(id: 2, language: "eng", name: nil),
+                    AudioTrackInfo(id: 3, language: "ger", name: nil, isForced: true)]
+    #expect(AddonSubtitlePlan.shouldReconsider(mode: .forcedOnly, wishLanguage: "de", embedded: embedded))
+    #expect(AddonSubtitlePlan.shouldReconsider(mode: .always, wishLanguage: "de", embedded: embedded))
+}
+
+@Test func planShouldReconsiderOffNever() {
     let engOnly = [AudioTrackInfo(id: 2, language: "eng", name: nil)]
-    let gerForced = [AudioTrackInfo(id: 3, language: "ger", name: nil, isForced: true)]
+    #expect(!AddonSubtitlePlan.shouldReconsider(mode: .off, wishLanguage: "de", embedded: engOnly))
+    #expect(!AddonSubtitlePlan.shouldReconsider(mode: .off, wishLanguage: "de", embedded: []))
+}
+
+@Test func planShouldReconsiderAlwaysWithMatchingEmbedded() {
     let gerFull = [AudioTrackInfo(id: 4, language: "deu", name: nil)]
-    #expect(AddonSubtitlePlan.autoSelect(added, subtitlesWanted: true, wishLanguage: "de", embedded: engOnly)?.id == "d")
-    #expect(AddonSubtitlePlan.autoSelect(added, subtitlesWanted: true, wishLanguage: "de", embedded: gerForced)?.id == "d")
-    #expect(AddonSubtitlePlan.autoSelect(added, subtitlesWanted: true, wishLanguage: "de", embedded: gerFull) == nil)
-    #expect(AddonSubtitlePlan.autoSelect(added, subtitlesWanted: false, wishLanguage: "de", embedded: engOnly) == nil)
-    #expect(AddonSubtitlePlan.autoSelect(added, subtitlesWanted: true, wishLanguage: "fr", embedded: engOnly) == nil)
+    #expect(!AddonSubtitlePlan.shouldReconsider(mode: .always, wishLanguage: "de", embedded: gerFull))
+    #expect(!AddonSubtitlePlan.shouldReconsider(mode: .forcedOnly, wishLanguage: "de", embedded: gerFull))
+}
+
+@Test func planHasEmbeddedTrackNameAware() {
+    // Erzwungen/Kommentar nur am Namen erkennbar (Flags fehlen): zählt nicht als volle Spur, wie bei SubtitlePicker.
+    let byName = [AudioTrackInfo(id: 5, language: "ger", name: "Forced"),
+                  AudioTrackInfo(id: 6, language: "ger", name: "Kommentar"),
+                  AudioTrackInfo(id: 7, language: "ger", name: "Addon", isExternal: true)]
+    #expect(!AddonSubtitlePlan.hasEmbeddedTrack(in: "de", tracks: byName))
+    #expect(AddonSubtitlePlan.hasEmbeddedTrack(in: "de", tracks: byName + [AudioTrackInfo(id: 8, language: "ger", name: "Full")]))
+    #expect(!AddonSubtitlePlan.hasEmbeddedTrack(in: nil, tracks: byName))
 }
 
 @Test func openSubtitlesHashSumsLittleEndianWithOverflow() {

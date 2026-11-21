@@ -75,35 +75,67 @@ enum VideoHash {
     }
 }
 
+/// Vor einem Neuladen gemerkte externe (Addon-)UT-Spur. Die Spur-ID wird beim Neuanlegen neu vergeben,
+/// darum zählen Name und Sprache (die Addon-Spur trägt keine URL in `AudioTrackInfo`).
+struct ExternalSubtitleRestore {
+    let name: String?
+    let language: String?
+    let byUser: Bool
+
+    /// nil, wenn keine oder keine externe Spur aktiv war.
+    init?(track: AudioTrackInfo?, byUser: Bool) {
+        guard let track, track.isExternal else { return nil }
+        name = track.name; language = track.language; self.byUser = byUser
+    }
+
+    func matches(name: String, language: String?) -> Bool {
+        self.name == name && MediaLabels.languageCode(self.language) == MediaLabels.languageCode(language)
+    }
+}
+
 extension PlayerControls {
     /// Nach dem Laden im Hintergrund: Addon-Untertitel in UT-Sprache, Tonsprache und Englisch (je höchstens 3) anhängen.
-    /// Fehlt eine eingebettete Spur in der Wunschsprache und steht Untertitel auf „Immer“, wird die Wahl nach den
-    /// Player-1-Regeln (`reconsiderSubtitles`) über alle Spuren neu bewertet. Nach einer Nutzerwahl nur hinzufügen.
-    func loadAddonSubtitles() async {
+    /// Außer bei „Aus“ und ohne volle eingebettete Spur in der Wunschsprache wird die Wahl danach nach den
+    /// Player-1-Regeln (`reconsiderSubtitles`, also `SubtitlePicker`) über alle Spuren neu bewertet; nach einer
+    /// Nutzerwahl werden Spuren nur hinzugefügt. `audioLanguage` ist die Sprache der Start-Tonspur (die Tonwahl
+    /// läuft asynchron). Mit `restore` (nach einem Neuladen) wird die zuvor aktive Addon-Spur wieder gewählt.
+    func loadAddonSubtitles(audioLanguage: String?, restore: ExternalSubtitleRestore? = nil) async {
         guard let addonSubtitles else { return }
         let embedded = engine.subtitleTracks
         guard let found = await addonSubtitles(), !Task.isCancelled else { return }
-        let audioLanguage = engine.audioTracks.first { $0.id == engine.activeAudioID }?.language
         let languages = AddonSubtitlePlan.languages(subtitleLanguage: profile.subtitleLanguage, audioLanguage: audioLanguage)
         let picked = AddonSubtitlePlan.select(found, languages: languages)
         var added: [(sub: AddonSubtitle, id: Int)] = []
+        var restoredID: Int?
         for (sub, name) in zip(picked, AddonSubtitlePlan.trackNames(picked)) {
             guard !Task.isCancelled else { return }
             guard let url = URL(string: sub.url),
                   let id = engine.addExternalSubtitle(url: url, name: name, language: sub.languageCode, formatHint: sub.formatHint)
             else { continue }
             added.append((sub, id))
+            if restoredID == nil, restore?.matches(name: name, language: sub.languageCode) == true { restoredID = id }
         }
         var addedLanguages: [String] = []
         for a in added { if let c = a.sub.languageCode, !addedLanguages.contains(c) { addedLanguages.append(c) } }
         RemoteLog.info("player", "Addon-UT: \(found.count) gefunden, \(added.count) hinzugefügt (Sprachen " +
             "\(addedLanguages.isEmpty ? "-" : addedLanguages.joined(separator: ", ")); gesucht \(languages.joined(separator: ", ")))")
-        // Automatisch nur bei „Immer“ und ohne volle eingebettete Spur in der Wunschsprache (bei „Aus“ und
-        // „Nur erzwungene“ bleibt die Start-Wahl). Die Wahl selbst trifft SubtitlePicker wie beim Start
-        // (Wunschsprache, Zweitsprache, Nicht-SDH vor SDH, nie Kommentar). Hat der Nutzer im Panel gewählt
-        // (selectSubtitle setzt subtitleChosenByUser), tut reconsiderSubtitles nichts: Spuren nur hinzugefügt.
-        guard !added.isEmpty, profile.subtitleMode == .always,
-              !AddonSubtitlePlan.hasEmbeddedTrack(in: profile.subtitleLanguage, tracks: embedded),
+        // Nach dem Neuladen: die vorher aktive Addon-Spur wieder setzen (Nutzerwahl bleibt Nutzerwahl).
+        if let restore, !Task.isCancelled {
+            if let restoredID {
+                if restore.byUser { engine.selectSubtitle(restoredID) } else { engine.autoSelectSubtitle(restoredID) }
+                RemoteLog.info("player", "Addon-UT nach Neuladen wieder gewählt: \(restoredID) · \(restore.name ?? "?")")
+                return
+            }
+            RemoteLog.info("player", "Addon-UT nach Neuladen nicht wiedergefunden: \(restore.name ?? "?")")
+        }
+        // Neu bewerten außer bei „Aus“ und ohne volle eingebettete Spur in der Wunschsprache (die bleibt vorn).
+        // Ob eine Addon-Spur gewählt wird, entscheidet SubtitlePicker wie beim Start: „Immer“ volle Spur in
+        // Wunsch-/Zweitsprache, „Nur erzwungene“ volle Spur nur bei fremdem Ton (sonst Forced in Tonsprache);
+        // Nicht-SDH vor SDH, nie Kommentar. Hat der Nutzer im Panel gewählt (selectSubtitle setzt
+        // subtitleChosenByUser), tut reconsiderSubtitles nichts: Spuren nur hinzugefügt.
+        guard !added.isEmpty,
+              AddonSubtitlePlan.shouldReconsider(mode: profile.subtitleMode, wishLanguage: profile.subtitleLanguage,
+                                                 embedded: embedded),
               !Task.isCancelled else { return }
         guard let track = engine.reconsiderSubtitles(audioLanguage: audioLanguage)?.track,
               let chosen = added.first(where: { $0.id == track.id }) else { return }
