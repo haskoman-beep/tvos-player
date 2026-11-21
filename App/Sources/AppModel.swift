@@ -296,8 +296,15 @@ final class AppModel: ObservableObject {
     func imdbID(for m: MetaPreview) async -> String? {
         if m.id.hasPrefix("tt") { return m.id }
         guard m.id.hasPrefix("tmdb:"), let n = Int(m.id.dropFirst(5)), let tmdb else { return nil }
-        return try? await tmdb.imdbID(tmdbID: n, type: m.type == "series" ? .series : .movie)
+        let key = "\(m.type):\(n)"
+        if let c = imdbCache[key] { return c }
+        let id = try? await tmdb.imdbID(tmdbID: n, type: m.type == "series" ? .series : .movie)
+        if let id { imdbCache[key] = id }
+        return id
     }
+
+    /// TMDB-ID → IMDb-ID (ändert sich nicht; spart die Nachfrage bei jedem Vorladen/Öffnen).
+    private var imdbCache: [String: String] = [:]
 
     func meta(type: String, imdb: String) async -> MetaDetail? {
         guard var m = try? await addons.meta(Self.cinemeta, type: type, id: imdb) else { return nil }
@@ -337,17 +344,26 @@ final class AppModel: ObservableObject {
 
     func streams(type: String, id: String) async -> [(addon: String, stream: StreamItem)] {
         // Kurzer Cache: Detailseite holt vorab (für die Technik-Plaketten), die Quellenliste nutzt das Ergebnis.
-        if let c = streamCache[id], Date().timeIntervalSince(c.at) < 600 { return c.list }   // 10 min
-        if let t = streamTasks[id] { return await t.value }
+        if let c = streamCache[id], Date().timeIntervalSince(c.at) < 600 {   // 10 min
+            RemoteLog.info("streams", "\(id): Cache-Treffer\(StreamPrefetcher.shared.wasPrefetched(id) ? " (vorgeladen)" : "") · \(c.list.count) Quellen")
+            return c.list
+        }
+        if let t = streamTasks[id] {
+            RemoteLog.info("streams", "\(id): wartet auf laufende Abfrage\(StreamPrefetcher.shared.isRunning(id) ? " (Vorladen)" : "")")
+            return await t.value
+        }
         let task = Task { () -> [(addon: String, stream: StreamItem)] in
             let all = await addons.streams(from: profile.addons, type: type, id: id)
             RemoteLog.info("streams", "\(type) \(id): " + all.map { "\($0.addon.manifest.name)=\($0.streams.count)" }.joined(separator: ", "))
+            // Rohergebnis aller Addons leer (fehlgeschlagene fehlen in `all`, zählen also als leer): vermutlich
+            // Ratenbegrenzung → Vorladen pausiert. Bewusst vor dem Filtern auf abspielbare Quellen.
+            if !profile.addons.isEmpty, all.allSatisfy({ $0.streams.isEmpty }) { streamsAllEmptyAt = Date() }
             return all.flatMap { r in playableStreams(r.streams).map { (r.addon.manifest.name, $0) } }
         }
         streamTasks[id] = task
         let list = await task.value
         streamTasks[id] = nil
-        if !list.isEmpty { streamCache[id] = (Date(), list) }
+        storeStreams(id: id, list: list)
         return list
     }
 
@@ -359,6 +375,10 @@ final class AppModel: ObservableObject {
 
     private var streamCache: [String: (at: Date, list: [(addon: String, stream: StreamItem)])] = [:]
     private var streamTasks: [String: Task<[(addon: String, stream: StreamItem)], Never>] = [:]
+    /// Leeres/fehlgeschlagenes Ergebnis: bis dahin kein Vorladen dieser ID (die Detailseite fragt trotzdem).
+    private var streamEmptyUntil: [String: Date] = [:]
+    /// Letztes Ergebnis, bei dem alle Addons leer blieben (vermutlich Ratenbegrenzung): Vorladen pausiert.
+    private(set) var streamsAllEmptyAt: Date?
 
     /// MDBList-Bewertungen (nil ohne Key oder ohne Treffer).
     func ratings(imdb: String, series: Bool) async -> ExternalRatings? {
@@ -435,4 +455,38 @@ extension AppModel {
                            item: progressItem(m, imdb: imdb, meta: detail), season: n.season, episode: n.episode,
                            episodes: eps, resumeLastSource: true)
     }
+}
+
+// Task 7: Zustand des Quellen-Caches für das Vorladen (StreamPrefetcher) – liest die privaten Caches oben.
+extension AppModel {
+    enum StreamCacheState { case cached, running, emptyRecently, missing }
+
+    func streamCacheState(id: String) -> StreamCacheState {
+        let now = Date()
+        if let c = streamCache[id], now.timeIntervalSince(c.at) < 600 { return .cached }
+        if streamTasks[id] != nil { return .running }
+        if let u = streamEmptyUntil[id], u > now { return .emptyRecently }
+        return .missing
+    }
+
+    /// Ergebnis ablegen: Treffer in den 10-min-Cache (abgelaufene raus, höchstens 40, älteste zuerst raus),
+    /// leere Ergebnisse 120 s als „leer“ merken. Ein Treffer hebt die Pause nach „alle Addons leer“ auf.
+    fileprivate func storeStreams(id: String, list: [(addon: String, stream: StreamItem)]) {
+        let now = Date()
+        streamEmptyUntil = streamEmptyUntil.filter { $0.value > now }
+        if list.isEmpty {
+            streamEmptyUntil[id] = now.addingTimeInterval(Self.emptyStreamsTTL)
+            return
+        }
+        streamEmptyUntil[id] = nil
+        streamsAllEmptyAt = nil
+        streamCache = streamCache.filter { now.timeIntervalSince($0.value.at) < 600 }
+        streamCache[id] = (now, list)
+        if streamCache.count > StreamPrefetcher.cacheLimit {
+            let drop = streamCache.sorted { $0.value.at < $1.value.at }.prefix(streamCache.count - StreamPrefetcher.cacheLimit)
+            for (k, _) in drop { streamCache[k] = nil }
+        }
+    }
+
+    static let emptyStreamsTTL: TimeInterval = 120
 }

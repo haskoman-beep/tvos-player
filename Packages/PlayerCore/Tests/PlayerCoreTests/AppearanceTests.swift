@@ -16,6 +16,22 @@ import Testing
     #expect(CardSize.large.scale == 1.2)
 }
 
+@Test func prefetchStreamsDefaultsTrueAndRoundTrips() throws {
+    // Altes Aussehen-JSON ohne das Feld: Vorladen ist an.
+    let old = try JSONDecoder().decode(Appearance.self, from: Data(#"{"accent":"green","expandPosters":false}"#.utf8))
+    #expect(old.prefetchStreams)
+    #expect(!old.expandPosters)
+    #expect(Appearance().prefetchStreams)
+    // Altes Profil ganz ohne Aussehen-Daten.
+    let p = try JSONDecoder().decode(Profile.self, from: Data(#"{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","name":"Alt"}"#.utf8))
+    #expect(p.appearance.prefetchStreams)
+    // Abgeschaltet bleibt abgeschaltet.
+    let off = Appearance(prefetchStreams: false)
+    let back = try JSONDecoder().decode(Appearance.self, from: JSONEncoder().encode(off))
+    #expect(!back.prefetchStreams)
+    #expect(back == off)
+}
+
 @Test func heroSourcePrefersExplicitThenHeroStyleThenFirstList() {
     let cw = HomeRow(content: .list(.continueWatching), style: .landscape)
     let coll = HomeRow(content: .collection(id: "c1"))

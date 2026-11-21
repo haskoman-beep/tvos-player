@@ -17,7 +17,8 @@ final class HomeFocus {
 
     /// Kachel hat den Fokus: Diashow sofort anhalten, Hintergrund erst nach 350 ms Ruhe wechseln.
     /// Ein neuer Fokus bricht die Wartezeit ab; pro Ruhepause höchstens eine Log-Zeile.
-    func set(_ m: MetaPreview) {
+    /// `onRest` läuft nach derselben Ruhezeit (Quellen vorladen, Task 7), nicht bei vorzeitigem Fokuswechsel.
+    func set(_ m: MetaPreview, onRest: (() -> Void)? = nil) {
         if !inRows { inRows = true }
         pending?.cancel()
         pending = nil
@@ -28,6 +29,7 @@ final class HomeFocus {
             self.item = m
             self.pending = nil
             RemoteLog.info("hero", "Fokus-Hintergrund \(m.id)")
+            onRest?()
         }
     }
 
