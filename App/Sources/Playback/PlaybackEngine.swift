@@ -82,11 +82,21 @@ final class AetherBackend: PlaybackEngine {
     var currentTime: Double { engine.clock.currentTime }
     var duration: Double { engine.duration }
     var audioTracks: [AudioTrackInfo] {
-        engine.audioTracks.map { AudioTrackInfo(id: $0.id, language: $0.language, name: $0.name, channels: $0.channels, codec: $0.codec) }
+        engine.audioTracks.map {
+            AudioTrackInfo(id: $0.id, language: $0.language, name: $0.name, channels: $0.channels, codec: $0.codec,
+                           isDefault: $0.isDefault, isCommentary: $0.isCommentary, isVisualImpaired: $0.isVisualImpaired,
+                           profile: $0.profile, isAtmos: $0.isAtmos || $0.trueHDAtmos == .atmos, isDTSX: $0.isDTSX,
+                           channelLayout: $0.channelLayout)
+        }
     }
     var activeAudioID: Int? { engine.activeAudioTrackIndex }
     var subtitleTracks: [AudioTrackInfo] {
-        engine.subtitleTracks.map { AudioTrackInfo(id: $0.id, language: $0.language, name: $0.name) }
+        engine.subtitleTracks.map {
+            AudioTrackInfo(id: $0.id, language: $0.language, name: $0.name, codec: $0.codec,
+                           isDefault: $0.isDefault, isForced: $0.isForced, isHearingImpaired: $0.isHearingImpaired,
+                           isCommentary: $0.isCommentary, isExternal: $0.isExternal,
+                           isImage: MediaLabels.isImageSubtitleCodec($0.codec))
+        }
     }
     var activeSubtitleID: Int? { engine.activeSubtitleTrackIndex }
     var errorText: String? {
