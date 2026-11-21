@@ -19,6 +19,23 @@ public struct SubtitlePick: Equatable, Sendable {
     }
 }
 
+/// Einstellungen für die automatische Untertitel-Wahl, aus dem Profil.
+public struct SubtitlePreferences: Equatable, Sendable {
+    public var mode: SubtitleMode
+    public var preferredLanguage: String?
+    public var secondaryLanguages: [String]
+
+    public init(mode: SubtitleMode, preferredLanguage: String?, secondaryLanguages: [String]) {
+        self.mode = mode; self.preferredLanguage = preferredLanguage; self.secondaryLanguages = secondaryLanguages
+    }
+
+    public init(profile: Profile) {
+        self.init(mode: profile.subtitleMode, preferredLanguage: profile.subtitleLanguage,
+                  secondaryLanguages: SubtitlePicker.secondaryLanguages(preferred: profile.subtitleLanguage,
+                                                                        audioPriority: profile.audioPriority))
+    }
+}
+
 /// Automatische Untertitel-Wahl (reine Logik, ohne Engine).
 ///
 /// Regeln:
@@ -34,6 +51,12 @@ public struct SubtitlePick: Equatable, Sendable {
 /// - Innerhalb einer Sprache: Nicht-SDH vor SDH, dann Container-Standard, dann Reihenfolge der Datei.
 /// - Erzwungen/SDH/Kommentar zählen auch, wenn nur der Spurname es sagt ("Forced", "SDH", "Commentary").
 public enum SubtitlePicker {
+    /// Wie `pick(_:mode:preferredLanguage:audioLanguage:secondaryLanguages:)`, mit gebündelten Einstellungen.
+    public static func pick(_ tracks: [AudioTrackInfo], preferences p: SubtitlePreferences, audioLanguage: String?) -> SubtitlePick {
+        pick(tracks, mode: p.mode, preferredLanguage: p.preferredLanguage, audioLanguage: audioLanguage,
+             secondaryLanguages: p.secondaryLanguages)
+    }
+
     public static func pick(_ tracks: [AudioTrackInfo], mode: SubtitleMode, preferredLanguage: String?,
                             audioLanguage: String?, secondaryLanguages: [String] = []) -> SubtitlePick {
         guard mode != .off else { return SubtitlePick(track: nil, reason: "Einstellung Aus") }
@@ -60,12 +83,13 @@ public enum SubtitlePicker {
         case .off:
             return SubtitlePick(track: nil, reason: "Einstellung Aus")
         case .forcedOnly:
-            if let forced {
-                return SubtitlePick(track: forced, reason: audio != nil ? "erzwungen in Tonsprache" : "erzwungen, Tonsprache unbekannt")
-            }
+            // Fremde Tonsprache zuerst: erzwungene Stellen in einer Sprache, die man nicht versteht, helfen nicht.
             if let audio, !known.isEmpty, !known.contains(audio), var full = fullTrack() {
                 full.reason = "Ton \(MediaLabels.languageName(audio)) fremd, \(full.reason)"
                 return full
+            }
+            if let forced {
+                return SubtitlePick(track: forced, reason: audio != nil ? "erzwungen in Tonsprache" : "erzwungen, Tonsprache unbekannt")
             }
             let lang = forcedLanguage.map { MediaLabels.languageName($0) } ?? "Tonsprache"
             return SubtitlePick(track: nil, reason: "Nur erzwungene, keine erzwungene Spur in \(lang)")
@@ -76,8 +100,10 @@ public enum SubtitlePicker {
         }
     }
 
-    /// Zweitsprachen für `.always`: die Sprachen aus dem Tonspur-Vorrang ohne "orig" und ohne die
-    /// Wunschsprache, in dieser Reihenfolge; ist die Liste leer, Englisch (außer Englisch ist die Wunschsprache).
+    /// Zweitsprachen: die Sprachen aus dem Tonspur-Vorrang ohne "orig" und ohne die Wunschsprache, in dieser
+    /// Reihenfolge; ist die Liste leer, Englisch (außer Englisch ist die Wunschsprache). Sie sind der Ersatz
+    /// bei `.always` und zählen (mit der Wunschsprache) als „verstandene“ Sprachen für die Prüfung auf
+    /// fremde Tonsprache bei `.forcedOnly`.
     public static func secondaryLanguages(preferred: String?, audioPriority: [String]) -> [String] {
         let wish = MediaLabels.languageCode(preferred)
         var out: [String] = []

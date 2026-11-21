@@ -52,6 +52,29 @@ private let sec = ["en"]
     #expect(p.reason == "Ton Japanisch fremd, Wunschsprache")
 }
 
+@Test func forcedOnlyForeignAudioBeatsForeignForced() {
+    // Japanischer Ton mit japanischer erzwungener Spur: die volle deutsche Spur gewinnt.
+    let tracks = [sub(1, "jpn", forced: true), sub(2, "ger")]
+    let p = SubtitlePicker.pick(tracks, mode: .forcedOnly, preferredLanguage: "de", audioLanguage: "jpn", secondaryLanguages: sec)
+    #expect(p.track?.id == 2)
+    #expect(p.reason == "Ton Japanisch fremd, Wunschsprache")
+}
+
+@Test func forcedOnlyForeignAudioWithoutFullFallsBackToForced() {
+    let tracks = [sub(1, "jpn", forced: true), sub(2, "fre")]
+    let p = SubtitlePicker.pick(tracks, mode: .forcedOnly, preferredLanguage: "de", audioLanguage: "jpn", secondaryLanguages: sec)
+    #expect(p.track?.id == 1)
+}
+
+@Test func preferencesFromProfile() {
+    var prof = Profile.makeDefault()
+    prof.subtitleMode = .always
+    let prefs = SubtitlePreferences(profile: prof)
+    #expect(prefs == SubtitlePreferences(mode: .always, preferredLanguage: "de", secondaryLanguages: ["en"]))
+    let p = SubtitlePicker.pick([sub(1, "eng"), sub(2, "deu")], preferences: prefs, audioLanguage: "en")
+    #expect(p.track?.id == 2)
+}
+
 @Test func forcedOnlyUnknownAudioUsesWishLanguage() {
     let tracks = [sub(1, "eng", forced: true), sub(2, "ger", forced: true)]
     let p = SubtitlePicker.pick(tracks, mode: .forcedOnly, preferredLanguage: "de", audioLanguage: "und", secondaryLanguages: sec)

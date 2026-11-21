@@ -36,12 +36,24 @@ protocol PlaybackEngine: ObservableObject {
     @discardableResult func autoSelectSubtitle(_ id: Int?) -> Bool
     /// true, sobald der Nutzer in dieser Wiedergabe selbst eine Untertitelspur (oder Aus) gewählt hat.
     var subtitleChosenByUser: Bool { get }
+    /// Einstellungen für die automatische Wahl (aus dem Profil, vor dem Laden setzen). nil = keine Automatik.
+    var subtitlePreferences: SubtitlePreferences? { get set }
+    /// Automatische Wahl neu bewerten über die aktuelle `subtitleTracks` (auch später ergänzte, z. B. Addon).
+    /// Tut nichts nach einer Nutzerwahl oder ohne `subtitlePreferences`; schaltet nur, wenn das Ergebnis von
+    /// der aktiven Spur abweicht. `audioLanguage` nil = Sprache der aktiven Tonspur. Liefert die Wahl (nil = übersprungen).
+    @discardableResult func reconsiderSubtitles(audioLanguage: String?) -> SubtitlePick?
     func stop()
     associatedtype Surface: View
     func surface() -> Surface
     /// Untertitel-Overlay für die aktive Spur (über der Surface, unter der Steuerleiste).
     associatedtype SubtitleLayer: View
-    func subtitleLayer(controlsVisible: Bool) -> SubtitleLayer
+    /// controlsInset: 0 = Steuerleiste verborgen, sonst ihre gemessene Höhe; die Untertitel stehen darüber.
+    func subtitleLayer(controlsInset: CGFloat) -> SubtitleLayer
+}
+
+extension PlaybackEngine {
+    /// Für spätere Spuren (Addon-Untertitel): nach dem Hinzufügen aufrufen, nicht `autoSelectSubtitle`.
+    @discardableResult func reconsiderSubtitles() -> SubtitlePick? { reconsiderSubtitles(audioLanguage: nil) }
 }
 
 /// Wünsche für das Laden, unabhängig vom Backend.
@@ -152,6 +164,19 @@ final class AetherBackend: PlaybackEngine {
         guard !subtitleChosenByUser else { return false }
         applySubtitle(id)
         return true
+    }
+    var subtitlePreferences: SubtitlePreferences?
+    @discardableResult func reconsiderSubtitles(audioLanguage: String?) -> SubtitlePick? {
+        guard let prefs = subtitlePreferences else { return nil }
+        let lang = audioLanguage ?? audioTracks.first(where: { $0.id == activeAudioID })?.language
+        let pick = SubtitlePicker.pick(subtitleTracks, preferences: prefs, audioLanguage: lang)
+        guard !subtitleChosenByUser else {
+            RemoteLog.info("player", "UT: Nutzerwahl bleibt (\(pick.logText))")
+            return nil
+        }
+        if pick.track?.id != activeSubtitleID { applySubtitle(pick.track?.id) }
+        RemoteLog.info("player", pick.logText)
+        return pick
     }
     private func applySubtitle(_ id: Int?) {
         if let id { engine.selectSubtitleTrack(index: id) } else { engine.clearSubtitle() }

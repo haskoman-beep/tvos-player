@@ -6,8 +6,8 @@ import PlayerCore
 extension AetherBackend {
     /// Untertitel-Ebene über der Surface: zeichnet die Cues der aktiven Spur, egal wer sie gewählt hat
     /// (Auto-Auswahl, Spur-Panel, Addon-Untertitel).
-    func subtitleLayer(controlsVisible: Bool) -> some View {
-        SubtitleOverlayView(engine: engine, controlsVisible: controlsVisible)
+    func subtitleLayer(controlsInset: CGFloat) -> some View {
+        SubtitleOverlayView(engine: engine, controlsInset: controlsInset)
     }
 }
 
@@ -18,15 +18,18 @@ extension AetherBackend {
 /// dadurch nicht mit 10 Hz neu, und auch dieses Overlay nur beim Wechsel eines Cues.
 struct SubtitleOverlayView: View {
     let engine: AetherEngine
-    var controlsVisible: Bool
+    /// 0 = Steuerleiste verborgen, sonst ihre gemessene Höhe.
+    var controlsInset: CGFloat
 
     /// Gut lesbar auf einem 4K-Fernseher aus Sofa-Entfernung (tvOS-Punkte, 1920×1080).
     static let fontSize: CGFloat = 48
     static let outlineWidth: CGFloat = 2.5
     /// Abstand zum unteren Bildschirmrand ohne Steuerleiste.
     static let bottomMargin: CGFloat = 70
-    /// So weit rücken untere Untertitel hoch, solange die Steuerleiste steht (Vorbild NuvioTVOS: 272).
-    static let controlsLift: CGFloat = 272
+    /// Ersatz für die Höhe der Steuerleiste, solange noch keine Messung da ist (Vorbild NuvioTVOS: 272).
+    static let fallbackControlsInset: CGFloat = 272
+    /// Abstand der Untertitel über der Oberkante der Steuerleiste.
+    static let controlsGap: CGFloat = 24
 
     @State private var active: [SubtitleCue] = []
     /// Sichtbare Zeilen, die im neuesten Cue-Fenster fehlen: bleiben bis zu ihrem Ende stehen (kein Flackern).
@@ -40,7 +43,8 @@ struct SubtitleOverlayView: View {
                                                   videoWidth: Int(engine.sourceVideoWidth),
                                                   videoHeight: Int(engine.sourceVideoHeight),
                                                   pixelAspect: engine.sourceVideoPixelAspectRatio)
-            let lift = controlsVisible ? Self.controlsLift : 0
+            let bottom = controlsInset > 0 ? controlsInset + Self.controlsGap : Self.bottomMargin
+            let lift = max(0, bottom - Self.bottomMargin)
             ZStack(alignment: .topLeading) {
                 if !nativeRendered {
                     ForEach(bitmapCues) { cue in
@@ -53,12 +57,12 @@ struct SubtitleOverlayView: View {
                         ForEach(bottomTextCues) { cue in textBody(cue, alignment: .center) }
                     }
                     .frame(maxWidth: max(min(rect.width, geo.size.width) * 0.86, 1))
-                    .frame(width: geo.size.width, height: max(geo.size.height - Self.bottomMargin - lift, 1),
+                    .frame(width: geo.size.width, height: max(geo.size.height - bottom, 1),
                            alignment: .bottom)
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
-            .animation(.easeInOut(duration: 0.22), value: controlsVisible)
+            .animation(.easeInOut(duration: 0.22), value: controlsInset)
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
