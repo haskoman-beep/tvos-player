@@ -228,10 +228,25 @@ actor DiskCacheSession {
             }
             // Auf den laufenden Vorlauf warten, aber nur bis zur Lesergrenze; der Vorlauf läuft weiter.
             let left = policy.readerHardLimit - Date().timeIntervalSince(started)
-            return try await Self.value(of: t, within: max(0.5, left))
+            do { return try await Self.value(of: t, within: max(0.5, left)) }
+            catch { readerGoesDirect(); throw error }
         }
         stats.misses += 1
-        return try await startFetch(i, prefetch: false).value
+        do { return try await startFetch(i, prefetch: false).value }
+        catch {
+            // Lesergrenze gerissen: die Engine liest ab jetzt direkt (307), der Vorlauf soll ihr nicht Bandbreite nehmen.
+            if Date().timeIntervalSince(started) >= policy.readerHardLimit - 0.5 { readerGoesDirect() }
+            throw error
+        }
+    }
+
+    /// Leser bekommt ein 307 nach Warten auf den Vorlauf oder gerissener Lesergrenze: ganze Sitzung leitet um,
+    /// laufender Vorlauf wird abgebrochen (keine Konkurrenz zum direkten Strom der Engine).
+    private func readerGoesDirect() {
+        guard !closed, !passthrough else { return }
+        passthrough = true
+        for (b, t) in inflight where readerWaiting[b] == nil { t.cancel() }
+        cacheLog("Plattencache: Leser direkt, Vorlauf gestoppt")
     }
 
     /// Eine Anfrage beginnt hier (große Anfragen verschieben die Leseposition, kleine Proben nicht).

@@ -171,7 +171,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                                   onUserInput()   // Klick auf den Knopf ist ein Tastendruck („Noch da?“)
                                   seekTask?.cancel(); pendingSeek = nil
                                   // Wie queueSeek: Bild nach dem Hintergrund freigegeben, erst Play baut neu auf.
-                                  guard !restorePending else { RemoteLog.info("player", "Überspringen gesperrt bis Play (nach Hintergrund)"); return false }
+                                  guard !restorePending, !restoring else { RemoteLog.info("player", "Überspringen gesperrt bis Play/Neuaufbau (nach Hintergrund)"); return false }
                                   return true
                               })
         }
@@ -180,7 +180,11 @@ struct PlayerControls<E: PlaybackEngine>: View {
         .focused($surfaceFocused)
         .onChange(of: skip.prompt) { _, p in if p == nil { surfaceFocused = true } }
         .onPlayPauseCommand { onUserInput(); togglePlay() }
-        .onTapGesture { onUserInput(); togglePlay() }   // Klick auf das Touchpad (Mitte) pausiert ebenfalls
+        .onTapGesture {   // Klick auf das Touchpad (Mitte) pausiert ebenfalls
+            // Select auf dem Überspringen-Knopf überspringt nur, kein zusätzliches Pausieren.
+            guard skip.prompt == nil else { return }
+            onUserInput(); togglePlay()
+        }
         .onMoveCommand { dir in
             onUserInput()
             if upNext != nil {
@@ -291,6 +295,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
         let now = engine.currentTime, rem = engine.duration - now
         // Abspann-Zeitpunkt bei jedem Takt neu lesen (Kapitel/IntroDB kommen später); nie später als die alte Regel.
         let cardAt = min(skip.upNextAt ?? .greatestFiniteMagnitude, engine.duration - 20)
+        // Vor den Abspann zurückgespult: abgebrochenes Up-next gilt wieder.
+        if upNextCancelled, now < cardAt - 20 { upNextCancelled = false }
         if rem < 120 || now >= cardAt - 100, !nextPrefetched { nextPrefetched = true; onNextSoon() }
         if let n = upNext {
             if now < cardAt - 20 { withAnimation { upNext = nil } }   // zurückgespult
@@ -368,7 +374,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
     /// ±10 s sammeln und nach 450 ms einmal springen.
     private func queueSeek(_ delta: Double) {
         // Bild nach dem Hintergrund freigegeben: erst Play baut neu auf (ein Neuaufbau würde von selbst starten).
-        guard !restorePending else { RemoteLog.info("player", "Sprung gesperrt bis Play (nach Hintergrund)"); return }
+        guard !restorePending, !restoring else { RemoteLog.info("player", "Sprung gesperrt bis Play/Neuaufbau (nach Hintergrund)"); return }
         let base = pendingSeek ?? engine.currentTime
         let limit = engine.duration > 10 ? engine.duration - 5 : .greatestFiniteMagnitude
         let target = min(max(0, base + delta), limit)
@@ -473,7 +479,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
 
     /// Ersatz-Laden schlug fehl: die Engine meldet den Fehler meist selbst (onChange → recover bricht diese
     /// Aufgabe ab). Sonst nach kurzer Pause selbst die nächste Stufe der Leiter nehmen (kein doppelter Schritt).
-    private func escalate(after error: Error) async {
+    func escalate(after error: Error) async {
         guard !Task.isCancelled, !leaving else { return }
         RemoteLog.error("player", "Neu laden fehlgeschlagen: \(error)")
         try? await Task.sleep(for: .milliseconds(1500))

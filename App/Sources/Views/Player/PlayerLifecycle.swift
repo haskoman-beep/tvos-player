@@ -73,9 +73,11 @@ extension PlayerControls {
             do { try await engine.recover() } catch {
                 guard !Task.isCancelled, !leaving else { return }
                 RemoteLog.error("player", "Neuaufbau nach Hintergrund fehlgeschlagen: \(error)")
-                // Nicht blind play(): die Fehlerleiter entscheidet (meldet die Engine selbst einen Fehler,
-                // ruft onChange(errorText) recover schon auf).
-                if engine.errorText == nil { restoring = false; recover("Neuaufbau nach Hintergrund fehlgeschlagen") }
+                // Nicht blind play(): die Fehlerleiter entscheidet. Meldet die Engine selbst einen Fehler, ruft
+                // onChange(errorText) recover auf (bricht diese Aufgabe ab); sonst nach 1,5 s escalate → recover.
+                guard engine.errorText == nil else { return }
+                restoring = false
+                await escalate(after: error)
                 return
             }
             guard !Task.isCancelled, !leaving else { return }

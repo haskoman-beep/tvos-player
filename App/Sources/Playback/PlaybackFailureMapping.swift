@@ -12,7 +12,8 @@ extension PlaybackEngine {
 extension AetherBackend {
     /// `errorInfo` der Engine (Art, Domäne, Code) für die Fehlerleiter. Die Engine setzt es vor `state = .error`.
     var playbackFailure: PlaybackFailure? {
-        if let i = engine.errorInfo {
+        // Nur im Fehlerzustand: ein altes errorInfo nach erfolgreichem Neuaufbau zählt nicht.
+        if case .error = engine.state, let i = engine.errorInfo {
             return PlaybackFailure(kind: i.kind.rawValue, domain: i.underlyingDomain, code: i.underlyingCode,
                                    ffmpegCode: i.ffmpegErrorCode, message: i.message)
         }
