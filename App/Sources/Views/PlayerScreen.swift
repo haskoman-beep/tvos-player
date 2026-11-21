@@ -47,7 +47,8 @@ struct PlayerScreen: View {
                                                            Task { _ = await model.streams(type: n.type, id: n.id) }
                                                        },
                                                        addonSubtitles: { await model.addonSubtitles(for: request, media: url, headers: headers, enabled: !isTrailer) },
-                                                       onTracksShown: { tracksOpen = $0 }) }
+                                                       onTracksShown: { tracksOpen = $0 },
+                                                       skipLookup: { isTrailer ? nil : await model.introDBQuery(for: request) }) }
             else { Text(initError ?? "Player wird gestartet …") }
         }
         .onDisappear {
@@ -93,6 +94,10 @@ struct PlayerControls<E: PlaybackEngine>: View {
     var addonSubtitles: (@MainActor () async -> [AddonSubtitle]?)? = nil
     /// Spur-Panel auf/zu (für PlayerScreen: onDisappear bei offenem Panel ist kein Verlassen).
     var onTracksShown: (Bool) -> Void = { _ in }
+    /// IntroDB-Abfrage für „Intro überspringen“ (nil bzw. Ergebnis nil = keine, z. B. Trailer); Kapitel gelten immer.
+    var skipLookup: (@MainActor () async -> IntroDBQuery?)? = nil
+    /// Sprungbereiche, Überspringen-Knopf, Abspann-Zeitpunkt (`skip.upNextAt`); SkipSegmentButton.swift.
+    @StateObject private var skip = SkipSegmentController()
     /// Laufende Addon-UT-Abfrage; abgebrochen beim Verlassen und vor dem Neuladen.
     @State var addonSubTask: Task<Void, Never>?
     /// Laufendes Neuladen nach einem Fehler; abgebrochen beim Verlassen.
@@ -128,7 +133,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             Color.black.ignoresSafeArea()
             engine.surface().ignoresSafeArea()
             engine.subtitleLayer(controlsInset: showOverlay ? (controlsHeight ?? SubtitleOverlayView.fallbackControlsInset) : 0)
-            if engine.isLoading { ProgressView().scaleEffect(2) }
+            PlayerLoadingSteps(engine: engine)
             if let e = loadError ?? engine.errorText {
                 Text("Fehler: \(e)").padding(30).background(.red.opacity(0.8), in: RoundedRectangle(cornerRadius: 16))
             }
@@ -138,8 +143,10 @@ struct PlayerControls<E: PlaybackEngine>: View {
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { controlsHeight = $0 }
             }
             if let n = upNext, let t = nextTitle { upNextCard(n, t).transition(.move(edge: .trailing).combined(with: .opacity)) }
+            SkipSegmentButton(controller: skip, engine: engine, lookup: skipLookup)
         }
-        .focusable()
+        // Steht der Überspringen-Knopf, bekommt er den Fokus; Befehle unten erreichen die Fläche weiterhin.
+        .focusable(skip.prompt == nil)
         .onPlayPauseCommand { togglePlay() }
         .onTapGesture { togglePlay() }   // Klick auf das Touchpad (Mitte) pausiert ebenfalls
         .onMoveCommand { dir in
@@ -155,7 +162,10 @@ struct PlayerControls<E: PlaybackEngine>: View {
             }
             poke()
         }
-        .onExitCommand { leave { saveProgress(); engine.stop(); dismiss() } }
+        .onExitCommand {
+            if skip.dismissPrompt() { return }   // Menü schließt zuerst den Überspringen-Knopf
+            leave { saveProgress(); engine.stop(); dismiss() }
+        }
         .onReceive(timer) { _ in
             tick &+= 1
             if engine.isPlaying, engine.errorText == nil { lastGoodTime = engine.currentTime }
