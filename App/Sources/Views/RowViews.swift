@@ -14,6 +14,8 @@ struct HomeRowView: View {
     /// Startseite mit Hero: fokussierte Kachel meldet sich (nil außerhalb der Startseite).
     @Environment(HomeFocus.self) private var homeFocus: HomeFocus?
     @FocusState private var focusedRoute: Route?
+    /// Welle C-b (#19): Fokus-Gedächtnis je Reihe (nil außerhalb der Startseite).
+    @Environment(\.homeRowFocusMemory) private var focusMemory
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -22,13 +24,18 @@ struct HomeRowView: View {
             }
             content
                 .disabled(!interactive)
+                .focusSection()
+                .defaultFocus($focusedRoute, rememberedRoute, priority: .userInitiated)
         }
         .task(id: row.content.key + (row.content == .list(.continueWatching) ? "\(model.progress.entries.count)-\(model.progress.continueWatching().first?.updated.timeIntervalSince1970 ?? 0)" : "") + model.catalogStamp(row.content)) {
             guard case .list(let s) = row.content else { return }
             items = await model.items(s); loaded = true
         }
         .onChange(of: focusedRoute) { _, r in
-            if let r, let homeFocus { homeFocus.set(r.heroPreview) { StreamPrefetcher.shared.request(r, model: model) } }
+            guard let r, focusMemory?.state.covered != true else { return }   // verdeckte Startseite: nichts merken
+            focusMemory?.state.record(row: row.id.uuidString, item: r.heroPreview.id)
+            MainThreadWatchdog.note("Fokus \(r.heroPreview.id)")
+            if let homeFocus { homeFocus.set(r.heroPreview) { StreamPrefetcher.shared.request(r, model: model) } }
         }
     }
 
@@ -68,15 +75,26 @@ struct HomeRowView: View {
                             } else {
                                 switch row.style {
                                 case .hero: HeroCard(item: m)
-                                case .landscape: LandscapeCard(item: m)
-                                case .top10: Top10Card(item: m, rank: i + 1)
-                                default: PosterCard(item: m)
+                                case .landscape: LandscapeCard(item: m).equatable()
+                                case .top10: Top10Card(item: m, rank: i + 1).equatable()
+                                default: PosterCard(item: m).equatable()
                                 }
                             }
                         }
                     }
                 }
             }
+        }
+    }
+
+    /// Zuletzt fokussierte Kachel dieser Reihe, sofern noch vorhanden (sonst entscheidet die Fokus-Engine).
+    private var rememberedRoute: Route? {
+        guard let id = focusMemory?.state.remembered(row: row.id.uuidString) else { return nil }
+        switch row.content {
+        case .collection(let c):
+            return model.collection(c)?.folders.first { "folder:\($0.id)" == id }.map { Route.folder($0) }
+        case .list:
+            return items.first { $0.id == id }.map(route(for:))
         }
     }
 
@@ -194,14 +212,14 @@ struct PosterCard: View {
     }
 }
 
-/// Aufgeklappter Inhalt: Hintergrundbild (1920 px wie der Hero → ein Download) + Logo (oder Titel). Existiert erst nach der Ruhezeit,
+/// Aufgeklappter Inhalt: Hintergrundbild (Größe nach Anzeige, ImageTarget) + Logo (oder Titel). Existiert erst nach der Ruhezeit,
 /// deshalb wird das Bild auch erst dann angefordert.
 private struct ExpandedPoster: View {
     let item: MetaPreview
     var body: some View {
         GeometryReader { g in
             ZStack(alignment: .bottomLeading) {
-                RemoteImage(url: item.background ?? item.poster, maxPixels: 1920)
+                RemoteImage(url: item.background ?? item.poster)
                     .frame(width: g.size.width, height: g.size.height).clipped()
                 LinearGradient(colors: [.black.opacity(0.75), .clear], startPoint: .bottom, endPoint: .center)
                 Group {
@@ -238,7 +256,7 @@ struct HeroCard: View {
     let item: MetaPreview
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            RemoteImage(url: item.background ?? item.poster, maxPixels: 1920).frame(width: 1600, height: 620).clipped()
+            RemoteImage(url: item.background ?? item.poster).frame(width: 1600, height: 620).clipped()
             LinearGradient(colors: [.black.opacity(0.85), .clear], startPoint: .bottom, endPoint: .center)
             VStack(alignment: .leading, spacing: 12) {
                 Text(item.name).font(.system(size: 64, weight: .heavy))

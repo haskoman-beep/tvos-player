@@ -7,7 +7,7 @@ struct PlayerApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView().environmentObject(model).task { DiskCacheProxy.cleanupAtLaunch(); await model.syncRemoteProgress() }
+            RootView().environmentObject(model).task { DiskCacheProxy.cleanupAtLaunch(); MainThreadWatchdog.apply(); await model.syncRemoteProgress() }
         }
     }
 }

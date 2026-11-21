@@ -8,6 +8,8 @@ public struct TimedCache<Value: Sendable>: Sendable {
         public var value: Value
         public var storedAt: Date
         public var failedAt: Date?
+        /// Aus dem Plattencache übernommen: beim ersten Zugriff einmal erneuern, auch wenn noch frisch.
+        public var restored = false
     }
 
     public var lifetime: TimeInterval
@@ -32,7 +34,7 @@ public struct TimedCache<Value: Sendable>: Sendable {
 
     /// Abgelaufen und nicht gerade erst fehlgeschlagen.
     public func needsRefresh(_ key: String, now: Date = Date()) -> Bool {
-        guard let e = entries[key], isStale(key, now: now) else { return false }
+        guard let e = entries[key], e.restored || isStale(key, now: now) else { return false }
         if let f = e.failedAt, now.timeIntervalSince(f) < retryAfter { return false }
         return true
     }
@@ -60,6 +62,15 @@ public struct TimedCache<Value: Sendable>: Sendable {
     }
 
     public mutating func removeAll() { entries.removeAll(); generation += 1 }
+
+    /// Gespeicherten Stand übernehmen (Plattencache beim Start). Überschreibt keinen vorhandenen Eintrag
+    /// und nichts nach einem Leeren seit `generation`. Der Eintrag gilt als erneuerungsbedürftig.
+    @discardableResult
+    public mutating func restore(_ value: Value, for key: String, storedAt: Date, generation: Int) -> Bool {
+        guard generation == self.generation, entries[key] == nil else { return false }
+        entries[key] = Entry(value: value, storedAt: storedAt, failedAt: nil, restored: true)
+        return true
+    }
 }
 
 public extension TimedCache where Value: Collection {

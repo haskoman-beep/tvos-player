@@ -61,7 +61,7 @@ struct DetailView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            RemoteImage(url: meta?.background ?? item.background, maxPixels: 1920).ignoresSafeArea().overlay(Color.black.opacity(0.55))
+            RemoteImage(url: meta?.background ?? item.background).ignoresSafeArea().overlay(Color.black.opacity(0.55))
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 28) {
                     if let logo = meta?.logo {
