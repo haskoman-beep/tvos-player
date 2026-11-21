@@ -21,11 +21,10 @@ final class AppModel: ObservableObject {
                                 resources: [AddonResource(name: "meta")], types: ["movie", "series"], idPrefixes: ["tt"]))
 
     init() {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Player", isDirectory: true)
-        store = ProfileStore(directory: dir)
+        let storage = DefaultsStorage()
+        store = ProfileStore(storage: storage)
         stored = store.load()
-        progressStore = ProgressStore(directory: dir)
+        progressStore = ProgressStore(storage: storage)
         progress = progressStore.load(profile: profile.id)
     }
 

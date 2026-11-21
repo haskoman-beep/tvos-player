@@ -95,20 +95,19 @@ public struct ProgressBook: Codable, Sendable, Equatable {
 
 /// Eine Datei pro Profil: progress-<id>.json (atomar).
 public struct ProgressStore: Sendable {
-    public let directory: URL
-    public init(directory: URL) { self.directory = directory }
-
-    public func fileURL(profile: UUID) -> URL { directory.appendingPathComponent("progress-\(profile.uuidString).json") }
+    public let storage: BlobStorage
+    public init(storage: BlobStorage) { self.storage = storage }
+    public init(directory: URL) { self.init(storage: FileBlobStorage(directory: directory)) }
+    func name(_ profile: UUID) -> String { "progress-\(profile.uuidString).json" }
 
     public func load(profile: UUID) -> ProgressBook {
-        guard let d = try? Data(contentsOf: fileURL(profile: profile)) else { return ProgressBook() }
+        guard let d = storage.read(name(profile)) else { return ProgressBook() }
         let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
         return (try? dec.decode(ProgressBook.self, from: d)) ?? ProgressBook()
     }
 
     public func save(_ book: ProgressBook, profile: UUID) throws {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
-        try enc.encode(book).write(to: fileURL(profile: profile), options: .atomic)
+        try storage.write(name(profile), try enc.encode(book))
     }
 }

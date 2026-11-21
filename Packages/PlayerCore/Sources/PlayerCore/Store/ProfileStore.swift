@@ -22,24 +22,24 @@ public enum StoreError: Error, Equatable { case newerSchema(Int), empty }
 
 /// Alle Profile in einer JSON-Datei, atomar geschrieben. Kaputte Dateien werden als `.bak` beiseitegelegt.
 public final class ProfileStore: @unchecked Sendable {
-    public let fileURL: URL
-    public var backupURL: URL { fileURL.appendingPathExtension("bak") }
+    public let storage: BlobStorage
+    static let name = "profiles.json"
 
-    public init(directory: URL) {
-        fileURL = directory.appendingPathComponent("profiles.json")
-    }
+    public init(storage: BlobStorage) { self.storage = storage }
+    /// Nur für Datei-Ablage (Tests).
+    var fileURL: URL { (storage as! FileBlobStorage).url(Self.name) }
+    var backupURL: URL { (storage as! FileBlobStorage).url(Self.name + ".bak") }
+    public convenience init(directory: URL) { self.init(storage: FileBlobStorage(directory: directory)) }
 
     public func load() -> StoredProfiles {
-        guard let data = try? Data(contentsOf: fileURL) else { return .makeDefault() }
+        guard let data = storage.read(Self.name) else { return .makeDefault() }
         if let s = try? Self.decode(data) { return s }
-        try? FileManager.default.removeItem(at: backupURL)
-        try? FileManager.default.copyItem(at: fileURL, to: backupURL)
+        try? storage.write(Self.name + ".bak", data)
         return .makeDefault()
     }
 
     public func save(_ s: StoredProfiles) throws {
-        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try exportData(s).write(to: fileURL, options: .atomic)
+        try storage.write(Self.name, try JSONEncoder().encode(s))
     }
 
     public func exportData(_ s: StoredProfiles) throws -> Data {
