@@ -114,7 +114,7 @@ struct HomeEditView: View {
             .onExitCommand { finish(nil) }
             .sheet(isPresented: $showAdd) {
                 AddRowSheet(options: editor.availableToAdd(collections: model.profile.collections,
-                                                           extraLists: [.continueWatching, .watchlist] + addonCatalogs)) { content in
+                                                           extraLists: [.continueWatching, .watchlist, .upcoming] + addonCatalogs)) { content in
                     showAdd = false
                     if let content {
                         editor.add(content)

@@ -183,3 +183,15 @@ public struct CardState: Sendable, Equatable {
         self.fraction = fraction; self.remainingSeconds = remainingSeconds; self.watched = watched; self.episode = episode
     }
 }
+
+extension ProgressBook {
+    /// Verlauf (Spec §7a.5): gesehene Einträge, neueste zuerst, eine Kachel pro Titel.
+    public func history(limit: Int = 50) -> [WatchProgress] {
+        var seen = Set<String>()
+        return entries.values
+            .filter { $0.finished }
+            .sorted { $0.updated > $1.updated }
+            .filter { seen.insert($0.item.id).inserted }
+            .prefix(limit).map { $0 }
+    }
+}

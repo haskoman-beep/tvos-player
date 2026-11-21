@@ -54,13 +54,13 @@ public struct Appearance: Codable, Sendable, Hashable {
 
 extension HomeLayout {
     /// Reihe, deren Titel im Hero laufen: explizit gewählt, sonst erste Hero-Reihe,
-    /// sonst erste Liste außer Weiterschauen; nil, wenn der Hero aus ist.
+    /// sonst erste Liste außer Weiterschauen und „Heute neu“; nil, wenn der Hero aus ist.
     public func heroSource(_ a: Appearance) -> HomeRow? {
         guard a.heroEnabled else { return nil }
         if let id = a.heroRowID, let r = rows.first(where: { $0.id == id }) { return r }
         if let r = rows.first(where: { $0.style == .hero }) { return r }
         return rows.first { row in
-            if case .list(let s) = row.content, s.kind != .continueWatching { return true }
+            if case .list(let s) = row.content, s.kind != .continueWatching, s.kind != .upcoming { return true }
             return false
         }
     }

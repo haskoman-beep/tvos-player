@@ -267,6 +267,7 @@ final class AppModel: ObservableObject {
 
     func items(_ source: CatalogSource) async -> [MetaPreview] {
         if case .continueWatching = source.kind { return progress.continueWatching().map(\.item) }
+        if case .upcoming = source.kind { return await upcomingToday() }   // eigener 6-h-Cache (AppModel+Upcoming)
         if let c = cache[source.id] { return c }
         var out: [MetaPreview] = []
         do {
