@@ -37,7 +37,8 @@ struct PlayerScreen: View {
                                                        onNextSoon: {
                                                            guard let n = request.nextRequest else { return }
                                                            Task { _ = await model.streams(type: n.type, id: n.id) }
-                                                       }) }
+                                                       },
+                                                       addonSubtitles: { await model.addonSubtitles(for: request, enabled: !isTrailer) }) }
             else { Text(initError ?? "Player wird gestartet …") }
         }
         .onDisappear { if !isTrailer { model.endPlayback(request) } }
@@ -68,6 +69,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
     var nextTitle: String? = nil
     /// Kurz vor Ende: Quellen der nächsten Folge vorab holen.
     var onNextSoon: () -> Void = {}
+    /// Untertitel aus Addons holen (nil = keine; Ergebnis nil = kein Untertitel-Addon installiert).
+    var addonSubtitles: (@MainActor () async -> [AddonSubtitle]?)? = nil
     @State private var upNext: Int?
     @State private var upNextCancelled = false
     @State private var nextPrefetched = false
@@ -159,6 +162,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                 } else {
                     engine.selectSubtitle(nil)
                 }
+                Task { await loadAddonSubtitles() }
                 RemoteLog.info("player", "Spielt · Tonspur \(engine.activeAudioID.map(String.init) ?? "-") · UT \(engine.activeSubtitleID.map(String.init) ?? "aus")")
                 engine.play()
                 poke()
