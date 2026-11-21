@@ -282,7 +282,7 @@ final class AppModel: ObservableObject {
                 out = try await trakt.list(user: user, slug: list, token: await token("trakt"))
             case .watchlist:
                 out = try await watchlistItems()
-            case .continueWatching:
+            case .continueWatching, .upcoming:
                 out = []
             }
         } catch { RemoteLog.error("katalog", "\(source.title): \(error)"); return [] }

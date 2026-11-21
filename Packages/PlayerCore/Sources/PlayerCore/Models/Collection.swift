@@ -14,6 +14,8 @@ public enum SourceKind: Codable, Sendable, Hashable {
     case addon(addonId: String, catalogId: String, type: String)
     case continueWatching
     case watchlist
+    /// Heute neu erschienene Folgen (Kalender).
+    case upcoming
 }
 
 /// Eine Titelliste (eine Startseiten-Reihe vom Typ "Liste").
@@ -31,6 +33,7 @@ public struct CatalogSource: Codable, Sendable, Hashable, Identifiable {
 
     public static let continueWatching = CatalogSource(id: "builtin.continue", title: "Weiterschauen", kind: .continueWatching, mediaType: .both)
     public static let watchlist = CatalogSource(id: "builtin.watchlist", title: "Merkliste", kind: .watchlist, mediaType: .both)
+    public static let upcoming = CatalogSource(id: "builtin.upcoming", title: "Heute neu", kind: .upcoming, mediaType: .series)
 }
 
 public struct Folder: Codable, Sendable, Hashable, Identifiable {

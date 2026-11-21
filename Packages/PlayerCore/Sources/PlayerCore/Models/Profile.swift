@@ -23,21 +23,24 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     public var autoplayNext: Bool
     /// Anmeldungen bei "trakt" / "simkl".
     public var syncTokens: [String: SyncToken]
+    /// Aussehen (Navigation, Akzent, Kachelgröße, Hero).
+    public var appearance: Appearance
 
     public init(id: UUID = UUID(), name: String, language: AppLanguage = .de, audioPriority: [String] = ["de", "en", "orig"],
                 subtitlesEnabled: Bool = false, subtitleLanguage: String = "de", progressSource: ProgressSource = .local,
                 addons: [InstalledAddon] = [], collections: [MediaCollection] = [], home: HomeLayout = HomeLayout(),
-                apiKeys: [String: String] = [:], autoplayNext: Bool = true, syncTokens: [String: SyncToken] = [:]) {
+                apiKeys: [String: String] = [:], autoplayNext: Bool = true, syncTokens: [String: SyncToken] = [:],
+                appearance: Appearance = Appearance()) {
         self.id = id; self.name = name; self.language = language; self.audioPriority = audioPriority
         self.subtitlesEnabled = subtitlesEnabled; self.subtitleLanguage = subtitleLanguage
         self.progressSource = progressSource; self.addons = addons; self.collections = collections
         self.home = home; self.apiKeys = apiKeys; self.autoplayNext = autoplayNext
-        self.syncTokens = syncTokens
+        self.syncTokens = syncTokens; self.appearance = appearance
     }
 
     enum CodingKeys: String, CodingKey {
         case id, name, language, audioPriority, subtitlesEnabled, subtitleLanguage, progressSource
-        case addons, collections, home, apiKeys, autoplayNext, syncTokens
+        case addons, collections, home, apiKeys, autoplayNext, syncTokens, appearance
     }
 
     /// Fehlende Felder (ältere Sicherungen, neue Einstellungen) bekommen Standardwerte statt das Profil zu verwerfen.
@@ -57,6 +60,7 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         apiKeys = try c.decodeIfPresent([String: String].self, forKey: .apiKeys) ?? [:]
         autoplayNext = try c.decodeIfPresent(Bool.self, forKey: .autoplayNext) ?? d.autoplayNext
         syncTokens = try c.decodeIfPresent([String: SyncToken].self, forKey: .syncTokens) ?? [:]
+        appearance = try c.decodeIfPresent(Appearance.self, forKey: .appearance) ?? d.appearance
     }
 
     public static func makeDefault(name: String = "Ich") -> Profile {
