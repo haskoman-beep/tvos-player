@@ -97,6 +97,7 @@ extension PlayerControls {
         // Welle D-a: Text-Untertitel selbst laden und nach UTF-8 umwandeln (CP1252, UTF-16, BOM, „Ã¤“);
         // geht das nicht, bekommt die Engine die Adresse. `addonTrackURLs` behält die Addon-Adresse.
         let local = await AddonSubtitleFiles.prepare(picked.filter { !presentURLs.contains($0.url) })
+        guard !Task.isCancelled, !leaving else { return }
         for (sub, name) in zip(picked, AddonSubtitlePlan.trackNames(picked)) where !presentURLs.contains(sub.url) {
             guard !Task.isCancelled else { return }
             guard let url = local[sub.url] ?? URL(string: sub.url),

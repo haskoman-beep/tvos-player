@@ -120,8 +120,11 @@ final class AetherBackend: PlaybackEngine {
     init() throws {
         engine = try AetherEngine()
         bag = engine.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
-        // Kein Untertitel-Versatz in der App: ohne Vorlauf-Reichweite liest die Engine eine Fernquelle
-        // nicht ein zweites Mal für Cues voraus (AetherEngine-Doku „Cue retention“, AE#1015).
+        // Keine feste Vorlauf-Reichweite: ohne Versatz liest die Engine eine Fernquelle nicht ein zweites Mal für
+        // Cues voraus (AetherEngine-Doku „Cue retention“, AE#1015). Der Untertitel-Versatz im Spur-Panel (Welle D-a,
+        // PlayerPictureSound.swift) setzt `setSoftwareSubtitleDelay`: ein negativer Wert (früher) startet bei
+        // eingebetteten Spuren dieses Vorauslesen doch – nur von Hand (Hinweis im Panel, Log), aus dem
+        // Spur-Gedächtnis nur bei externen/Addon-Spuren.
         engine.maximumSubtitleOffsetSeconds = 0
         Self.installEngineLog()
         // Eingebaute Zusatzteile der Engine (Paket-Traits, gesetzt in Packages/AetherFEL); erwartet: DolbyVisionFelCurves.

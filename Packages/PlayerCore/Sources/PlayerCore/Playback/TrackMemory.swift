@@ -100,7 +100,11 @@ public enum TrackMemoryPlan {
         /// Nichts gemerkt oder Spur fehlt: Automatik (SubtitlePicker) entscheidet.
         case automatic
         case off
+        /// Genauer Treffer: gleiche Sprache und gleiche Art (erzwungen/voll, SDH) – gilt wie eine Nutzerwahl.
         case track(Int)
+        /// Nur gleiche Sprache, andere Art (z. B. nur „erzwungen“ statt voll): automatisch wählen und auf eine
+        /// passende (Addon-)Spur warten, die später noch kommt.
+        case fallback(Int)
     }
 
     /// Untertitel nach der gemerkten Wahl: gleiche Sprache, möglichst gleiche Art (erzwungen, SDH), nie Kommentar,
@@ -119,7 +123,8 @@ public enum TrackMemoryPlan {
             // Bei gleicher Wertung die erste Spur (stabile Wahl).
             var best = matching[0]
             for t in matching.dropFirst() where score(t) > score(best) { best = t }
-            return .track(best.id)
+            let exact = best.isForced == forced && best.isHearingImpaired == sdh
+            return exact ? .track(best.id) : .fallback(best.id)
         }
     }
 

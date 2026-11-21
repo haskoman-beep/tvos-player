@@ -264,7 +264,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             if tick % 10 == 0 && engine.isPlaying { saveProgress() }
             upNextTick()
             stabilityTick(blocked: failureNotice != nil || loadError != nil)
-            idleTick()
+            idleTick(failed: failureNotice != nil || loadError != nil)
         }
         .onChange(of: engine.loadActivity.hasFirstFrame) { _, f in if f { stabilityFirstFrame() } }
         .onChange(of: stability.isOnline) { _, on in stabilityNetworkChanged(on) }
@@ -274,7 +274,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                          canScrub: { !leaving && !showTracks && upNext == nil && skip.prompt == nil && failureNotice == nil
                                      && !restorePending && !restoring && engine.duration > 0 && engine.errorText == nil },
                          edges: { SkipSegments.snapEdges(skip.segments) + engine.chapterMarks.map(\.start) })
-            idleTick()
+            idleTick(failed: failureNotice != nil || loadError != nil)
             guard loadTask == nil else { return }
             loadTask = Task { await loadAndStart() }
         }

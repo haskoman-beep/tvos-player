@@ -112,9 +112,52 @@ private let srtUTF8 = "1\n00:00:01,000 --> 00:00:02,000\nSchöne Grüße aus Kö
 @Test func charsetKeepsRealCapitalUmlautsAndSymbols() {
     let text = "Ärger mit Öl? Ä« nein. Ü-Wagen, Größe 2°C, Café © 2024"
     let d = SubtitleCharset.decode(Data(text.utf8))
-    // Bekannte Grenze: „Ä«“ (CP1252 C4 AB) ist zugleich UTF-8 für „ī“ und wird ersetzt; kommt im echten Text kaum vor.
-    #expect(d.text.hasPrefix("Ärger mit Öl? "))
-    #expect(d.text.hasSuffix("Ü-Wagen, Größe 2°C, Café © 2024"))
+    #expect(d.text == text)
+    #expect(d.repaired == 0)
+}
+
+/// Echter deutscher Text mit „…“, „“, »« direkt nach ß/Ä/Ü (Review I1), in UTF-8 und in CP1252.
+@Test func charsetKeepsGermanTypography() {
+    let lines = ["Ich weiß…", "Das macht „Spaß“", "»Spaß«", "„Ä…“", "Ü… nein", "Grüße – „Straße“"]
+    let cp1252: [String: [UInt8]] = [
+        "Ich weiß…": [0x49, 0x63, 0x68, 0x20, 0x77, 0x65, 0x69, 0xDF, 0x85],
+        "Das macht „Spaß“": [0x44, 0x61, 0x73, 0x20, 0x6D, 0x61, 0x63, 0x68, 0x74, 0x20, 0x84, 0x53, 0x70, 0x61, 0xDF, 0x93],
+        "»Spaß«": [0xBB, 0x53, 0x70, 0x61, 0xDF, 0xAB],
+        "„Ä…“": [0x84, 0xC4, 0x85, 0x93],
+    ]
+    for l in lines {
+        let d = SubtitleCharset.decode(Data(l.utf8))
+        #expect(d.text == l)
+        #expect(d.repaired == 0)
+    }
+    let all = lines.joined(separator: "\n")
+    #expect(SubtitleCharset.decode(Data(all.utf8)).text == all)
+    // CP1252-Datei: einzelne Zeilen wie „weiß…“ (DF 85) sind zufällig gültiges UTF-8; eine echte Datei enthält
+    // weitere Umlaute („für“ = 66 FC 72), die kein UTF-8 sind. Deshalb als ganze Datei prüfen.
+    var file: [UInt8] = [0x66, 0xFC, 0x72, 0x0A]
+    var expected = "für\n"
+    for (l, bytes) in cp1252.sorted(by: { $0.key < $1.key }) { file += bytes + [0x0A]; expected += l + "\n" }
+    let d = SubtitleCharset.decode(Data(file))
+    #expect(d.source == .cp1252)
+    #expect(d.text == expected)
+    #expect(d.repaired == 0)
+}
+
+@Test func charsetRepairNeedsTypicalHits() {
+    // Ein einzelnes „Ã¼“ in sonst gültigem UTF-8 reicht nicht (könnte echt sein); zwei typische Treffer schon.
+    #expect(SubtitleCharset.decode(Data("Ã¼".utf8)).repaired == 0)
+    #expect(SubtitleCharset.decode(Data("GrÃ¼ÃŸe".utf8)).text == "Grüße")
+    // Echtes Mojibake mit „…“ und „ß“ daneben: repariert wird nur das Mojibake.
+    let d = SubtitleCharset.decode(Data("Ich weiÃŸâ€¦ KÃ¶ln".utf8))
+    #expect(d.text == "Ich weiß… Köln")
+    #expect(d.repaired == 3)
+}
+
+@Test func charsetRepairsLatin1Mojibake() {
+    // UTF-8 einmal als ISO-8859-1 gelesen: ß = C3 9F → „Ã\u{9F}“, Ä = C3 84 → „Ã\u{84}“ (C1-Steuerzeichen, Review M4).
+    let d = SubtitleCharset.decode(Data("Stra\u{C3}\u{9F}e, \u{C3}\u{84}rger".utf8))
+    #expect(d.text == "Straße, Ärger")
+    #expect(d.repaired == 2)
 }
 
 // MARK: Bildschirmschoner
@@ -177,6 +220,13 @@ private func tr(_ id: Int, _ lang: String?, forced: Bool = false, sdh: Bool = fa
     #expect(TrackMemoryPlan.subtitle(TrackMemory(subtitle: .language("de", forced: true, hearingImpaired: false)), tracks: subs) == .track(10))
     #expect(TrackMemoryPlan.subtitle(TrackMemory(subtitle: .language("en", forced: false, hearingImpaired: false)), tracks: subs) == .track(14))
     #expect(TrackMemoryPlan.subtitle(TrackMemory(subtitle: .language("fr", forced: false, hearingImpaired: false)), tracks: subs) == .automatic)
+    // Review I2: nur andere Art da → Ersatz (automatisch), nicht als Nutzerwahl.
+    let onlyForced = [tr(20, "ger", forced: true), tr(21, "eng")]
+    #expect(TrackMemoryPlan.subtitle(TrackMemory(subtitle: .language("de", forced: false, hearingImpaired: false)), tracks: onlyForced) == .fallback(20))
+    #expect(TrackMemoryPlan.subtitle(TrackMemory(subtitle: .language("en", forced: false, hearingImpaired: true)), tracks: onlyForced) == .fallback(21))
+    // Später geladene volle Addon-Spur ist dann ein genauer Treffer.
+    let withAddon = onlyForced + [tr(22, "ger", ext: true)]
+    #expect(TrackMemoryPlan.subtitle(TrackMemory(subtitle: .language("de", forced: false, hearingImpaired: false)), tracks: withAddon) == .track(22))
     #expect(TrackMemoryPlan.choice(for: nil) == .off)
     #expect(TrackMemoryPlan.choice(for: tr(1, "eng", sdh: true)) == .language("en", forced: false, hearingImpaired: true))
     #expect(TrackMemoryPlan.choice(for: tr(1, nil)) == nil)

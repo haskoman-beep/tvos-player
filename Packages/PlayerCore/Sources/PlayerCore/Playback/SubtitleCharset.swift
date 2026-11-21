@@ -2,9 +2,9 @@ import Foundation
 
 /// Zeichensatz von Addon-Untertiteln erkennen und nach UTF-8 umwandeln (Welle D-a).
 ///
-/// Reihenfolge: BOM (UTF-8, UTF-16 LE/BE) → gültiges UTF-8 → UTF-16 ohne BOM (Nullbytes) → CP1252
+/// Reihenfolge: BOM (UTF-8, UTF-16 LE/BE) → UTF-16 ohne BOM (Nullbytes) → gültiges UTF-8 → CP1252
 /// (umfasst ISO-8859-1 für alle druckbaren Zeichen). Danach werden doppelt kodierte Zeichen repariert
-/// („Ã¤“ → „ä“, „â€ž“ → „„“): Folgen, die als UTF-8-Bytes gelesen in CP1252 angezeigt wurden.
+/// („Ã¤“ → „ä“, „â€ž“ → „„“), nur bei genug typischen Treffern in der Datei (siehe `repairMojibake`).
 /// Ergebnis ist immer UTF-8 ohne BOM.
 public enum SubtitleCharset {
     public enum Source: String, Sendable, Equatable {
@@ -24,7 +24,7 @@ public enum SubtitleCharset {
     public static func decode(_ data: Data) -> Decoded {
         let bytes = [UInt8](data)
         let (raw, source) = detect(bytes)
-        let (fixed, n) = repairMojibake(raw)
+        let (fixed, n) = repairMojibake(raw, minimumHits: source == .cp1252 ? 1 : 2)
         return Decoded(text: fixed, source: source, repaired: n)
     }
 
@@ -107,28 +107,51 @@ public enum SubtitleCharset {
         return String(scalars)
     }
 
+    /// Zeichen → Byte, wie es ein CP1252- oder ISO-8859-1-Leser erzeugt hätte (C1-Steuerzeichen U+0080–U+009F
+    /// stammen aus einer Latin-1-Lesart und stehen direkt für ihr Byte).
     static func cp1252Byte(_ s: Unicode.Scalar) -> UInt8? {
         let v = s.value
-        if v < 0x80 || (0xA0...0xFF).contains(v) { return UInt8(v) }
+        if v <= 0xFF { return UInt8(v) }
         return cp1252Reverse[v]
     }
 
     // MARK: Doppelt kodiert
 
-    /// Ersetzt Folgen aus Startbyte (0xC2–0xF4) und passenden Folgebytes (0x80–0xBF), jeweils als CP1252-Zeichen
-    /// gelesen, durch das eigentliche Zeichen. Einzelne „Ä“, „Ö“, „ß“ im richtigen Text bleiben stehen,
-    /// weil ihnen kein Folgebyte-Zeichen folgt.
-    static func repairMojibake(_ text: String) -> (String, Int) {
+    /// Erlaubte Startzeichen: „Â“ (C2: «, °, NBSP …), „Ã“ (C3: alle Umlaute, ß, é …), „Å“ (C5: Œ, Š, Ÿ …),
+    /// „â“ (E2: „ “ ” – … €). Andere Startbytes (z. B. „ß“ = DF, „Ä“ = C4) kommen in echtem deutschem Text vor
+    /// („weiß…“, „Spaß“, »Spaß«, „Ä…“) und werden nie angefasst.
+    static let mojibakeLeads: Set<UInt8> = [0xC2, 0xC3, 0xC5, 0xE2]
+    /// Typische zweite Zeichen nach „Ã“ (ä ö ü ß Ä Ö Ü é è à ç á, als CP1252 und als Latin-1/C1 gelesen).
+    static let typicalAfterA: Set<UInt32> = [0xA4, 0xB6, 0xBC, 0x178, 0x9F, 0x201E, 0x84, 0x2013, 0x96, 0x153, 0x9C,
+                                              0xA9, 0xA8, 0xA0, 0xA7, 0xA1]
+
+    /// Typische Treffer in der ganzen Datei: „Ã“ + typisches Zeichen oder „â€“ / „â\u{80}“.
+    static func typicalMojibakeHits(_ scalars: [Unicode.Scalar]) -> Int {
+        var n = 0
+        var i = 0
+        while i + 1 < scalars.count {
+            let a = scalars[i].value, b = scalars[i + 1].value
+            if a == 0xC3, typicalAfterA.contains(b) { n += 1; i += 2; continue }
+            if a == 0xE2, b == 0x20AC || b == 0x80 { n += 1; i += 2; continue }
+            i += 1
+        }
+        return n
+    }
+
+    /// Ersetzt Folgen aus erlaubtem Startzeichen (`mojibakeLeads`) und passenden Folgebytes (0x80–0xBF), jeweils als
+    /// CP1252-/Latin-1-Zeichen gelesen, durch das eigentliche Zeichen – aber nur, wenn die Datei mindestens
+    /// `minimumHits` typische Treffer hat. Gültiger Text ohne solche Treffer bleibt unverändert.
+    static func repairMojibake(_ text: String, minimumHits: Int = 2) -> (String, Int) {
         let scalars = Array(text.unicodeScalars)
-        // Schnell raus: ohne mögliches Startbyte nichts zu tun.
-        guard scalars.contains(where: { (0xC2...0xF4).contains($0.value) }) else { return (text, 0) }
+        guard typicalMojibakeHits(scalars) >= max(1, minimumHits) else { return (text, 0) }
         var out = String.UnicodeScalarView()
         out.reserveCapacity(scalars.count)
         var fixed = 0
         var i = 0
         while i < scalars.count {
             let s = scalars[i]
-            if let lead = cp1252Byte(s), let need = continuationCount(lead), i + need < scalars.count {
+            if let lead = cp1252Byte(s), mojibakeLeads.contains(lead), let need = continuationCount(lead),
+               i + need < scalars.count {
                 var seq = [lead]
                 for k in 1...need {
                     guard let c = cp1252Byte(scalars[i + k]), (0x80...0xBF).contains(c) else { break }

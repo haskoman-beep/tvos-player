@@ -240,7 +240,8 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
             }
             Text(active?.isNativelyRendered == true
                  ? "Diese Spur zeichnet das System: der Versatz wirkt hier nicht."
-                 : SubtitleOffset.hint(value))
+                 : SubtitleOffset.hint(value) + (value < 0 && active?.isExternal != true
+                                                  ? " · Früher anzeigen lädt den Film teils doppelt" : ""))
                 .font(.caption).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 16).padding(.bottom, 12)
@@ -250,7 +251,9 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
         let n = SubtitleOffset.normalized(v)
         guard n != engine.subtitleOffset else { return }
         engine.setSubtitleOffset(n)
-        RemoteLog.info("player", "UT-Versatz: \(SubtitleOffset.label(n))")
+        let embedded = engine.subtitleTracks.first { $0.id == engine.activeSubtitleID }?.isExternal != true
+        RemoteLog.info("player", "UT-Versatz: \(SubtitleOffset.label(n))"
+                       + (n < 0 && embedded ? " · Vorauslesen der Engine aktiv (Fernquelle wird teils doppelt geladen)" : ""))
         onRemember?(.offset(n))
     }
 

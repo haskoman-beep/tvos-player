@@ -48,8 +48,14 @@ enum PlayerIdleTimer {
 
 extension PlayerControls {
     /// Jede Sekunde (und beim Erscheinen): Spielen, Laden, Nachpuffern sperren; Pause nur bis zur Grenze aus dem Profil.
-    func idleTick() {
+    /// `failed`: Fehlerbildschirm (Ladefehler, „Erneut versuchen“) – keine Pause, Schoner frei (wie bei Engine-Fehler).
+    func idleTick(failed: Bool) {
         guard !leaving else { releaseIdleTimer(); return }
+        if failed || engine.errorText != nil {
+            idle.reset()
+            PlayerIdleTimer.set(false, token: idleToken)
+            return
+        }
         idle.pauseLimitMinutes = profile.player.screensaverPauseMinutes
         let busy = engine.isPlaying || engine.isLoading || engine.loadActivity.buffering || stab.loadInFlight || restoring
         PlayerIdleTimer.set(idle.update(busy: busy), token: idleToken)
@@ -74,16 +80,14 @@ extension PlayerControls {
     }
 
     /// Gemerkter Versatz und Untertitel beim Start. true = Untertitel festgelegt (dann keine Automatik).
-    /// Fehlt die gemerkte Sprache noch, versucht es der Addon-Loader nach dem Hinzufügen erneut.
+    /// Nur ein genauer Treffer (Sprache und Art) gilt als Nutzerwahl; ein Ersatz wird automatisch gewählt und
+    /// der Addon-Loader sucht nach dem Hinzufügen weiter nach der genauen Spur.
     func applyRememberedSubtitles() -> Bool {
         guard let m = trackMemory else { return false }
-        if let o = m.subtitleOffset, o != 0 {
-            engine.setSubtitleOffset(o)
-            RemoteLog.info("player", "UT-Versatz aus Spur-Gedächtnis: \(SubtitleOffset.label(o))")
-        }
         switch TrackMemoryPlan.subtitle(m, tracks: engine.subtitleTracks) {
         case .automatic:
             subtitleMemoryPending = m.subtitle != nil
+            applyRememberedOffset(m, track: nil)
             return false
         case .off:
             engine.selectSubtitle(nil)
@@ -92,8 +96,31 @@ extension PlayerControls {
         case .track(let id):
             engine.selectSubtitle(id)
             RemoteLog.info("player", "UT aus Spur-Gedächtnis: \(id)")
+            applyRememberedOffset(m, track: id)
+            return true
+        case .fallback(let id):
+            engine.autoSelectSubtitle(id)
+            subtitleMemoryPending = true
+            RemoteLog.info("player", "UT aus Spur-Gedächtnis ersatzweise: \(id) (andere Art, warte auf Addon)")
+            applyRememberedOffset(m, track: id)
             return true
         }
+    }
+
+    /// Gemerkter Versatz. Negativ (früher) nur für externe/Addon-Spuren: bei eingebetteten Spuren liest die Engine
+    /// dafür eine Fernquelle ein zweites Mal voraus (doppelte Bandbreite) – das nur, wenn der Nutzer es selbst einstellt.
+    /// Beim Wechsel auf eine Addon-Spur holt der Addon-Loader einen zurückgehaltenen Wert nach.
+    func applyRememberedOffset(_ m: TrackMemory?, track id: Int?) {
+        guard let o = m?.subtitleOffset, o != 0, o != engine.subtitleOffset else { return }
+        if o < 0 {
+            let track = engine.subtitleTracks.first { $0.id == id }
+            guard track?.isExternal == true else {
+                RemoteLog.info("player", "UT-Versatz \(SubtitleOffset.label(o)) aus Spur-Gedächtnis nicht übernommen (eingebettete Spur)")
+                return
+            }
+        }
+        engine.setSubtitleOffset(o)
+        RemoteLog.info("player", "UT-Versatz aus Spur-Gedächtnis: \(SubtitleOffset.label(o))")
     }
 
     /// Nach dem Hinzufügen von Addon-Untertiteln: gemerkte Sprache jetzt da? true = gewählt.
@@ -103,6 +130,7 @@ extension PlayerControls {
         subtitleMemoryPending = false
         engine.selectSubtitle(id)
         RemoteLog.info("player", "Addon-UT aus Spur-Gedächtnis: \(id)")
+        applyRememberedOffset(trackMemory, track: id)
         return true
     }
 }
@@ -123,6 +151,8 @@ enum AddonSubtitleFiles {
     static let textFormats: Set<String> = ["srt", "vtt", "ass", "ssa"]
     static let maxBytes = 5 * 1024 * 1024
     static let timeout: TimeInterval = 10
+    /// Gesamtfrist je Datei (timeoutInterval ist nur Leerlauf).
+    static let deadline: TimeInterval = 15
     /// Dateien in Caches/AddonSubtitles; ältere als 24 h räumt der erste Aufruf je App-Start weg.
     @MainActor private static var cleaned = false
 
@@ -162,11 +192,9 @@ enum AddonSubtitleFiles {
         var r = URLRequest(url: url, timeoutInterval: timeout)
         r.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
         do {
-            let (data, resp) = try await URLSession.shared.data(for: r)
-            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                return (address, nil, "HTTP \((resp as? HTTPURLResponse)?.statusCode ?? -1)")
-            }
-            guard !data.isEmpty, data.count <= maxBytes else { return (address, nil, "Größe \(data.count) B") }
+            let data: Data
+            do { data = try await download(r) } catch let e as DownloadError { return (address, nil, e.note) }
+            guard !data.isEmpty else { return (address, nil, "leer") }
             // Gepackt (gzip/zip): nicht anfassen, die Engine bekommt die Adresse.
             if data.starts(with: [0x1F, 0x8B]) || data.starts(with: [0x50, 0x4B]) { return (address, nil, "gepackt") }
             let decoded = SubtitleCharset.decode(data)
@@ -178,6 +206,43 @@ enum AddonSubtitleFiles {
             return (address, file, plain ? nil : decoded.logText)
         } catch {
             return (address, nil, Task.isCancelled ? nil : "Fehler \(LogRedact.text("\(error)"))")
+        }
+    }
+
+    enum DownloadError: Error {
+        case status(Int), tooLarge(Int64), timeout
+        var note: String {
+            switch self {
+            case .status(let c): "HTTP \(c)"
+            case .tooLarge(let n): "zu groß (\(n) B)"
+            case .timeout: "Frist \(Int(AddonSubtitleFiles.deadline)) s"
+            }
+        }
+    }
+
+    /// Körper mit Bytezähler (Abbruch über `maxBytes`, auch bei falscher oder fehlender Längenangabe) und Gesamtfrist.
+    nonisolated static func download(_ r: URLRequest) async throws -> Data {
+        try await withThrowingTaskGroup(of: Data?.self) { group in
+            group.addTask {
+                let (stream, resp) = try await URLSession.shared.bytes(for: r)
+                let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
+                guard (200..<300).contains(code) else { throw DownloadError.status(code) }
+                if resp.expectedContentLength > Int64(maxBytes) { throw DownloadError.tooLarge(resp.expectedContentLength) }
+                var data = Data()
+                if resp.expectedContentLength > 0 { data.reserveCapacity(Int(resp.expectedContentLength)) }
+                for try await b in stream {
+                    data.append(b)
+                    if data.count > maxBytes { throw DownloadError.tooLarge(Int64(data.count)) }
+                }
+                return data
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(deadline * 1_000_000_000))
+                return nil
+            }
+            defer { group.cancelAll() }
+            guard let first = try await group.next(), let data = first else { throw DownloadError.timeout }
+            return data
         }
     }
 
