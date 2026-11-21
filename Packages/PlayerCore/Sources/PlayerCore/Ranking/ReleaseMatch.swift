@@ -32,7 +32,7 @@ public struct ReleaseProfile: Equatable, Sendable {
         if let group, name.flatMap(ReleaseName.group) == group { p += 1000; anchored = true }
         if let pattern, name.flatMap(ReleaseName.pattern) == pattern { p += 800; anchored = true }
         let t = StreamTraits.parse(s)
-        if !traits.languages.isEmpty, Set(traits.languages) == Set(t.languages) { p += 250 }
+        if !requiredLanguages.isEmpty, coversLanguages(t) { p += 250 }
         if let r = traits.resolution, t.resolution == r { p += 150; anchored = true }
         if !traits.hdr.isEmpty {
             if traits.hdr.contains("DV") == t.hdr.contains("DV") { p += 60 }
@@ -49,18 +49,30 @@ public struct ReleaseProfile: Equatable, Sendable {
 
     /// Punkte allein (Log/Tests).
     public func score(_ s: StreamItem, addon: String?) -> Int { match(s, addon: addon).score }
+
+    /// Sprachen der laufenden Quelle ohne „multi“ (ein Multi-Release mit Deutsch passt zu einer deutschen Quelle).
+    public var requiredLanguages: Set<String> { Set(traits.languages).subtracting(["multi"]) }
+
+    /// Quelle enthält alle Sprachen der laufenden Quelle (mehr Sprachen sind erlaubt).
+    public func coversLanguages(_ t: StreamTraits) -> Bool { requiredLanguages.isSubset(of: Set(t.languages)) }
 }
 
-/// Quelle für die nächste Folge. Reihenfolge: gleiche `bingeGroup` (Stremio) → höchste Release-Nähe unter den Quellen
-/// mit gleicher Gruppe, gleichem Muster oder gleicher Auflösung → bestehende Sortierung (erste Quelle).
-/// Sicher nicht gecachte Quellen nur, wenn es sonst keine gibt. Gleichstand: Listenreihenfolge.
+/// Quelle für die nächste Folge. Reihenfolge: gleiche `bingeGroup` (Stremio) → nur Quellen mit allen Sprachen der
+/// laufenden Quelle (falls es welche gibt) → darin höchste Release-Nähe unter den Quellen mit gleicher Gruppe, gleichem
+/// Muster oder gleicher Auflösung → erste Quelle (der Sprachauswahl). Sicher nicht gecachte Quellen nur, wenn es sonst
+/// keine gibt. Gleichstand: Listenreihenfolge.
 public func nextEpisodeStream(_ streams: [(addon: String, stream: StreamItem)], matching ref: ReleaseProfile?) -> StreamItem? {
     let ok = Set(playableStreams(streams.map(\.stream)).map(\.id))
     let all = streams.filter { ok.contains($0.stream.id) }
     let ready = all.filter { StreamTraits.parse($0.stream).cached != false }
-    let pool = ready.isEmpty ? all : ready
+    var pool = ready.isEmpty ? all : ready
     guard let ref else { return pool.first?.stream }
     if let g = ref.bingeGroup, let same = pool.first(where: { $0.stream.behaviorHints?.bingeGroup == g }) { return same.stream }
+    // Sprache vor Listenreihenfolge: eine deutsche Folge geht deutsch weiter, wenn es irgendeine deutsche Quelle gibt.
+    if !ref.requiredLanguages.isEmpty {
+        let lang = pool.filter { ref.coversLanguages(StreamTraits.parse($0.stream)) }
+        if !lang.isEmpty { pool = lang }
+    }
     var best: (score: Int, stream: StreamItem)?
     for e in pool {
         let m = ref.match(e.stream, addon: e.addon)
@@ -135,17 +147,16 @@ enum ReleaseName {
     private static let services: [(code: String, names: [String])] = [
         ("TB", ["TORBOX"]), ("RD", ["REAL-DEBRID", "REALDEBRID"]), ("AD", ["ALLDEBRID"]), ("PM", ["PREMIUMIZE"]),
         ("DL", ["DEBRID-LINK", "DEBRIDLINK"]), ("ED", ["EASYDEBRID"]), ("OC", ["OFFCLOUD"]), ("PKP", ["PIKPAK"]),
-        ("NZB", ["USENET", "EASYNEWS"]), ("EN", []),
+        ("NZB", ["USENET", "EASYNEWS"]),
     ]
 
     /// Dienst aus dem Quellennamen ("[TB⚡] …", "[RD+]", "TorBox …"). Kurzzeichen nur als ganzes Wort mit "+", "⚡",
-    /// "⏳" oder "]" dahinter (nicht "CACHED+", nicht "WEB-DL"); "EN" nur als Klammer-Token "[EN]", "[EN+]", "[EN⚡]".
+    /// "⏳" oder "]" dahinter (nicht "CACHED+", nicht "WEB-DL"). "[EN]" ist ein Sprach-Etikett, kein Dienst.
     static func service(_ s: StreamItem) -> String? {
         let up = (s.name ?? "").uppercased()
         for (code, names) in services {
-            let lead = code == "EN" ? #"\["# : #"(^|[^A-Z0-9])"#
-            if up.range(of: lead + code + #"(\+|⚡|⏳|\])"#, options: .regularExpression) != nil
-                || names.contains(where: { up.contains($0) }) { return code == "EN" ? "NZB" : code }
+            if up.range(of: #"(^|[^A-Z0-9])"# + code + #"(\+|⚡|⏳|\])"#, options: .regularExpression) != nil
+                || names.contains(where: { up.contains($0) }) { return code }
         }
         return nil
     }

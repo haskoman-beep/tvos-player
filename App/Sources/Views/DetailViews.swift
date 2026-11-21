@@ -366,8 +366,7 @@ struct StreamListView: View {
                 }
                 ForEach(streams, id: \.stream.id) { entry in
                     Button {
-                        fallbacks = 0; AutoNextState.userInput($autoNext)
-                        autoNext.ask = nil; autoNext.inputSinceStart = false   // Neustart von Hand: neue Folge ohne Eingabe
+                        fallbacks = 0; AutoNextState.userInput($autoNext); autoNext.ask = nil
                         playing = entry.stream
                     } label: {
                         StreamRow(addon: entry.addon, stream: entry.stream).opacity(failed.contains(entry.stream.id) ? 0.4 : 1)
@@ -460,8 +459,8 @@ extension StreamListView {
             }
             return
         }
-        // „Klick: jetzt“ oder eine andere Taste in dieser Folge: der Start zählt nicht als automatisch.
-        startNext(next, after: stream, auto: !autoNext.inputSinceStart)
+        // Nur der Tastendruck, der diesen Start auslöst („Klick: jetzt“, ≤ 1,5 s vorher), macht ihn zu einem von Hand.
+        startNext(next, after: stream, auto: !autoNext.counter.startIsManual())
     }
 
     /// Quellen der nächsten Folge holen und die zum laufenden Release passende starten (Rückfall: Listenreihenfolge).
@@ -477,7 +476,6 @@ extension StreamListView {
             RemoteLog.info("player", "Nächste Folge: \(addon ?? "?") · \(s.name ?? "") · Nähe \(ref.score(s, addon: addon))\(s.behaviorHints?.bingeGroup == ref.bingeGroup && ref.bingeGroup != nil ? " (bingeGroup)" : "")")
             if let addon { autoNext.addons[s.id] = addon }
             if auto { autoNext.counter.autoStarted() }
-            autoNext.inputSinceStart = false
             nextNote = nil
             current = next
             try? await Task.sleep(for: .milliseconds(800))

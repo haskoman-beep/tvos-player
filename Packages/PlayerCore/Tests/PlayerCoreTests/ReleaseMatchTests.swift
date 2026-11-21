@@ -113,17 +113,59 @@ private func st(_ name: String, _ desc: String, file: String? = nil, binge: Stri
 }
 
 @Test func withoutAnchorListOrderWins() {
-    // Weder Gruppe/Muster noch Auflösung gleich: erste Quelle, auch wenn eine andere Sprache/Addon teilt.
+    // Gleiche Sprache, aber weder Gruppe/Muster noch Auflösung gleich: erste Quelle, auch wenn die andere das Addon teilt.
     let ref = ReleaseProfile(stream: st("[TB⚡] AIO", "⚡ 1080p 🇩🇪"), addon: "AIO")
-    let first = st("[RD+] Torrentio", "⚡ 2160p HDR10 🇬🇧")
+    let first = st("[RD+] Torrentio", "⚡ 2160p HDR10 🇩🇪")
     let low = st("[TB⚡] AIO", "⚡ 720p 🇩🇪")
     #expect(nextEpisodeStream([("Torrentio", first), ("AIO", low)], matching: ref)?.id == first.id)
+}
+
+@Test func languageBeforeListOrder() {
+    let ref = ReleaseProfile(stream: st("[TB⚡] AIO", "⚡ 1080p 🇩🇪"), addon: "AIO")
+    // Englisch 2160p zuerst, Deutsch 720p danach: Deutsch gewinnt (auch ohne Auflösungs-Anker).
+    let en4k = st("[TB⚡] AIO", "⚡ 2160p 🇬🇧"), de720 = st("[TB⚡] AIO", "⚡ 720p 🇩🇪")
+    #expect(nextEpisodeStream([("AIO", en4k), ("AIO", de720)], matching: ref)?.id == de720.id)
+    // Englisch 1080p (Auflösungs-Anker) zuerst, Deutsch 2160p danach: Deutsch gewinnt.
+    let en1080 = st("[TB⚡] AIO", "⚡ 1080p 🇬🇧"), de4k = st("[TB⚡] AIO", "⚡ 2160p 🇩🇪")
+    #expect(nextEpisodeStream([("AIO", en1080), ("AIO", de4k)], matching: ref)?.id == de4k.id)
+    // Keine Quelle in der Sprache: bestehende Logik über alle Quellen.
+    #expect(nextEpisodeStream([("AIO", en4k), ("AIO", en1080)], matching: ref)?.id == en1080.id)
+}
+
+@Test func multiReferenceMatchesGermanSource() {
+    let ref = ReleaseProfile(stream: st("[TB⚡] AIO", "⚡ 1080p 🇩🇪 MULTI"), addon: "AIO")
+    #expect(ref.requiredLanguages == ["de"])
+    let en = st("[TB⚡] AIO", "⚡ 1080p 🇬🇧"), de = st("[TB⚡] AIO", "⚡ 1080p 🇩🇪")
+    #expect(nextEpisodeStream([("AIO", en), ("AIO", de)], matching: ref)?.id == de.id)
 }
 
 @Test func serviceNeedsWholeToken() {
     #expect(ReleaseName.service(StreamItem(name: "AIO CACHED+ 1080p")) == nil)      // kein „ED+“
     #expect(ReleaseName.service(StreamItem(name: "OPEN+ 1080p")) == nil)            // kein „EN+“ ohne Klammer
     #expect(ReleaseName.service(StreamItem(name: "[EN⚡] Easynews")) == "NZB")
+    #expect(ReleaseName.service(StreamItem(name: "[EN] AIO 1080p")) == nil)         // [EN] ist eine Sprache
     #expect(ReleaseName.service(StreamItem(name: "[EN] Usenet")) == "NZB")
     #expect(ReleaseName.service(StreamItem(name: "[ED+] AIO")) == "ED")
+}
+
+@Test func stillWatchingPauseInEpisodeOneStillPromptsBeforeFive() {
+    // Limit 3: Folge 1 von Hand, Pause mitten in Folge 1, danach keine Taste mehr → Abfrage vor Folge 5.
+    var c = StillWatchingCounter()
+    let t0 = Date(timeIntervalSince1970: 10_000)
+    c.userInput(at: t0)                                   // Quelle für Folge 1 gewählt
+    c.userInput(at: t0.addingTimeInterval(1200))          // Pause in Folge 1
+    var started = [1]
+    var now = t0.addingTimeInterval(2400)                 // Ende Folge 1
+    for ep in 2...6 {
+        if c.promptDue(limit: 3) { break }
+        if !c.startIsManual(now: now) { c.autoStarted() }
+        started.append(ep)
+        now = now.addingTimeInterval(2400)
+    }
+    #expect(started == [1, 2, 3, 4])                     // vor Folge 5 wird gefragt
+    // „Klick: jetzt“: Taste direkt vor dem Start → von Hand, zählt nicht.
+    var k = StillWatchingCounter()
+    k.userInput(at: now)
+    #expect(k.startIsManual(now: now.addingTimeInterval(0.3)))
+    #expect(!k.startIsManual(now: now.addingTimeInterval(5)))
 }
