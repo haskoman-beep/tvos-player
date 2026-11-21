@@ -200,10 +200,9 @@ extension View {
     }
 
     /// Dunkler, ruhiger Grund für Bedienseiten (Einstellungen, Verwalter, Quellen) statt heller Glasfläche.
-    /// Blendet auch den Systemhintergrund von `List`/`Form` aus, damit der Grund überall gleich ist.
+    /// (`scrollContentBackground` gibt es auf tvOS nicht; tvOS-Listen zeichnen ohnehin keinen eigenen Grund.)
     func settingsSurface() -> some View {
         self
-            .scrollContentBackground(.hidden)
             .background(Theme.Palette.surface.ignoresSafeArea())
     }
 }
