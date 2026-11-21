@@ -12,7 +12,7 @@ struct ServiceSettings: View {
         }
         Section("Dienste") {
             SecureField(model.profile.apiKeys["tmdb"].map { _ in "TMDB-Key (gespeichert)" } ?? "TMDB-API-Key", text: $tmdbKey)
-            Button("TMDB-Key speichern") { model.update { $0.apiKeys["tmdb"] = tmdbKey }; tmdbKey = "" }.disabled(tmdbKey.isEmpty)
+            Button("TMDB-Key speichern") { model.update { $0.apiKeys["tmdb"] = tmdbKey }; model.clearCatalogCache(); tmdbKey = "" }.disabled(tmdbKey.isEmpty)
             ForEach(AppModel.syncServices, id: \.self) { s in
                 let name = s == "trakt" ? "Trakt" : "Simkl"
                 if !model.hasClient(s) {

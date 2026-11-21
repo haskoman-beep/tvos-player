@@ -217,11 +217,13 @@ struct PosterCard: View {
 private struct ExpandedPoster: View {
     let item: MetaPreview
     @Environment(\.displayScale) private var displayScale
+    @Environment(\.heroBackdropShared) private var heroShared
     var body: some View {
         GeometryReader { g in
             ZStack(alignment: .bottomLeading) {
-                // Gleiche Variante wie der Vollbild-Hintergrund (gleiche Adresse): ein Download, ein Bitmap.
-                RemoteImage(url: item.background ?? item.poster, fixedTarget: .fullScreen(scale: displayScale))
+                // Mit Hero: gleiche Variante wie der Vollbild-Hintergrund (gleiche Adresse), ein Download, ein Bitmap.
+                // Ohne Hero: nach gezeichneter Größe.
+                RemoteImage(url: item.background ?? item.poster, fixedTarget: heroShared ? .fullScreen(scale: displayScale) : nil)
                     .frame(width: g.size.width, height: g.size.height).clipped()
                 LinearGradient(colors: [.black.opacity(0.75), .clear], startPoint: .bottom, endPoint: .center)
                 Group {

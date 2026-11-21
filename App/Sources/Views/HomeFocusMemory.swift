@@ -35,3 +35,16 @@ extension LandscapeCard: Equatable {
 extension Top10Card: Equatable {
     nonisolated static func == (a: Top10Card, b: Top10Card) -> Bool { a.item == b.item && a.rank == b.rank }
 }
+
+/// Welle C-b (N-4): Seite mit Vollbild-Hero. Nur dann nutzt eine aufgeklappte Karte die Vollbild-Variante
+/// (gleiches Bitmap wie der Hero); sonst wird nach gezeichneter Größe dekodiert.
+private struct HeroBackdropSharedKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var heroBackdropShared: Bool {
+        get { self[HeroBackdropSharedKey.self] }
+        set { self[HeroBackdropSharedKey.self] = newValue }
+    }
+}

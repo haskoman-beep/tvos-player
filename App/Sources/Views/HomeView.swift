@@ -62,6 +62,7 @@ struct HomeView: View {
                 .padding(.top, 24)
                 .padding(.bottom, 60)
             }
+            .environment(\.heroBackdropShared, true)
             // Weicher Rand oben, damit hochgescrollte Reihen nicht hart an der Info abreißen.
             .mask {
                 VStack(spacing: 0) {

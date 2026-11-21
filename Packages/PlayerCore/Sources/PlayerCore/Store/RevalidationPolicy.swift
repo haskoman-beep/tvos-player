@@ -44,14 +44,32 @@ public struct RevalidationPolicy: Sendable, Equatable {
 }
 
 /// Quellenliste nach einer Erneuerung: Addons, die diesmal nicht geantwortet haben (Fehler, Zeitüberschreitung),
-/// behalten ihre bisherigen Einträge, hinten in alter Reihenfolge. So ersetzt ein Teilausfall keine volle Liste
-/// durch eine kleinere. Nur Addons, die noch eingerichtet sind; hat kein Addon geantwortet, bleibt das Ergebnis
-/// unverändert (leer: der alte Stand bleibt ohnehin).
+/// behalten ihre bisherigen Einträge, hinten in alter Reihenfolge, aber nur bis zu ihrem eigenen Abrufzeitpunkt
+/// plus `maxAge` (sonst blieben Einträge eines dauerhaft ausfallenden Addons mit veraltetem Cache-Status und
+/// toten Links ewig drin). Nur Addons, die noch eingerichtet sind. Ist das neue Ergebnis leer oder hat kein
+/// Addon geantwortet, bleibt es unverändert: leer ersetzt keinen Stand (und hält die Pause nach leerer Antwort).
 public enum StreamListMerge {
+    public struct Result<T> {
+        public var list: [(addon: String, stream: T)]
+        /// Abrufzeitpunkt je Addon für den neuen Stand (geantwortet → `now`, behalten → alter Zeitpunkt).
+        public var fetchedAt: [String: Date]
+    }
+
     public static func keepingFailed<T>(fresh: [(addon: String, stream: T)], previous: [(addon: String, stream: T)]?,
-                                        answered: Set<String>, configured: Set<String>) -> [(addon: String, stream: T)] {
-        guard let previous, !answered.isEmpty else { return fresh }
-        let kept = previous.filter { configured.contains($0.addon) && !answered.contains($0.addon) }
-        return kept.isEmpty ? fresh : fresh + kept
+                                        previousStoredAt: Date, previousFetchedAt: [String: Date],
+                                        answered: Set<String>, configured: Set<String>,
+                                        now: Date = Date(), maxAge: TimeInterval) -> Result<T> {
+        var fetchedAt: [String: Date] = [:]
+        for a in answered { fetchedAt[a] = now }
+        guard let previous, !answered.isEmpty, !fresh.isEmpty else { return Result(list: fresh, fetchedAt: fetchedAt) }
+        var kept: [(addon: String, stream: T)] = []
+        for e in previous where configured.contains(e.addon) && !answered.contains(e.addon) {
+            let at = previousFetchedAt[e.addon] ?? previousStoredAt
+            let age = now.timeIntervalSince(at)
+            guard age < maxAge, age > -maxAge else { continue }
+            kept.append(e)
+            fetchedAt[e.addon] = at
+        }
+        return Result(list: fresh + kept, fetchedAt: fetchedAt)
     }
 }

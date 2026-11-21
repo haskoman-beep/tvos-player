@@ -238,19 +238,51 @@ private func entries(_ rows: [String: (count: Int, at: Date)]) -> [String: Timed
 // MARK: Nacharbeiten (Review C-b)
 
 @Test func streamMergeKeepsOldEntriesOfFailedAddons() {
+    let t0 = Date()
+    let now = t0.addingTimeInterval(120)
     let old: [(addon: String, stream: String)] = [("A", "a1"), ("B", "b1"), ("B", "b2"), ("C", "c1")]
     let fresh: [(addon: String, stream: String)] = [("A", "a2")]
+    func merge(_ f: [(addon: String, stream: String)], _ p: [(addon: String, stream: String)]?, answered: Set<String>,
+               configured: Set<String>, fetched: [String: Date] = [:]) -> StreamListMerge.Result<String> {
+        StreamListMerge.keepingFailed(fresh: f, previous: p, previousStoredAt: t0, previousFetchedAt: fetched,
+                                      answered: answered, configured: configured, now: now, maxAge: 1800)
+    }
     // B hat nicht geantwortet → b1, b2 bleiben (hinten, alte Reihenfolge); C ist nicht mehr eingerichtet → weg.
-    let m = StreamListMerge.keepingFailed(fresh: fresh, previous: old, answered: ["A"], configured: ["A", "B"])
-    #expect(m.map(\.stream) == ["a2", "b1", "b2"])
-    // A hat geantwortet, aber nichts geliefert: A-Einträge fallen weg, das ist eine echte Antwort.
-    let m2 = StreamListMerge.keepingFailed(fresh: [], previous: old, answered: ["A", "B"], configured: ["A", "B", "C"])
-    #expect(m2.map(\.stream) == ["c1"])
-    // Niemand hat geantwortet: Ergebnis unverändert (leer → alter Stand bleibt über storeStreams).
-    let m3 = StreamListMerge.keepingFailed(fresh: fresh, previous: old, answered: [], configured: ["A", "B"])
-    #expect(m3.map(\.stream) == ["a2"])
-    let m4 = StreamListMerge.keepingFailed(fresh: fresh, previous: nil, answered: ["A"], configured: ["A", "B"])
-    #expect(m4.map(\.stream) == ["a2"])
+    let m = merge(fresh, old, answered: ["A"], configured: ["A", "B"])
+    #expect(m.list.map(\.stream) == ["a2", "b1", "b2"])
+    #expect(m.fetchedAt == ["A": now, "B": t0])
+    // Leeres Ergebnis (A gedrosselt, B ausgefallen): unverändert leer → der alte Stand bleibt über storeStreams.
+    let m2 = merge([], old, answered: ["A"], configured: ["A", "B"])
+    #expect(m2.list.isEmpty)
+    // Niemand hat geantwortet, oder kein alter Stand: Ergebnis unverändert.
+    let m3 = merge(fresh, old, answered: [], configured: ["A", "B"])
+    #expect(m3.list.map(\.stream) == ["a2"])
+    let m4 = merge(fresh, nil, answered: ["A"], configured: ["A", "B"])
+    #expect(m4.list.map(\.stream) == ["a2"])
+}
+
+@Test func streamMergeDropsFailedAddonAfterMaxAge() {
+    let t0 = Date()
+    let old: [(addon: String, stream: String)] = [("A", "a1"), ("B", "b1")]
+    // B fällt dauerhaft aus: jede Erneuerung behält b1 mit B's eigenem Abrufzeitpunkt t0, nicht mit dem neuen.
+    var fetched: [String: Date] = [:]
+    var list = old
+    var storedAt = t0
+    for minutes in [10.0, 20, 29] {
+        let now = t0.addingTimeInterval(minutes * 60)
+        let r = StreamListMerge.keepingFailed(fresh: [("A", "a\(Int(minutes))")], previous: list, previousStoredAt: storedAt,
+                                              previousFetchedAt: fetched, answered: ["A"], configured: ["A", "B"],
+                                              now: now, maxAge: 1800)
+        #expect(r.list.contains { $0.stream == "b1" })
+        #expect(r.fetchedAt["B"] == t0)
+        list = r.list; fetched = r.fetchedAt; storedAt = now
+    }
+    let late = t0.addingTimeInterval(31 * 60)
+    let r = StreamListMerge.keepingFailed(fresh: [("A", "a31")], previous: list, previousStoredAt: storedAt,
+                                          previousFetchedAt: fetched, answered: ["A"], configured: ["A", "B"],
+                                          now: late, maxAge: 1800)
+    #expect(r.list.map(\.stream) == ["a31"])               // nach 30 min seit B's letzter Antwort: weg
+    #expect(r.fetchedAt == ["A": late])
 }
 
 @Test func revalidationBacksOffAfterEmptyAnswers() {

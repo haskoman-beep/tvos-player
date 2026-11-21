@@ -74,6 +74,11 @@ extension AppModel {
         RemoteLog.info("katalog", "Plattencache verworfen")
     }
 
+    /// Dateien aller genannten Profile löschen (Sicherung eingespielt: alte Addon-Quellen in jedem Profil).
+    func removeCatalogFiles(profiles ids: [UUID]) {
+        for id in Set(ids) { removeCatalogFile(profile: id) }
+    }
+
     /// Datei eines Profils löschen (Profil gelöscht).
     func removeCatalogFile(profile id: UUID) {
         catalogDisk.files.remove(CatalogSnapshot.fileName(profile: id))
@@ -108,6 +113,12 @@ extension AppModel {
             let ok = await Task.detached(priority: .utility) { () -> Bool in
                 do { try files.write(name, data); return true } catch { return false }
             }.value
+            // Während des Schreibens geleert/gewechselt/gelöscht: das Entfernen lief schon, die Datei wäre wieder da.
+            if ok, self.profile.id != profileID || self.cache.generation != generation {
+                files.remove(name)
+                RemoteLog.info("katalog", "Plattencache: während des Schreibens verworfen, Datei entfernt")
+                return
+            }
             if ok {
                 RemoteLog.info("katalog", "Plattencache geschrieben: \(entries.count) Reihen, \(data.count / 1024) KB")
             } else {

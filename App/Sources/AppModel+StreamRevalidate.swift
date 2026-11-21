@@ -43,15 +43,23 @@ extension AppModel {
     }
 
     /// Abfrage-Ergebnis mit dem bisherigen Stand zusammenführen: Addons, die nicht geantwortet haben
-    /// (in `answered` fehlen), behalten ihre alten Einträge, solange der Stand noch zeigbar ist.
+    /// (in `answered` fehlen), behalten ihre alten Einträge bis 30 min nach ihrer eigenen letzten Antwort
+    /// (`RevalidationPolicy.streams.usableFor`). Ein leeres Ergebnis bleibt leer (alter Stand + Pause bleiben).
     func keepingFailedAddonStreams(id: String, answered: [String], list: [(addon: String, stream: StreamItem)]) -> [(addon: String, stream: StreamItem)] {
-        guard let old = streamCache[id], RevalidationPolicy.streams.isUsable(storedAt: old.at) else { return list }
-        let merged = StreamListMerge.keepingFailed(fresh: list, previous: old.list, answered: Set(answered),
-                                                   configured: Set(profile.addons.map { $0.manifest.name }))
-        if merged.count != list.count {
-            RemoteLog.info("streams", "\(id): \(merged.count - list.count) Quellen ohne Antwort ihres Addons aus dem alten Stand behalten")
+        let now = Date()
+        let old = streamCache[id].flatMap { RevalidationPolicy.streams.isUsable(storedAt: $0.at, now: now) ? $0 : nil }
+        let r = StreamListMerge.keepingFailed(fresh: list, previous: old?.list, previousStoredAt: old?.at ?? now,
+                                              previousFetchedAt: streamAddonFetchedAt[id] ?? [:], answered: Set(answered),
+                                              configured: Set(profile.addons.map { $0.manifest.name }),
+                                              now: now, maxAge: RevalidationPolicy.streams.usableFor)
+        if !r.list.isEmpty {
+            streamAddonFetchedAt = streamAddonFetchedAt.filter { streamCache[$0.key] != nil }
+            streamAddonFetchedAt[id] = r.fetchedAt
         }
-        return merged
+        if r.list.count != list.count {
+            RemoteLog.info("streams", "\(id): \(r.list.count - list.count) Quellen ohne Antwort ihres Addons aus dem alten Stand behalten")
+        }
+        return r.list
     }
 
     /// Für Weiterschauen mit letzter Quelle und automatische nächste Folge: ist der Stand veraltet und läuft

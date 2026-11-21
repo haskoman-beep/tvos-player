@@ -399,6 +399,8 @@ final class AppModel: ObservableObject {
     /// Welle C-b: nicht privat, damit AppModel+StreamRevalidate den Stand lesen kann.
     var streamCache: [String: (at: Date, list: [(addon: String, stream: StreamItem)])] = [:]
     var streamTasks: [String: Task<[(addon: String, stream: StreamItem)], Never>] = [:]
+    /// Welle C-b: Abrufzeitpunkt je Addon im Stand von `streamCache[id]` (behaltene Einträge laufen nach ihm ab).
+    var streamAddonFetchedAt: [String: [String: Date]] = [:]
     /// Leeres/fehlgeschlagenes Ergebnis: bis dahin kein Vorladen dieser ID (die Detailseite fragt trotzdem).
     private(set) var streamEmptyUntil: [String: Date] = [:]
     /// Letztes Ergebnis, bei dem alle Addons leer blieben (vermutlich Ratenbegrenzung): Vorladen pausiert.
@@ -440,7 +442,9 @@ final class AppModel: ObservableObject {
                 else { lastError = "Link nicht erkannt: \(l)" }
             case .importBackup(let d):
                 do {
+                    let before = stored.profiles.map(\.id)
                     stored = try store.importData(d); save(); clearCatalogCache()
+                    removeCatalogFiles(profiles: before + stored.profiles.map(\.id))
                     progress = progressStore.load(profile: profile.id)
                 } catch { lastError = "Sicherung ungültig: \(error)" }
             case .importFusionURL(let u): await importFusionKit(from: u)
