@@ -257,27 +257,31 @@ actor DiskCacheSession {
     }
 
     /// Ergebnis eines Abruf-Tasks, höchstens `seconds` lang (der Task selbst wird nicht abgebrochen).
+    /// Wettlauf über einen Einmal-Schalter (keine Task-Gruppe: die wartete auf `t.value`, das auf Abbruch nicht reagiert).
     private static func value(of t: Task<Data, Error>, within seconds: TimeInterval) async throws -> Data {
-        try await withThrowingTaskGroup(of: Data.self) { g in
-            g.addTask { try await t.value }
-            g.addTask {
-                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                throw DiskCacheError.badAnswer("Vorlauf-Block nicht in \(Int(seconds)) s")
+        let once = DiskCacheOnce()
+        return try await withCheckedThrowingContinuation { (k: CheckedContinuation<Data, Error>) in
+            let timer = Task {
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                if once.fire() { k.resume(throwing: DiskCacheError.badAnswer("Vorlauf-Block nicht in \(Int(seconds.rounded())) s")) }
             }
-            defer { g.cancelAll() }
-            guard let d = try await g.next() else { throw CancellationError() }
-            return d
+            Task {
+                let r = await t.result
+                if once.fire() { timer.cancel(); k.resume(with: r) }
+            }
         }
     }
 
     private func startFetch(_ i: Int, prefetch: Bool) -> Task<Data, Error> {
-        let t = Task { try await self.fetchBlock(i, prefetch: prefetch) }
-        inflight[i] = t
         if prefetch { prefetchCount += 1 } else { readerFetches += 1 }
+        // Laufende Abrufe (einschließlich dieses) beim Start: teilt die Messung der Geschwindigkeit.
+        let running = prefetchCount + readerFetches
+        let t = Task { try await self.fetchBlock(i, prefetch: prefetch, concurrent: running) }
+        inflight[i] = t
         return t
     }
 
-    private func fetchBlock(_ i: Int, prefetch: Bool) async throws -> Data {
+    private func fetchBlock(_ i: Int, prefetch: Bool, concurrent: Int) async throws -> Data {
         defer {
             inflight[i] = nil
             if prefetch { prefetchCount -= 1 } else { readerFetches -= 1 }
@@ -303,7 +307,9 @@ actor DiskCacheSession {
                 if prefetch { stats.prefetched += 1 }
                 failures = 0
                 store(i, a.data)
-                noteRate(bytes: Int64(a.data.count), seconds: Date().timeIntervalSince(t0))
+                // Größte Zahl laufender Abrufe am Anfang oder Ende (der erste einer Vorlauf-Runde sieht beim Start nur sich).
+                noteRate(bytes: Int64(a.data.count), seconds: Date().timeIntervalSince(t0),
+                         concurrent: max(concurrent, prefetchCount + readerFetches))
                 return a.data
             } catch {
                 lastError = error
@@ -328,8 +334,8 @@ actor DiskCacheSession {
     }
 
     /// Geschwindigkeit nachführen: zu langsam → erst weniger parallel, bei einem Abruf Umleitung (fail open).
-    private func noteRate(bytes: Int64, seconds: TimeInterval) {
-        rate.note(bytes: bytes, seconds: seconds)
+    private func noteRate(bytes: Int64, seconds: TimeInterval, concurrent: Int) {
+        policy.record(&rate, bytes: bytes, seconds: seconds, concurrent: concurrent)
         let perBlock = rate.secondsPerBlock(policy.blockSize).map { String(format: "%.1f s je Block", $0) } ?? "?"
         switch policy.slowAction(rate: rate, parallel: parallel) {
         case .none:

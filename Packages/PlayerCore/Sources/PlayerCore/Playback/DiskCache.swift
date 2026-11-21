@@ -152,6 +152,8 @@ public struct DiskCachePolicy: Equatable, Sendable {
     public var slowBlockSeconds: TimeInterval = 10
     /// Messungen, bevor die Geschwindigkeit zählt.
     public var minimumRateSamples = 2
+    /// Langsame Messungen in Folge (bei einem Abruf), bevor die Sitzung umleitet.
+    public var slowSamplesUntilPassthrough = 3
 
     /// Ursprung drosselt (429/503): weniger parallele Abrufe statt Fehler zählen.
     public static func isThrottle(status: Int) -> Bool { status == 429 || status == 503 }
@@ -161,7 +163,17 @@ public struct DiskCachePolicy: Equatable, Sendable {
     /// Was bei der gemessenen Geschwindigkeit zu tun ist.
     public func slowAction(rate: DiskCacheRate, parallel: Int) -> DiskCacheSlowAction {
         guard rate.samples >= minimumRateSamples, let s = rate.secondsPerBlock(blockSize), s > slowBlockSeconds else { return .none }
-        return parallel > 1 ? .lowerParallel : .passthrough
+        if parallel > 1 { return .lowerParallel }
+        return rate.slowInARow >= slowSamplesUntilPassthrough ? .passthrough : .none
+    }
+
+    /// Eine Messung eintragen: Dauer durch die beim Start laufenden Abrufe geteilt (sie teilen sich die Leitung),
+    /// auf 2 × `slowBlockSeconds` gekappt (ein Hänger allein kippt kein schnelles Mittel).
+    public func record(_ rate: inout DiskCacheRate, bytes: Int64, seconds: TimeInterval, concurrent: Int) {
+        guard bytes > 0 else { return }
+        let s = min(max(0, seconds) / Double(max(1, concurrent)), 2 * slowBlockSeconds)
+        rate.note(bytes: bytes, seconds: s)
+        rate.noteSlow(s * Double(blockSize) / Double(bytes) > slowBlockSeconds)
     }
 
     /// Vorlauf für ein Budget: nie mehr als die Hälfte, mindestens ein Block.
@@ -175,6 +187,8 @@ public enum DiskCacheSlowAction: Equatable, Sendable { case none, lowerParallel,
 public struct DiskCacheRate: Equatable, Sendable {
     public private(set) var secondsPerByte: Double?
     public private(set) var samples = 0
+    /// Langsame Messungen in Folge (siehe `DiskCachePolicy.record`).
+    public private(set) var slowInARow = 0
     public var alpha = 0.3
 
     public init() {}
@@ -187,6 +201,8 @@ public struct DiskCacheRate: Equatable, Sendable {
         secondsPerByte = secondsPerByte.map { $0 + alpha * (v - $0) } ?? v
         samples += 1
     }
+
+    public mutating func noteSlow(_ slow: Bool) { slowInARow = slow ? slowInARow + 1 : 0 }
 
     public func secondsPerBlock(_ blockSize: Int64) -> Double? { secondsPerByte.map { $0 * Double(blockSize) } }
 }

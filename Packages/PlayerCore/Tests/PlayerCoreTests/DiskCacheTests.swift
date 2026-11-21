@@ -258,11 +258,29 @@ import Testing
     r.note(bytes: 4_000_000, seconds: 2)
     #expect(p.slowAction(rate: r, parallel: 1) == .none)   // schnell genug
     var slow = DiskCacheRate()
-    slow.note(bytes: 4_000_000, seconds: 20); slow.note(bytes: 4_000_000, seconds: 15)
+    p.record(&slow, bytes: 4_000_000, seconds: 20, concurrent: 1)
+    p.record(&slow, bytes: 4_000_000, seconds: 15, concurrent: 1)
     #expect((slow.secondsPerBlock(4_000_000) ?? 0) > 10)
     #expect(p.slowAction(rate: slow, parallel: 2) == .lowerParallel)
+    // Umleiten erst nach 3 langsamen Messungen in Folge.
+    #expect(p.slowAction(rate: slow, parallel: 1) == .none)
+    p.record(&slow, bytes: 4_000_000, seconds: 12, concurrent: 1)
+    #expect(slow.slowInARow == 3)
     #expect(p.slowAction(rate: slow, parallel: 1) == .passthrough)
-    // Gleitendes Mittel: ein schneller Ausreißer kippt ein langsames Mittel nicht sofort.
-    slow.note(bytes: 4_000_000, seconds: 1)
-    #expect(p.slowAction(rate: slow, parallel: 1) == .passthrough)
+    // Eine schnelle Messung unterbricht die Folge.
+    p.record(&slow, bytes: 4_000_000, seconds: 1, concurrent: 1)
+    #expect(slow.slowInARow == 0)
+    #expect(p.slowAction(rate: slow, parallel: 1) == .none)
+    // Schnelles Mittel + ein 60-s-Hänger (gekappt auf 20 s) → nichts.
+    var fast = DiskCacheRate()
+    p.record(&fast, bytes: 4_000_000, seconds: 2, concurrent: 1)
+    p.record(&fast, bytes: 4_000_000, seconds: 2, concurrent: 1)
+    p.record(&fast, bytes: 4_000_000, seconds: 60, concurrent: 1)
+    #expect(p.slowAction(rate: fast, parallel: 1) == .none)
+    #expect(p.slowAction(rate: fast, parallel: 2) == .none)
+    // Parallele Abrufe teilen sich die Leitung: 2 × 16 s gleichzeitig = 8 s je Block → nicht langsam.
+    var shared = DiskCacheRate()
+    p.record(&shared, bytes: 4_000_000, seconds: 16, concurrent: 2)
+    p.record(&shared, bytes: 4_000_000, seconds: 16, concurrent: 2)
+    #expect(p.slowAction(rate: shared, parallel: 2) == .none)
 }
