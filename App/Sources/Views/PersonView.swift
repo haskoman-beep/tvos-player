@@ -1,0 +1,73 @@
+import SwiftUI
+import PlayerCore
+
+/// Personenseite (aus der Besetzung): Foto, Name, Biografie, darunter die Filmografie nach Beliebtheit.
+struct PersonView: View {
+    @EnvironmentObject var model: AppModel
+    let personID: Int
+    let name: String
+    @State private var person: PersonCredits?
+    @State private var failed = false
+    @State private var showBio = false
+
+    var body: some View {
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 40) {
+                HStack(alignment: .top, spacing: 50) {
+                    RemoteImage(url: person?.photo, maxPixels: 600)
+                        .frame(width: 260, height: 390).clipShape(RoundedRectangle(cornerRadius: 16))
+                        .overlay { if person?.photo == nil { Text(String(name.prefix(1))).font(.system(size: 90, weight: .bold)) } }
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text(person?.name ?? name).font(.largeTitle.bold())
+                        if let k = person?.knownFor { Text("Bekannt für: \(Self.department(k))").foregroundStyle(.secondary) }
+                        if let b = person?.biography {
+                            Button { showBio = true } label: {
+                                FocusHighlight { Text(b).font(.callout).lineLimit(4).multilineTextAlignment(.leading) }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        if person == nil && !failed { ProgressView() }
+                        if failed { Text("Person konnte nicht geladen werden.").foregroundStyle(.secondary) }
+                    }
+                    .frame(maxWidth: 1100, alignment: .leading)
+                }
+                if let credits = person?.credits, !credits.isEmpty {
+                    Text("Bekannt aus").font(.title3.bold())
+                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(240), spacing: 40), count: 6), alignment: .leading, spacing: 50) {
+                        // Film und Serie können dieselbe TMDB-Nummer haben: ganzes Element als Schlüssel.
+                        ForEach(credits, id: \.self) { m in
+                            NavigationLinkish(route: .detail(m), onActivate: { $0 }, label: PosterCard(item: m))
+                        }
+                    }
+                }
+            }
+            .padding(80)
+        }
+        .sheet(isPresented: $showBio) { FullTextSheet(title: person?.name ?? name, text: person?.biography ?? "") }
+        .task {
+            guard person == nil else { return }
+            guard let tmdb = model.tmdb else { failed = true; RemoteLog.info("person", "kein TMDB-Key"); return }
+            do {
+                let p = try await tmdb.personCredits(id: personID)
+                person = p
+                RemoteLog.info("person", "\(personID) \(p.name): \(p.credits.count) Titel, Bio \(p.biography == nil ? "fehlt" : "da")")
+            } catch {
+                failed = true
+                RemoteLog.error("person", "\(personID) laden fehlgeschlagen: \(error)")
+            }
+        }
+    }
+
+    static func department(_ d: String) -> String {
+        switch d {
+        case "Acting": "Schauspiel"
+        case "Directing": "Regie"
+        case "Writing": "Drehbuch"
+        case "Production": "Produktion"
+        case "Camera": "Kamera"
+        case "Editing": "Schnitt"
+        case "Sound": "Ton"
+        default: d
+        }
+    }
+}

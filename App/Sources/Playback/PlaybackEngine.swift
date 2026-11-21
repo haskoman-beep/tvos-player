@@ -40,6 +40,8 @@ struct LoadPrefs {
     var audioLanguages: [String] = []
     var subtitleLanguages: [String] = []
     var headers: [String: String] = [:]
+    /// Entferntes HLS direkt an AVPlayer (Trailer).
+    var nativeRemoteHLS = false
 }
 
 /// AetherEngine-Backend.
@@ -103,6 +105,7 @@ final class AetherBackend: PlaybackEngine {
         o.preferredAudioLanguages = prefs.audioLanguages
         o.preferredSubtitleLanguages = prefs.subtitleLanguages
         o.httpHeaders = prefs.headers
+        o.nativeRemoteHLS = prefs.nativeRemoteHLS
         // Schnellerer Start bei Fernquellen (Werte wie NuvioTVOS): 8 MiB / 5 s statt 50 MB / 60 s.
         o.probesize = 8 * 1024 * 1024
         o.maxAnalyzeDuration = 5_000_000

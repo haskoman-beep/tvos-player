@@ -93,7 +93,10 @@ struct NavigationLinkish<L: View>: View {
 }
 
 private struct NavigateKey: EnvironmentKey {
-    static let defaultValue: (Route) -> Void = { _ in }
+    /// Ohne gesetztes Ziel: nichts tun, aber im Log sichtbar machen (Diagnose für verlorene Umgebung).
+    static let defaultValue: (Route) -> Void = { r in
+        Task { @MainActor in RemoteLog.info("nav", "kein Navigationsziel für \(r.logName)") }
+    }
 }
 
 extension EnvironmentValues {

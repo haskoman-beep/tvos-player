@@ -18,6 +18,18 @@ enum Route: Hashable {
     case folder(Folder)
     case collection(String)
     case streams(PlayRequest)
+    case person(id: Int, name: String)
+
+    /// Kurzname fürs Log.
+    var logName: String {
+        switch self {
+        case .detail(let m): "detail \(m.name)"
+        case .folder(let f): "folder \(f.title)"
+        case .collection(let id): "collection \(id)"
+        case .streams(let r): "streams \(r.title)"
+        case .person(let id, let name): "person \(id) \(name)"
+        }
+    }
 }
 
 /// Was abgespielt werden soll: Stremio-ID ("tt…" oder "tt…:S:E") plus Anzeige-Eintrag für Weiterschauen.
@@ -108,12 +120,19 @@ struct RootView: View {
     }
 
     /// Eigener Navigationspfad je Tab.
+    /// `\.navigate` wird zusätzlich IN jeder Destination gesetzt: mit der Tab-API (`Tab {}` / `.sidebarAdaptable`)
+    /// erreicht der außen am NavigationStack gesetzte Wert die gepushten Seiten nicht (dort galt der No-op-Standard,
+    /// Abspielen/Ähnliche Titel auf der Detailseite taten nichts).
     private func stack<V: View>(_ p: Binding<NavigationPath>, @ViewBuilder root: () -> V) -> some View {
         let r = root()
-        return NavigationStack(path: p) {
-            r.navigationDestination(for: Route.self) { RouteView(route: $0) }
+        let push: (Route) -> Void = { route in
+            RemoteLog.info("nav", "→ \(route.logName)")
+            p.wrappedValue.append(route)
         }
-        .environment(\.navigate, { p.wrappedValue.append($0) })
+        return NavigationStack(path: p) {
+            r.navigationDestination(for: Route.self) { RouteView(route: $0).environment(\.navigate, push) }
+        }
+        .environment(\.navigate, push)
     }
 }
 
@@ -125,6 +144,7 @@ struct RouteView: View {
         case .folder(let f): FolderView(folder: f)
         case .collection(let id): CollectionView(collectionID: id)
         case .streams(let r): StreamListView(request: r)
+        case .person(let id, let name): PersonView(personID: id, name: name)
         }
     }
 }

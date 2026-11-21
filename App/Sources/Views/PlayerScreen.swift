@@ -12,29 +12,34 @@ struct PlayerScreen: View {
     var onEnded: (Bool) -> Void = { _ in }
     /// Quelle taugt nicht (Platzhalter, Fehler nach Neustart): nächste Quelle versuchen.
     var onFallback: (String) -> Void = { _ in }
+    /// Trailer: kein Fortschritt, kein Scrobble, kein Up-next, kein Fortsetzen.
+    var isTrailer = false
+    /// Adresse ist ein entferntes HLS-Master (AVPlayer direkt, ohne Demuxer-Probe).
+    var remoteHLS = false
     @State private var backend: AetherBackend?
     @State private var initError: String?
 
     var body: some View {
         Group {
             if let backend { PlayerControls(engine: backend, url: url, title: request.title, profile: model.profile,
-                                                       start: model.progress.resumePosition(for: request.id),
-                                                       startFraction: model.progress.resumeFraction(for: request.id),
+                                                       start: isTrailer ? nil : model.progress.resumePosition(for: request.id),
+                                                       startFraction: isTrailer ? nil : model.progress.resumeFraction(for: request.id),
                                                        runtimeMinutes: request.runtimeMinutes,
+                                                       checksPlaceholder: !isTrailer,
                                                        prefs: LoadPrefs(audioLanguages: model.profile.audioPriority.filter { $0 != "orig" },
                                                                         subtitleLanguages: model.profile.subtitlesEnabled ? [model.profile.subtitleLanguage] : [],
-                                                                        headers: headers),
-                                                       report: { pos, dur in model.recordProgress(request, position: pos, duration: dur) },
+                                                                        headers: headers, nativeRemoteHLS: remoteHLS),
+                                                       report: { pos, dur in if !isTrailer { model.recordProgress(request, position: pos, duration: dur) } },
                                                        onEnded: onEnded, onFallback: onFallback,
-                                                       onPause: { model.scrobblePause(request) },
-                                                       nextTitle: model.profile.autoplayNext ? request.nextRequest?.title : nil,
+                                                       onPause: { if !isTrailer { model.scrobblePause(request) } },
+                                                       nextTitle: !isTrailer && model.profile.autoplayNext ? request.nextRequest?.title : nil,
                                                        onNextSoon: {
                                                            guard let n = request.nextRequest else { return }
                                                            Task { _ = await model.streams(type: n.type, id: n.id) }
                                                        }) }
             else { Text(initError ?? "Player wird gestartet …") }
         }
-        .onDisappear { model.endPlayback(request) }
+        .onDisappear { if !isTrailer { model.endPlayback(request) } }
         .onAppear {
             do { backend = try AetherBackend() } catch { initError = "Player-Start fehlgeschlagen: \(error)"; RemoteLog.error("player", initError ?? "") }
         }
@@ -49,6 +54,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
     let start: Double?
     var startFraction: Double? = nil
     var runtimeMinutes: Double? = nil
+    /// Trailer sind kurz: keine Platzhalter-Erkennung.
+    var checksPlaceholder = true
     var prefs = LoadPrefs()
     let report: (Double, Double) -> Void
     let onEnded: (Bool) -> Void
@@ -133,7 +140,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             do {
                 RemoteLog.info("player", "Laden \(title) · Start \(start.map { Int($0) } ?? 0)s · \(url.host ?? "?")")
                 try await engine.load(url, start: start, prefs: prefs)
-                if isPlaceholderVideo(duration: engine.duration, expectedRuntimeMinutes: runtimeMinutes) {
+                if checksPlaceholder, isPlaceholderVideo(duration: engine.duration, expectedRuntimeMinutes: runtimeMinutes) {
                     RemoteLog.info("player", "Platzhalter erkannt (\(Int(engine.duration))s, erwartet \(runtimeMinutes.map { Int($0) } ?? 0) min) → nächste Quelle")
                     engine.stop(); onFallback("Quelle noch nicht bereit (Platzhalter)"); return
                 }

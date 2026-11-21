@@ -40,6 +40,10 @@ struct DetailView: View {
     @State private var tech: [String] = []
     @State private var certification: String?
     @State private var extra: LocalizedMeta?
+    @State private var trailer: TrailerPlay?
+    @State private var trailerLoading = false
+    @State private var trailerNote: String?
+    @State private var showFullText = false
 
     private var isSeries: Bool { item.type == "series" }
 
@@ -57,7 +61,12 @@ struct DetailView: View {
                         .compactMap { $0 }.joined(separator: " · ")).foregroundStyle(.secondary)
                     InfoBadges(ratings: ratings, tech: tech, certification: certification ?? ratings?.certification)
                     if let t = extra?.tagline { Text(t).italic().foregroundStyle(.secondary) }
-                    Text(meta?.description ?? item.description ?? "").frame(maxWidth: 1100, alignment: .leading)
+                    if !overview.isEmpty {
+                        // Kurz halten; Klick zeigt den ganzen Text.
+                        Button { showFullText = true } label: { FocusHighlight { Text(overview).font(.callout).lineLimit(3).multilineTextAlignment(.leading) } }
+                            .buttonStyle(.plain)
+                            .frame(maxWidth: 1100, alignment: .leading)
+                    }
 
                     if loading {
                         ProgressView()
@@ -75,6 +84,7 @@ struct DetailView: View {
                                 if let k = extra?.trailerYouTube { trailerButton(k) }
                             }
                         }
+                        if let trailerNote { Text(trailerNote).foregroundStyle(.secondary) }
                         if let x = extra { DetailExtras(info: x, isSeries: isSeries) }
                     } else {
                         Text("Keine IMDb-ID gefunden – Streams nicht abrufbar.").foregroundStyle(.secondary)
@@ -101,17 +111,46 @@ struct DetailView: View {
             await translateSeason()
         }
         .onChange(of: season) { Task { await translateSeason() } }
+        .sheet(isPresented: $showFullText) { FullTextSheet(title: item.name, text: overview) }
+        .fullScreenCover(item: $trailer) { t in
+            PlayerScreen(url: t.stream.url,
+                         request: PlayRequest(type: item.type, id: "trailer:\(t.key)", title: "Trailer · \(item.name)", item: item),
+                         onEnded: { _ in trailer = nil },
+                         onFallback: { reason in
+                             trailer = nil
+                             trailerNote = "Trailer nicht verfügbar"
+                             RemoteLog.info("trailer", "\(t.key) Wiedergabe fehlgeschlagen: \(reason)")
+                         },
+                         isTrailer: true, remoteHLS: t.stream.isHLS)
+                .environmentObject(model)
+        }
     }
 
+    private var overview: String { meta?.description ?? item.description ?? "" }
+
     private func trailerButton(_ key: String) -> some View {
-        Button("🎬 Trailer") {
-            // tvOS hat keinen Browser: Trailer in der YouTube-App öffnen.
-            guard let u = URL(string: "youtube://www.youtube.com/watch?v=\(key)") else { return }
-            UIApplication.shared.open(u) { ok in
-                RemoteLog.info("detail", "Trailer \(key) in YouTube-App: \(ok ? "geöffnet" : "nicht möglich")")
-                if !ok, let w = URL(string: "https://www.youtube.com/watch?v=\(key)") { UIApplication.shared.open(w) }
-            }
+        Button(trailerLoading ? "Trailer wird geladen …" : "🎬 Trailer") {
+            Task { await playTrailer(key) }
         }
+    }
+
+    /// Trailer im eigenen Player (YouTube-Adresse über Innertube auflösen); kein Wechsel in die YouTube-App.
+    private func playTrailer(_ key: String) async {
+        guard !trailerLoading else { return }
+        trailerLoading = true
+        trailerNote = nil
+        RemoteLog.info("trailer", "\(key) wird aufgelöst")
+        let s = await YouTubeResolver().resolve(videoID: key, log: { line in
+            Task { @MainActor in RemoteLog.info("trailer", line) }
+        })
+        trailerLoading = false
+        guard let s else {
+            trailerNote = "Trailer nicht verfügbar"
+            RemoteLog.info("trailer", "\(key): keine abspielbare Adresse")
+            return
+        }
+        RemoteLog.info("trailer", "\(key) → \(s.client) · \(s.isHLS ? "HLS" : "MP4 \(s.height ?? 0)p")")
+        trailer = TrailerPlay(key: key, stream: s)
     }
 
     private func translateSeason() async {
@@ -171,6 +210,41 @@ struct DetailView: View {
                     }
                 }
             }
+        }
+    }
+}
+
+/// Aufgelöster Trailer für den Player.
+struct TrailerPlay: Identifiable {
+    let id = UUID()
+    let key: String
+    let stream: YouTubeStream
+}
+
+/// Dezente Fokusanzeige für Text-Knöpfe (`.buttonStyle(.plain)`).
+struct FocusHighlight<C: View>: View {
+    @Environment(\.isFocused) private var focused
+    @ViewBuilder let content: C
+    var body: some View {
+        content
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(focused ? 0.14 : 0)))
+            .animation(.easeOut(duration: 0.15), value: focused)
+    }
+}
+
+/// Blatt mit dem ganzen Text (Beschreibung, Biografie).
+struct FullTextSheet: View {
+    let title: String
+    let text: String
+    var body: some View {
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 30) {
+                Text(title).font(.title2.bold())
+                Text(text).font(.body).focusable()
+            }
+            .frame(maxWidth: 1300, alignment: .leading)
+            .padding(60)
         }
     }
 }
@@ -356,35 +430,50 @@ struct SearchView: View {
 }
 
 /// Infozeile der Detailseite: Technik gefüllt, Bewertungen/Freigabe mit Rahmen (Zwei-Stil-Regel nach Swiftfin).
+/// Alle Plaketten einzeilig, gleich hoch; passt die Zeile nicht, bricht sie um (FlowLayout), statt abzuschneiden.
 struct InfoBadges: View {
     let ratings: ExternalRatings?
     let tech: [String]
     var certification: String?
+    static let height: CGFloat = 44
 
     var body: some View {
         let rated = ratings.map(MDBList.badges) ?? []
         if !rated.isEmpty || !tech.isEmpty || certification != nil {
-            HStack(spacing: 14) {
+            FlowLayout(spacing: 14, lineSpacing: 14) {
                 ForEach(tech, id: \.self) { t in
-                    Text(t).font(.caption.weight(.bold)).foregroundStyle(.black)
-                        .padding(.horizontal, 12).padding(.vertical, 5)
+                    Text(t).foregroundStyle(.black)
+                        .modifier(BadgeShape())
                         .background(Color.white.opacity(0.85), in: RoundedRectangle(cornerRadius: 6))
                 }
                 if let c = certification {
-                    Text(c).font(.caption.weight(.semibold))
-                        .padding(.horizontal, 10).padding(.vertical, 4)
+                    Text(c)
+                        .modifier(BadgeShape())
                         .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.6), lineWidth: 2))
                 }
                 ForEach(rated) { b in
                     HStack(spacing: 6) {
-                        Text(b.label).font(.caption.weight(.heavy)).foregroundStyle(labelColor(b.source))
-                        Text(b.text).font(.caption.weight(.semibold))
+                        Text(b.label).foregroundStyle(labelColor(b.source))
+                        Text(b.text)
                     }
-                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .modifier(BadgeShape())
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(scoreColor(b.score).opacity(0.8), lineWidth: 2))
                 }
             }
+            .frame(maxWidth: 1400, alignment: .leading)
             .transition(.opacity)
+        }
+    }
+
+    /// Einheitliche Schrift, Höhe und Innenabstand; nie umbrechen.
+    struct BadgeShape: ViewModifier {
+        func body(content: Content) -> some View {
+            content
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 12)
+                .frame(height: InfoBadges.height)
         }
     }
 
@@ -405,6 +494,7 @@ struct InfoBadges: View {
 
 /// Besetzung, ähnliche Titel und „Über“ (alles aus dem einen TMDB-Abruf).
 struct DetailExtras: View {
+    @Environment(\.navigate) private var navigate
     let info: LocalizedMeta
     let isSeries: Bool
 
@@ -415,7 +505,7 @@ struct DetailExtras: View {
                 ScrollView(.horizontal) {
                     LazyHStack(spacing: 36) {
                         ForEach(info.cast) { c in
-                            Button {} label: {
+                            Button { navigate(.person(id: c.id, name: c.name)) } label: {
                                 VStack(spacing: 10) {
                                     RemoteImage(url: c.photo, maxPixels: 370)
                                         .frame(width: 180, height: 180).clipShape(Circle())
@@ -499,5 +589,45 @@ struct DetailExtras: View {
         case "Planned": "Geplant"
         default: s
         }
+    }
+}
+
+/// Zeilen-Umbruch-Layout: Kinder in ihrer Idealgröße nebeneinander, bei Platzmangel in die nächste Zeile.
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 14
+    var lineSpacing: CGFloat = 14
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = arrange(width: proposal.width ?? .infinity, subviews: subviews)
+        let width = rows.map { r in r.map(\.size.width).reduce(0, +) + spacing * CGFloat(max(0, r.count - 1)) }.max() ?? 0
+        let height = rows.map { r in r.map(\.size.height).max() ?? 0 }.reduce(0, +) + lineSpacing * CGFloat(max(0, rows.count - 1))
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in arrange(width: bounds.width, subviews: subviews) {
+            let h = row.map(\.size.height).max() ?? 0
+            var x = bounds.minX
+            for e in row {
+                subviews[e.index].place(at: CGPoint(x: x, y: y + (h - e.size.height) / 2), proposal: ProposedViewSize(e.size))
+                x += e.size.width + spacing
+            }
+            y += h + lineSpacing
+        }
+    }
+
+    private func arrange(width: CGFloat, subviews: Subviews) -> [[(index: Int, size: CGSize)]] {
+        var rows: [[(index: Int, size: CGSize)]] = [[]]
+        var x: CGFloat = 0
+        for i in subviews.indices {
+            let size = subviews[i].sizeThatFits(.unspecified)
+            if !rows[rows.count - 1].isEmpty, x + spacing + size.width > width {
+                rows.append([]); x = 0
+            }
+            x += (rows[rows.count - 1].isEmpty ? 0 : spacing) + size.width
+            rows[rows.count - 1].append((i, size))
+        }
+        return rows.filter { !$0.isEmpty }
     }
 }
