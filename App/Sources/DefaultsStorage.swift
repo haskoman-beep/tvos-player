@@ -16,9 +16,16 @@ struct DefaultsStorage: BlobStorage {
         let caches = FileBlobStorage(directory: fm.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Player", isDirectory: true))
         let supportOK = support.isWritable
-        tiered = TieredBlobStorage(defaults: UserDefaultsBlobs(), directories: supportOK ? [support, caches] : [caches],
+        // Lesen immer aus beiden Ordnern, schreiben nur in die beschreibbaren.
+        tiered = TieredBlobStorage(defaults: UserDefaultsBlobs(), directories: [support, caches],
+                                   writeDirectories: [support, caches].filter { $0.directory == caches.directory || supportOK },
                                    compress: { try? ($0 as NSData).compressed(using: .lzfse) as Data },
-                                   decompress: { try? ($0 as NSData).decompressed(using: .lzfse) as Data })
+                                   decompress: { try? ($0 as NSData).decompressed(using: .lzfse) as Data },
+                                   onProfilesFileOnly: { bytes in
+                                       Task { @MainActor in
+                                           RemoteLog.error("speicher", "Profile nur als Datei gespeichert (\(DefaultsStorage.kb(bytes)), nicht in UserDefaults)")
+                                       }
+                                   })
         let m = tiered.migrate()
         if !m.moved.isEmpty || !m.failed.isEmpty {
             RemoteLog.info("speicher", "Migration: verschoben \(m.moved) · behalten \(m.kept) · fehlgeschlagen \(m.failed)")

@@ -205,6 +205,33 @@ private func blockedDir() -> FileBlobStorage {
     #expect(prog.load(profile: id).entries.count == 1)
 }
 
+@Test func readsFromReadOnlyDirButWritesOnlyToWritable() throws {
+    let kv = MemoryKeyValueBlobs()
+    let old = FileBlobStorage(directory: tempDir()), cur = FileBlobStorage(directory: tempDir())
+    try old.write("progress-a.json", bytes(200_000, 1))           // Altbestand im nun gesperrten Ordner
+    let s = TieredBlobStorage(defaults: kv, directories: [old, cur], writeDirectories: [cur])
+    #expect(s.read("progress-a.json") == bytes(200_000, 1))
+    try s.write("progress-b.json", bytes(200_000, 2))
+    #expect(old.read("progress-b.json") == nil && cur.read("progress-b.json") == bytes(200_000, 2))
+}
+
+@Test func reportsProfilesOnlyInFile() throws {
+    final class Box: @unchecked Sendable { var sizes: [Int] = [] }
+    let box = Box()
+    let kv = MemoryKeyValueBlobs()
+    let s = TieredBlobStorage(defaults: kv, directories: [FileBlobStorage(directory: tempDir())],
+                              onProfilesFileOnly: { box.sizes.append($0) })
+    try s.write("profiles.json", bytes(1000))
+    #expect(box.sizes.isEmpty)
+    try s.write("profiles.json", bytes(TieredBlobStorage.profileLimit + 1))
+    #expect(box.sizes == [TieredBlobStorage.profileLimit + 1])
+    kv.dropsWrites = true
+    try s.write("profiles.json", bytes(10))
+    #expect(box.sizes.count == 2 && box.sizes.last == 10)
+    try s.write("progress-a.json", bytes(10))                       // andere Blöcke melden nichts
+    #expect(box.sizes.count == 2)
+}
+
 // MARK: TimedCache
 
 @Test func timedCacheFreshStaleAndRetry() {

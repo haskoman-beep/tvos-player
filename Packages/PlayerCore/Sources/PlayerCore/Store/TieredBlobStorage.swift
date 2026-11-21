@@ -33,15 +33,23 @@ public struct TieredBlobStorage: BlobStorage {
     public static var othersBudget: Int { budget - profileLimit }
 
     public let defaults: KeyValueBlobs
+    /// Gelesen wird immer aus allen Ordnern (auch einem, der gerade nicht beschreibbar ist).
     public let directories: [FileBlobStorage]
+    /// Geschrieben wird nur hierhin (Standard: alle `directories`).
+    public let writeDirectories: [FileBlobStorage]
     let compress: @Sendable (Data) -> Data?
     let decompress: @Sendable (Data) -> Data?
+    /// Meldung, wenn die Profile nur noch als Datei liegen (komprimierte Bytes).
+    let onProfilesFileOnly: (@Sendable (Int) -> Void)?
 
-    public init(defaults: KeyValueBlobs, directories: [FileBlobStorage],
+    public init(defaults: KeyValueBlobs, directories: [FileBlobStorage], writeDirectories: [FileBlobStorage]? = nil,
                 compress: @escaping @Sendable (Data) -> Data? = { $0 },
-                decompress: @escaping @Sendable (Data) -> Data? = { $0 }) {
+                decompress: @escaping @Sendable (Data) -> Data? = { $0 },
+                onProfilesFileOnly: (@Sendable (Int) -> Void)? = nil) {
         self.defaults = defaults; self.directories = directories
+        self.writeDirectories = writeDirectories ?? directories
         self.compress = compress; self.decompress = decompress
+        self.onProfilesFileOnly = onProfilesFileOnly
     }
 
     /// Höchstgröße (komprimiert) eines Blocks in UserDefaults; 0 = nur Datei.
@@ -60,13 +68,15 @@ public struct TieredBlobStorage: BlobStorage {
 
     public func write(_ name: String, _ data: Data) throws {
         let fileOK = writeFile(name, data)
-        if let z = compress(data), fitsDefaults(name, bytes: z.count) {
+        let z = compress(data)
+        if let z, fitsDefaults(name, bytes: z.count) {
             defaults.set(z, forKey: key(name))
             if defaults.data(forKey: key(name)) == z { return }
             defaults.remove(forKey: key(name))   // Schreiben nicht angekommen: nur Datei gilt
         } else {
             defaults.remove(forKey: key(name))
         }
+        if name == Self.profileName { onProfilesFileOnly?(z?.count ?? data.count) }
         guard fileOK else { throw StorageFull(bytes: data.count) }
     }
 
@@ -79,7 +89,7 @@ public struct TieredBlobStorage: BlobStorage {
     @discardableResult
     func writeFile(_ name: String, _ data: Data) -> Bool {
         var ok = false
-        for dir in directories where (try? dir.write(name, data)) != nil { ok = true }
+        for dir in writeDirectories where (try? dir.write(name, data)) != nil { ok = true }
         return ok
     }
 
