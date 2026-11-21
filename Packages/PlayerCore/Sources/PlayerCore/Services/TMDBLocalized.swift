@@ -186,3 +186,55 @@ extension MetaDetail {
         return m
     }
 }
+
+// MARK: Kalender (Task 5)
+
+extension TMDBClient {
+    /// Kommende Folgen einer Serie: letzte und nächste Folge aus `/tv/{id}`, dazu die Folgen der laufenden Staffel
+    /// (nur abgerufen, wenn die nächste Folge bis `through` (YYYY-MM-DD) erscheint).
+    /// `seriesID` ist "tmdb:{id}"; die App ersetzt sie durch die ID aus Weiterschauen/Merkliste.
+    public func nextEpisodes(tmdbID: Int, through: String? = nil) async throws -> [UpcomingEpisode] {
+        let base = Self.parseNextEpisodes(try await http.data(from: url("/tv/\(tmdbID)")))
+        guard let next = base.first(where: { $0.isNext }) else { return base.map(\.episode) }
+        if let through, next.episode.airDate > through { return base.map(\.episode) }
+        let data = try await http.data(from: url("/tv/\(tmdbID)/season/\(next.episode.season)"))
+        let season = Self.parseSeasonEpisodes(data, like: next.episode)
+        var seen = Set<String>(), out: [UpcomingEpisode] = []
+        for e in base.map(\.episode) + season where seen.insert(e.id).inserted { out.append(e) }
+        return out
+    }
+
+    /// `last_episode_to_air` und `next_episode_to_air` einer Serie (`isNext` markiert die nächste).
+    static func parseNextEpisodes(_ data: Data) -> [(episode: UpcomingEpisode, isNext: Bool)] {
+        guard let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let id = o["id"] as? Int,
+              let name = (o["name"] ?? o["title"]) as? String else { return [] }
+        let template = UpcomingEpisode(seriesID: "tmdb:\(id)", seriesName: name,
+                                       poster: (o["poster_path"] as? String).map { posterBase + $0 },
+                                       season: 0, episode: 0, airDate: "",
+                                       background: (o["backdrop_path"] as? String).map { backdropBase + $0 })
+        return [("last_episode_to_air", false), ("next_episode_to_air", true)].compactMap { key, isNext in
+            guard let e = o[key] as? [String: Any], let ep = episode(e, like: template) else { return nil }
+            return (ep, isNext)
+        }
+    }
+
+    /// Folgen einer Staffel (`/tv/{id}/season/{n}`) mit Ausstrahlungsdatum.
+    static func parseSeasonEpisodes(_ data: Data, like template: UpcomingEpisode) -> [UpcomingEpisode] {
+        guard let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let eps = o["episodes"] as? [[String: Any]] else { return [] }
+        return eps.compactMap { episode($0, like: template) }
+    }
+
+    private static func episode(_ e: [String: Any], like t: UpcomingEpisode) -> UpcomingEpisode? {
+        guard let s = e["season_number"] as? Int, let n = e["episode_number"] as? Int,
+              let date = e["air_date"] as? String, date.count >= 10 else { return nil }
+        // Ohne Übersetzung liefert TMDB "Episode 3" / "Folge 3" – dann ohne Titel.
+        let title = (e["name"] as? String).flatMap { s in
+            s.isEmpty || s.range(of: #"^(Episode|Folge) \d+$"#, options: .regularExpression) != nil ? nil : s
+        }
+        var x = t
+        x.season = s; x.episode = n; x.title = title; x.airDate = String(date.prefix(10))
+        x.still = (e["still_path"] as? String).map { stillBase + $0 }
+        return x
+    }
+}

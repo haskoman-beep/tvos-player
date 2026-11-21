@@ -50,17 +50,21 @@ struct HomeRowView: View {
             }
         case .list:
             if loaded && items.isEmpty {
-                Text(row.content == .list(.continueWatching) ? "Noch nichts angefangen." : model.tmdb == nil ? "TMDB-Key fehlt (Einstellungen)" : "Keine Einträge")
+                Text(row.content == .list(.continueWatching) ? "Noch nichts angefangen." : row.content == .list(.upcoming) && model.tmdb != nil ? "Heute keine neuen Folgen." : model.tmdb == nil ? "TMDB-Key fehlt (Einstellungen)" : "Keine Einträge")
                     .foregroundStyle(.secondary).padding(.leading, 60).frame(height: 120)
             } else {
                 Strip {
                     ForEach(Array((row.style == .top10 ? Array(items.prefix(10)) : items).enumerated()), id: \.element.id) { i, m in
                         card(route(for: m)) {
-                            switch row.style {
-                            case .hero: HeroCard(item: m)
-                            case .landscape: LandscapeCard(item: m)
-                            case .top10: Top10Card(item: m, rank: i + 1)
-                            default: PosterCard(item: m)
+                            if row.content == .list(.upcoming) {
+                                UpcomingTodayCard(item: m, landscape: row.style == .landscape || row.style == .hero)
+                            } else {
+                                switch row.style {
+                                case .hero: HeroCard(item: m)
+                                case .landscape: LandscapeCard(item: m)
+                                case .top10: Top10Card(item: m, rank: i + 1)
+                                default: PosterCard(item: m)
+                                }
                             }
                         }
                     }
