@@ -47,3 +47,14 @@ public func nextEpisodeStream(_ streams: [StreamItem], bingeGroup: String?) -> S
     if let g = bingeGroup, let same = playable.first(where: { $0.behaviorHints?.bingeGroup == g }) { return same }
     return playable.first
 }
+
+extension ProgressBook {
+    /// Welche Folge „Abspielen“ startet (wie Weiterschauen): die angefangene Folge, nach einer gesehenen die nächste,
+    /// sonst (nie gestartet oder Serie zu Ende) die erste Folge, ohne Folgenliste S1F1.
+    public func nextOpenEpisode(seriesID: String, in episodes: [EpisodeRef]) -> EpisodeRef {
+        let first = episodes.first ?? EpisodeRef(season: 1, episode: 1)
+        guard let e = latest(forItem: seriesID), let s = e.season, let ep = e.episode else { return first }
+        if !e.finished { return EpisodeRef(season: s, episode: ep) }
+        return EpisodeRef.next(after: s, ep, in: episodes) ?? first
+    }
+}

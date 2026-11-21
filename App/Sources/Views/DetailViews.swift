@@ -83,8 +83,7 @@ struct DetailView: View {
                             let resume = model.progress.resumePosition(for: imdb)
                             HStack(spacing: 30) {
                                 Button(resume.map { "▶ Fortsetzen ab \(timeText($0))" } ?? "▶ Abspielen") {
-                                    navigate(.streams(PlayRequest(type: "movie", id: imdb, title: item.name, item: progressItem(imdb), runtimeMinutes: parseRuntimeMinutes(meta?.runtime),
-                                                                  resumeLastSource: resume != nil)))
+                                    navigate(.streams(model.moviePlayRequest(item, imdb: imdb, meta: meta, resumeLastSource: resume != nil)))
                                 }
                                 .focused($focus, equals: .play)
                                 if let k = extra?.trailerYouTube { trailerButton(k) }
@@ -182,11 +181,7 @@ struct DetailView: View {
     }
 
     /// Eintrag mit IMDb-ID, damit Weiterschauen direkt Cinemeta/Streams nutzen kann.
-    private func progressItem(_ imdb: String) -> MetaPreview {
-        MetaPreview(id: imdb, type: item.type, name: item.name, poster: meta?.poster ?? item.poster,
-                    background: meta?.background ?? item.background, logo: meta?.logo, description: meta?.description ?? item.description,
-                    releaseInfo: meta?.releaseInfo ?? item.releaseInfo, imdbRating: item.imdbRating)
-    }
+    private func progressItem(_ imdb: String) -> MetaPreview { model.progressItem(item, imdb: imdb, meta: meta) }
 
     private var seasons: [Int] {
         Array(Set((meta?.videos ?? []).compactMap(\.season).filter { $0 > 0 })).sorted()

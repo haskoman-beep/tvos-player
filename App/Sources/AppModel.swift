@@ -393,3 +393,39 @@ final class AppModel: ObservableObject {
         if lastError == nil { notice = "\(commands.count) Eingabe(n) vom Handy übernommen." }
     }
 }
+
+// MARK: Hero (Startseite)
+
+extension AppModel {
+    /// Folien des Hero: Einträge der Hero-Quellreihe über den Reihen-Loader (gleicher Cache), höchstens 8.
+    func heroItems(for row: HomeRow) async -> [MetaPreview] {
+        guard case .list(let s) = row.content else { return [] }
+        return Array(await items(s).prefix(8))
+    }
+
+    /// Eintrag mit IMDb-ID, damit Weiterschauen direkt Cinemeta/Streams nutzen kann.
+    func progressItem(_ m: MetaPreview, imdb: String, meta: MetaDetail?) -> MetaPreview {
+        MetaPreview(id: imdb, type: m.type, name: m.name, poster: meta?.poster ?? m.poster,
+                    background: meta?.background ?? m.background, logo: meta?.logo, description: meta?.description ?? m.description,
+                    releaseInfo: meta?.releaseInfo ?? m.releaseInfo, imdbRating: m.imdbRating)
+    }
+
+    func moviePlayRequest(_ m: MetaPreview, imdb: String, meta: MetaDetail?, resumeLastSource: Bool) -> PlayRequest {
+        PlayRequest(type: "movie", id: imdb, title: m.name, item: progressItem(m, imdb: imdb, meta: meta),
+                    runtimeMinutes: parseRuntimeMinutes(meta?.runtime), resumeLastSource: resumeLastSource)
+    }
+
+    /// „Abspielen“ im Hero, wie Weiterschauen: Film mit gemerkter Quelle (sonst Quellenliste),
+    /// Serie mit der nächsten offenen Folge, sonst S1F1. Metadaten/Folgen werden erst hier geladen.
+    func quickPlayRequest(for m: MetaPreview) async -> PlayRequest? {
+        guard let imdb = await imdbID(for: m) else { return nil }
+        let series = m.type == "series"
+        let detail = await self.meta(type: series ? "series" : "movie", imdb: imdb)
+        guard series else { return moviePlayRequest(m, imdb: imdb, meta: detail, resumeLastSource: true) }
+        let eps = EpisodeRef.list(from: detail?.videos ?? [])
+        let n = progress.nextOpenEpisode(seriesID: imdb, in: eps)
+        return PlayRequest(type: "series", id: "\(imdb):\(n.season):\(n.episode)", title: "\(m.name) S\(n.season)E\(n.episode)",
+                           item: progressItem(m, imdb: imdb, meta: detail), season: n.season, episode: n.episode,
+                           episodes: eps, resumeLastSource: true)
+    }
+}
