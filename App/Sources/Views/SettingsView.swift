@@ -60,6 +60,7 @@ struct SettingsView: View {
                 }
                 Text("Tonspur-Vorrang: " + model.profile.audioPriority.map { $0 == "orig" ? "Original" : $0.uppercased() }.joined(separator: " → "))
                 Toggle("Untertitel automatisch an", isOn: binding(\.subtitlesEnabled))
+                Toggle("Nächste Folge automatisch starten", isOn: binding(\.autoplayNext))
                 Picker("Fortschritt & Gesehen", selection: binding(\.progressSource)) {
                     Text("Lokal").tag(ProgressSource.local); Text("Trakt").tag(ProgressSource.trakt); Text("Simkl").tag(ProgressSource.simkl)
                 }

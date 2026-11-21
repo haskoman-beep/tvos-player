@@ -168,7 +168,7 @@ extension StreamListView {
     /// Folge zu Ende → nächste Folge mit gleicher bingeGroup starten (Spec §6 Player: nächste Folge).
     func ended(_ stream: StreamItem) {
         playing = nil
-        guard let next = (current ?? request).nextRequest else { return }
+        guard model.profile.autoplayNext, let next = (current ?? request).nextRequest else { return }
         nextNote = "Nächste Folge wird gesucht: \(next.title) …"
         Task {
             let list = await model.streams(type: next.type, id: next.id).map(\.stream)

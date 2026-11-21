@@ -43,3 +43,9 @@ func tempDir() -> URL {
     let s = StoredProfiles.makeDefault()
     #expect(try store.importData(store.exportData(s)) == s)
 }
+
+@Test func olderProfileWithoutNewFieldsStillLoads() throws {
+    let json = #"{"schemaVersion":1,"profiles":[{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","name":"Alt"}]}"#
+    let s = try ProfileStore(directory: tempDir()).importData(Data(json.utf8))
+    #expect(s.profiles[0].name == "Alt" && s.profiles[0].autoplayNext && s.profiles[0].audioPriority == ["de", "en", "orig"])
+}

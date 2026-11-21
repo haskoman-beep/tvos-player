@@ -19,15 +19,40 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     public var home: HomeLayout
     /// z. B. "tmdb", "mdblist", "tvdb". Liegt bewusst im Profil (Export enthält sie, Gerät ist privat).
     public var apiKeys: [String: String]
+    /// Nächste Folge automatisch starten.
+    public var autoplayNext: Bool
 
     public init(id: UUID = UUID(), name: String, language: AppLanguage = .de, audioPriority: [String] = ["de", "en", "orig"],
                 subtitlesEnabled: Bool = false, subtitleLanguage: String = "de", progressSource: ProgressSource = .local,
                 addons: [InstalledAddon] = [], collections: [MediaCollection] = [], home: HomeLayout = HomeLayout(),
-                apiKeys: [String: String] = [:]) {
+                apiKeys: [String: String] = [:], autoplayNext: Bool = true) {
         self.id = id; self.name = name; self.language = language; self.audioPriority = audioPriority
         self.subtitlesEnabled = subtitlesEnabled; self.subtitleLanguage = subtitleLanguage
         self.progressSource = progressSource; self.addons = addons; self.collections = collections
-        self.home = home; self.apiKeys = apiKeys
+        self.home = home; self.apiKeys = apiKeys; self.autoplayNext = autoplayNext
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, language, audioPriority, subtitlesEnabled, subtitleLanguage, progressSource
+        case addons, collections, home, apiKeys, autoplayNext
+    }
+
+    /// Fehlende Felder (ältere Sicherungen, neue Einstellungen) bekommen Standardwerte statt das Profil zu verwerfen.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = Profile(name: "")
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Profil"
+        language = try c.decodeIfPresent(AppLanguage.self, forKey: .language) ?? d.language
+        audioPriority = try c.decodeIfPresent([String].self, forKey: .audioPriority) ?? d.audioPriority
+        subtitlesEnabled = try c.decodeIfPresent(Bool.self, forKey: .subtitlesEnabled) ?? d.subtitlesEnabled
+        subtitleLanguage = try c.decodeIfPresent(String.self, forKey: .subtitleLanguage) ?? d.subtitleLanguage
+        progressSource = try c.decodeIfPresent(ProgressSource.self, forKey: .progressSource) ?? d.progressSource
+        addons = try c.decodeIfPresent([InstalledAddon].self, forKey: .addons) ?? []
+        collections = try c.decodeIfPresent([MediaCollection].self, forKey: .collections) ?? []
+        home = try c.decodeIfPresent(HomeLayout.self, forKey: .home) ?? d.home
+        apiKeys = try c.decodeIfPresent([String: String].self, forKey: .apiKeys) ?? [:]
+        autoplayNext = try c.decodeIfPresent(Bool.self, forKey: .autoplayNext) ?? d.autoplayNext
     }
 
     public static func makeDefault(name: String = "Ich") -> Profile {
