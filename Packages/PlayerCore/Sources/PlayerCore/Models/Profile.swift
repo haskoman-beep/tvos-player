@@ -21,20 +21,23 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     public var apiKeys: [String: String]
     /// Nächste Folge automatisch starten.
     public var autoplayNext: Bool
+    /// Anmeldungen bei "trakt" / "simkl".
+    public var syncTokens: [String: SyncToken]
 
     public init(id: UUID = UUID(), name: String, language: AppLanguage = .de, audioPriority: [String] = ["de", "en", "orig"],
                 subtitlesEnabled: Bool = false, subtitleLanguage: String = "de", progressSource: ProgressSource = .local,
                 addons: [InstalledAddon] = [], collections: [MediaCollection] = [], home: HomeLayout = HomeLayout(),
-                apiKeys: [String: String] = [:], autoplayNext: Bool = true) {
+                apiKeys: [String: String] = [:], autoplayNext: Bool = true, syncTokens: [String: SyncToken] = [:]) {
         self.id = id; self.name = name; self.language = language; self.audioPriority = audioPriority
         self.subtitlesEnabled = subtitlesEnabled; self.subtitleLanguage = subtitleLanguage
         self.progressSource = progressSource; self.addons = addons; self.collections = collections
         self.home = home; self.apiKeys = apiKeys; self.autoplayNext = autoplayNext
+        self.syncTokens = syncTokens
     }
 
     enum CodingKeys: String, CodingKey {
         case id, name, language, audioPriority, subtitlesEnabled, subtitleLanguage, progressSource
-        case addons, collections, home, apiKeys, autoplayNext
+        case addons, collections, home, apiKeys, autoplayNext, syncTokens
     }
 
     /// Fehlende Felder (ältere Sicherungen, neue Einstellungen) bekommen Standardwerte statt das Profil zu verwerfen.
@@ -53,6 +56,7 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         home = try c.decodeIfPresent(HomeLayout.self, forKey: .home) ?? d.home
         apiKeys = try c.decodeIfPresent([String: String].self, forKey: .apiKeys) ?? [:]
         autoplayNext = try c.decodeIfPresent(Bool.self, forKey: .autoplayNext) ?? d.autoplayNext
+        syncTokens = try c.decodeIfPresent([String: SyncToken].self, forKey: .syncTokens) ?? [:]
     }
 
     public static func makeDefault(name: String = "Ich") -> Profile {

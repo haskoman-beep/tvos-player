@@ -106,10 +106,11 @@ struct PhoneInputView: View {
         .onDisappear { server.stop() }
     }
 
-    private func qr(_ s: String) -> UIImage? {
-        let f = CIFilter.qrCodeGenerator()
-        f.message = Data(s.utf8); f.correctionLevel = "M"
-        guard let out = f.outputImage, let cg = CIContext().createCGImage(out, from: out.extent) else { return nil }
-        return UIImage(cgImage: cg)
-    }
+}
+
+func qr(_ s: String) -> UIImage? {
+    let f = CIFilter.qrCodeGenerator()
+    f.message = Data(s.utf8); f.correctionLevel = "M"
+    guard let out = f.outputImage, let cg = CIContext().createCGImage(out, from: out.extent) else { return nil }
+    return UIImage(cgImage: cg)
 }

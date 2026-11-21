@@ -7,7 +7,7 @@ struct PlayerApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView().environmentObject(model)
+            RootView().environmentObject(model).task { await model.syncRemoteProgress() }
         }
     }
 }

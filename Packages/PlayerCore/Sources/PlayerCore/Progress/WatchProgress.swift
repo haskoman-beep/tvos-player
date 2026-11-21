@@ -14,15 +14,18 @@ public struct WatchProgress: Codable, Sendable, Hashable, Identifiable {
     public var finished: Bool
     /// Nächste Folge nach einer gesehenen: erscheint in Weiterschauen, obwohl noch nicht gestartet.
     public var nextUp: Bool?
+    /// Stand aus Trakt/Simkl (0…1), solange die Laufzeit lokal noch unbekannt ist.
+    public var remoteFraction: Double?
 
     public init(id: String, item: MetaPreview, season: Int? = nil, episode: Int? = nil,
-                position: Double, duration: Double, updated: Date = Date(), finished: Bool = false, nextUp: Bool? = nil) {
+                position: Double, duration: Double, updated: Date = Date(), finished: Bool = false, nextUp: Bool? = nil,
+                remoteFraction: Double? = nil) {
         self.id = id; self.item = item; self.season = season; self.episode = episode
         self.position = position; self.duration = duration; self.updated = updated; self.finished = finished
-        self.nextUp = nextUp
+        self.nextUp = nextUp; self.remoteFraction = remoteFraction
     }
 
-    public var fraction: Double { duration > 0 ? position / duration : 0 }
+    public var fraction: Double { duration > 0 ? position / duration : (remoteFraction ?? 0) }
 }
 
 public struct ProgressBook: Codable, Sendable, Equatable {
@@ -59,7 +62,7 @@ public struct ProgressBook: Codable, Sendable, Equatable {
     public func continueWatching(limit: Int = 30) -> [WatchProgress] {
         var seen = Set<String>()
         return entries.values
-            .filter { !$0.finished && ($0.position >= Self.minimumSeconds || $0.nextUp == true) }
+            .filter { !$0.finished && ($0.position >= Self.minimumSeconds || $0.nextUp == true || ($0.remoteFraction ?? 0) > 0) }
             .sorted { $0.updated > $1.updated }
             .filter { seen.insert($0.item.id).inserted }
             .prefix(limit).map { $0 }
@@ -71,6 +74,23 @@ public struct ProgressBook: Codable, Sendable, Equatable {
     }
 
     public func isWatched(_ id: String) -> Bool { entries[id]?.finished == true }
+
+    /// Nur Anteil bekannt (aus Trakt/Simkl): Player springt nach dem Laden dorthin.
+    public func resumeFraction(for id: String) -> Double? {
+        guard let e = entries[id], !e.finished, e.duration == 0, let f = e.remoteFraction, f > 0.01, f < Self.finishedAt else { return nil }
+        return f
+    }
+
+    /// Angefangenes aus dem Sync-Dienst übernehmen; neuerer lokaler Stand gewinnt.
+    public mutating func merge(remote: [RemoteProgress]) {
+        for r in remote {
+            if let l = entries[r.id], l.updated >= r.updated { continue }
+            let dur = entries[r.id]?.duration ?? 0
+            entries[r.id] = WatchProgress(id: r.id, item: r.item, season: r.season, episode: r.episode,
+                                          position: dur > 0 ? r.fraction * dur : 0, duration: dur, updated: r.updated,
+                                          finished: r.fraction >= Self.finishedAt, remoteFraction: dur > 0 ? nil : r.fraction)
+        }
+    }
 }
 
 /// Eine Datei pro Profil: progress-<id>.json (atomar).

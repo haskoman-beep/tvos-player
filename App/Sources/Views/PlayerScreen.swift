@@ -15,10 +15,12 @@ struct PlayerScreen: View {
         Group {
             if let backend { PlayerControls(engine: backend, url: url, title: request.title, profile: model.profile,
                                                        start: model.progress.resumePosition(for: request.id),
+                                                       startFraction: model.progress.resumeFraction(for: request.id),
                                                        report: { pos, dur in model.recordProgress(request, position: pos, duration: dur) },
                                                        onEnded: onEnded) }
             else { Text(initError ?? "Player wird gestartet …") }
         }
+        .onDisappear { model.endPlayback(request) }
         .onAppear {
             do { backend = try AetherBackend() } catch { initError = "Player-Start fehlgeschlagen: \(error)" }
         }
@@ -31,6 +33,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
     let title: String
     let profile: Profile
     let start: Double?
+    var startFraction: Double? = nil
     let report: (Double, Double) -> Void
     let onEnded: () -> Void
     @Environment(\.dismiss) private var dismiss
@@ -39,6 +42,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
     @State private var hideTask: Task<Void, Never>?
     @State private var loadError: String?
     @State private var tick = 0
+    @State private var fractionApplied = false
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -68,6 +72,12 @@ struct PlayerControls<E: PlaybackEngine>: View {
             if tick % 10 == 0 && engine.isPlaying { saveProgress() }
         }
         .onDisappear { saveProgress() }
+        .onChange(of: engine.duration) { _, d in
+            // Stand aus Trakt/Simkl kennt nur den Anteil: springen, sobald die Laufzeit da ist.
+            guard d > 0, !fractionApplied, start == nil, let f = startFraction else { return }
+            fractionApplied = true
+            Task { await engine.seek(f * d) }
+        }
         .onChange(of: engine.isEnded) { _, ended in
             guard ended else { return }
             if engine.duration > 0 { report(engine.duration, engine.duration) }

@@ -190,10 +190,10 @@ struct AddRowSheet: View {
                         }
                     }
                 }
-                Section("TMDB-Liste, Filmreihe oder Studio") {
-                    TextField("Link, z. B. themoviedb.org/list/…", text: $tmdbLink)
+                Section("TMDB- oder Trakt-Liste, Filmreihe, Studio") {
+                    TextField("Link, z. B. themoviedb.org/list/… oder trakt.tv/users/…/lists/…", text: $tmdbLink)
                     Button("Als Reihe hinzufügen") {
-                        if let s = TMDBLink.source(from: tmdbLink) { done(.list(s)) } else { model.lastError = "Link nicht erkannt: \(tmdbLink)" }
+                        if let s = TMDBLink.source(from: tmdbLink) ?? TraktLink.source(from: tmdbLink) { done(.list(s)) } else { model.lastError = "Link nicht erkannt: \(tmdbLink)" }
                     }
                     .disabled(tmdbLink.isEmpty)
                 }

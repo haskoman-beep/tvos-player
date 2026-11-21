@@ -80,7 +80,7 @@ public enum PhoneCommand: Equatable, Sendable {
 /// Seitenlogik ohne Netzwerk: Token prüfen, Formular lesen, Befehle erzeugen.
 public struct PhoneInputPage: Sendable {
     public let token: String
-    public static let services = ["tmdb", "mdblist", "tvdb"]
+    public static let services = ["tmdb", "mdblist", "tvdb", "trakt_id", "trakt_secret", "simkl_id"]
 
     public init(token: String) { self.token = token }
 
@@ -133,8 +133,9 @@ public struct PhoneInputPage: Sendable {
         <form method=post action="/submit?t=\(token)">
         <h2>Addon</h2>\(field("addon", "Manifest-URL", "https://…/manifest.json"))
         <h2>Schlüssel</h2>\(field("key_tmdb", "TMDB-API-Key", ""))\(field("key_mdblist", "MDBList-Key", ""))\(field("key_tvdb", "TVDB-Key", ""))
+        \(field("key_trakt_id", "Trakt Client ID", ""))\(field("key_trakt_secret", "Trakt Client Secret", ""))\(field("key_simkl_id", "Simkl Client ID", ""))
         <h2>Collections</h2>\(field("nuvio_url", "Nuvio-Export (URL)", "https://…json"))\(field("nuvio_json", "… oder Nuvio-JSON einfügen", "{…}", area: true))
-        \(field("tmdb_link", "TMDB-Liste/Filmreihe/Studio als Reihe", "https://www.themoviedb.org/list/…"))
+        \(field("tmdb_link", "TMDB- oder Trakt-Liste, Filmreihe, Studio als Reihe", "https://www.themoviedb.org/list/… oder https://trakt.tv/users/…/lists/…"))
         <h2>Sicherung</h2><p><a href="/export?t=\(token)">Alle Profile herunterladen (JSON)</a></p>
         \(field("backup_json", "Sicherung wiederherstellen (ersetzt alle Profile!)", "{…}", area: true))
         <button>An den Fernseher senden</button>

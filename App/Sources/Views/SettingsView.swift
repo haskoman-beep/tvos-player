@@ -45,7 +45,16 @@ struct SettingsView: View {
             Section("Dienste") {
                 SecureField(model.profile.apiKeys["tmdb"].map { _ in "TMDB-Key (gespeichert)" } ?? "TMDB-API-Key", text: $tmdbKey)
                 Button("TMDB-Key speichern") { model.update { $0.apiKeys["tmdb"] = tmdbKey }; tmdbKey = "" }.disabled(tmdbKey.isEmpty)
-                Text("Trakt, Simkl, TVDB und MDBList folgen (P4/P5).").foregroundStyle(.secondary)
+                ForEach(AppModel.syncServices, id: \.self) { s in
+                    let name = s == "trakt" ? "Trakt" : "Simkl"
+                    if !model.hasClient(s) {
+                        Text("\(name): Client ID über die Handy-Seite eintragen").foregroundStyle(.secondary)
+                    } else if model.isConnected(s) {
+                        Button("\(name) verbunden ✓ – abmelden", role: .destructive) { model.disconnect(s) }
+                    } else {
+                        NavigationLink("Mit \(name) verbinden") { SyncLoginView(service: s) }
+                    }
+                }
             }
 
             Section("Collections") {
