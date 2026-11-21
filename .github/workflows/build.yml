@@ -21,10 +21,13 @@ jobs:
       - name: Build
         run: |
           set -o pipefail
+          # Build-Nummer = Laufnummer; Commit/Branch für „App aktualisieren“ in den Einstellungen.
           cd App && xcodebuild -project Player.xcodeproj -scheme Player -configuration Release \
             -sdk appletvos -destination 'generic/platform=tvOS' -derivedDataPath build \
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" PLAYER_BUILD_COMMIT="$GITHUB_SHA" PLAYER_BUILD_BRANCH="$GITHUB_REF_NAME" \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build > build.log 2>&1 || { grep -E 'error:|BUILD FAILED' build.log | head -80; exit 1; }
           tail -5 build.log
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' -c 'Print :PlayerBuildCommit' -c 'Print :PlayerBuildBranch' build/Build/Products/Release-appletvos/Player.app/Info.plist
       - name: Package IPA
         run: |
           mkdir -p Payload
@@ -41,3 +44,39 @@ jobs:
           name: Player-ipa
           path: Player.ipa
           retention-days: 14
+  release:
+    # Öffentliches Release „app-main“ mit Player.ipa (nur main): atvloadly lädt es ohne Anmeldung,
+    # das Artefakt „Player-ipa“ dagegen braucht eine Anmeldung und ist gezippt.
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: release-app-main
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Player-ipa
+      - name: Release app-main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ls -la Player.ipa
+          notes="Build $GITHUB_RUN_NUMBER · Commit $GITHUB_SHA · Branch main"
+          title="Player Build $GITHUB_RUN_NUMBER"
+          if old=$(gh release view app-main --json body --jq .body 2>/dev/null); then
+            prev=$(printf '%s\n' "$old" | sed -n 's/.*Build \([0-9][0-9]*\).*/\1/p' | head -1)
+            if [ -n "$prev" ] && [ "$prev" -ge "$GITHUB_RUN_NUMBER" ]; then
+              echo "Release hat schon Build $prev – nichts zu tun"
+              exit 0
+            fi
+            gh release upload app-main Player.ipa --clobber
+            gh release edit app-main --title "$title" --notes "$notes"
+            gh api -X PATCH "repos/$GH_REPO/git/refs/tags/app-main" -f sha="$GITHUB_SHA" -F force=true > /dev/null
+          else
+            gh release create app-main Player.ipa --target "$GITHUB_SHA" --title "$title" --notes "$notes" --latest
+          fi

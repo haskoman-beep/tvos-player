@@ -1,0 +1,187 @@
+import Foundation
+import Network
+import CryptoKit
+import PlayerCore
+
+/// „App aktualisieren“: neuesten main-Build auf GitHub suchen und über atvloadly am Pi installieren lassen.
+/// Logik/Parsing in PlayerCore (`AppUpdateClient`); hier nur Zustand, Bonjour-Suche und Log.
+@MainActor
+final class AppUpdater: ObservableObject {
+    static let shared = AppUpdater()
+
+    enum Phase: Equatable {
+        case idle
+        case checking
+        case checked(UpdateState)
+        case starting
+        case installing(String)
+        case done(String)
+        case failed(String)
+    }
+
+    @Published private(set) var phase: Phase = .idle
+    @Published private(set) var searching = false
+    @Published private(set) var addressNote: String?
+
+    /// Build dieser App (CI-Laufnummer, Commit, Branch aus der Info.plist).
+    let current = AppBuildInfo(info: Bundle.main.infoDictionary)
+    private let client = AppUpdateClient(accountID: AppUpdater.md5)
+    private var poll: Task<Void, Never>?
+    private var workstations: [String] = []
+
+    private init() {}
+
+    var busy: Bool {
+        switch phase {
+        case .checking, .starting, .installing: return true
+        default: return false
+        }
+    }
+
+    /// atvloadly will die Apple-ID als md5 (hex, klein) – der Klartext verlässt die App nicht.
+    nonisolated static func md5(_ s: String) -> String {
+        Insecure.MD5.hash(data: Data(s.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func text(_ error: Error) -> String {
+        if let e = error as? AppUpdateError { return e.text }
+        return AppUpdateLog.redact(error.localizedDescription)
+    }
+
+    // MARK: Suche
+
+    func check() {
+        guard !busy else { return }
+        phase = .checking
+        Task {
+            do {
+                let s = try await client.check(current: current)
+                phase = .checked(s)
+                RemoteLog.info("update", "Prüfung: installiert Build \(current.buildLabel) · \(Self.describe(s))")
+            } catch {
+                let m = Self.text(error)
+                phase = .failed(m)
+                RemoteLog.error("update", "Prüfung fehlgeschlagen: \(m)")
+            }
+        }
+    }
+
+    private static func describe(_ s: UpdateState) -> String {
+        switch s {
+        case .upToDate(let b): return "aktuell (main \(b.number))"
+        case .available(let r, let b):
+            let n = r.number.map { String($0) } ?? "?"
+            return "Paket Build \(n) verfügbar (main \(b.number) · \(b.shortCommit))"
+        case .notPublished(let b): return "main \(b.number) ohne Paket im Release"
+        }
+    }
+
+    // MARK: Installation
+
+    func install(_ release: ReleaseBuild, base: URL) {
+        guard !busy else { return }
+        phase = .starting
+        let bundleID = Bundle.main.bundleIdentifier ?? "de.haskoman.player"
+        let n = release.number.map { String($0) } ?? "?"
+        Task {
+            do {
+                let s = try await client.start(base: base, bundleID: bundleID, release: release)
+                let way: String
+                switch s.route {
+                case .sourceUpdate: way = "Quelle"
+                case .mcp: way = "MCP install_app"
+                }
+                RemoteLog.info("update", "atvloadly übernimmt Build \(n) über \(way) (Eintrag \(s.appID)): \(AppUpdateLog.redact(s.message))")
+                phase = .installing("atvloadly installiert Build \(n) … Die App wird dabei beendet – danach neu öffnen.")
+                watch(base: base, appID: s.appID, bundleID: bundleID, ipaURL: release.ipaURL)
+            } catch {
+                let m = Self.text(error)
+                phase = .failed(m)
+                RemoteLog.error("update", "Installation nicht gestartet: \(m)")
+            }
+        }
+    }
+
+    /// Alle 3 s nachsehen, ob atvloadly noch installiert. Gelingt es, beendet tvOS die App vorher.
+    private func watch(base: URL, appID: Int, bundleID: String, ipaURL: URL) {
+        poll?.cancel()
+        poll = Task {
+            var misses = 0
+            let deadline = Date().addingTimeInterval(20 * 60)
+            while !Task.isCancelled && Date() < deadline {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                do {
+                    let list = try await client.installing(base: base)
+                    misses = 0
+                    if !Atvloadly.isInstalling(list, appID: appID, bundleID: bundleID, ipaURL: ipaURL) {
+                        phase = .done("atvloadly ist fertig, die App läuft aber noch. Zeigt sie nach dem Neustart den alten Build, ist die Installation fehlgeschlagen – Protokoll auf der atvloadly-Seite ansehen.")
+                        RemoteLog.error("update", "atvloadly meldet Ende der Installation, App läuft noch mit Build \(current.buildLabel)")
+                        return
+                    }
+                } catch {
+                    misses += 1
+                    if misses >= 10 {
+                        phase = .failed("atvloadly antwortet nicht mehr: \(Self.text(error))")
+                        RemoteLog.error("update", "Statusabfrage fehlgeschlagen: \(Self.text(error))")
+                        return
+                    }
+                }
+            }
+            if !Task.isCancelled, case .installing = phase { phase = .failed("Keine Rückmeldung von atvloadly nach 20 Minuten.") }
+        }
+    }
+
+    // MARK: atvloadly-Adresse
+
+    /// Bonjour `_workstation._tcp` kurz durchsuchen und Rechner per `GET /api/version` prüfen.
+    /// (atvloadly selbst meldet sich nicht per Bonjour; der Pi meldet sich als Workstation.)
+    func discover() async -> URL? {
+        guard !searching else { return nil }
+        searching = true
+        addressNote = nil
+        defer { searching = false }
+        workstations = []
+        let b = NWBrowser(for: .bonjour(type: "_workstation._tcp", domain: nil), using: .tcp)
+        b.browseResultsChangedHandler = { results, _ in
+            let names = results.compactMap { r -> String? in
+                if case let .service(name, _, _, _) = r.endpoint { return name }
+                return nil
+            }
+            Task { @MainActor in AppUpdater.shared.workstations = names }
+        }
+        b.start(queue: .main)
+        try? await Task.sleep(nanoseconds: 3_000_000_000)
+        b.cancel()
+        let names = workstations
+        for u in AtvloadlyAddress.candidates(workstations: names) {
+            if let v = await Self.probe(u) {
+                addressNote = "Gefunden: atvloadly \(v)"
+                RemoteLog.info("update", "atvloadly gefunden: \(u.absoluteString) (\(v))")
+                return u
+            }
+        }
+        addressNote = names.isEmpty
+            ? "Kein Rechner per Bonjour gefunden – Adresse über die Handy-Seite eintragen."
+            : "Kein atvloadly unter \(names.count) Rechner(n) gefunden – Adresse über die Handy-Seite eintragen."
+        RemoteLog.info("update", "atvloadly-Suche ohne Treffer (\(names.count) Workstation(s))")
+        return nil
+    }
+
+    /// Eingetragene Adresse prüfen (Hinweis unter dem Feld).
+    func verify(_ base: URL) {
+        addressNote = "Prüfe …"
+        Task {
+            if let v = await Self.probe(base) { addressNote = "atvloadly \(v) erreichbar" }
+            else { addressNote = "Unter dieser Adresse antwortet kein atvloadly." }
+        }
+    }
+
+    /// Kurzer Test (4 s) – URLSessionSender hat keine eigene Zeitgrenze.
+    private nonisolated static func probe(_ base: URL) async -> String? {
+        var r = URLRequest(url: base.appendingPathComponent("api/version"), timeoutInterval: 4)
+        r.cachePolicy = .reloadIgnoringLocalCacheData
+        guard let res = try? await URLSession.shared.data(for: r) else { return nil }
+        guard (res.1 as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        return try? Atvloadly.parseVersion(res.0)
+    }
+}

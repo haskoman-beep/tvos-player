@@ -80,7 +80,7 @@ public enum PhoneCommand: Equatable, Sendable {
 /// Seitenlogik ohne Netzwerk: Token prüfen, Formular lesen, Befehle erzeugen.
 public struct PhoneInputPage: Sendable {
     public let token: String
-    public static let services = ["tmdb", "mdblist", "tvdb", "trakt_id", "trakt_secret", "simkl_id"]
+    public static let services = ["tmdb", "mdblist", "tvdb", "trakt_id", "trakt_secret", "simkl_id", "atvloadly"]
 
     public init(token: String) { self.token = token }
 
@@ -136,6 +136,7 @@ public struct PhoneInputPage: Sendable {
         \(field("key_trakt_id", "Trakt Client ID", ""))\(field("key_trakt_secret", "Trakt Client Secret", ""))\(field("key_simkl_id", "Simkl Client ID", ""))
         <h2>Collections</h2>\(field("nuvio_url", "Nuvio-Export (URL)", "https://…json"))\(field("nuvio_json", "… oder Nuvio-JSON einfügen", "{…}", area: true))
         \(field("tmdb_link", "TMDB- oder Trakt-Liste, Filmreihe, Studio als Reihe", "https://www.themoviedb.org/list/… oder https://trakt.tv/users/…/lists/…"))
+        <h2>App-Update</h2>\(field("key_atvloadly", "atvloadly-Adresse (Pi)", "http://pi-name.local:5533"))
         <h2>Sicherung</h2><p><a href="/export?t=\(token)">Alle Profile herunterladen (JSON)</a></p>
         \(field("backup_json", "Sicherung wiederherstellen (ersetzt alle Profile!)", "{…}", area: true))
         <button>An den Fernseher senden</button>
