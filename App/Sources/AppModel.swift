@@ -351,6 +351,12 @@ final class AppModel: ObservableObject {
         return list
     }
 
+    /// Nur der Cache, ohne Abfrage: erlaubt Technik-Plaketten schon im ersten Bild der Detailseite.
+    func cachedStreams(id: String) -> [(addon: String, stream: StreamItem)]? {
+        guard let c = streamCache[id], Date().timeIntervalSince(c.at) < 600 else { return nil }
+        return c.list
+    }
+
     private var streamCache: [String: (at: Date, list: [(addon: String, stream: StreamItem)])] = [:]
     private var streamTasks: [String: Task<[(addon: String, stream: StreamItem)], Never>] = [:]
 
