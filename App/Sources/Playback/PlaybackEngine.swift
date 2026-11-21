@@ -46,6 +46,9 @@ protocol PlaybackEngine: ObservableObject {
     /// Tut nichts nach einer Nutzerwahl oder ohne `subtitlePreferences`; schaltet nur, wenn das Ergebnis von
     /// der aktiven Spur abweicht. `audioLanguage` nil = Sprache der aktiven Tonspur. Liefert die Wahl (nil = übersprungen).
     @discardableResult func reconsiderSubtitles(audioLanguage: String?) -> SubtitlePick?
+    /// Externe Untertiteldatei als Spur anmelden (`isExternal = true`); liefert die Spur-ID oder nil.
+    @discardableResult
+    func addExternalSubtitle(url: URL, name: String, language: String?, formatHint: String?) -> Int?
     func stop()
     associatedtype Surface: View
     func surface() -> Surface
@@ -58,6 +61,12 @@ protocol PlaybackEngine: ObservableObject {
 extension PlaybackEngine {
     /// Für spätere Spuren (Addon-Untertitel): nach dem Hinzufügen aufrufen, nicht `autoSelectSubtitle`.
     @discardableResult func reconsiderSubtitles() -> SubtitlePick? { reconsiderSubtitles(audioLanguage: nil) }
+}
+
+extension PlaybackEngine {
+    /// Backends ohne externe Untertitel melden nichts an.
+    @discardableResult
+    func addExternalSubtitle(url: URL, name: String, language: String?, formatHint: String?) -> Int? { nil }
 }
 
 /// Wünsche für das Laden, unabhängig vom Backend.
@@ -190,4 +199,10 @@ final class AetherBackend: PlaybackEngine {
     }
     func stop() { engine.stop() }
     func surface() -> some View { AetherPlayerSurface(engine: engine) }
+    /// AetherEngine #88: Spur erscheint in `subtitleTracks` (synthetische ID, `isExternal`), wählbar über `selectSubtitle`.
+    /// `httpHeaders` nil: Kopfzeilen der Quelle gehen nur an denselben Ursprung.
+    @discardableResult
+    func addExternalSubtitle(url: URL, name: String, language: String?, formatHint: String?) -> Int? {
+        engine.addExternalSubtitleTrack(ExternalSubtitleTrack(url: url, name: name, language: language, formatHint: formatHint)).id
+    }
 }

@@ -41,7 +41,8 @@ struct PlayerScreen: View {
                                                        onNextSoon: {
                                                            guard let n = request.nextRequest else { return }
                                                            Task { _ = await model.streams(type: n.type, id: n.id) }
-                                                       }) }
+                                                       },
+                                                       addonSubtitles: { await model.addonSubtitles(for: request, media: url, headers: headers, enabled: !isTrailer) }) }
             else { Text(initError ?? "Player wird gestartet …") }
         }
         .onDisappear {
@@ -80,6 +81,10 @@ struct PlayerControls<E: PlaybackEngine>: View {
     var nextTitle: String? = nil
     /// Kurz vor Ende: Quellen der nächsten Folge vorab holen.
     var onNextSoon: () -> Void = {}
+    /// Untertitel aus Addons holen (nil = keine; Ergebnis nil = kein Untertitel-Addon installiert).
+    var addonSubtitles: (@MainActor () async -> [AddonSubtitle]?)? = nil
+    /// Laufende Addon-UT-Abfrage; abgebrochen beim Verlassen und vor dem Neuladen.
+    @State var addonSubTask: Task<Void, Never>?
     @State private var upNext: Int?
     @State private var upNextCancelled = false
     @State private var nextPrefetched = false
@@ -138,7 +143,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             if tick % 10 == 0 && engine.isPlaying { saveProgress() }
             upNextTick()
         }
-        .onDisappear { saveProgress(); RemoteLog.info("player", "Verlassen") }
+        .onDisappear { addonSubTask?.cancel(); saveProgress(); RemoteLog.info("player", "Verlassen") }
         .onChange(of: engine.errorText) { _, e in
             guard let e else { return }
             RemoteLog.error("player", "Engine: \(e) · \(engine.infoText) · \(engine.errorDetail) · bei \(Int(lastGoodTime))s")
@@ -175,6 +180,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                 // Tonwahl läuft asynchron: die Sprache der gewählten Spur direkt mitgeben.
                 engine.subtitlePreferences = SubtitlePreferences(profile: profile)
                 engine.reconsiderSubtitles(audioLanguage: (best ?? engine.audioTracks.first(where: { $0.id == engine.activeAudioID }))?.language)
+                addonSubTask = Task { await loadAddonSubtitles() }
                 RemoteLog.info("player", "Spielt · Tonspur \(engine.activeAudioID.map(String.init) ?? "-") · UT \(engine.activeSubtitleID.map(String.init) ?? "aus")")
                 engine.play()
                 poke()
@@ -278,6 +284,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
 
     /// Fehler mitten im Film: einmal an der Stelle neu laden (frisches Muxer-Budget), sonst nächste Quelle.
     private func recover(_ reason: String) {
+        addonSubTask?.cancel()
         guard recoveries < 1 else {
             RemoteLog.error("player", "Neu laden half nicht → nächste Quelle")
             saveProgress(); engine.stop(); onFallback("Wiedergabefehler: \(reason)"); return
