@@ -54,7 +54,7 @@ struct AppearanceSettings: View {
                 Text("Logo").tag(BadgeStyle.logo)
                 Text("Text").tag(BadgeStyle.text)
             }
-            PosterBadgePlacementRow()
+            PosterQualitySettingRow()
             ForEach(Self.badgeTypes.indices, id: \.self) { i in
                 Toggle(Self.badgeTypes[i].0, isOn: model.binding((\Profile.appearance.badges).appending(path: Self.badgeTypes[i].1)))
             }
