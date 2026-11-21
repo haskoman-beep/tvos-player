@@ -61,21 +61,34 @@ extension PlayerControls {
     }
 
     /// Play nach dem Hintergrund: Sitzung an der Stelle neu aufbauen; der Neuaufbau spielt los.
+    /// Läuft schon ein Neuaufbau (Play-Taste und Play von außen kurz nacheinander), passiert nichts.
     func restoreAndPlay() {
-        guard !leaving else { return }
+        guard !leaving, !restoring else { return }
+        restoring = true
         restorePending = false
         life.userResumed()
         recoverTask?.cancel()
         recoverTask = Task {
+            defer { restoring = false }
             do { try await engine.recover() } catch {
                 guard !Task.isCancelled, !leaving else { return }
                 RemoteLog.error("player", "Neuaufbau nach Hintergrund fehlgeschlagen: \(error)")
-                engine.play()   // Engine meldet den Fehler selbst, die Fehlerleiter übernimmt
+                // Nicht blind play(): die Fehlerleiter entscheidet (meldet die Engine selbst einen Fehler,
+                // ruft onChange(errorText) recover schon auf).
+                if engine.errorText == nil { restoring = false; recover("Neuaufbau nach Hintergrund fehlgeschlagen") }
                 return
             }
             guard !Task.isCancelled, !leaving else { return }
             if !engine.isPlaying { engine.play() }
             RemoteLog.info("player", "Nach Hintergrund neu aufgebaut · \(engine.stateText) bei \(Int(engine.currentTime))s")
+            // Sicherheitsnetz: Addon-Untertitel gemerkt, aber keine externe Spur mehr da → neu holen.
+            if !addonTrackURLs.isEmpty, !engine.subtitleTracks.contains(where: \.isExternal) {
+                RemoteLog.info("player", "Addon-Untertitel nach Neuaufbau weg → neu holen")
+                addonTrackURLs = [:]
+                let audioLanguage = engine.audioTracks.first { $0.id == engine.activeAudioID }?.language
+                addonSubTask?.cancel()
+                addonSubTask = Task { await loadAddonSubtitles(audioLanguage: audioLanguage) }
+            }
         }
     }
 

@@ -106,6 +106,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
     @State private var resolvedPrefs: LoadPrefs?
     /// Nach dem Hintergrund: Engine hat das Bild freigegeben, Neuaufbau erst beim Play-Druck (PlayerLifecycle.swift).
     @State var restorePending = false
+    @State var restoring = false
     /// Laufende Addon-UT-Abfrage; abgebrochen beim Verlassen und vor dem Neuladen.
     @State var addonSubTask: Task<Void, Never>?
     /// Laufendes Neuladen nach einem Fehler; abgebrochen beim Verlassen.
@@ -204,7 +205,9 @@ struct PlayerControls<E: PlaybackEngine>: View {
             leave { onEnded(!upNextCancelled) }
         }
         .onChange(of: showTracks) { _, open in onTracksShown(open) }
-        .fullScreenCover(isPresented: $showTracks) { PlayerTrackPanel(engine: engine, profile: profile, sourceURL: url) }
+        .fullScreenCover(isPresented: $showTracks) { PlayerTrackPanel(engine: engine, profile: profile, sourceURL: url, audioLocked: restorePending) }
+        // Play von außen (Siri, Kontrollzentrum) nach dem Hintergrund: erst neu aufbauen.
+        .onChange(of: engine.isPlaying) { _, p in if p, restorePending { restoreAndPlay() } }
         .onPlayerLifecycle { handlePhase($0) }
         .playbackErrorAlert($failureNotice, chooseOther: { leave { saveProgress(); engine.stop(); dismiss() } },
                             retry: { recoveryPlan.reset(); life.userResumed(); recover("Erneut versuchen", manual: true) })
@@ -347,7 +350,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
 
     /// Fehler: einordnen (PlayerCore `RecoveryPlanner`) und je Klasse gleiche Quelle neu laden, Link neu auflösen,
     /// nächste Quelle oder Meldung. `manual`: Nutzer will es erneut versuchen, auch wo die Leiter aufgeben würde.
-    private func recover(_ reason: String, manual: Bool = false) {
+    func recover(_ reason: String, manual: Bool = false) {
         guard !leaving else { return }
         addonSubTask?.cancel()
         recoveryPlan.canReresolve = reresolve != nil
