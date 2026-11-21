@@ -99,23 +99,32 @@ public struct RowCatalog: Sendable {
     /// Mehrere Wörter müssen alle vorkommen (in Titel, Untertitel oder Quelle). Treffer im Titel stehen vorn,
     /// sonst bleibt die Reihenfolge des Katalogs. Leere Suche = keine Treffer.
     public func search(_ query: String) -> [RowCatalogEntry] {
-        let words = RowCatalog.fold(query).split(whereSeparator: \.isWhitespace).map(String.init)
-        guard !words.isEmpty else { return [] }
+        let plain = RowCatalog.fold(query).split(whereSeparator: \.isWhitespace).map(String.init)
+        let translit = RowCatalog.fold(query, transliterate: true).split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !plain.isEmpty, plain.count == translit.count else { return [] }
+        let words = Array(zip(plain, translit))
+        /// „Komödie“ findet sich mit „komodie“, „komoedie“ und „komödie“; „Fuer“ auch mit „für“.
+        func matches(_ text: String) -> Bool {
+            let p = RowCatalog.fold(text), t = RowCatalog.fold(text, transliterate: true)
+            return words.allSatisfy { w in p.contains(w.0) || t.contains(w.0) || p.contains(w.1) }
+        }
         var inTitle: [RowCatalogEntry] = [], elsewhere: [RowCatalogEntry] = []
         var seen = Set<String>()
         for e in allEntries where !seen.contains(e.id) {
-            let title = RowCatalog.fold(e.title)
-            let all = title + " " + RowCatalog.fold(e.subtitle) + " " + RowCatalog.fold(e.source)
-            guard words.allSatisfy({ all.contains($0) }) else { continue }
+            guard matches(e.title + " " + e.subtitle + " " + e.source) else { continue }
             seen.insert(e.id)
-            if words.allSatisfy({ title.contains($0) }) { inTitle.append(e) } else { elsewhere.append(e) }
+            if matches(e.title) { inTitle.append(e) } else { elsewhere.append(e) }
         }
         return inTitle + elsewhere
     }
 
     /// Kleinschreibung, ohne Akzente/Umlautpunkte, „ß“ → „ss“, Leerraum zusammengefasst.
-    public static func fold(_ s: String) -> String {
-        let lowered = s.lowercased().replacingOccurrences(of: "ß", with: "ss")
+    /// `transliterate`: Umlaute werden zu ae/oe/ue statt a/o/u.
+    public static func fold(_ s: String, transliterate: Bool = false) -> String {
+        var lowered = s.precomposedStringWithCanonicalMapping.lowercased().replacingOccurrences(of: "ß", with: "ss")
+        if transliterate {
+            for (u, r) in [("ä", "ae"), ("ö", "oe"), ("ü", "ue")] { lowered = lowered.replacingOccurrences(of: u, with: r) }
+        }
         let scalars = lowered.decomposedStringWithCanonicalMapping.unicodeScalars.filter {
             $0.properties.generalCategory != .nonspacingMark
         }
@@ -147,12 +156,22 @@ public struct RowCatalog: Sendable {
         }
     }
 
-    /// Thema und Ersteller aus dem Titel einer Kit-Datei: „Genres · dannyrutledge“ → (Genres, dannyrutledge).
+    /// Thema und Ersteller aus dem Titel einer Kit-Datei: „Genres · autorA“ → (Genres, autorA).
+    /// Komplette Startseiten („Komplette Startseite · X“) bekommen je Datei einen eigenen Abschnitt.
     static func kitTopic(_ title: String) -> (topic: String, creator: String?) {
+        if title.hasPrefix(setupPrefix) { return (title, nil) }
         guard let r = title.range(of: " · ") else { return (title, nil) }
         let creator = String(title[r.upperBound...])
         return (String(title[..<r.lowerBound]), creator.isEmpty ? nil : creator)
     }
+
+    static let setupPrefix = "Komplette Startseite"
+
+    /// Themenfolge laut Plan §2.5: Genres, Streaming, Jahrzehnte, Regisseure, Preise, danach alles andere nach Alphabet
+    /// (komplette Startseiten eingeschlossen).
+    static let kitTopicRanks = ["genres": 0, "streaming": 1, "jahrzehnte": 2, "regie": 3, "regisseure": 3, "preise": 4]
+
+    static func kitTopicRank(_ topic: String) -> Int { kitTopicRanks[fold(topic)] ?? 5 }
 
     static func kitGroup(sources: [FusionKitSource], contents: [String: FusionKitContent], traktID: Bool, traktLogin: Bool,
                          status: (String) -> RowCatalogEntry.Status) -> RowCatalogGroup {
@@ -188,7 +207,10 @@ public struct RowCatalog: Sendable {
             hint = (hiddenNeedsID ? "Trakt Client ID fehlt – " : "Trakt-Anmeldung fehlt – ") + what
         }
         return RowCatalogGroup(id: kind.rawValue, kind: kind, title: kind.title,
-                               sections: sections.map { RowCatalogSection(title: $0.topic, entries: $0.entries) },
+                               sections: sections.sorted { l, r in
+                                   let a = kitTopicRank(l.topic), b = kitTopicRank(r.topic)
+                                   return a != b ? a < b : fold(l.topic) < fold(r.topic)
+                               }.map { RowCatalogSection(title: $0.topic, entries: $0.entries) },
                                hiddenCount: hidden, hint: hint, pendingSources: pending)
     }
 }

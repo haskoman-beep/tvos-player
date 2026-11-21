@@ -26,8 +26,8 @@ private func kitRow(_ id: String, _ title: String, tiles: Int, trakt: Bool = fal
     return FusionKitRow(id: id, title: title, style: .collectionTiles, body: .collection(MediaCollection(id: id, title: title, folders: folders)))
 }
 
-private let kitA = FusionKitSource(id: "ka", title: "Genres · dannyrutledge", url: "u1", custom: false)
-private let kitB = FusionKitSource(id: "kb", title: "Genres · mousa.a", url: "u2", custom: false)
+private let kitA = FusionKitSource(id: "ka", title: "Genres · autorA", url: "u1", custom: false)
+private let kitB = FusionKitSource(id: "kb", title: "Genres · autorB", url: "u2", custom: false)
 private let kitC = FusionKitSource(id: "kc", title: "Streaming · x", url: "u3", custom: false)
 private let kitD = FusionKitSource(id: "kd", title: "Jahrzehnte · y", url: "u4", custom: false)
 
@@ -90,7 +90,7 @@ private func catalog(layout: HomeLayout = HomeLayout(), traktID: Bool = false, t
     let c = catalog(traktID: true, traktLogin: true)
     let kit = c.group("kit")!
     #expect(kit.sections.map(\.title) == ["Genres", "Streaming"])
-    #expect(kit.sections[0].entries.map(\.subtitle) == ["56 Kacheln · dannyrutledge", "10 Kacheln · mousa.a"])
+    #expect(kit.sections[0].entries.map(\.subtitle) == ["56 Kacheln · autorA", "10 Kacheln · autorB"])
     #expect(kit.count == 4 && kit.hiddenCount == 0 && kit.hint == nil)
     #expect(kit.pendingSources == 1)   // „Jahrzehnte“ noch nicht geladen
     #expect(kit.sections[0].entries[0].action == .kit(rowID: "fusion.ka.g", source: kitA))
@@ -122,7 +122,7 @@ private func catalog(layout: HomeLayout = HomeLayout(), traktID: Bool = false, t
     #expect(c.search("aiostreams beliebte").map(\.title) == ["Beliebte Filme"])
     let genres = c.search("genres")
     #expect(genres.map(\.source) == ["Fusion-Kit", "Fusion-Kit", "Fertige Pakete"])
-    #expect(genres.prefix(2).map(\.subtitle) == ["56 Kacheln · dannyrutledge", "10 Kacheln · mousa.a"])
+    #expect(genres.prefix(2).map(\.subtitle) == ["56 Kacheln · autorA", "10 Kacheln · autorB"])
     let serie = c.search("serie")
     #expect(serie.first?.title == "Top 10 Serien")                       // Titeltreffer, Katalogreihenfolge
     #expect(serie.contains { $0.title == CatalogSource.traktRecommendedShows.title })
@@ -130,4 +130,45 @@ private func catalog(layout: HomeLayout = HomeLayout(), traktID: Bool = false, t
     // „Komödie“ passt nur über den Untertitel „Liste · Film“ und steht deshalb hinter den Titeltreffern.
     #expect(film.first == "Beliebte Filme")
     #expect(film.firstIndex(of: "Komödie")! > film.firstIndex(of: CatalogSource.traktRecommendedMovies.title)!)
+}
+
+@Test func kitTopicsInPlanOrderAndSetupsSplit() {
+    let titles = ["Preise · a", "Zombies · b", "Komplette Startseite · Zwei", "Regie · c", "Animation · d",
+                  "Jahrzehnte · e", "Komplette Startseite · Eins", "Streaming · f", "Genres · g"]
+    let sources = titles.enumerated().map { FusionKitSource(id: "s\($0.offset)", title: $0.element, url: "u", custom: false) }
+    var contents: [String: FusionKitContent] = [:]
+    for (i, _) in titles.enumerated() {
+        contents["s\(i)"] = FusionKitContent(rows: [kitRow("fusion.s\(i).a", "R\(i)a", tiles: 1), kitRow("fusion.s\(i).b", "R\(i)b", tiles: 2)])
+    }
+    let kit = RowCatalog(layout: HomeLayout(), kitSources: sources, kitContents: contents).group("kit")!
+    #expect(kit.sections.map(\.title) == ["Genres", "Streaming", "Jahrzehnte", "Regie", "Preise", "Animation",
+                                          "Komplette Startseite · Eins", "Komplette Startseite · Zwei", "Zombies"])
+    // Jede komplette Startseite bleibt ein eigener Abschnitt; ihr Untertitel nennt nur die Art.
+    let eins = kit.sections.first { $0.title == "Komplette Startseite · Eins" }!
+    #expect(eins.entries.map(\.title) == ["R6a", "R6b"])
+    #expect(eins.entries.map(\.subtitle) == ["1 Kacheln", "2 Kacheln"])
+}
+
+@Test func searchTransliteratesUmlauts() {
+    let c = catalog()
+    for q in ["komoedie", "Komödie", "komodie", "KOMOEDIE"] {
+        #expect(c.search(q).map(\.title) == ["Komödie"], "\(q)")
+    }
+    var a = addon()
+    a.manifest.catalogs = [CatalogDescriptor(type: "movie", id: "f", name: "Fuer Kinder"),
+                           CatalogDescriptor(type: "movie", id: "s", name: "Straße der Träume")]
+    let d = RowCatalog(layout: HomeLayout(), addons: [a], packages: [])
+    #expect(d.search("für").map(\.title) == ["Fuer Kinder"])
+    #expect(d.search("fuer").map(\.title) == ["Fuer Kinder"])
+    #expect(d.search("strasse traeume").map(\.title) == ["Straße der Träume"])
+    #expect(d.search("straße träume").map(\.title) == ["Straße der Träume"])
+    #expect(RowCatalog.fold("Grüße", transliterate: true) == "gruesse")
+}
+
+@Test func traktTextsAndOnHomeWhileLoggedOut() {
+    var l = HomeLayout()
+    l.insert(.list(.traktRecommendedShows))
+    let t = catalog(layout: l, traktID: false, traktLogin: false).group("trakt")!
+    #expect(t.entries[0].status == .unavailable("braucht Trakt-Anmeldung und Client ID"))
+    #expect(t.entries[1].status == .onHome(position: 1))
 }

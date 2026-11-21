@@ -150,9 +150,11 @@ extension HomeLayout {
     @discardableResult
     public mutating func moveToBottom(_ id: UUID) -> RowMove? { move(id, to: rows.count - 1) }
 
-    /// Neue Reihe; `index` nil = am Ende, sonst in die Grenzen gezogen. Prüft keine Doppelten.
+    /// Neue Reihe; `index` nil = am Ende, sonst in die Grenzen gezogen. Liegt der Inhalt schon auf der Startseite,
+    /// bleibt alles, wie es ist, und die vorhandene Reihe wird zurückgegeben.
     @discardableResult
     public mutating func insert(_ content: RowContent, at index: Int? = nil, style: RowStyle? = nil) -> UUID {
+        if let existing = row(withKey: content.key) { return existing.id }
         let row = HomeRow(content: content, style: style)
         rows.insert(row, at: min(max(index ?? rows.count, 0), rows.count))
         return row.id

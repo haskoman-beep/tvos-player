@@ -133,3 +133,24 @@ func numberedRows(_ n: Int) -> HomeLayout {
     do { let r = empty.move(UUID(), to: 0); #expect(r == nil) }
     do { let r = empty.moveToBottom(UUID()); #expect(r == nil) }
 }
+
+@Test func layoutInsertDeduplicates() {
+    var l = threeRows()
+    let watchlist = l.rows[2].id
+    let again = l.insert(.list(.watchlist), at: 0)
+    #expect(again == watchlist && l.rows.count == 3 && l.rows[2].id == watchlist)
+    let fresh = l.insert(.collection(id: "neu"))
+    let second = l.insert(.collection(id: "neu"), at: 0)
+    #expect(second == fresh && l.rows.last?.id == fresh)
+    #expect(l.rows.filter { $0.content.key == "collection:neu" }.count == 1)
+}
+
+@Test func moveEdgesSingleRowAndOwnIndex() {
+    var one = numberedRows(1)
+    do { let r = one.moveToBottom(one.rows[0].id); #expect(r == nil) }
+    var l = numberedRows(4)
+    do { let r = l.move(l.rows[2].id, to: 2); #expect(r == nil) }
+    var e = HomeEditor(layout: HomeLayout())
+    do { let r = e.moveToTop(UUID()); #expect(r == nil) }
+    #expect(e.layout.rows.isEmpty)
+}
