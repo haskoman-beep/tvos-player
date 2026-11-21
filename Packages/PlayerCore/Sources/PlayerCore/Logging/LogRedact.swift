@@ -25,9 +25,10 @@ public enum LogRedact {
         var out = s
         if out.contains("/") { out = replaceURLs(out) }
         let lower = out.lowercased()
-        if keyWords.contains(where: { lower.contains($0) }) {
-            out = keyValuePattern.stringByReplacingMatches(
-                in: out, range: NSRange(location: 0, length: (out as NSString).length), withTemplate: "$1$2$3$4…")
+        if keyWords.contains(where: { lower.contains($0) }) { out = maskKeyValues(out) }
+        if lower.contains("bearer") {
+            out = bearerPattern.stringByReplacingMatches(
+                in: out, range: NSRange(location: 0, length: (out as NSString).length), withTemplate: "$1 …")
         }
         if longestTokenRun(out) >= opaqueRun {
             out = opaquePattern.stringByReplacingMatches(
@@ -58,6 +59,29 @@ public enum LogRedact {
         return parts.count > 1 ? "\(base)/…/\(shown)" : "\(base)/\(shown)"
     }
 
+    /// Wert hinter einem Schlüsselnamen durch „…“ ersetzen; Anführungszeichen bleiben stehen
+    /// (`"…"`, `'…'`). Ungequotete Werte, die mit `schema://` beginnen, sind schon gekürzte Adressen und bleiben.
+    private static func maskKeyValues(_ s: String) -> String {
+        let ns = s as NSString
+        let matches = keyValuePattern.matches(in: s, range: NSRange(location: 0, length: ns.length))
+        guard !matches.isEmpty else { return s }
+        var out = ""
+        var pos = 0
+        for m in matches {
+            let value = m.range(at: 4)
+            let v = ns.substring(with: value)
+            let masked: String
+            if v.hasPrefix("\"") { masked = "\"…\"" }
+            else if v.hasPrefix("'") { masked = "'…'" }
+            else if v.range(of: #"^[A-Za-z][A-Za-z0-9+.\-]*://"#, options: .regularExpression) != nil { masked = v }
+            else { masked = "…" }
+            out += ns.substring(with: NSRange(location: pos, length: value.location - pos)) + masked
+            pos = value.location + value.length
+        }
+        out += ns.substring(from: pos)
+        return out
+    }
+
     private static func replaceURLs(_ s: String) -> String {
         let ns = s as NSString
         let matches = urlPattern.matches(in: s, range: NSRange(location: 0, length: ns.length))
@@ -85,16 +109,24 @@ public enum LogRedact {
     }
 
     /// Adresse mit Schema bis zum nächsten Leerraum/Anführungszeichen (`|`, `{`, `[` gehören dazu:
-    /// Torrentio-Konfiguration `providers=…|realdebrid=KEY`, IPv6-Hosts) – oder ohne Schema `host.tld[:port]/…`.
+    /// Torrentio-Konfiguration `providers=…|realdebrid=KEY`, IPv6-Hosts) – oder ohne Schema
+    /// `host.tld[:port]/…`, `10.0.0.5[:port]/…`, `localhost[:port]/…`.
     nonisolated(unsafe) private static let urlPattern = try! NSRegularExpression(
-        pattern: #"[A-Za-z][A-Za-z0-9+.\-]*://[^\s"'<>]+|(?<![A-Za-z0-9_.@/:%\-])(?:[A-Za-z0-9\-]+\.)+[A-Za-z]{2,}(?::[0-9]+)?/[^\s"'<>]*"#)
-
-    private static let keyWords = ["token", "key", "password", "secret"]
-
-    /// `token=…`, `apiKey: …`, `"api_key":"…"`, `refreshToken: Optional("…")` (Groß/Klein egal).
-    nonisolated(unsafe) private static let keyValuePattern = try! NSRegularExpression(
-        pattern: #"\b((?:access|refresh|auth)?[-_]?token|api[-_]?key|apikey|key|password|secret)("?\s*[:=]\s*)(Optional\()?("?)[^\s"',;&)}\]]+"#,
+        pattern: #"[A-Za-z][A-Za-z0-9+.\-]*://[^\s"'<>]+|(?<![A-Za-z0-9_.@/:%\-])(?:(?:[A-Za-z0-9\-]+\.)+[A-Za-z]{2,}|(?:[0-9]{1,3}\.){3}[0-9]{1,3}|localhost)(?::[0-9]+)?/[^\s"'<>]*"#,
         options: [.caseInsensitive])
+
+    private static let keyWords = ["token", "key", "passwd", "password", "secret"]
+
+    /// Schlüsselname (auch mit Vorsilbe/camelCase: `x_api_key`, `userToken`, `clientSecret`, `session_key`),
+    /// direkt danach `:`/`=` (sonst kein Treffer – „keyboard“ bleibt). Wert: `"…"`, `'…'` (auch mit Leerzeichen),
+    /// `Optional("…")` oder ungequotet bis zum nächsten Trenner. Groß/Klein egal.
+    nonisolated(unsafe) private static let keyValuePattern = try! NSRegularExpression(
+        pattern: #"\b([A-Za-z0-9_\-]*(?:token|key|passwd|password|secret))(["']?\s*[:=]\s*)(Optional\()?("[^"]*"|'[^']*'|[^\s"',;&)}\]]+)"#,
+        options: [.caseInsensitive])
+
+    /// `Authorization: Bearer <Wert>`
+    nonisolated(unsafe) private static let bearerPattern = try! NSRegularExpression(
+        pattern: #"\b(Bearer)\s+[A-Za-z0-9._~+/=\-]+"#, options: [.caseInsensitive])
 
     nonisolated(unsafe) private static let opaquePattern = try! NSRegularExpression(
         pattern: "[A-Za-z0-9_-]{\(opaqueRun),}")

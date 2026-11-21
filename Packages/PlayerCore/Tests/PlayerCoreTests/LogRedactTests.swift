@@ -171,6 +171,43 @@ import Testing
     #expect(!LogRedact.looksSecret("manifest.json"))
 }
 
+// MARK: Nachtrag
+
+@Test func redactQuotedValuesWithSpaces() {
+    #expect(LogRedact.text("apikey: 'abc def'") == "apikey: '…'")
+    #expect(LogRedact.text(#"password: "my secret pass", n=1"#) == #"password: "…", n=1"#)
+    #expect(LogRedact.text(#"secret='a b c'"#) == #"secret='…'"#)
+    let once = LogRedact.text(#"password: "my secret pass""#)
+    #expect(LogRedact.text(once) == once)
+}
+
+@Test func redactPrefixedAndCamelCaseKeys() {
+    #expect(LogRedact.text("x_api_key=abc1 userToken: t2 clientSecret=s3 session_key=k4")
+            == "x_api_key=… userToken: … clientSecret=… session_key=…")
+    #expect(LogRedact.text("x-api-key: k5") == "x-api-key: …")
+    // Kein `:`/`=` direkt nach dem Schlüssel → unverändert
+    #expect(LogRedact.text("Taste keyboard: K95, Keyboard=an, Schlüssel fehlt") == "Taste keyboard: K95, Keyboard=an, Schlüssel fehlt")
+    // Schon gekürzte Adresse als Wert bleibt lesbar (NSError-UserInfo)
+    #expect(LogRedact.text("NSErrorFailingURLStringKey=https://api.torbox.app/v1/x/requestdl?token=S1")
+            == "NSErrorFailingURLStringKey=https://api.torbox.app/…/requestdl")
+}
+
+@Test func redactSchemelessIPAndLocalhost() {
+    #expect(LogRedact.text("Addon 10.0.0.5:7000/realdebrid=ABCDEF1234567890XYZ/manifest.json neu")
+            == "Addon 10.0.0.5:7000/…/manifest.json neu")
+    #expect(LogRedact.text("Addon 10.0.0.7/0a1b2c3d-4e5f-6789-abcd-ef0123456789") == "Addon 10.0.0.7/…")
+    #expect(LogRedact.text("lokal localhost:7000/abc/def/stream.json?k=1") == "lokal localhost:7000/…/stream.json")
+    #expect(LogRedact.text("Version 0.4.0/1 bleibt") == "Version 0.4.0/1 bleibt")
+    let once = LogRedact.text("Addon 10.0.0.5:7000/realdebrid=ABCDEF1234567890XYZ/manifest.json")
+    #expect(LogRedact.text(once) == once)
+}
+
+@Test func redactBearer() {
+    #expect(LogRedact.text("Authorization: Bearer eyJabc.def-ghi_jkl") == "Authorization: Bearer …")
+    #expect(LogRedact.text("header authorization: bearer abc123") == "header authorization: bearer …")
+    #expect(LogRedact.text(LogRedact.text("Authorization: Bearer x1")) == "Authorization: Bearer …")
+}
+
 @Test func imageBudgetScalesWithAvailableMemory() {
     let mb = ImageCacheBudget.mb
     // Unbekannt → bisherige feste Grenze
