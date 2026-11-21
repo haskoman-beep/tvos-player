@@ -29,6 +29,9 @@ struct QualityLogo: View {
     let kind: QualityLogoKind
     var height: CGFloat = 38
     var color: Color = .white
+    /// Einzeilige Kurzform (Poster, kleine Höhen): die leichte zweite Zeile wäre dort nur 7–8 pt hoch und unleserlich.
+    /// nil = automatisch unter 34 pt Höhe (Quellenliste 38 pt und Detailseite 44 pt bleiben zweizeilig).
+    var compact: Bool? = nil
 
     var body: some View {
         wordmark
@@ -43,13 +46,30 @@ struct QualityLogo: View {
             .accessibilityLabel(Self.label(kind))
     }
 
-    /// Unter dieser Höhe entfällt die kleine Zusatzzeile bei 4K (wäre unleserlich).
-    private var compact: Bool { height < 34 }
+    private var isCompact: Bool { compact ?? (height < 34) }
 
     @ViewBuilder private var wordmark: some View {
+        if isCompact { line(Self.shortText(kind), 0.5) } else { full }
+    }
+
+    /// Kurzformen: eine fette Zeile.
+    static func shortText(_ k: QualityLogoKind) -> String {
+        switch k {
+        case .uhd4K: "4K"
+        case .dolbyVision: "DV"
+        case .dolbyAtmos: "ATMOS"
+        case .dtsHDMA: "DTS-HD MA"
+        case .dtsX: "DTS:X"
+        case .hdr10: "HDR10"
+        case .hdr10Plus: "HDR10+"
+        case .remux: "REMUX"
+        }
+    }
+
+    @ViewBuilder private var full: some View {
         switch kind {
         case .uhd4K:
-            if compact { line("4K", 0.56) } else { twoLine("4K", "ULTRA HD", top: 0.42, bottom: 0.2) }
+            twoLine("4K", "ULTRA HD", top: 0.42, bottom: 0.2)
         case .dolbyVision: twoLine("DOLBY", "VISION")
         case .dolbyAtmos: twoLine("DOLBY", "ATMOS")
         case .dtsHDMA: twoLine("DTS-HD", "MASTER AUDIO", bottom: 0.22)
@@ -91,11 +111,13 @@ struct QualityBadgeView: View {
     let badge: QualityBadge
     var height: CGFloat = 38
     var surface: BadgeSurface = .dark
+    /// Logos einzeilig (siehe `QualityLogo.compact`).
+    var compactLogo: Bool? = nil
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: height * 0.18, style: .continuous)
         if let logo = badge.logo {
-            QualityLogo(kind: logo, height: height, color: surface.foreground)
+            QualityLogo(kind: logo, height: height, color: surface.foreground, compact: compactLogo)
                 .background(surface.fill, in: shape)
         } else {
             Text(badge.text)
@@ -126,6 +148,16 @@ struct PosterQualityBadges: View {
     let item: MetaPreview
     var scale: CGFloat = 1
     @State private var best: BestQuality?
+    /// Plakettenhöhe bei Kartengröße „Mittel“. Logos einzeilig (fett), damit sie auf dem Poster lesbar bleiben.
+    static let badgeHeight: CGFloat = 38
+    private func row(_ badges: [QualityBadge]) -> some View {
+        HStack(spacing: 6 * scale) {
+            ForEach(badges) { QualityBadgeView(badge: $0, height: Self.badgeHeight * scale, surface: .image, compactLogo: true) }
+        }
+    }
+
+    /// Höchstbreite links neben den Plaketten (aufgeklapptes Poster: Logo/Titel), als Anteil der Breite.
+    static let leadingContentMaxFraction: CGFloat = 0.55
 
     var body: some View {
         let settings = model.profile.appearance.badges
@@ -135,8 +167,11 @@ struct PosterQualityBadges: View {
             if !list.isEmpty {
                 // Fortschrittsbalken (CardStateOverlay) sitzt ganz unten: Plaketten darüber.
                 let lifted = (model.progress.cardState(itemID: item.id)?.fraction ?? 0) > 0
-                HStack(spacing: 6 * scale) {
-                    ForEach(list) { QualityBadgeView(badge: $0, height: 30 * scale, surface: .image) }
+                // Passt die Reihe nicht in die Posterbreite (Text-Stil), entfallen Plaketten von hinten.
+                ViewThatFits(in: .horizontal) {
+                    row(list)
+                    row(Array(list.prefix(2)))
+                    row(Array(list.prefix(1)))
                 }
                 .padding(.trailing, 10 * scale)
                 .padding(.bottom, (lifted ? 24 : 10) * scale)

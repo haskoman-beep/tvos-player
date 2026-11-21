@@ -113,13 +113,16 @@ public struct BestQuality: Equatable, Sendable {
     public var hdr: String?
     public var atmos = false
     public var dtsX = false
+    public var dtsHDMA = false
+    /// Mindestens eine REMUX-Quelle.
+    public var remux = false
     /// Meiste Kanäle ("7.1" > "5.1" > "2.0").
     public var channels: String?
 
     public init(resolution: String? = nil, dolbyVision: Bool = false, hdr: String? = nil, atmos: Bool = false,
-                dtsX: Bool = false, channels: String? = nil) {
+                dtsX: Bool = false, dtsHDMA: Bool = false, remux: Bool = false, channels: String? = nil) {
         self.resolution = resolution; self.dolbyVision = dolbyVision; self.hdr = hdr
-        self.atmos = atmos; self.dtsX = dtsX; self.channels = channels
+        self.atmos = atmos; self.dtsX = dtsX; self.dtsHDMA = dtsHDMA; self.remux = remux; self.channels = channels
     }
 
     static let resolutionRank = ["2160p", "1440p", "1080p", "720p", "480p"]
@@ -136,6 +139,8 @@ public struct BestQuality: Equatable, Sendable {
         b.hdr = others.contains("HDR10+") ? "HDR10+" : others.contains("HDR10") ? "HDR10" : others.isEmpty ? nil : "HDR"
         b.atmos = t.contains { $0.audio.contains("Atmos") }
         b.dtsX = t.contains { $0.audio.contains("DTS:X") }
+        b.dtsHDMA = t.contains { $0.audio.contains("DTS-HD MA") }
+        b.remux = t.contains { $0.source == "REMUX" }
         b.channels = ["7.1", "5.1", "2.0"].first { c in t.contains { $0.channels == c } }
         return b
     }
@@ -152,7 +157,8 @@ public enum QualityBadges {
             guard s.shows(type) else { return }
             out.append(QualityBadge(type: type, text: text, logo: logos ? logo : nil, tone: tone))
         }
-        if let r = t.resolution { add(.resolution, r, r == "2160p" ? .uhd4K : nil) }
+        // 2160p heißt überall „4K“ (Quellenliste, Detailseite, Poster); andere Auflösungen bleiben „1080p“ usw.
+        if let r = t.resolution { add(.resolution, r == "2160p" ? "4K" : r, r == "2160p" ? .uhd4K : nil) }
         for h in t.hdr { add(.hdr, h, hdrLogo(h)) }
         if let src = t.source { add(.source, src, src == "REMUX" ? .remux : nil) }
         if let c = t.videoCodec { add(.videoCodec, t.tenBit ? "\(c) 10-bit" : c) }
@@ -165,7 +171,7 @@ public enum QualityBadges {
         return out
     }
 
-    /// Technik-Plaketten der Detailseite: 4K/HD, Dolby Vision, HDR-Art, Atmos, DTS:X, Kanäle.
+    /// Technik-Plaketten der Detailseite: 4K/HD, Dolby Vision, HDR-Art, REMUX, Atmos, DTS:X, DTS-HD MA, Kanäle.
     public static func detail(_ b: BestQuality, settings s: BadgeSettings) -> [QualityBadge] {
         let logos = s.style == .logo
         var out: [QualityBadge] = []
@@ -176,13 +182,16 @@ public enum QualityBadges {
         if let r = resolutionBadge(b.resolution) { add(.resolution, r.text, r.logo) }
         if b.dolbyVision { add(.hdr, "Dolby Vision", .dolbyVision) }
         if let h = b.hdr { add(.hdr, h, hdrLogo(h)) }
+        if b.remux { add(.source, "REMUX", .remux) }
         if b.atmos { add(.audio, "Dolby Atmos", .dolbyAtmos) }
         if b.dtsX { add(.audio, "DTS:X", .dtsX) }
+        if b.dtsHDMA { add(.audio, "DTS-HD MA", .dtsHDMA) }
         if let ch = b.channels, ch != "2.0" { add(.channels, ch, nil) }
         return out
     }
 
     /// Höchstens 3 kleine Plaketten fürs Poster: beste Auflösung, DV (sonst HDR-Art), Atmos. Leer, wenn abgeschaltet.
+    /// Kurze Texte („DV“, „Atmos“), damit auch der Text-Stil in die Posterbreite passt.
     public static func poster(_ b: BestQuality, settings s: BadgeSettings) -> [QualityBadge] {
         guard s.onPosters else { return [] }
         let logos = s.style == .logo
@@ -192,9 +201,9 @@ public enum QualityBadges {
             out.append(QualityBadge(type: type, text: text, logo: logos ? logo : nil))
         }
         if let r = resolutionBadge(b.resolution) { add(.resolution, r.text, r.logo) }
-        if b.dolbyVision { add(.hdr, "Dolby Vision", .dolbyVision) }
+        if b.dolbyVision { add(.hdr, "DV", .dolbyVision) }
         else if let h = b.hdr { add(.hdr, h, hdrLogo(h)) }
-        if b.atmos { add(.audio, "Dolby Atmos", .dolbyAtmos) }
+        if b.atmos { add(.audio, "Atmos", .dolbyAtmos) }
         return Array(out.prefix(3))
     }
 
