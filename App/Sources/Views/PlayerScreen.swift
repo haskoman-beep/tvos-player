@@ -16,6 +16,10 @@ struct PlayerScreen: View {
     var isTrailer = false
     /// Adresse ist ein entferntes HLS-Master (AVPlayer direkt, ohne Demuxer-Probe).
     var remoteHLS = false
+    /// Jeder Tastendruck im Player („Noch da?“-Zähler zurücksetzen).
+    var onUserInput: () -> Void = {}
+    /// „Noch da?“ steht an: kein Up-next-Countdown, die Abfrage kommt nach dem Ende.
+    var holdsUpNext = false
     @State private var backend: AetherBackend?
     @State private var initError: String?
     /// Kennzeichen beim Vorladen: solange ein Player offen ist, keine Vorlade-Abfragen.
@@ -41,13 +45,14 @@ struct PlayerScreen: View {
                                                        onEnded: { tracksOpen = false; onEnded($0) },
                                                        onFallback: { tracksOpen = false; onFallback($0) },
                                                        onPause: { if !isTrailer { model.scrobblePause(request) } },
-                                                       nextTitle: !isTrailer && model.profile.autoplayNext ? request.nextRequest?.title : nil,
+                                                       nextTitle: !isTrailer && !holdsUpNext && model.profile.autoplayNext ? request.nextRequest?.title : nil,
                                                        onNextSoon: {
                                                            guard let n = request.nextRequest else { return }
                                                            Task { _ = await model.streams(type: n.type, id: n.id) }
                                                        },
                                                        addonSubtitles: { await model.addonSubtitles(for: request, media: url, headers: headers, enabled: !isTrailer) },
-                                                       onTracksShown: { tracksOpen = $0 }) }
+                                                       onTracksShown: { tracksOpen = $0 },
+                                                       onUserInput: onUserInput) }
             else { Text(initError ?? "Player wird gestartet …") }
         }
         .onDisappear {
@@ -93,6 +98,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
     var addonSubtitles: (@MainActor () async -> [AddonSubtitle]?)? = nil
     /// Spur-Panel auf/zu (für PlayerScreen: onDisappear bei offenem Panel ist kein Verlassen).
     var onTracksShown: (Bool) -> Void = { _ in }
+    /// Jeder Tastendruck („Noch da?“-Zähler).
+    var onUserInput: () -> Void = {}
     /// Laufende Addon-UT-Abfrage; abgebrochen beim Verlassen und vor dem Neuladen.
     @State var addonSubTask: Task<Void, Never>?
     /// Laufendes Neuladen nach einem Fehler; abgebrochen beim Verlassen.
@@ -140,9 +147,10 @@ struct PlayerControls<E: PlaybackEngine>: View {
             if let n = upNext, let t = nextTitle { upNextCard(n, t).transition(.move(edge: .trailing).combined(with: .opacity)) }
         }
         .focusable()
-        .onPlayPauseCommand { togglePlay() }
-        .onTapGesture { togglePlay() }   // Klick auf das Touchpad (Mitte) pausiert ebenfalls
+        .onPlayPauseCommand { onUserInput(); togglePlay() }
+        .onTapGesture { onUserInput(); togglePlay() }   // Klick auf das Touchpad (Mitte) pausiert ebenfalls
         .onMoveCommand { dir in
+            onUserInput()
             if upNext != nil {
                 withAnimation { upNext = nil }; upNextCancelled = true
                 RemoteLog.info("player", "Up-next abgebrochen"); return

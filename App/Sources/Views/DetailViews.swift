@@ -352,6 +352,8 @@ struct StreamListView: View {
     /// Quellen, die in dieser Liste schon versagt haben, und Zahl der automatischen Wechsel.
     @State private var failed: Set<String> = []
     @State private var fallbacks = 0
+    /// „Noch da?“-Zähler, Addon je Quelle, offene Abfrage (StillWatchingPrompt.swift).
+    @State private var autoNext = AutoNextState()
 
     var body: some View {
         // Titel als Listenkopf (scrollt mit weg) statt navigationTitle: der große tvOS-Titel lag über den Zeilen.
@@ -363,7 +365,7 @@ struct StreamListView: View {
                     Text(model.profile.addons.isEmpty ? "Kein Addon installiert (Einstellungen → Addons)." : "Keine abspielbaren Quellen.")
                 }
                 ForEach(streams, id: \.stream.id) { entry in
-                    Button { fallbacks = 0; playing = entry.stream } label: {
+                    Button { fallbacks = 0; AutoNextState.userInput($autoNext); playing = entry.stream } label: {
                         StreamRow(addon: entry.addon, stream: entry.stream).opacity(failed.contains(entry.stream.id) ? 0.4 : 1)
                     }
                 }
@@ -402,8 +404,11 @@ struct StreamListView: View {
         .fullScreenCover(item: $playing) { s in
             if let u = s.url.flatMap(URL.init(string:)) { PlayerScreen(url: u, request: current ?? request,
                                                                              headers: s.behaviorHints?.proxyHeaders?.request ?? [:],
-                                                                             onEnded: { ended(s, autoplay: $0) }, onFallback: { fallback(from: s, reason: $0) }).environmentObject(model) }
+                                                                             onEnded: { ended(s, autoplay: $0) }, onFallback: { fallback(from: s, reason: $0) },
+                                                                             onUserInput: { AutoNextState.userInput($autoNext) },
+                                                                             holdsUpNext: autoNext.promptDue(model.profile)).environmentObject(model) }
         }
+        .modifier(StillWatchingAlert(state: $autoNext, note: $nextNote) { startNext($0.next, after: $0.stream, auto: false) })
     }
 }
 
@@ -435,16 +440,33 @@ extension StreamListView {
         }
     }
 
-    /// Folge zu Ende → nächste Folge mit gleicher bingeGroup starten (Spec §6 Player: nächste Folge).
+    /// Folge zu Ende → nächste Folge mit gleichem Release starten (Spec §6 Player: nächste Folge).
+    /// Nach N automatischen Folgen ohne Tastendruck erst „Noch da?“ fragen.
     func ended(_ stream: StreamItem, autoplay: Bool = true) {
         playing = nil
         guard autoplay, model.profile.autoplayNext, let next = (current ?? request).nextRequest else { return }
+        if autoNext.promptDue(model.profile) {
+            RemoteLog.info("player", "Noch da?: nach \(autoNext.counter.autoStarts) automatischen Folgen, vor \(next.title)")
+            // Erst nach dem Schließen des Players zeigen (Alert während der Cover-Animation geht verloren).
+            Task { try? await Task.sleep(for: .milliseconds(700)); autoNext.ask = StillWatchingAsk(stream: stream, next: next) }
+            return
+        }
+        startNext(next, after: stream, auto: true)
+    }
+
+    /// Quellen der nächsten Folge holen und die zum laufenden Release passende starten (Rückfall: Listenreihenfolge).
+    func startNext(_ next: PlayRequest, after stream: StreamItem, auto: Bool) {
         nextNote = "Nächste Folge wird gesucht: \(next.title) …"
+        let ref = autoNext.releaseProfile(stream, listAddon: streams.first { $0.stream.id == stream.id }?.addon)
         Task {
-            let list = await model.streams(type: next.type, id: next.id).map(\.stream)
-            guard let s = nextEpisodeStream(list, bingeGroup: stream.behaviorHints?.bingeGroup) else {
+            let list = await model.streams(type: next.type, id: next.id)
+            guard let s = nextEpisodeStream(list, matching: ref) else {
                 nextNote = "Keine Quelle für \(next.title) gefunden."; return
             }
+            let addon = list.first { $0.stream.id == s.id }?.addon
+            RemoteLog.info("player", "Nächste Folge: \(addon ?? "?") · \(s.name ?? "") · Nähe \(ref.score(s, addon: addon))\(s.behaviorHints?.bingeGroup == ref.bingeGroup && ref.bingeGroup != nil ? " (bingeGroup)" : "")")
+            if let addon { autoNext.addons[s.id] = addon }
+            if auto { autoNext.counter.autoStarted() }
             nextNote = nil
             current = next
             try? await Task.sleep(for: .milliseconds(800))
