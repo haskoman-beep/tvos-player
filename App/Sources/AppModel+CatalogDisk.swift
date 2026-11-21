@@ -79,10 +79,12 @@ extension AppModel {
                 guard let data = CatalogSnapshot.encode(entries: entries) else { return nil }
                 do { try files.write(name, data); return data.count } catch { return -1 }
             }.value
-            switch bytes {
-            case nil: RemoteLog.info("katalog", "Plattencache: nichts zu schreiben")
-            case -1?: RemoteLog.error("katalog", "Plattencache: Schreiben fehlgeschlagen")
-            case let b?: RemoteLog.info("katalog", "Plattencache geschrieben: \(entries.count) Reihen, \(b / 1024) KB")
+            if let b = bytes, b >= 0 {
+                RemoteLog.info("katalog", "Plattencache geschrieben: \(entries.count) Reihen, \(b / 1024) KB")
+            } else if bytes == nil {
+                RemoteLog.info("katalog", "Plattencache: nichts zu schreiben")
+            } else {
+                RemoteLog.error("katalog", "Plattencache: Schreiben fehlgeschlagen")
             }
         }
     }
