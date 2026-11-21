@@ -197,3 +197,48 @@ import Testing
     let back = try JSONDecoder().decode(Profile.self, from: JSONEncoder().encode(on))
     #expect(back.diskCache.enabled && back.diskCache.limitGB == 32)
 }
+
+// MARK: Fix-Runde 1
+
+@Test func diskCacheCredentialSourcesBypass() {
+    let u = URL(string: "https://cdn.example.com/a.mkv")!
+    #expect(!DiskCacheSource.needsCredentials(u, headers: [:]))
+    #expect(!DiskCacheSource.needsCredentials(u, headers: ["User-Agent": "x", "Referer": "y"]))
+    #expect(DiskCacheSource.needsCredentials(u, headers: ["Authorization": "Bearer t"]))
+    #expect(DiskCacheSource.needsCredentials(u, headers: ["cookie": "a=b"]))
+    #expect(DiskCacheSource.needsCredentials(u, headers: ["Proxy-Authorization": "x"]))
+    #expect(DiskCacheSource.needsCredentials(URL(string: "https://u:p@cdn.example.com/a.mkv")!, headers: [:]))
+}
+
+@Test func diskCacheHeaderValuesSanitized() {
+    #expect(DiskCacheHTTP.safeHeaderValue("video/mp4\r\nX-Evil: 1") == "video/mp4X-Evil: 1")
+    #expect(DiskCacheHTTP.safeHeaderValue("\r\n") == nil)
+    #expect(DiskCacheHTTP.safeContentType(nil) == "application/octet-stream")
+    #expect(DiskCacheHTTP.safeContentType(" \n") == "application/octet-stream")
+    let h = DiskCacheHTTP.mediaHead(status: 206, contentType: "video/mp4\r\nSet-Cookie: x", range: 0...9, total: 100)
+    #expect(!h.contains("\r\nSet-Cookie"))
+    let r = DiskCacheHTTP.plainHead(status: 307, headers: [("Location", "https://a.example/x\r\nX: y")])
+    #expect(r.contains("Location: https://a.example/xX: y\r\n"))
+    #expect(!r.contains("\r\nX: y"))
+}
+
+@Test func diskCacheLimitClampedToChoices() throws {
+    #expect(DiskCacheSettings.nearestChoice(8) == 8)
+    #expect(DiskCacheSettings.nearestChoice(0) == 4)
+    #expect(DiskCacheSettings.nearestChoice(-5) == 4)
+    #expect(DiskCacheSettings.nearestChoice(12) == 8)
+    #expect(DiskCacheSettings.nearestChoice(13) == 16)
+    #expect(DiskCacheSettings.nearestChoice(1000) == 32)
+    #expect(DiskCacheSettings(limitGB: 7).limitBytes == 8_000_000_000)
+    let s = try JSONDecoder().decode(DiskCacheSettings.self, from: Data(#"{"enabled":true,"limitGB":100}"#.utf8))
+    #expect(s.limitGB == 32)
+}
+
+@Test func diskCacheThrottleAndAttempts() {
+    #expect(DiskCachePolicy.isThrottle(status: 429) && DiskCachePolicy.isThrottle(status: 503))
+    #expect(!DiskCachePolicy.isThrottle(status: 500) && !DiskCachePolicy.isThrottle(status: 404))
+    let p = DiskCachePolicy()
+    // Leser: ein Versuch mit harter Grenze, klar unter der 20-s-Lesegrenze der Engine; Vorlauf zwei.
+    #expect(Double(p.readerAttempts) * p.originTimeout < 20)
+    #expect(Double(p.prefetchAttempts) * p.originTimeout + 0.4 < 20)
+}

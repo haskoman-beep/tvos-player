@@ -87,6 +87,8 @@ final class AetherBackend: PlaybackEngine {
     private var bag: AnyCancellable?
     /// Plattencache-Sitzung dieser Wiedergabe (nil = direkt); stop() schließt sie.
     private var cacheSession: String?
+    /// stop() kam (z. B. Verlassen während der Cache-Probe): eine danach fertige Sitzung sofort schließen.
+    private var stopped = false
 
     init() throws {
         engine = try AetherEngine()
@@ -170,9 +172,14 @@ final class AetherBackend: PlaybackEngine {
         o.probesize = 8 * 1024 * 1024
         o.maxAnalyzeDuration = 5_000_000
         o.skipsContainerAttachments = true
+        stopped = false
         // Plattencache: nur die Adresse tauschen; jeder Fehler dort → direkte Adresse.
         let routed = await DiskCacheProxy.shared.route(url, headers: prefs.headers, settings: prefs.diskCache,
                                                       nativeHLS: prefs.nativeRemoteHLS, reuse: cacheSession)
+        if let s = routed.session, Task.isCancelled || stopped {
+            if cacheSession == s { cacheSession = nil }
+            await DiskCacheProxy.shared.close(s); throw CancellationError()
+        }
         if let s = routed.session { cacheSession = s }
         do { _ = try await engine.load(url: routed.url, startPosition: start, options: o) }
         catch where routed.session != nil && !Task.isCancelled {
@@ -182,7 +189,13 @@ final class AetherBackend: PlaybackEngine {
             _ = try await engine.load(url: url, startPosition: start, options: o)
         }
     }
-    func recover() async throws { try await engine.reloadAtCurrentPosition() }
+    func recover() async throws {
+        // Plattencache: Listener nach Ruhezustand neu auf dem alten Port; sonst wirft recover → load() → route.
+        if let s = cacheSession, !(await DiskCacheProxy.shared.ensureServing(s)) {
+            throw DiskCacheError.badAnswer("lokaler Proxy nicht mehr auf der alten Adresse")
+        }
+        try await engine.reloadAtCurrentPosition()
+    }
     func play() { engine.play() }
     func pause() { engine.pause() }
     /// Engine liest den echten AVPlayer-Zustand (der veröffentlichte `state` kann hinterherhinken).
@@ -217,6 +230,7 @@ final class AetherBackend: PlaybackEngine {
         if let id { engine.selectSubtitleTrack(index: id) } else { engine.clearSubtitle() }
     }
     func stop() {
+        stopped = true
         engine.stop()
         if let s = cacheSession { cacheSession = nil; Task { await DiskCacheProxy.shared.close(s) } }
     }

@@ -13,7 +13,12 @@ public struct DiskCacheSettings: Codable, Sendable, Hashable {
         self.enabled = enabled; self.limitGB = limitGB
     }
 
-    public var limitBytes: Int64 { Int64(max(1, limitGB)) * 1_000_000_000 }
+    /// Nächste angebotene Größe (bei Gleichstand die kleinere): fremde Werte aus alten/bearbeiteten Profilen.
+    public static func nearestChoice(_ gb: Int) -> Int {
+        sizeChoices.min { abs($0 - gb) < abs($1 - gb) } ?? 8
+    }
+
+    public var limitBytes: Int64 { Int64(Self.nearestChoice(limitGB)) * 1_000_000_000 }
 
     enum CodingKeys: String, CodingKey { case enabled, limitGB }
 
@@ -21,6 +26,6 @@ public struct DiskCacheSettings: Codable, Sendable, Hashable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = DiskCacheSettings()
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? d.enabled
-        limitGB = try c.decodeIfPresent(Int.self, forKey: .limitGB) ?? d.limitGB
+        limitGB = Self.nearestChoice(try c.decodeIfPresent(Int.self, forKey: .limitGB) ?? d.limitGB)
     }
 }

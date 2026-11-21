@@ -137,8 +137,15 @@ public struct DiskCachePolicy: Equatable, Sendable {
     public var minimumBudgetBytes: Int64 = 64 * 1024 * 1024
     /// Fehlgeschlagene Abrufe in Folge, ab denen die Sitzung nur noch auf den Ursprung umleitet.
     public var failuresUntilPassthrough = 3
-    /// Zeitgrenze je Abruf beim Ursprung; unter der Lesegrenze der Engine.
-    public var originTimeout: TimeInterval = 12
+    /// Harte Zeitgrenze je Abruf beim Ursprung (ganzer Block, nicht nur Leerlauf).
+    public var originTimeout: TimeInterval = 8
+    /// Versuche je Block: Vorlauf darf wiederholen, ein Block, auf den die Engine wartet, nicht – so bleibt der
+    /// Weg bis zur Antwort (Abruf oder 307) klar unter der 20-s-Lesegrenze der Engine.
+    public var prefetchAttempts = 2
+    public var readerAttempts = 1
+
+    /// Ursprung drosselt (429/503): weniger parallele Abrufe statt Fehler zählen.
+    public static func isThrottle(status: Int) -> Bool { status == 429 || status == 503 }
 
     public init() {}
 
@@ -228,6 +235,14 @@ public enum DiskCacheSource {
     public static let videoExtensions: Set<String> = ["mkv", "mp4", "m4v", "mov", "webm", "avi", "ts", "m2ts", "mpg", "mpeg", "wmv", "flv"]
     static let streamingExtensions: Set<String> = ["m3u8", "m3u", "mpd", "ism", "isml"]
 
+    /// Quelle mit Anmeldung (Kopfzeilen oder Benutzer in der Adresse): Cache umgehen – ein 307-Rückfall auf
+    /// einen anderen Host verlöre die Anmeldedaten (die Engine verwirft sie bei Host-Wechsel).
+    public static func needsCredentials(_ url: URL, headers: [String: String]) -> Bool {
+        if url.user != nil || url.password != nil { return true }
+        let secret: Set<String> = ["authorization", "cookie", "proxy-authorization"]
+        return headers.keys.contains { secret.contains($0.lowercased()) }
+    }
+
     public static func decide(_ url: URL, nativeHLS: Bool) -> Decision {
         if nativeHLS { return .bypass("HLS") }
         guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return .bypass("kein http") }
@@ -263,12 +278,23 @@ public enum DiskCacheSource {
 // MARK: - HTTP-Antworten des Proxys
 
 public enum DiskCacheHTTP {
+    /// Kopfzeilen-Wert ohne Zeilenumbrüche (gegen Header-Injektion aus Ursprungsantworten); leer → nil.
+    public static func safeHeaderValue(_ v: String?) -> String? {
+        guard let v else { return nil }
+        let clean = String(v.unicodeScalars.filter { $0 != "\r" && $0 != "\n" && $0 != "\0" })
+            .trimmingCharacters(in: .whitespaces)
+        return clean.isEmpty ? nil : clean
+    }
+
+    /// Inhaltstyp für die Antwort an die Engine, Rückfall `application/octet-stream`.
+    public static func safeContentType(_ v: String?) -> String { safeHeaderValue(v) ?? "application/octet-stream" }
+
     /// Kopf einer Antwort mit Körper (200/206). `range` nil = ganze Datei.
     public static func mediaHead(status: Int, contentType: String, range: ClosedRange<Int64>?, total: Int64,
                                  headOnly: Bool = false) -> String {
         let length = range.map { Int64($0.count) } ?? total
         var h = "HTTP/1.1 \(status) \(reason(status))\r\n"
-        h += "Content-Type: \(contentType)\r\n"
+        h += "Content-Type: \(safeContentType(contentType))\r\n"
         h += "Content-Length: \(length)\r\n"
         h += "Accept-Ranges: bytes\r\n"
         if let range { h += "Content-Range: \(HTTPContentRange(range: range, total: total).headerValue)\r\n" }
@@ -279,7 +305,7 @@ public enum DiskCacheHTTP {
     /// Antwort ohne Körper (307 Umleitung, 404, 416 …).
     public static func plainHead(status: Int, headers: [(String, String)] = []) -> String {
         var h = "HTTP/1.1 \(status) \(reason(status))\r\nContent-Length: 0\r\n"
-        for (k, v) in headers { h += "\(k): \(v)\r\n" }
+        for (k, v) in headers { if let v = safeHeaderValue(v) { h += "\(k): \(v)\r\n" } }
         h += "Cache-Control: no-store\r\nConnection: close\r\n\r\n"
         return h
     }

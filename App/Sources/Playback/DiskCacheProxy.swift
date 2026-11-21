@@ -26,12 +26,14 @@ enum DiskCacheError: Error, CustomStringConvertible {
     case noRangeSupport(Int)
     case badAnswer(String)
     case notEligible(String)
+    case throttled(Int)
 
     var description: String {
         switch self {
         case .noRangeSupport(let s): "Ursprung ohne Range-Antwort (Status \(s))"
         case .badAnswer(let s): "unerwartete Antwort (\(s))"
         case .notEligible(let t): "kein Dateityp für den Cache (\(t))"
+        case .throttled(let s): "Ursprung drosselt (Status \(s))"
         }
     }
 }
@@ -94,6 +96,8 @@ final class DiskCacheOriginFetcher: NSObject, URLSessionDataDelegate, @unchecked
             try await withCheckedThrowingContinuation { (k: CheckedContinuation<Answer, Error>) in
                 lock.withLock { pending[task.taskIdentifier] = Pending(continuation: k, limit: limit) }
                 task.resume()
+                // Harte Grenze für den ganzen Abruf (timeoutInterval zählt nur Leerlauf).
+                DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [weak task] in task?.cancel() }
             }
         } onCancel: {
             task.cancel()
@@ -148,6 +152,10 @@ actor DiskCacheSession {
     private var prefetchPausedUntil = Date.distantPast
     private var readPosition: Int64 = 0
     private var failures = 0
+    /// Gleichzeitige Vorlauf-Abrufe; sinkt, wenn der Ursprung drosselt (429/503).
+    private var parallel: Int
+    /// Blöcke, auf die gerade ein Leser wartet: ein laufender Vorlauf-Abruf wiederholt dann nicht mehr.
+    private var readerWaiting: [Int: Int] = [:]
     private var closed = false
     private var writeProblemLogged = false
     private(set) var passthrough = false
@@ -158,6 +166,7 @@ actor DiskCacheSession {
         self.token = token; self.origin = origin; self.headers = headers; self.dir = dir; self.plan = plan
         self.contentType = contentType; self.fileName = fileName; self.budget = budget; self.policy = policy
         self.fetcher = fetcher
+        parallel = max(1, policy.parallelPrefetches)
         index = DiskCacheIndex(plan: plan)
     }
 
@@ -165,10 +174,11 @@ actor DiskCacheSession {
     static func open(token: String, origin: URL, headers: [String: String], decision: DiskCacheSource.Decision,
                      budget: Int64, dir: URL, policy: DiskCachePolicy, fetcher: DiskCacheOriginFetcher) async throws -> DiskCacheSession {
         let a = try await fetcher.fetch(origin, headers: headers, range: 0...(policy.blockSize - 1), timeout: 8)
-        guard a.status == 206, let cr = a.contentRange, cr.range?.lowerBound == 0, let total = cr.total, total > 0 else {
+        guard a.status == 206, let cr = a.contentRange, let total = cr.total, total > 0,
+              cr.range == 0...(min(policy.blockSize, total) - 1) else {
             throw DiskCacheError.noRangeSupport(a.status)
         }
-        let type = a.contentType ?? "application/octet-stream"
+        let type = DiskCacheHTTP.safeContentType(a.contentType)
         let lowered = type.lowercased()
         if lowered.contains("mpegurl") || lowered.contains("dash+xml") || lowered.hasPrefix("text/") {
             throw DiskCacheError.notEligible(type)
@@ -199,7 +209,11 @@ actor DiskCacheSession {
             // Datei fehlt (tvOS darf Caches/ leeren) oder ist kaputt: neu holen.
             index.remove(i)
         }
-        if let t = inflight[i] { return try await t.value }
+        if let t = inflight[i] {
+            readerWaiting[i, default: 0] += 1
+            defer { readerWaiting[i, default: 1] -= 1; if readerWaiting[i] == 0 { readerWaiting[i] = nil } }
+            return try await t.value
+        }
         stats.misses += 1
         return try await startFetch(i, prefetch: false).value
     }
@@ -241,11 +255,16 @@ actor DiskCacheSession {
         }
         let r = plan.range(of: i)
         var lastError: Error = DiskCacheError.badAnswer("kein Versuch")
-        for attempt in 0..<2 {
+        let attempts = max(1, prefetch ? policy.prefetchAttempts : policy.readerAttempts)
+        for attempt in 0..<attempts {
             if closed || Task.isCancelled { throw CancellationError() }
+            // Wartet die Engine auf diesen Block, kein zweiter Versuch: lieber gleich 307 als die Lesegrenze reißen.
+            if attempt > 0, readerWaiting[i] != nil { break }
             do {
                 let a = try await fetcher.fetch(origin, headers: headers, range: r, timeout: policy.originTimeout)
-                guard a.status == 206, a.contentRange?.range?.lowerBound == r.lowerBound, Int64(a.data.count) == Int64(r.count) else {
+                if DiskCachePolicy.isThrottle(status: a.status) { throw DiskCacheError.throttled(a.status) }
+                guard a.status == 206, a.contentRange?.range == r, a.contentRange?.total == plan.totalLength,
+                      Int64(a.data.count) == Int64(r.count) else {
                     throw DiskCacheError.badAnswer("Status \(a.status), \(a.data.count) Bytes")
                 }
                 stats.originBytes += Int64(a.data.count)
@@ -256,11 +275,18 @@ actor DiskCacheSession {
             } catch {
                 lastError = error
                 if closed || Task.isCancelled { throw error }
-                if attempt == 0 { try? await Task.sleep(nanoseconds: 400_000_000) }
+                if case DiskCacheError.throttled = error { break }
+                if attempt + 1 < attempts { try? await Task.sleep(nanoseconds: 400_000_000) }
             }
         }
-        failures += 1
         if prefetch { prefetchPausedUntil = Date().addingTimeInterval(5) }
+        // Drosselung: erst weniger parallel abrufen; erst bei einem einzigen Abruf zählt sie als Fehler.
+        if case DiskCacheError.throttled(let st) = lastError, parallel > 1 {
+            parallel -= 1
+            cacheLog("Ursprung drosselt (Status \(st)) → Vorlauf mit \(parallel) Abruf(en)")
+            throw lastError
+        }
+        failures += 1
         if failures >= policy.failuresUntilPassthrough, !passthrough {
             passthrough = true
             cacheError("Ursprung antwortet nicht verlässlich (\(short(lastError))) → Umleitung auf die direkte Adresse")
@@ -307,7 +333,7 @@ actor DiskCacheSession {
     /// Vorlauf: fehlende Blöcke ab der Leseposition, höchstens `parallelPrefetches` gleichzeitig.
     private func pump() {
         guard !closed, !passthrough, Date() >= prefetchPausedUntil else { return }
-        while prefetchCount < policy.parallelPrefetches,
+        while prefetchCount < parallel,
               let b = index.nextPrefetch(readPosition: readPosition, aheadBytes: aheadBytes, excluding: Set(inflight.keys)) {
             _ = startFetch(b, prefetch: true)
         }
@@ -323,6 +349,10 @@ actor DiskCacheProxy {
     private let fetcher: DiskCacheOriginFetcher
     nonisolated private let queue = DispatchQueue(label: "player.diskcache.net")
     private var listener: NWListener?
+    /// Zuletzt benutzter Port: nach einem Neustart des Listeners zuerst derselbe (die Engine kennt die alte Adresse).
+    private var lastPort: NWEndpoint.Port?
+    /// Port in der Adresse, die die Engine für die laufende Sitzung bekommen hat.
+    private var sessionPort: UInt16?
     private var session: DiskCacheSession?
     /// Quellen, die in dieser App-Sitzung schon am Cache gescheitert sind: direkt.
     private var failedOrigins: Set<URL> = []
@@ -364,6 +394,10 @@ actor DiskCacheProxy {
     func route(_ url: URL, headers: [String: String], settings: DiskCacheSettings?,
                nativeHLS: Bool, reuse: String?) async -> (url: URL, session: String?) {
         guard let settings, settings.enabled else { return (url, nil) }
+        if DiskCacheSource.needsCredentials(url, headers: headers) {
+            cacheLog("Plattencache umgangen (Quelle mit Anmeldung)")
+            return (url, nil)
+        }
         let decision = DiskCacheSource.decide(url, nativeHLS: nativeHLS)
         if case .bypass(let why) = decision {
             cacheLog("Plattencache umgangen (\(why))")
@@ -380,6 +414,7 @@ actor DiskCacheProxy {
                 return (url, nil)
             }
             cacheLog("Plattencache: laufende Sitzung weiter")
+            sessionPort = port
             return (proxyURL(s, port: port), s.token)
         }
         if let old = session { session = nil; await old.close() }
@@ -407,6 +442,7 @@ actor DiskCacheProxy {
             }
             cacheLog("Plattencache an · \(s.plan.totalLength / 1_000_000) MB · Budget \(budget / 1_000_000) MB · "
                      + "\(s.contentType) · \(url.host ?? "?")")
+            sessionPort = port
             return (proxyURL(s, port: port), token)
         } catch {
             failedOrigins.insert(url)
@@ -420,6 +456,7 @@ actor DiskCacheProxy {
     func close(_ token: String) async {
         guard let s = session, s.token == token else { return }
         session = nil
+        sessionPort = nil
         let stats = await s.stats
         await s.close()
         listener?.cancel(); listener = nil
@@ -430,6 +467,19 @@ actor DiskCacheProxy {
     func giveUp(_ url: URL, token: String) async {
         failedOrigins.insert(url)
         await close(token)
+    }
+
+    /// Vor dem Neuladen an derselben Stelle (recover): läuft die Sitzung und hört der Listener noch auf dem
+    /// Port aus der Adresse der Engine? false → der Aufrufer lädt über `load()` neu (route liefert dann eine
+    /// gültige Adresse oder die direkte).
+    func ensureServing(_ token: String) async -> Bool {
+        guard currentSession(token: token) != nil, let want = sessionPort else { return false }
+        let port = await ensureListener()
+        guard port == want else {
+            cacheLog("Lokaler Proxy auf neuem Port (\(port.map(String.init) ?? "keiner")) → Neuladen über route")
+            return false
+        }
+        return true
     }
 
     private func proxyURL(_ s: DiskCacheSession, port: UInt16) -> URL {
@@ -447,8 +497,13 @@ actor DiskCacheProxy {
     private func ensureListener() async -> UInt16? {
         if let l = listener, case .ready = l.state, let p = l.port?.rawValue, p != 0 { return p }
         listener?.cancel(); listener = nil
+        if let last = lastPort, let p = await startListener(port: last) { return p }
+        return await startListener(port: .any)
+    }
+
+    private func startListener(port: NWEndpoint.Port) async -> UInt16? {
         let params = NWParameters.tcp
-        params.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: .any)
+        params.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: port)
         params.acceptLocalOnly = true
         let l: NWListener
         do { l = try NWListener(using: params) } catch {
@@ -462,9 +517,15 @@ actor DiskCacheProxy {
                 switch st {
                 case .ready:
                     if once.fire() { k.resume(returning: true) }
-                case .failed(_), .cancelled:
+                case .failed(_):
                     if once.fire() { k.resume(returning: false) }
-                    Task { await self?.listenerEnded(l) }
+                    Task { await self?.listenerEnded(l, failed: true) }
+                case .cancelled:
+                    if once.fire() { k.resume(returning: false) }
+                    // Rückrufe lösen (sie halten den Listener und den Proxy).
+                    l.stateUpdateHandler = nil
+                    l.newConnectionHandler = nil
+                    Task { await self?.listenerEnded(l, failed: false) }
                 default:
                     break
                 }
@@ -475,17 +536,31 @@ actor DiskCacheProxy {
         }
         guard ready, let p = l.port?.rawValue, p != 0 else { l.cancel(); return nil }
         listener = l
+        lastPort = l.port
         return p
     }
 
-    private func listenerEnded(_ l: NWListener) {
-        if listener === l { listener = nil }
+    /// Listener fiel aus (z. B. im Hintergrund): bei offener Sitzung gleich neu, möglichst auf demselben Port.
+    private func listenerEnded(_ l: NWListener, failed: Bool) async {
+        guard listener === l else { return }
+        listener = nil
+        l.cancel()
+        guard failed, session != nil else { return }
+        let p = await ensureListener()
+        cacheLog(p == sessionPort ? "Lokaler Proxy neu gestartet (gleicher Port)"
+                                  : "Lokaler Proxy neu gestartet (Port \(p.map(String.init) ?? "keiner"))")
     }
 
     // MARK: Verbindungen
 
     nonisolated private func accept(_ c: NWConnection) {
-        c.stateUpdateHandler = { st in if case .failed(_) = st { c.cancel() } }
+        c.stateUpdateHandler = { st in
+            switch st {
+            case .failed(_): c.cancel()
+            case .cancelled: c.stateUpdateHandler = nil
+            default: break
+            }
+        }
         c.start(queue: queue)
         Task { await self.serve(c) }
     }
