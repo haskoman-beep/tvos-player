@@ -92,6 +92,8 @@ extension PlayerControls {
         case .off:
             engine.selectSubtitle(nil)
             RemoteLog.info("player", "UT aus Spur-Gedächtnis: aus")
+            // Versatz trotzdem setzen, damit er beim späteren Einschalten gilt (negativ bleibt zurückgehalten).
+            applyRememberedOffset(m, track: nil)
             return true
         case .track(let id):
             engine.selectSubtitle(id)
@@ -109,7 +111,8 @@ extension PlayerControls {
 
     /// Gemerkter Versatz. Negativ (früher) nur für externe/Addon-Spuren: bei eingebetteten Spuren liest die Engine
     /// dafür eine Fernquelle ein zweites Mal voraus (doppelte Bandbreite) – das nur, wenn der Nutzer es selbst einstellt.
-    /// Beim Wechsel auf eine Addon-Spur holt der Addon-Loader einen zurückgehaltenen Wert nach.
+    /// Ein zurückgehaltener negativer Wert wird später nur über `applyPendingSubtitleMemory` nachgeholt, also nur
+    /// wenn eine Untertitel-Wahl gemerkt ist und eine genaue Addon-Spur dazukommt; andere Wechsel holen ihn nicht nach.
     func applyRememberedOffset(_ m: TrackMemory?, track id: Int?) {
         guard let o = m?.subtitleOffset, o != 0, o != engine.subtitleOffset else { return }
         if o < 0 {
@@ -225,6 +228,7 @@ enum AddonSubtitleFiles {
         try await withThrowingTaskGroup(of: Data?.self) { group in
             group.addTask {
                 let (stream, resp) = try await URLSession.shared.bytes(for: r)
+                defer { stream.task.cancel() }   // auch bei falschem Status oder zu großer Längenangabe nicht weiterladen
                 let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
                 guard (200..<300).contains(code) else { throw DownloadError.status(code) }
                 if resp.expectedContentLength > Int64(maxBytes) { throw DownloadError.tooLarge(resp.expectedContentLength) }
