@@ -30,7 +30,7 @@ public struct RowCatalog: Sendable {
         for a in addons {
             let gid = "addon:" + a.manifest.id
             var sections: [(type: String, entries: [RowCatalogEntry])] = []
-            for c in a.manifest.catalogs where !(c.extra ?? []).contains(where: { $0.isRequired == true }) {
+            for c in a.manifest.catalogs where RowCatalog.isAddable(c) {
                 let src = RowCatalog.addonSource(addon: a.manifest, catalog: c)
                 let e = RowCatalogEntry(id: "list:" + src.id, title: c.name ?? c.id,
                                         subtitle: "Liste · " + RowCatalog.typeSingular(c.type),
@@ -129,6 +129,17 @@ public struct RowCatalog: Sendable {
             $0.properties.generalCategory != .nonspacingMark
         }
         return String(String.UnicodeScalarView(scalars)).split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
+    /// Kataloge mit Pflicht-Extra (z. B. `search`) ergeben ohne Eingabe keine Reihe.
+    public static func isAddable(_ c: CatalogDescriptor) -> Bool {
+        !(c.extra ?? []).contains(where: { $0.isRequired == true })
+    }
+
+    /// Alle Addon-Kataloge, die sich als Reihe anlegen lassen, in Manifest-Reihenfolge (eine Formel für Fernseher
+    /// und Handy-Seite, F-e M5).
+    public static func addonSources(_ addons: [InstalledAddon]) -> [CatalogSource] {
+        addons.flatMap { a in a.manifest.catalogs.filter(isAddable).map { addonSource(addon: a.manifest, catalog: $0) } }
     }
 
     /// Dieselbe Quelle wie bisher im Hinzufügen-Blatt (ID bleibt gleich, damit vorhandene Reihen erkannt werden).

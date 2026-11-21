@@ -8,9 +8,11 @@ public struct HomeEditor: Sendable {
     public private(set) var grabbed: UUID?
     private let original: HomeLayout
 
-    public init(layout: HomeLayout, grabbing: UUID? = nil) {
+    /// `added`: Reihen, die schon als „neu“ gelten (Verwalter übernimmt eine fremde Änderung, ohne die Marken zu verlieren).
+    public init(layout: HomeLayout, grabbing: UUID? = nil, added: [UUID] = []) {
         self.layout = layout; self.original = layout
         self.grabbed = grabbing.flatMap { id in layout.rows.contains { $0.id == id } ? id : nil }
+        self.added = added.filter { id in layout.rows.contains { $0.id == id } }
     }
 
     private var index: Int? { grabbed.flatMap { id in layout.rows.firstIndex { $0.id == id } } }
@@ -102,6 +104,40 @@ public struct HomeEditor: Sendable {
         return true
     }
 
+    /// Welle F-b2: Reihe ausblenden. Sie verschwindet von der Startseite und wird vollständig (ID, Stil) in `hidden`
+    /// (`Profile.hiddenRows`) gemerkt, gleiche Regel wie auf der Handy-Seite. nil = Reihe unbekannt.
+    @discardableResult
+    public mutating func hide(_ id: UUID, into hidden: inout [HomeRow]) -> (row: HomeRow, at: Int)? {
+        guard let at = layout.index(of: id) else { return nil }
+        let row = layout.rows[at]
+        remove(id)
+        HomeLayout.rememberHidden(row, in: &hidden)
+        return (row, at)
+    }
+
+    /// Welle F-b2: ausgeblendete Reihe unverändert unten wieder anhängen (Nutzerentscheidung 2).
+    /// Liegt ihr Inhalt inzwischen schon auf der Startseite, wird sie nur aus `hidden` genommen.
+    @discardableResult
+    public mutating func restore(_ id: UUID, from hidden: inout [HomeRow]) -> HomeRestore? {
+        guard let j = hidden.firstIndex(where: { $0.id == id }) else { return nil }
+        let row = hidden.remove(at: j)
+        if let existing = layout.rows.first(where: { $0.id == row.id || $0.content.key == row.content.key }) {
+            return .alreadyOnHome(existing)
+        }
+        layout.rows.append(row)
+        return .restored(row, at: layout.rows.count - 1)
+    }
+
+    /// Welle F-b2: nächster erlaubter Stil einer Reihe (Aktionsleiste „Stil“), ohne sie anzufassen.
+    @discardableResult
+    public mutating func cycleStyle(_ id: UUID) -> RowStyle? {
+        guard let i = layout.index(of: id) else { return nil }
+        let styles = layout.rows[i].content.allowedStyles
+        let cur = styles.firstIndex(of: layout.rows[i].style) ?? 0
+        layout.rows[i].style = styles[(cur + 1) % styles.count]
+        return layout.rows[i].style
+    }
+
     public func commit() -> HomeLayout { layout }
     public func cancel() -> HomeLayout { original }
 
@@ -123,6 +159,14 @@ public struct RowMove: Equatable, Sendable {
 public enum RowToggle: Equatable, Sendable {
     case added(UUID)
     case removed(UUID)
+}
+
+/// Ergebnis von `HomeEditor.restore`.
+public enum HomeRestore: Equatable, Sendable {
+    /// Unten wieder angehängt (0-basierte Stelle).
+    case restored(HomeRow, at: Int)
+    /// Inhalt lag schon auf der Startseite (diese Reihe); nur aus „Ausgeblendet“ genommen, Startseite unverändert.
+    case alreadyOnHome(HomeRow)
 }
 
 /// Bearbeitung ohne Editor-Sitzung (z. B. Handy-Seite „Startseite ordnen“).
@@ -165,5 +209,20 @@ extension HomeLayout {
         guard let i = index(of: id) else { return false }
         rows.remove(at: i)
         return true
+    }
+
+    /// Merkt eine ausgeblendete Reihe (`Profile.hiddenRows`): gleicher Inhalt nur einmal, höchstens `hiddenLimit`,
+    /// die älteste fällt zuerst heraus. Gilt für Fernseher und Handy.
+    public static func rememberHidden(_ row: HomeRow, in hidden: inout [HomeRow]) {
+        hidden.removeAll { $0.id == row.id || $0.content.key == row.content.key }
+        hidden.append(row)
+        if hidden.count > hiddenLimit { hidden.removeFirst(hidden.count - hiddenLimit) }
+    }
+
+    /// Ausgeblendete Reihen, die sich wieder einblenden lassen (Inhalt nicht auf der Startseite), neueste zuerst.
+    /// Gemerkte Reihen, deren Inhalt inzwischen wieder da ist, zeigen weder Fernseher noch Handy an.
+    public func restorable(_ hidden: [HomeRow]) -> [HomeRow] {
+        let shown = Set(rows.map(\.content.key))
+        return hidden.reversed().filter { !shown.contains($0.content.key) }
     }
 }

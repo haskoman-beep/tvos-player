@@ -1,73 +1,61 @@
 import SwiftUI
 import PlayerCore
 
-/// Einstellungen → Startseite → Fusion-Kit: Kit an/aus und Auswahl der Reihen.
-/// Die Kit-Dateien kommen zur Laufzeit von GitHub (kit.betterer.cc); gewählte Reihen erscheinen am Ende der Startseite
-/// und lassen sich dort wie jede Reihe verschieben, umstellen oder entfernen.
+/// Einstellungen › Startseite › Fusion-Kit (Plan §2.2, E10): nur noch an/aus und „Neu laden“.
+/// Die Kit-Reihen wählt man im Hinzufügen-Browser (Quelle „Fusion-Kit“, Welle F-b2); gewählte Reihen hängen unten
+/// an der Startseite und lassen sich im Verwalter wie jede Reihe ordnen oder ausblenden.
+/// Kit-Dateien kommen zur Laufzeit von GitHub (kit.betterer.cc).
 struct FusionKitSettingsView: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var kit = FusionKitStore.shared
+    @State private var removeCandidate: FusionKitSource?
 
     var body: some View {
-        Section("Startseiten-Kit (Fusion)") {
-            Toggle("Kit-Reihen auf der Startseite", isOn: Binding(get: { kit.settings.enabled }, set: { kit.setEnabled($0) }))
+        SettingsToggleRow(symbol: "sparkles", tint: Theme.CategoryTint.home.color, title: "Fusion-Kit",
+                          detail: "Kit-Reihen auf der Startseite; Auswahl unter „Reihen & Collections“",
+                          reserveDetailSpace: false,
+                          isOn: Binding(get: { kit.settings.enabled }, set: { on in
+                              kit.setEnabled(on)
+                              RemoteLog.info("kit", on ? "Fusion-Kit an" : "Fusion-Kit aus")
+                          }))
+            .task { await kit.refresh(all: true) }
+            .confirmationDialog(removeCandidate.map { "„\($0.title)“ entfernen?" } ?? "",
+                                isPresented: Binding(get: { removeCandidate != nil }, set: { if !$0 { removeCandidate = nil } }),
+                                titleVisibility: .visible, presenting: removeCandidate) { src in
+                Button("Entfernen", role: .destructive) {
+                    kit.removeSource(src.id)
+                    RemoteLog.info("kit", "Eigene Kit-Datei entfernt: \(src.title)")
+                }
+                Button("Behalten", role: .cancel) {}
+            } message: { _ in
+                Text("Die Kit-Datei wird nicht mehr geladen. Über „Collections importieren“ lässt sie sich wieder einfügen.")
+            }
+        if kit.settings.enabled {
+            SettingsRow(symbol: "arrow.clockwise", tint: Theme.CategoryTint.home.color,
+                        title: busy ? "Lädt …" : "Neu laden",
+                        detail: kit.listingError.map { "Kit-Katalog nicht erreichbar: \($0)" },
+                        detailAlwaysVisible: kit.listingError != nil, reserveDetailSpace: false) {
+                Task { await kit.refresh(force: true, all: true) }
+            }
+            .disabled(busy)
             if !model.hasTraktID {
-                Text("Ohne Trakt Client ID (Handy-Seite) bleiben Trakt-Reihen und -Kacheln ausgeblendet.")
-                    .foregroundStyle(.secondary)
-            }
-            Button { Task { await kit.refresh(force: true, all: true) } } label: { Text(busy ? "Lädt …" : "Kit neu laden") }
-                .disabled(busy)
-            if let e = kit.listingError {
-                Text("Kit-Katalog nicht erreichbar: \(e)").foregroundStyle(.secondary)
-            }
-            Text("Weitere Kits: auf kit.betterer.cc „Copy JSON URL“ wählen und auf der Handy-Seite einfügen.")
-                .foregroundStyle(.secondary)
-        }
-        .task { await kit.refresh(all: true) }
-
-        ForEach(kit.sources) { src in
-            Section(src.title) {
-                if let c = kit.contents[src.id] {
-                    if c.rows.isEmpty { Text("Keine passenden Reihen").foregroundStyle(.secondary) }
-                    ForEach(c.rows) { row in
-                        Toggle(isOn: Binding(get: { kit.settings.isSelected(row.id) },
-                                             set: { kit.select(row.id, $0, source: src) })) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(row.title)
-                                Text(detail(row)).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                } else if let e = kit.errors[src.id] {
-                    Text("Nicht geladen: \(e)").foregroundStyle(.secondary)
-                } else {
-                    Text(kit.loading.contains(src.id) ? "Lädt …" : "Noch nicht geladen").foregroundStyle(.secondary)
+                // E11: ein Hinweis mit Weg zum Handy statt Text ohne Ausweg.
+                NavigationLink { PhoneInputView(section: .keys) } label: {
+                    SettingsRowLabel(symbol: Theme.Tone.warn.symbol, tint: Theme.Tone.warn.color,
+                                     title: "Trakt Client ID fehlt",
+                                     detail: "Ohne sie fehlen Trakt-Reihen und -Kacheln · Am Handy eintragen",
+                                     accessory: .chevron, detailAlwaysVisible: true, reserveDetailSpace: false)
                 }
-                if !kit.isListed(src.id) {
-                    Button("Entfernen", role: .destructive) { kit.removeSource(src.id) }
-                }
+                .buttonStyle(ThemeRowButtonStyle())
+                .settingsRowAccessibility(title: "Trakt Client ID fehlt", detail: "Am Handy eintragen", accessory: .chevron)
+            }
+            // Eigene Kit-Dateien (per Handy eingefügt, nicht im Katalog) lassen sich hier wieder entfernen.
+            ForEach(kit.sources.filter { !kit.isListed($0.id) }) { src in
+                SettingsRow(symbol: "trash", tint: Theme.Tone.error.color, title: "„\(src.title)“ entfernen",
+                            detail: "Eigene Kit-Datei", reserveDetailSpace: false) { removeCandidate = src }
             }
         }
     }
 
     private var busy: Bool { kit.listingLoading || !kit.loading.isEmpty }
-
-    /// Art der Reihe plus, was ihr fehlt (Trakt Client ID, Anmeldung, TMDB-Schlüssel).
-    private func detail(_ row: FusionKitRow) -> String {
-        var parts: [String] = []
-        let traktID = model.hasTraktID, login = model.isConnected("trakt")
-        switch row.body {
-        case .collection(let c): parts.append("\(c.folders.count) Kacheln")
-        case .list: parts.append(row.style == .top10 ? "Liste mit Rang" : "Liste")
-        }
-        if let a = row.available(traktID: traktID, traktLogin: login) {
-            if case .collection(let full) = row.body, case .collection(let v) = a.body, v.folders.count < full.folders.count {
-                parts.append("ohne Trakt Client ID nur \(v.folders.count) Kacheln")
-            }
-        } else {
-            parts.append(traktID && row.needs.contains(.traktLogin) ? "braucht Trakt-Anmeldung" : "braucht Trakt Client ID")
-        }
-        if row.needs.contains(.tmdb) && model.tmdb == nil { parts.append("braucht TMDB-Schlüssel") }
-        return parts.joined(separator: " · ")
-    }
 }
