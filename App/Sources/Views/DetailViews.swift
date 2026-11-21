@@ -59,7 +59,8 @@ struct DetailView: View {
                         if isSeries { episodes(imdb) } else {
                             let resume = model.progress.resumePosition(for: imdb)
                             Button(resume.map { "▶ Fortsetzen ab \(timeText($0))" } ?? "▶ Abspielen") {
-                                navigate(.streams(PlayRequest(type: "movie", id: imdb, title: item.name, item: progressItem(imdb), runtimeMinutes: parseRuntimeMinutes(meta?.runtime))))
+                                navigate(.streams(PlayRequest(type: "movie", id: imdb, title: item.name, item: progressItem(imdb), runtimeMinutes: parseRuntimeMinutes(meta?.runtime),
+                                                              resumeLastSource: resume != nil)))
                             }
                         }
                     } else {
@@ -162,6 +163,24 @@ struct StreamListView: View {
         .task {
             streams = await model.streams(type: request.type, id: request.id)
             loading = false
+            if request.type == "series", request.episodes.isEmpty, let base = request.id.split(separator: ":").first {
+                // Aus Weiterschauen: Folgenliste nachladen, damit die nächste Folge automatisch kommt.
+                let eps = EpisodeRef.list(from: await model.meta(type: "series", imdb: String(base))?.videos ?? [])
+                if current == nil { var r = request; r.episodes = eps; current = r }
+            }
+            if request.resumeLastSource, playing == nil, let last = model.progress.lastSource(for: request.id) {
+                if let s = last.match(in: streams) {
+                    RemoteLog.info("player", "Weiterschauen mit letzter Quelle: \(s.name ?? "") \(s.label.prefix(60))")
+                    playing = s
+                } else {
+                    nextNote = "Letzte Quelle nicht mehr verfügbar – bitte wählen."
+                    RemoteLog.info("player", "Letzte Quelle nicht gefunden (\(last.fingerprint.prefix(60)))")
+                }
+            }
+        }
+        .onChange(of: playing) { _, s in
+            guard let s else { return }
+            model.rememberSource(current ?? request, stream: s, addon: streams.first { $0.stream.id == s.id }?.addon ?? "")
         }
         .fullScreenCover(item: $playing) { s in
             if let u = s.url.flatMap(URL.init(string:)) { PlayerScreen(url: u, request: current ?? request,

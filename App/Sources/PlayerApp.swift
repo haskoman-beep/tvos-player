@@ -32,6 +32,8 @@ struct PlayRequest: Hashable {
     var episodes: [EpisodeRef] = []
     /// Erwartete Laufzeit in Minuten (für die Platzhalter-Erkennung), falls bekannt.
     var runtimeMinutes: Double? = nil
+    /// Aus Weiterschauen: zuletzt gespielte Quelle ohne Auswahl starten.
+    var resumeLastSource = false
 
     var nextRequest: PlayRequest? {
         guard let s = season, let e = episode, let n = EpisodeRef.next(after: s, e, in: episodes),

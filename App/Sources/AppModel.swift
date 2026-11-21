@@ -41,6 +41,12 @@ final class AppModel: ObservableObject {
         scrobbleProgress(r, fraction: duration > 0 ? position / duration : 0)
     }
 
+    /// Gewählte Quelle merken, damit Weiterschauen sie direkt startet.
+    func rememberSource(_ r: PlayRequest, stream: StreamItem, addon: String) {
+        progress.rememberSource(stream, addon: addon, for: r.id)
+        do { try progressStore.save(progress, profile: profile.id) } catch { lastError = "Quelle nicht gespeichert: \(error)" }
+    }
+
     /// Player wird verlassen: Trakt/Simkl bekommen den letzten Stand.
     func endPlayback(_ r: PlayRequest) {
         sendScrobble(scrobbler.end(id: r.id))

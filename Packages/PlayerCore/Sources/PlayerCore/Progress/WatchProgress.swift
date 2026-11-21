@@ -33,8 +33,21 @@ public struct ProgressBook: Codable, Sendable, Equatable {
     public static let minimumSeconds = 60.0
     public var schemaVersion = 1
     public var entries: [String: WatchProgress] = [:]
+    /// Zuletzt gespielte Quelle je Film bzw. Serie (Schlüssel: IMDb-ID ohne Staffel/Folge). Optional für alte Dateien.
+    public var sources: [String: LastSource]?
 
     public init() {}
+
+    /// Schlüssel für `sources`: "tt123:1:2" → "tt123".
+    public static func sourceKey(_ id: String) -> String { String(id.split(separator: ":").first ?? Substring(id)) }
+
+    public mutating func rememberSource(_ stream: StreamItem, addon: String, for id: String, now: Date = Date()) {
+        var all = sources ?? [:]
+        all[Self.sourceKey(id)] = LastSource(stream: stream, addon: addon, contentID: id, savedAt: now)
+        sources = all
+    }
+
+    public func lastSource(for id: String) -> LastSource? { sources?[Self.sourceKey(id)] }
 
     /// Speichert eine Position. Ab 92 % gilt der Titel als gesehen.
     public mutating func record(id: String, item: MetaPreview, season: Int? = nil, episode: Int? = nil,
@@ -109,5 +122,39 @@ public struct ProgressStore: Sendable {
     public func save(_ book: ProgressBook, profile: UUID) throws {
         let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
         try storage.write(name(profile), try enc.encode(book))
+    }
+}
+
+/// Merkmale der zuletzt gewählten Quelle, um sie in einer frischen Quellenliste wiederzufinden
+/// (Debrid-Links laufen ab, darum wird nicht die alte URL gespielt).
+public struct LastSource: Codable, Sendable, Hashable {
+    public var addon: String
+    public var name: String?
+    /// Dateiname bzw. Beschreibung – erkennt genau dieselbe Datei.
+    public var fingerprint: String
+    public var bingeGroup: String?
+    /// Inhalt, für den sie gewählt wurde ("tt123" oder "tt123:1:2").
+    public var contentID: String
+    public var savedAt: Date
+
+    public init(stream: StreamItem, addon: String, contentID: String, savedAt: Date = Date()) {
+        self.addon = addon; self.name = stream.name
+        self.fingerprint = stream.behaviorHints?.filename ?? stream.label
+        self.bingeGroup = stream.behaviorHints?.bingeGroup
+        self.contentID = contentID; self.savedAt = savedAt
+    }
+
+    /// Passende Quelle in einer neuen Liste: gleiche Datei (gleicher Inhalt), sonst gleiche bingeGroup,
+    /// sonst gleicher Addon + gleicher Quellenname mit gleicher Auflösung. Nicht gecachte nur als letzte Wahl.
+    public func match(in streams: [(addon: String, stream: StreamItem)]) -> StreamItem? {
+        let list = streams.filter { $0.stream.url != nil }
+        func fp(_ s: StreamItem) -> String { s.behaviorHints?.filename ?? s.label }
+        if let e = list.first(where: { fp($0.stream) == fingerprint }) { return e.stream }
+        let ready = list.filter { StreamTraits.parse($0.stream).cached != false }
+        if let g = bingeGroup, let e = ready.first(where: { $0.stream.behaviorHints?.bingeGroup == g }) { return e.stream }
+        let res = StreamTraits.parse(StreamItem(name: name, title: fingerprint)).resolution
+        if let e = ready.first(where: { $0.addon == addon && $0.stream.name == name
+                                        && StreamTraits.parse($0.stream).resolution == res }) { return e.stream }
+        return nil
     }
 }

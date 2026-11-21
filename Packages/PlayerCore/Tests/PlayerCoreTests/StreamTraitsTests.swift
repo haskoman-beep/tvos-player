@@ -78,3 +78,30 @@ import Testing
     #expect(nextEpisodeStream([a, b], bingeGroup: "g1")?.url == "https://x/b")
     #expect(nextEpisodeStream([a], bingeGroup: "g1")?.url == "https://x/a")
 }
+
+@Test func lastSourceMatching() throws {
+    func st(_ name: String, _ title: String, _ url: String, file: String? = nil, group: String? = nil) throws -> StreamItem {
+        var o: [String: Any] = ["name": name, "title": title, "url": url]
+        var h: [String: Any] = [:]
+        if let file { h["filename"] = file }
+        if let group { h["bingeGroup"] = group }
+        if !h.isEmpty { o["behaviorHints"] = h }
+        return try JSONDecoder().decode(StreamItem.self, from: JSONSerialization.data(withJSONObject: o))
+    }
+    let old = try st("TB 2160p", "⚡ Film.2160p.mkv", "https://x/alt", file: "Film.2160p.mkv", group: "g4k")
+    let last = LastSource(stream: old, addon: "AIO", contentID: "tt1")
+    // gleiche Datei mit neuer URL
+    let same = try st("TB 2160p", "⚡ Film.2160p.mkv", "https://x/neu", file: "Film.2160p.mkv", group: "g4k")
+    let other = try st("TB 1080p", "⚡ Film.1080p.mkv", "https://x/b", file: "Film.1080p.mkv", group: "g1080")
+    #expect(last.match(in: [("AIO", other), ("AIO", same)])?.url == "https://x/neu")
+    // nächste Folge: andere Datei, gleiche bingeGroup
+    let ep2 = try st("TB 2160p", "⚡ Serie.S01E02.2160p.mkv", "https://x/e2", file: "Serie.S01E02.2160p.mkv", group: "g4k")
+    #expect(last.match(in: [("AIO", other), ("AIO", ep2)])?.url == "https://x/e2")
+    // nichts Passendes
+    #expect(last.match(in: [("AIO", try st("XY", "720p", "https://x/c"))]) == nil)
+    // altes Fortschrittsformat ohne `sources` lädt weiter
+    let book = try JSONDecoder().decode(ProgressBook.self, from: Data(#"{"schemaVersion":1,"entries":{}}"#.utf8))
+    #expect(book.lastSource(for: "tt1:1:2") == nil)
+    var b2 = book; b2.rememberSource(old, addon: "AIO", for: "tt1:1:2")
+    #expect(b2.lastSource(for: "tt1")?.contentID == "tt1:1:2")
+}

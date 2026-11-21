@@ -49,7 +49,7 @@ struct HomeRowView: View {
             } else {
                 Strip {
                     ForEach(Array((row.style == .top10 ? Array(items.prefix(10)) : items).enumerated()), id: \.element.id) { i, m in
-                        card(.detail(m)) {
+                        card(route(for: m)) {
                             switch row.style {
                             case .hero: HeroCard(item: m)
                             case .landscape: LandscapeCard(item: m)
@@ -61,6 +61,16 @@ struct HomeRowView: View {
                 }
             }
         }
+    }
+
+    /// Weiterschauen mit gemerkter Quelle → direkt abspielen, sonst Detailseite.
+    private func route(for m: MetaPreview) -> Route {
+        guard row.content == .list(.continueWatching),
+              let e = model.progress.continueWatching().first(where: { $0.item.id == m.id }),
+              model.progress.lastSource(for: e.id) != nil else { return .detail(m) }
+        let title = e.season.map { "\(m.name) S\($0)E\(e.episode ?? 0)" } ?? m.name
+        return .streams(PlayRequest(type: e.season == nil ? "movie" : "series", id: e.id, title: title, item: m,
+                                    season: e.season, episode: e.episode, resumeLastSource: true))
     }
 
     private func card<L: View>(_ route: Route, @ViewBuilder label: () -> L) -> some View {
