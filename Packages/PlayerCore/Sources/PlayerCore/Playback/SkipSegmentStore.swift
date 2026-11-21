@@ -1,7 +1,8 @@
 import Foundation
 
 /// IntroDB-Antworten auf dem Gerät (über `BlobStorage`), mit Laufzeit der Datei, sobald sie gespielt wurde.
-/// Nur Antworten mit Marken werden gemerkt (eine leere Antwort ist von einem Fehler nicht zu unterscheiden).
+/// Antworten mit Marken gelten `maxAge`, „keine Marken“ (der Dienst antwortete, kennt aber nichts) nur
+/// `emptyMaxAge`, damit neu eingetragene Marken bald ankommen. Fehler werden nie gemerkt.
 public struct SkipSegmentStore: Sendable, Equatable {
     public struct Entry: Codable, Sendable, Equatable {
         public var segments: [SkipSegment]
@@ -19,6 +20,8 @@ public struct SkipSegmentStore: Sendable, Equatable {
     public static let maxEntries = 400
     /// Einträge gelten so lange (danach erneut abfragen).
     public static let maxAge: TimeInterval = 60 * 24 * 3600
+    /// „Keine Marken“ gilt so lange (5 Tage).
+    public static let emptyMaxAge: TimeInterval = 5 * 24 * 3600
 
     public private(set) var entries: [String: Entry] = [:]
 
@@ -31,16 +34,22 @@ public struct SkipSegmentStore: Sendable, Equatable {
         return "\(id)|\(q.season ?? 0)|\(q.episode ?? 0)"
     }
 
-    /// Gültiger Eintrag (nicht zu alt) oder nil.
+    /// Gültigkeit eines Eintrags (leer = „keine Marken“, kürzer).
+    static func isValid(_ e: Entry, now: Date) -> Bool {
+        now.timeIntervalSince(e.savedAt) < (e.segments.isEmpty ? emptyMaxAge : maxAge)
+    }
+
+    /// Gültiger Eintrag (nicht zu alt) oder nil. Ein Eintrag mit leerer Liste heißt „keine Marken, nicht erneut fragen“.
     public func entry(_ q: IntroDBQuery, now: Date = Date()) -> Entry? {
-        guard let e = entries[Self.key(q)], now.timeIntervalSince(e.savedAt) < Self.maxAge else { return nil }
+        guard let e = entries[Self.key(q)], Self.isValid(e, now: now) else { return nil }
         return e
     }
 
-    /// Marken merken (leere Liste: nichts). Eine schon bekannte Laufzeit bleibt erhalten.
+    /// Antwort merken (leere Liste = „keine Marken“, kurze Gültigkeit). Eine schon bekannte Laufzeit bleibt erhalten.
+    /// Ein gültiger Eintrag mit Marken wird nicht durch „keine Marken“ ersetzt.
     public mutating func store(_ segments: [SkipSegment], for q: IntroDBQuery, now: Date = Date()) {
-        guard !segments.isEmpty else { return }
         let k = Self.key(q)
+        if segments.isEmpty, let old = entries[k], !old.segments.isEmpty, Self.isValid(old, now: now) { return }
         entries[k] = Entry(segments: segments, duration: entries[k]?.duration, savedAt: now)
         trim(now: now)
     }
@@ -62,7 +71,7 @@ public struct SkipSegmentStore: Sendable, Equatable {
         let id = q.imdb.split(separator: ":").first.map(String.init) ?? q.imdb
         let prefix = "\(id)|\(s)|"
         return entries.compactMap { k, e in
-            guard k.hasPrefix(prefix), k != "\(prefix)\(ep)", now.timeIntervalSince(e.savedAt) < Self.maxAge else { return nil }
+            guard k.hasPrefix(prefix), k != "\(prefix)\(ep)", Self.isValid(e, now: now) else { return nil }
             return e
         }
     }
@@ -91,7 +100,7 @@ public struct SkipSegmentStore: Sendable, Equatable {
     }
 
     private mutating func trim(now: Date) {
-        entries = entries.filter { now.timeIntervalSince($0.value.savedAt) < Self.maxAge }
+        entries = entries.filter { Self.isValid($0.value, now: now) }
         guard entries.count > Self.maxEntries else { return }
         let keep = entries.sorted { $0.value.savedAt > $1.value.savedAt }.prefix(Self.maxEntries)
         entries = Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) })

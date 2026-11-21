@@ -33,7 +33,7 @@ protocol PlaybackEngine: ObservableObject {
     var chapterMarks: [ChapterMark] { get }
     /// Spul-Vorschau nur aus schon geladenen Daten (keine zweite Verbindung); Umsetzung: PlayerScrub.swift.
     var supportsScrubPreview: Bool { get }
-    func scrubPreview(at seconds: Double, refined: Bool, maxWidth: Int) async -> CGImage?
+    func scrubPreview(at seconds: Double, refined: Bool, maxWidth: Int) async -> ScrubStill?
     func endScrubPreview() async
 
     func load(_ url: URL, start: Double?, prefs: LoadPrefs) async throws
@@ -106,8 +106,10 @@ final class AetherBackend: PlaybackEngine {
     let engine: AetherEngine
     private var bag: AnyCancellable?
     /// Plattencache-Sitzung dieser Wiedergabe (nil = direkt); stop() schließt sie.
+    /// Intern auch für PlayerAudioOptions.swift (`stopKeepingDisplayMode`); sonst nur hier setzen.
     var cacheSession: String?
     /// stop() kam (z. B. Verlassen während der Cache-Probe): eine danach fertige Sitzung sofort schließen.
+    /// Intern auch für PlayerAudioOptions.swift (`stopKeepingDisplayMode`).
     var stopped = false
 
     init() throws {

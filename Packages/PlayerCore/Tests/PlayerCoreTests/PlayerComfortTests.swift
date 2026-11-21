@@ -35,6 +35,14 @@ private func ok(_ b: Bool, sourceLocation: SourceLocation = #_sourceLocation) {
     #expect(!p.isActive)
 }
 
+@Test func scrubPanMustBeMostlyHorizontal() {
+    #expect(ScrubPlanner.panIsHorizontal(translationX: 120, translationY: 20))
+    #expect(ScrubPlanner.panIsHorizontal(translationX: -120, translationY: 70))
+    #expect(!ScrubPlanner.panIsHorizontal(translationX: 60, translationY: 100))   // schräg nach unten
+    #expect(!ScrubPlanner.panIsHorizontal(translationX: 50, translationY: 40))
+    #expect(!ScrubPlanner.panIsHorizontal(translationX: .nan, translationY: 0))
+}
+
 @Test func scrubClampsToFileAndSnaps() {
     var p = ScrubPlanner()
     p.pan(deltaX: -5000, velocityX: 0, position: 10, duration: 7200, now: 0)
@@ -183,8 +191,6 @@ private func seg(_ k: SkipSegment.Kind, _ s: Double, _ e: Double) -> SkipSegment
     let e2 = IntroDBQuery(imdb: "tt1:1:2", season: 1, episode: 2)
     #expect(SkipSegmentStore.key(e2) == "tt1|1|2")
     #expect(SkipSegmentStore.key(IntroDBQuery(imdb: "tt9")) == "tt9|m")
-    st.store([], for: e1, now: now)
-    #expect(st.entries.isEmpty)                      // leere Antwort wird nicht gemerkt
     st.store([seg(.intro, 60, 90)], for: e1, now: now)
     st.store([seg(.intro, 62, 92)], for: e2, now: now)
     ok(st.noteDuration(2700, for: e1))
@@ -197,6 +203,34 @@ private func seg(_ k: SkipSegment.Kind, _ s: Double, _ e: Double) -> SkipSegment
     #expect(st.entry(e1, now: now.addingTimeInterval(SkipSegmentStore.maxAge + 1)) == nil)
     #expect(SkipSegmentStore.neighborEpisodes(of: 1) == [2, 3, 4, 5])
     #expect(SkipSegmentStore.neighborEpisodes(of: 5) == [4, 6, 3, 7])
+}
+
+@Test func skipStoreRemembersEmptyAnswersShortly() {
+    let now = Date(timeIntervalSince1970: 1_000_000)
+    var st = SkipSegmentStore()
+    let q = IntroDBQuery(imdb: "tt5", season: 2, episode: 3)
+    st.store([], for: q, now: now)
+    #expect(st.entry(q, now: now)?.segments == [])                     // „keine Marken“: nicht erneut fragen
+    #expect(st.entry(q, now: now.addingTimeInterval(4 * 86400)) != nil)
+    #expect(st.entry(q, now: now.addingTimeInterval(6 * 86400)) == nil)  // nach 5 Tagen erneut
+    // Marken werden nicht durch eine spätere leere Antwort ersetzt.
+    st.store([seg(.intro, 30, 60)], for: q, now: now)
+    st.store([], for: q, now: now.addingTimeInterval(10))
+    #expect(st.entry(q, now: now.addingTimeInterval(20))?.segments.count == 1)
+    #expect(st.entry(q, now: now.addingTimeInterval(30 * 86400)) != nil)  // Marken gelten 60 Tage
+}
+
+@Test func introDBLookupSeparatesNoMarksFromFailure() async {
+    let q = IntroDBQuery(imdb: "tt0903747", season: 1, episode: 2)
+    let url = IntroDBClient.url(q)!.absoluteString
+    let notFound = await IntroDBClient(http: FakeHTTP(routes: [:])).lookup(q)
+    #expect(notFound == [])                                                 // 404 = keine Marken
+    let empty = await IntroDBClient(http: FakeHTTP(routes: [url: #"{"intro":null}"#])).lookup(q)
+    #expect(empty == [])
+    let junk = await IntroDBClient(http: FakeHTTP(routes: [url: "<html>"])).lookup(q)
+    #expect(junk == nil)                                                    // kein JSON = Fehler, nicht merken
+    let noID = await IntroDBClient(http: FakeHTTP(routes: [:])).lookup(IntroDBQuery(imdb: "kitsu:1"))
+    #expect(noID == nil)
 }
 
 @Test func skipStoreRoundTripsThroughBlobStorage() throws {
@@ -262,7 +296,22 @@ private func seg(_ k: SkipSegment.Kind, _ s: Double, _ e: Double) -> SkipSegment
 @Test func modeSwitchExitClosesWithoutSwitch() {
     var e = ModeSwitchExit(stoppedAt: 10)
     ok(e.observe(switching: false, now: 10.1) == .wait)
-    ok(e.observe(switching: false, now: 10.5) == .close(reason: "kein Moduswechsel"))
+    ok(e.observe(switching: false, now: 10.5) == .wait)   // HDR-Standard: bis 1 s auf den Beginn warten
+    ok(e.observe(switching: false, now: 11) == .close(reason: "kein Moduswechsel"))
+    var sdr = ModeSwitchExit(stoppedAt: 0, startGrace: ModeSwitchExit.startGrace(sourceFormat: "sdr"))
+    ok(sdr.observe(switching: false, now: 0.1) == .wait)
+    ok(sdr.observe(switching: false, now: 0.2) == .close(reason: "kein Moduswechsel"))
+    #expect(ModeSwitchExit.startGrace(sourceFormat: "dolbyVision") == 1.0)
+    #expect(ModeSwitchExit.startGrace(sourceFormat: nil) == 1.0)
+    #expect(ModeSwitchExit.startGrace(sourceFormat: "SDR") == 0.2)
+}
+
+@Test func displayModeKeepsOnlyWhenNextEpisodeStarts() {
+    let d = DisplayModeSettings()
+    #expect(d.keepsMode(nextStarts: true, hasNext: true))
+    #expect(!d.keepsMode(nextStarts: true, hasNext: false))    // Film, letzte Folge, „Noch da?“, Autoplay aus
+    #expect(!d.keepsMode(nextStarts: false, hasNext: true))    // Up-next abgebrochen
+    #expect(!DisplayModeSettings(keepModeBetweenEpisodes: false).keepsMode(nextStarts: true, hasNext: true))
 }
 
 @Test func modeSwitchExitWaitsForSwitchAndSettle() {

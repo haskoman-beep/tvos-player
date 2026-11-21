@@ -97,6 +97,13 @@ public struct ScrubPlanner: Sendable {
         return move(by: deltaX * Self.secondsPerPoint(duration: duration) * Self.acceleration(velocity: velocityX), now: now)
     }
 
+    /// Wischgeste überwiegend waagrecht (Gesamtweg seit Beginn)? Nur dann zählt sie als Spulen; ein schräges
+    /// ▼-Wischen öffnet weiter das Spur-Panel.
+    public static func panIsHorizontal(translationX: Double, translationY: Double) -> Bool {
+        guard translationX.isFinite, translationY.isFinite else { return false }
+        return abs(translationX) > abs(translationY) * 1.5
+    }
+
     /// Wischgeste zu Ende (Finger weg): Schwelle zurücksetzen.
     public mutating func panEnded() { pendingPoints = 0 }
 

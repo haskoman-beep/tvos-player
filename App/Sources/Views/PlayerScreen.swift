@@ -129,7 +129,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
     /// Laufendes Neuladen nach einem Fehler; abgebrochen beim Verlassen.
     @State var recoverTask: Task<Void, Never>?
     /// Laden und Start; läuft einmal (ein onAppear nach dem Spur-Panel lädt nicht neu), abgebrochen beim Verlassen.
-    @State private var loadTask: Task<Void, Never>?
+    /// Intern auch für PlayerExit.swift (Abbruch beim geordneten Ausstieg).
+    @State var loadTask: Task<Void, Never>?
     /// Addon-URL je angelegter Addon-UT-Spur (ID → URL): Wiederwahl nach dem Neuladen, keine Dubletten.
     @State var addonTrackURLs: [Int: String] = [:]
     /// Player wird verlassen (Menü, Ende, nächste Quelle): onDisappear ist dann echt, auch bei offenem Panel.
@@ -145,6 +146,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
     @State private var tick = 0
     @State private var fractionApplied = false
     /// Gesammeltes Sprungziel: mehrere ±10-s-Drücke werden zu einem Sprung (Muxer-Neustarts sparen).
+    /// Intern auch für PlayerScrub.swift (`confirmScrub`); sonst nur hier setzen.
     @State var pendingSeek: Double?
     @State var seekTask: Task<Void, Never>?
     @State private var lastToggle = Date.distantPast
@@ -187,14 +189,16 @@ struct PlayerControls<E: PlaybackEngine>: View {
         .focusable(skip.prompt == nil)
         .focused($surfaceFocused)
         .onChange(of: skip.prompt) { _, p in if p == nil { surfaceFocused = true } }
-        .onPlayPauseCommand { onUserInput(); if scrub.isActive { confirmScrub(); return }; togglePlay() }
+        .onPlayPauseCommand { guard !leaving else { return }; onUserInput(); if scrub.isActive { confirmScrub(); return }; togglePlay() }
         .onTapGesture {   // Klick auf das Touchpad (Mitte) pausiert ebenfalls
+            guard !leaving else { return }   // geordneter Ausstieg läuft (schwarz): keine Eingaben mehr
             if scrub.isActive { onUserInput(); confirmScrub(); return }   // Select bestätigt das Spulen
             // Select auf dem Überspringen-Knopf überspringt nur, kein zusätzliches Pausieren.
             guard skip.prompt == nil else { return }
             onUserInput(); togglePlay()
         }
         .onMoveCommand { dir in
+            guard !leaving else { return }
             onUserInput()
             if upNext != nil {
                 withAnimation { upNext = nil }; upNextCancelled = true
@@ -212,6 +216,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             poke()
         }
         .onExitCommand {
+            guard !leaving else { return }
             if scrub.cancel() { onUserInput(); return }   // Menü bricht zuerst das Spulen ab
             if skip.dismissPrompt() { onUserInput(); return }   // Menü schließt zuerst den Überspringen-Knopf
             leaveWithModeSwitch()   // Abdeckung, Moduswechsel abwarten, dann schließen (PlayerExit.swift)
@@ -254,8 +259,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
         .onChange(of: engine.isEnded) { _, ended in
             guard ended else { return }
             if engine.duration > 0 { report(engine.duration, engine.duration) }
-            stopBeforeNext(!upNextCancelled)   // HDMI-Modus halten, wenn die nächste Folge startet (PlayerExit.swift)
-            leave { onEnded(!upNextCancelled) }
+            finishAtEnd(autoplay: !upNextCancelled)   // HDMI-Modus halten oder geordneter Ausstieg (PlayerExit.swift)
         }
         .onChange(of: showTracks) { _, open in onTracksShown(open) }
         .onChange(of: scrub.isActive) { _, a in if a { onUserInput() }; poke() }
@@ -330,6 +334,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
     }
 
     private func startNext() {
+        guard !leaving else { return }
         upNext = nil
         if engine.duration > 0 { report(engine.duration, engine.duration) }
         RemoteLog.info("player", "Nächste Folge startet")
@@ -374,6 +379,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
     }
 
     private func togglePlay() {
+        guard !leaving else { return }
         // Ein Druck kann doppelt ankommen (Play/Pause-Taste + Systembefehl): zweiten innerhalb 350 ms ignorieren.
         let now = Date()
         if now.timeIntervalSince(lastToggle) < 0.35 { RemoteLog.info("player", "Play/Pause doppelt, ignoriert"); return }
@@ -395,6 +401,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
 
     /// ±10 s sammeln und nach 450 ms einmal springen.
     private func queueSeek(_ delta: Double) {
+        guard !leaving else { return }
         // Bild nach dem Hintergrund freigegeben: erst Play baut neu auf (ein Neuaufbau würde von selbst starten).
         guard !restorePending, !restoring else { RemoteLog.info("player", "Sprung gesperrt bis Play/Neuaufbau (nach Hintergrund)"); return }
         let base = pendingSeek ?? engine.currentTime
@@ -520,6 +527,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
         report(engine.currentTime, engine.duration)
     }
 
+    /// Intern auch für PlayerScrub.swift (Steuerleiste beim Spulen zeigen).
     func poke() {
         withAnimation { showOverlay = true }
         hideTask?.cancel()

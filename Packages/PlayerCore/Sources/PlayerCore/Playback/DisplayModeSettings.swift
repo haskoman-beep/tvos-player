@@ -34,6 +34,13 @@ public struct DisplayModeSettings: Codable, Sendable, Equatable {
         keepModeBetweenEpisodes = try c.decodeIfPresent(Bool.self, forKey: .keepModeBetweenEpisodes) ?? d.keepModeBetweenEpisodes
     }
 
+    /// HDMI-Modus beim Stopp halten? Nur wenn die Einstellung an ist, die Wiedergabe gleich weitergeht
+    /// (`nextStarts`: nicht abgebrochen) und es überhaupt eine automatisch startende nächste Folge gibt
+    /// (`hasNext`). Film, letzte Folge, „Noch da?“ und Autoplay aus → normal zurücksetzen.
+    public func keepsMode(nextStarts: Bool, hasNext: Bool) -> Bool {
+        keepModeBetweenEpisodes && nextStarts && hasNext
+    }
+
     /// Kurztext fürs Log (nur Abweichungen vom Engine-Standard).
     public var logText: String {
         var parts: [String] = []

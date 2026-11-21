@@ -6,10 +6,16 @@ import PlayerCore
 
 // MARK: Vorschaubilder aus der Engine
 
+/// Ein Vorschaubild und die Zeit, die es wirklich zeigt (nächstes dekodierbares Bild, kann vom Ziel abweichen).
+struct ScrubStill {
+    let image: CGImage
+    let seconds: Double
+}
+
 /// Standard für Backends ohne Vorschau.
 extension PlaybackEngine {
     var supportsScrubPreview: Bool { false }
-    func scrubPreview(at seconds: Double, refined: Bool, maxWidth: Int) async -> CGImage? { nil }
+    func scrubPreview(at seconds: Double, refined: Bool, maxWidth: Int) async -> ScrubStill? { nil }
     func endScrubPreview() async {}
 }
 
@@ -18,10 +24,13 @@ extension PlaybackEngine {
 /// (nicht z. B. Dolby Vision Profil 5 ohne Umformung). Nach dem Spulen die Still-Dekoder freigeben.
 extension AetherBackend {
     var supportsScrubPreview: Bool { engine.supportsCacheBackedStills }
-    func scrubPreview(at seconds: Double, refined: Bool, maxWidth: Int) async -> CGImage? {
+    func scrubPreview(at seconds: Double, refined: Bool, maxWidth: Int) async -> ScrubStill? {
         guard engine.supportsCacheBackedStills else { return nil }
-        return await engine.scrubPreviewFrame(atSeconds: seconds, refined: refined, maxWidth: maxWidth,
-                                              isCancelled: { false })?.image
+        // `isCancelled: { false }` genügt: die Engine prüft zusätzlich `Task.isCancelled`, und der Aufruf läuft
+        // strukturiert im `previewTask` des ScrubController (dessen Abbruch beendet die Abfrage).
+        guard let f = await engine.scrubPreviewFrame(atSeconds: seconds, refined: refined, maxWidth: maxWidth,
+                                                     isCancelled: { false }) else { return nil }
+        return ScrubStill(image: f.image, seconds: f.actualSeconds)
     }
     func endScrubPreview() async { await engine.releaseScrubPreviewDecoders() }
 }
@@ -39,11 +48,13 @@ final class ScrubController: ObservableObject {
     @Published private(set) var previewTime: Double?
 
     private var planner = ScrubPlanner()
-    private var cache = ScrubPreviewCache<CGImage>(capacity: 48)
+    private var cache = ScrubPreviewCache<ScrubStill>(capacity: 48)
     private let input = RemoteTouchInput()
     private var previewTask: Task<Void, Never>?
     private var idleTask: Task<Void, Never>?
     private var fetching = false
+    /// Wechselt mit jedem Spul-Ende: ein abgebrochener alter Vorschau-Task setzt `fetching` nicht mehr zurück.
+    private var previewGen = 0
     private var usedPreview = false
 
     /// Von PlayerControls beim Erscheinen gesetzt.
@@ -52,7 +63,7 @@ final class ScrubController: ObservableObject {
     private var duration: () -> Double = { 0 }
     private var edges: () -> [Double] = { [] }
     private var supportsPreview: () -> Bool = { false }
-    private var fetch: (Double, Bool) async -> CGImage? = { _, _ in nil }
+    private var fetch: (Double, Bool) async -> ScrubStill? = { _, _ in nil }
     private var release: () async -> Void = {}
 
     static let previewWidth = 480
@@ -144,6 +155,9 @@ final class ScrubController: ObservableObject {
         previewTask?.cancel(); previewTask = nil
         idleTask?.cancel(); idleTask = nil
         preview = nil; previewTime = nil
+        previewGen &+= 1; fetching = false
+        // Bilder nicht über das Spulen hinaus halten (bis zu 48 × 480 px); die Engine behält ihre eigenen.
+        cache.reset()
         if usedPreview {
             usedPreview = false
             Task { await release() }
@@ -171,24 +185,28 @@ final class ScrubController: ObservableObject {
     /// Immer nur eine Abfrage gleichzeitig; danach gilt das dann aktuelle Ziel.
     private func requestPreview() {
         guard supportsPreview() else { return }
-        if let hit = cache.value(at: target) { preview = hit; previewTime = target }
+        if let hit = cache.value(at: target) { preview = hit.image; previewTime = hit.seconds }
         guard !fetching else { return }
         previewTask?.cancel()
-        previewTask = Task { [weak self] in await self?.runPreview() }
+        let gen = previewGen
+        previewTask = Task { [weak self] in await self?.runPreview(gen) }
     }
 
-    private func runPreview() async {
+    private func runPreview(_ gen: Int) async {
         fetching = true
-        defer { fetching = false }
+        defer { if gen == previewGen { fetching = false } }
         var lastCoarse: Int?
         while !Task.isCancelled, isActive {
-            let t = target, key = ScrubPreviewCache<CGImage>.key(t)
+            let t = target, key = ScrubPreviewCache<ScrubStill>.key(t)
             if key != lastCoarse, cache.value(at: t) == nil {
                 lastCoarse = key
                 usedPreview = true
                 let img = await fetch(t, false)
                 guard !Task.isCancelled, isActive else { return }
-                if let img { cache.store(img, at: t); if ScrubPreviewCache<CGImage>.key(target) == key { preview = img; previewTime = t } }
+                if let img {
+                    cache.store(img, at: t)
+                    if ScrubPreviewCache<ScrubStill>.key(target) == key { preview = img.image; previewTime = img.seconds }
+                }
                 continue
             }
             // Ziel ruht: genaues Bild für genau diese Stelle (nicht zwischengespeichert).
@@ -196,7 +214,7 @@ final class ScrubController: ObservableObject {
             guard !Task.isCancelled, isActive else { return }
             guard target == t else { continue }
             usedPreview = true
-            if let img = await fetch(t, true), !Task.isCancelled, isActive, target == t { preview = img; previewTime = t }
+            if let img = await fetch(t, true), !Task.isCancelled, isActive, target == t { preview = img.image; previewTime = img.seconds }
             // Bis zur nächsten Bewegung nichts mehr tun.
             while !Task.isCancelled, isActive, target == t { try? await Task.sleep(for: .milliseconds(100)) }
         }
@@ -217,7 +235,8 @@ final class RemoteTouchInput: NSObject, UIGestureRecognizerDelegate {
 
     private var recognizer: UIPanGestureRecognizer?
     private var lastTranslation: CGFloat = 0
-    private var pads: [(pad: GCMicroGamepad, absolute: Bool)] = []
+    /// Je Gamepad der vorige Zustand (absolute Werte, Handler), beim Abmelden zurückgesetzt.
+    private var pads: [(pad: GCMicroGamepad, absolute: Bool, handler: GCControllerDirectionPadValueChangedHandler?)] = []
     private var connectObserver: NSObjectProtocol?
 
     func start() {
@@ -244,7 +263,7 @@ final class RemoteTouchInput: NSObject, UIGestureRecognizerDelegate {
         if let g = recognizer { g.view?.removeGestureRecognizer(g) }
         recognizer = nil
         for p in pads {
-            p.pad.dpad.valueChangedHandler = nil
+            p.pad.dpad.valueChangedHandler = p.handler
             p.pad.reportsAbsoluteDpadValues = p.absolute
         }
         pads = []
@@ -255,9 +274,11 @@ final class RemoteTouchInput: NSObject, UIGestureRecognizerDelegate {
     private func attachPads() {
         for c in GCController.controllers() {
             guard let pad = c.microGamepad, !pads.contains(where: { $0.pad === pad }) else { continue }
-            pads.append((pad, pad.reportsAbsoluteDpadValues))
+            let previous = pad.dpad.valueChangedHandler
+            pads.append((pad, pad.reportsAbsoluteDpadValues, previous))
             pad.reportsAbsoluteDpadValues = true
-            pad.dpad.valueChangedHandler = { [weak self] _, x, y in
+            pad.dpad.valueChangedHandler = { [weak self] d, x, y in
+                previous?(d, x, y)
                 MainActor.assumeIsolated {
                     if x == 0 && y == 0 { self?.onTouchEnded() } else { self?.onTouch(Double(x), Double(y)) }
                 }
@@ -270,9 +291,11 @@ final class RemoteTouchInput: NSObject, UIGestureRecognizerDelegate {
         case .began:
             lastTranslation = g.translation(in: g.view).x
         case .changed:
-            let x = g.translation(in: g.view).x
-            let dx = x - lastTranslation
-            lastTranslation = x
+            let tr = g.translation(in: g.view)
+            let dx = tr.x - lastTranslation
+            lastTranslation = tr.x
+            // Schräges/senkrechtes Wischen (z. B. ▼ zum Spur-Panel) spult nicht.
+            guard ScrubPlanner.panIsHorizontal(translationX: Double(tr.x), translationY: Double(tr.y)) else { return }
             onPan(Double(dx), Double(g.velocity(in: g.view).x))
         case .ended, .cancelled, .failed:
             lastTranslation = 0
@@ -387,12 +410,17 @@ enum PlayerClock {
 extension PlayerControls {
     /// Select/Play beim Spulen: an das Ziel springen (gleiche Sperre wie ±10 s nach dem Hintergrund).
     func confirmScrub() {
+        guard !leaving else { _ = scrub.cancel(log: false); return }
         guard let t = scrub.confirm() else { poke(); return }
         guard !restorePending, !restoring else { RemoteLog.info("player", "Spulen gesperrt bis Play/Neuaufbau (nach Hintergrund)"); return }
-        seekTask?.cancel(); pendingSeek = nil
+        // Ziel bis zur Landung halten (wie `queueSeek`), sonst springt die Zeitleiste kurz zurück.
+        seekTask?.cancel(); pendingSeek = t
         RemoteLog.info("player", "Spulen \(Int(engine.currentTime)) → \(Int(t))s")
         seekTask = Task {
+            guard !Task.isCancelled, !leaving else { return }
             await engine.seek(t)
+            guard !Task.isCancelled else { return }
+            pendingSeek = nil
         }
         poke()
     }
