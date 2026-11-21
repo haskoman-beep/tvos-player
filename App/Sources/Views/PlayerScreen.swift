@@ -48,7 +48,8 @@ struct PlayerScreen: View {
                                                        },
                                                        addonSubtitles: { await model.addonSubtitles(for: request, media: url, headers: headers, enabled: !isTrailer) },
                                                        onTracksShown: { tracksOpen = $0 },
-                                                       reresolve: { isTrailer ? nil : await model.freshStream(for: request) }) }
+                                                       reresolve: { isTrailer ? nil : await model.freshStream(for: request) },
+                                                       skipLookup: { isTrailer ? nil : await model.introDBQuery(for: request) }) }
             else { Text(initError ?? "Player wird gestartet …") }
         }
         .onDisappear {
@@ -107,6 +108,12 @@ struct PlayerControls<E: PlaybackEngine>: View {
     /// Nach dem Hintergrund: Engine hat das Bild freigegeben, Neuaufbau erst beim Play-Druck (PlayerLifecycle.swift).
     @State var restorePending = false
     @State var restoring = false
+    /// IntroDB-Abfrage für „Intro überspringen“ (nil bzw. Ergebnis nil = keine, z. B. Trailer); Kapitel gelten immer.
+    var skipLookup: (@MainActor () async -> IntroDBQuery?)? = nil
+    /// Sprungbereiche, Überspringen-Knopf, Abspann-Zeitpunkt (`skip.upNextAt`); SkipSegmentButton.swift.
+    @StateObject private var skip = SkipSegmentController()
+    /// Fokus der Spielerfläche; geht zurück, sobald der Überspringen-Knopf verschwindet.
+    @FocusState private var surfaceFocused: Bool
     /// Laufende Addon-UT-Abfrage; abgebrochen beim Verlassen und vor dem Neuladen.
     @State var addonSubTask: Task<Void, Never>?
     /// Laufendes Neuladen nach einem Fehler; abgebrochen beim Verlassen.
@@ -141,7 +148,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             Color.black.ignoresSafeArea()
             engine.surface().ignoresSafeArea()
             engine.subtitleLayer(controlsInset: showOverlay ? (controlsHeight ?? SubtitleOverlayView.fallbackControlsInset) : 0)
-            if engine.isLoading { ProgressView().scaleEffect(2) }
+            PlayerLoadingSteps(engine: engine)
             if let e = loadError ?? engine.errorText {
                 Text("Fehler: \(e)").padding(30).background(.red.opacity(0.8), in: RoundedRectangle(cornerRadius: 16))
             }
@@ -151,8 +158,13 @@ struct PlayerControls<E: PlaybackEngine>: View {
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { controlsHeight = $0 }
             }
             if let n = upNext, let t = nextTitle { upNextCard(n, t).transition(.move(edge: .trailing).combined(with: .opacity)) }
+            SkipSegmentButton(controller: skip, engine: engine, lookup: skipLookup,
+                              onBeforeSkip: { seekTask?.cancel(); pendingSeek = nil })
         }
-        .focusable()
+        // Steht der Überspringen-Knopf, bekommt er den Fokus; Befehle unten erreichen die Fläche weiterhin.
+        .focusable(skip.prompt == nil)
+        .focused($surfaceFocused)
+        .onChange(of: skip.prompt) { _, p in if p == nil { surfaceFocused = true } }
         .onPlayPauseCommand { togglePlay() }
         .onTapGesture { togglePlay() }   // Klick auf das Touchpad (Mitte) pausiert ebenfalls
         .onMoveCommand { dir in
@@ -168,7 +180,10 @@ struct PlayerControls<E: PlaybackEngine>: View {
             }
             poke()
         }
-        .onExitCommand { leave { saveProgress(); engine.stop(); dismiss() } }
+        .onExitCommand {
+            if skip.dismissPrompt() { return }   // Menü schließt zuerst den Überspringen-Knopf
+            leave { saveProgress(); engine.stop(); dismiss() }
+        }
         .onReceive(timer) { _ in
             tick &+= 1
             if engine.isPlaying, engine.errorText == nil { lastGoodTime = engine.currentTime; recoveryPlan.notePlaying() }
@@ -176,6 +191,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             upNextTick()
         }
         .onAppear {
+            surfaceFocused = true
             guard loadTask == nil else { return }
             loadTask = Task { await loadAndStart() }
         }

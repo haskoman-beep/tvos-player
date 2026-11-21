@@ -27,6 +27,10 @@ protocol PlaybackEngine: ObservableObject {
     var sourceVideoWidth: Int? { get }
     /// Name des Dynamik-Formats der Quelle ("sdr", "hdr10", "hdr10Plus", "dolbyVision", "hlg"); nil = unbekannt.
     var sourceVideoFormatName: String? { get }
+    /// Stand des laufenden Starts (Lade-Schritte); nil = kein Start läuft. Umsetzung: PlayerLoadingSteps.swift.
+    var startupStatus: StartupStatus? { get }
+    /// Kapitel der Datei (für „Intro überspringen“); leer = keine. Umsetzung: PlayerLoadingSteps.swift.
+    var chapterMarks: [ChapterMark] { get }
 
     func load(_ url: URL, start: Double?, prefs: LoadPrefs) async throws
     /// Neue Sitzung an der aktuellen Stelle (frisches Fehlerbudget der Engine).
@@ -36,6 +40,8 @@ protocol PlaybackEngine: ObservableObject {
     func togglePlayPause()
     var stateText: String { get }
     func seek(_ seconds: Double) async
+    /// Bildgenauer Sprung (Überspringen-Knopf); Standard: normaler `seek` (PlayerLoadingSteps.swift).
+    func seek(_ seconds: Double, exact: Bool) async
     func selectAudio(_ id: Int)
     /// Wahl durch den Nutzer (Spur-Panel). Ab dann ändert keine Automatik mehr die Untertitel („Aus bleibt Aus“).
     func selectSubtitle(_ id: Int?)
