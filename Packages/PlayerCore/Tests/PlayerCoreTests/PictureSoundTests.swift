@@ -237,3 +237,19 @@ private func tr(_ id: Int, _ lang: String?, forced: Bool = false, sdh: Bool = fa
     #expect(b.entries.count == FileProgressBook.limit)
     #expect(b.entries["f0"] == nil && b.entries["f3"] != nil)
 }
+
+@Test func trackMemoryAppliesPanelChoices() {
+    var m = TrackMemory()
+    m.apply(.audio(tr(1, "eng")))
+    m.apply(.subtitle(tr(2, "ger", forced: true)))
+    m.apply(.offset(0.30000000000000004))
+    #expect(m.audioLanguage == "en")
+    #expect(m.subtitle == .language("de", forced: true, hearingImpaired: false))
+    #expect(m.subtitleOffset == 0.3)
+    m.apply(.subtitle(nil))
+    #expect(m.subtitle == .off)
+    m.apply(.audio(tr(3, nil)))
+    #expect(m.audioLanguage == nil)
+    m.apply(.subtitle(tr(4, nil)))
+    #expect(m.subtitle == nil)
+}

@@ -130,3 +130,22 @@ public enum TrackMemoryPlan {
         return .language(lang, forced: track.isForced, hearingImpaired: track.isHearingImpaired)
     }
 }
+
+/// Eine Nutzerwahl im Spur-Panel, die gemerkt wird.
+public enum TrackMemoryChange: Sendable, Equatable {
+    case audio(AudioTrackInfo)
+    /// nil = „Aus“.
+    case subtitle(AudioTrackInfo?)
+    case offset(Double)
+}
+
+extension TrackMemory {
+    /// Wahl übernehmen. Spuren ohne Sprache löschen den gemerkten Wert (sonst gälte eine alte Wahl weiter).
+    public mutating func apply(_ change: TrackMemoryChange) {
+        switch change {
+        case .audio(let t): audioLanguage = MediaLabels.languageCode(t.language)
+        case .subtitle(let t): subtitle = TrackMemoryPlan.choice(for: t)
+        case .offset(let s): subtitleOffset = SubtitleOffset.normalized(s)
+        }
+    }
+}

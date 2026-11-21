@@ -24,6 +24,9 @@ struct PlayerScreen: View {
     var onSourceVerdict: (SourceVerdict) -> Void = { _ in }
     /// Dateiname der Quelle (`behaviorHints.filename`) für den Untertitel-Abgleich; nil = aus der Adresse.
     var releaseName: String? = nil
+    /// Welle D-a: eigener Fortschritt (TorBox-Dateien): Startstelle und Ablage statt ProgressBook; Profil-Einstellungen
+    /// für Plattencache, Ton und Bild gelten dann wie bei Filmen, sonst bleibt es beim Trailer-Verhalten.
+    var ownProgress: OwnProgress? = nil
     @State private var backend: AetherBackend?
     @State private var initError: String?
     /// Kennzeichen beim Vorladen: solange ein Player offen ist, keine Vorlade-Abfragen.
@@ -34,8 +37,8 @@ struct PlayerScreen: View {
     var body: some View {
         Group {
             if let backend { PlayerControls(engine: backend, url: url, title: request.title, profile: model.profile,
-                                                       start: isTrailer ? nil : model.progress.resumePosition(for: request.id),
-                                                       startFraction: isTrailer ? nil : model.progress.resumeFraction(for: request.id),
+                                                       start: ownProgress != nil ? ownProgress?.start : (isTrailer ? nil : model.progress.resumePosition(for: request.id)),
+                                                       startFraction: isTrailer || ownProgress != nil ? nil : model.progress.resumeFraction(for: request.id),
                                                        runtimeMinutes: request.runtimeMinutes,
                                                        heading: PlayerHeading(request),
                                                        checksPlaceholder: !isTrailer,
@@ -44,10 +47,13 @@ struct PlayerScreen: View {
                                                                         // Untertitel bewusst ohne Engine-Vorwahl: SubtitlePicker wählt nach dem Laden.
                                                                         subtitleLanguages: [],
                                                                         headers: headers, nativeRemoteHLS: remoteHLS,
-                                                                        diskCache: isTrailer ? nil : model.profile.diskCache,
-                                                                        audio: isTrailer ? nil : model.profile.audioShaping,
-                                                                        display: isTrailer ? nil : model.profile.displayMode),
-                                                       report: { pos, dur in if !isTrailer { model.recordProgress(request, position: pos, duration: dur) } },
+                                                                        diskCache: isTrailer && ownProgress == nil ? nil : model.profile.diskCache,
+                                                                        audio: isTrailer && ownProgress == nil ? nil : model.profile.audioShaping,
+                                                                        display: isTrailer && ownProgress == nil ? nil : model.profile.displayMode),
+                                                       report: { pos, dur in
+                                                           if let ownProgress { ownProgress.record(pos, dur) }
+                                                           else if !isTrailer { model.recordProgress(request, position: pos, duration: dur) }
+                                                       },
                                                        // Ausgang bei offenem Panel: danach ist onDisappear echt.
                                                        onEnded: { tracksOpen = false; onEnded($0) },
                                                        onFallback: { tracksOpen = false; onFallback($0) },
@@ -63,7 +69,11 @@ struct PlayerScreen: View {
                                                        skipLookup: { isTrailer ? nil : await model.introDBQuery(for: request) },
                                                        onUserInput: onUserInput,
                                                        onSourceVerdict: isTrailer ? { _ in } : onSourceVerdict,
-                                                       releaseName: releaseName) }
+                                                       releaseName: releaseName,
+                                                       trackMemory: memoryKey.flatMap { PlayerMemory.shared.trackMemory(profile: model.profile.id, key: $0) },
+                                                       onRemember: memoryKey.map { key -> (TrackMemoryChange) -> Void in
+                                                           { change in PlayerMemory.shared.remember(change, key: key, profile: model.profile.id) }
+                                                       }) }
             else { Text(initError ?? "Player wird gestartet …") }
         }
         .onDisappear {
@@ -79,6 +89,12 @@ struct PlayerScreen: View {
             guard backend == nil else { return }
             do { backend = try AetherBackend() } catch { initError = "Player-Start fehlgeschlagen: \(error)"; RemoteLog.error("player", initError ?? "") }
         }
+    }
+
+    /// Spur-Wahl je Serie/Film (Welle D-a): nil = aus (Einstellung) oder Trailer.
+    private var memoryKey: String? {
+        guard model.profile.player.rememberTracks, !isTrailer || ownProgress != nil else { return nil }
+        return TrackMemoryBook.key(itemID: request.item.id)
     }
 }
 
@@ -136,6 +152,13 @@ struct PlayerControls<E: PlaybackEngine>: View {
     @ObservedObject var stability = PlaybackStability.shared
     /// Dateiname der Quelle für den Untertitel-Abgleich (AddonSubtitleLoader); nil = aus der Adresse.
     var releaseName: String? = nil
+    /// Welle D-a: gemerkte Spur-Wahl dieses Titels (nil = keine) und Rückruf für neue Wahlen im Panel.
+    var trackMemory: TrackMemory? = nil
+    var onRemember: ((TrackMemoryChange) -> Void)? = nil
+    @State var subtitleMemoryPending = false
+    /// Bildschirmschoner-Regel (PlayerPictureSound.swift).
+    @State var idle = IdleTimerPolicy()
+    @State var idleToken = UUID()
     /// Laufende Addon-UT-Abfrage; abgebrochen beim Verlassen und vor dem Neuladen.
     @State var addonSubTask: Task<Void, Never>?
     /// Laufendes Neuladen nach einem Fehler; abgebrochen beim Verlassen.
@@ -241,6 +264,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             if tick % 10 == 0 && engine.isPlaying { saveProgress() }
             upNextTick()
             stabilityTick(blocked: failureNotice != nil || loadError != nil)
+            idleTick()
         }
         .onChange(of: engine.loadActivity.hasFirstFrame) { _, f in if f { stabilityFirstFrame() } }
         .onChange(of: stability.isOnline) { _, on in stabilityNetworkChanged(on) }
@@ -250,6 +274,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                          canScrub: { !leaving && !showTracks && upNext == nil && skip.prompt == nil && failureNotice == nil
                                      && !restorePending && !restoring && engine.duration > 0 && engine.errorText == nil },
                          edges: { SkipSegments.snapEdges(skip.segments) + engine.chapterMarks.map(\.start) })
+            idleTick()
             guard loadTask == nil else { return }
             loadTask = Task { await loadAndStart() }
         }
@@ -261,6 +286,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             RemoteLog.info("player", "Verlassen (Panel \(showTracks ? "offen" : "zu")\(leaving ? ", Ausgang" : ""))")
             guard !showTracks || leaving else { return }
             loadTask?.cancel(); addonSubTask?.cancel(); recoverTask?.cancel(); lifeTask?.cancel()
+            releaseIdleTimer()
         }
         .onChange(of: engine.errorText) { _, e in
             guard let e else { return }
@@ -281,7 +307,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
         .onChange(of: showTracks) { _, open in onTracksShown(open) }
         .onChange(of: scrub.isActive) { _, a in if a { onUserInput() }; poke() }
         .onChange(of: scrub.target) { _, _ in poke() }
-        .fullScreenCover(isPresented: $showTracks) { PlayerTrackPanel(engine: engine, profile: profile, sourceURL: url, audioLocked: restorePending) }
+        .fullScreenCover(isPresented: $showTracks) { PlayerTrackPanel(engine: engine, profile: profile, sourceURL: url, audioLocked: restorePending, onRemember: onRemember) }
         // Play von außen (Siri, Kontrollzentrum) nach dem Hintergrund: erst neu aufbauen.
         .onChange(of: engine.isPlaying) { _, p in if p { stabilityPlaying() }; if p, restorePending { restoreAndPlay() } }
         .onPlayerLifecycle { handlePhase($0) }
@@ -307,14 +333,15 @@ struct PlayerControls<E: PlaybackEngine>: View {
             RemoteLog.info("player", "Geladen · \(Int(engine.duration))s · \(engine.infoText) · Ton: " +
                 engine.audioTracks.map { "\($0.id):\($0.language ?? "?")/\($0.channels ?? 0)ch" }.joined(separator: " ") +
                 " · UT: \(engine.subtitleTracks.count)")
-            let best = preferredAudioTrack(engine.audioTracks, priority: profile.audioPriority)
+            // Spur-Gedächtnis (Welle D-a) vor der Automatik, nur wenn die Sprache da ist.
+            let best = rememberedAudio() ?? preferredAudioTrack(engine.audioTracks, priority: profile.audioPriority)
             if let best, best.id != engine.activeAudioID {
                 engine.selectAudio(best.id)
             }
             // Tonwahl läuft asynchron: die Sprache der gewählten Spur direkt mitgeben (auch an die Addon-UT).
             let startAudio = (best ?? engine.audioTracks.first(where: { $0.id == engine.activeAudioID }))?.language
             engine.subtitlePreferences = SubtitlePreferences(profile: profile)
-            engine.reconsiderSubtitles(audioLanguage: startAudio)
+            if !applyRememberedSubtitles() { engine.reconsiderSubtitles(audioLanguage: startAudio) }
             addonSubTask = Task { await loadAddonSubtitles(audioLanguage: startAudio) }
             RemoteLog.info("player", "Spielt · Tonspur \(engine.activeAudioID.map(String.init) ?? "-") · UT \(engine.activeSubtitleID.map(String.init) ?? "aus") · \(engine.infoText)")
             playUnlessHeld()
@@ -332,6 +359,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
     /// Jeder Ausgang aus dem Player (Menü, Ende, nächste Folge, nächste Quelle) geht hier durch.
     func leave(_ exit: () -> Void) {
         leaving = true
+        releaseIdleTimer()   // Bildschirmschoner wieder frei (Welle D-a)
         exit()
     }
 

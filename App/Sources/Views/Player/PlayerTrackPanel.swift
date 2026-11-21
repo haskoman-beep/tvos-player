@@ -44,6 +44,8 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
     var sourceURL: URL? = nil
     /// Tonspur-Wechsel gesperrt (nach dem Hintergrund bis Play neu aufgebaut hat).
     var audioLocked = false
+    /// Welle D-a: Nutzerwahl merken (Spur-Gedächtnis je Serie); nil = aus.
+    var onRemember: ((TrackMemoryChange) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var tab: PlayerTrackTab = .audio
     @FocusState private var focus: Focus?
@@ -55,6 +57,9 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
         case audio(Int)
         case subtitleOff
         case subtitle(Int)
+        /// Versatz-Knopf (Index in `SubtitleOffset.steps`) bzw. Zurücksetzen.
+        case offsetStep(Int)
+        case offsetReset
     }
 
     /// Startfokus: Reiter Ton auf der aktiven Spur (ohne Tonspuren: der Reiter selbst).
@@ -168,7 +173,7 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
                 ForEach(Array(tracks.enumerated()), id: \.element.id) { i, t in
                     row(TrackPanelLogic.audioRow(t, number: i + 1), active: t.id == engine.activeAudioID) {
                         RemoteLog.info("player", "Tonspur gewählt: \(t.id)\(audioLocked ? " · gesperrt bis Play" : "")")
-                        if !audioLocked { engine.selectAudio(t.id) }
+                        if !audioLocked { engine.selectAudio(t.id); onRemember?(.audio(t)) }
                         dismiss()
                     }
                     .focused($focus, equals: .audio(t.id))
@@ -186,9 +191,10 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
         // mehr, auch der Addon-Loader nicht (der fügt dann nur noch Spuren hinzu).
         return ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 4) {
+                offsetRow
                 row(TrackRowLabel(title: "Aus", detail: nil, name: nil, badges: []), active: engine.activeSubtitleID == nil) {
                     RemoteLog.info("player", "Untertitel aus")
-                    engine.selectSubtitle(nil); dismiss()
+                    engine.selectSubtitle(nil); onRemember?(.subtitle(nil)); dismiss()
                 }
                 .focused($focus, equals: .subtitleOff)
                 ForEach(groups, id: \.code) { g in
@@ -198,13 +204,54 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
                     ForEach(Array(g.tracks.enumerated()), id: \.element.id) { i, t in
                         row(TrackPanelLogic.subtitleRow(t, number: i + 1), active: t.id == engine.activeSubtitleID) {
                             RemoteLog.info("player", "Untertitel gewählt: \(t.id)")
-                            engine.selectSubtitle(t.id); dismiss()
+                            engine.selectSubtitle(t.id); onRemember?(.subtitle(t)); dismiss()
                         }
                         .focused($focus, equals: .subtitle(t.id))
                     }
                 }
             }
         }
+    }
+
+    // MARK: Untertitel-Versatz (Welle D-a)
+
+    /// Versatz für eingebettete und Addon-Untertitel; Knöpfe schließen das Panel nicht.
+    private var offsetRow: some View {
+        let value = engine.subtitleOffset
+        let active = engine.subtitleTracks.first { $0.id == engine.activeSubtitleID }
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 16) {
+                Text("Versatz").font(.callout.bold()).foregroundStyle(.secondary).frame(width: 140, alignment: .leading)
+                ForEach(Array(SubtitleOffset.steps.enumerated()), id: \.offset) { i, step in
+                    if i == SubtitleOffset.steps.count / 2 {
+                        Text(SubtitleOffset.label(value)).font(.body.monospacedDigit().weight(.semibold))
+                            .frame(width: 150)
+                    }
+                    Button { changeOffset(SubtitleOffset.adjusted(engine.subtitleOffset, by: step)) } label: {
+                        FocusHighlight { Text(SubtitleOffset.stepLabel(step)).font(.body.monospacedDigit()) }
+                    }
+                    .buttonStyle(.plain)
+                    .focused($focus, equals: .offsetStep(i))
+                }
+                Button { changeOffset(0) } label: { FocusHighlight { Text("Zurücksetzen").font(.body) } }
+                    .buttonStyle(.plain)
+                    .focused($focus, equals: .offsetReset)
+                Spacer(minLength: 0)
+            }
+            Text(active?.isNativelyRendered == true
+                 ? "Diese Spur zeichnet das System: der Versatz wirkt hier nicht."
+                 : SubtitleOffset.hint(value))
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 16).padding(.bottom, 12)
+    }
+
+    private func changeOffset(_ v: Double) {
+        let n = SubtitleOffset.normalized(v)
+        guard n != engine.subtitleOffset else { return }
+        engine.setSubtitleOffset(n)
+        RemoteLog.info("player", "UT-Versatz: \(SubtitleOffset.label(n))")
+        onRemember?(.offset(n))
     }
 
     // MARK: Zeile

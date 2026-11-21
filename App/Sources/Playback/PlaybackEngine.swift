@@ -65,6 +65,9 @@ protocol PlaybackEngine: ObservableObject {
     /// Externe Untertiteldatei als Spur anmelden (`isExternal = true`); liefert die Spur-ID oder nil.
     @discardableResult
     func addExternalSubtitle(url: URL, name: String, language: String?, formatHint: String?) -> Int?
+    /// Untertitel-Versatz in Sekunden (+ = später), gilt für das eigene Overlay; Umsetzung: PlayerPictureSound.swift.
+    var subtitleOffset: Double { get }
+    func setSubtitleOffset(_ seconds: Double)
     func stop()
     /// Stopp vor der nächsten Folge: HDMI-Modus bleibt stehen (PlayerAudioOptions.swift).
     func stopKeepingDisplayMode()
