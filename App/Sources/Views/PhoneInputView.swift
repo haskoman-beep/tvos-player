@@ -44,9 +44,13 @@ final class PhoneServer: ObservableObject {
                 case .incomplete where !done && err == nil:
                     self.receive(c, buffer: buf)
                 case .complete(let r):
-                    let (resp, cmds) = self.page.handle(r, profileName: self.model?.profile.name ?? "") { self.model?.backupData() ?? Data() }
+                    let (resp, cmds) = self.page.handle(r, profileName: self.model?.profile.name ?? "",
+                                                        home: self.model?.phoneHomeState() ?? .empty) { self.model?.backupData() ?? Data() }
+                    // Welle F-e: „Startseite ordnen“ vor der Antwort übernehmen, damit die Folgeseite den neuen Stand zeigt.
+                    let home = cmds.filter(\.isHomeEdit), rest = cmds.filter { !$0.isHomeEdit }
+                    if !home.isEmpty { self.model?.applyHome(home) }
                     self.send(c, resp)
-                    if !cmds.isEmpty, let m = self.model { await m.apply(cmds) }
+                    if !rest.isEmpty, let m = self.model { await m.apply(rest) }
                 case .tooLarge:
                     self.send(c, HTTPResponse(status: 413, body: Data("Zu groß".utf8)))
                 default:
@@ -80,29 +84,38 @@ final class PhoneServer: ObservableObject {
 }
 
 struct PhoneInputView: View {
+    /// Welle F-e: Abschnitt, bei dem die Handy-Seite aufgeht (Anker in der QR-Adresse); nil = Seitenanfang.
+    var section: PhoneSection? = nil
     @EnvironmentObject var model: AppModel
+    @Environment(\.dismiss) private var dismiss
     @StateObject private var server = PhoneServer()
+    @FocusState private var doneFocused: Bool
+
+    private var link: String? { server.address.map { PhoneSection.url($0, section: section) } }
 
     var body: some View {
         HStack(spacing: 80) {
-            if let a = server.address, let img = qr(a) {
+            if let a = link, let img = qr(a) {
                 Image(uiImage: img).interpolation(.none).resizable().frame(width: 480, height: 480)
                     .padding(24).background(.white, in: RoundedRectangle(cornerRadius: 24))
             }
             VStack(alignment: .leading, spacing: 24) {
                 Text("Am Handy eingeben").font(.title2.bold())
-                Text("QR-Code mit der iPhone-Kamera scannen. Auf der Seite Addon-URLs, Schlüssel, Nuvio-Export oder TMDB-Links einfügen und senden. Dort kannst du auch alle Profile sichern.")
+                Text("QR-Code mit der iPhone-Kamera scannen. Auf der Seite Addon-URLs, Schlüssel, Nuvio-Export oder TMDB-Links einfügen und senden. Unter „Startseite ordnen“ Reihen per Finger verschieben und ausblenden. Dort kannst du auch alle Profile sichern.")
                     .frame(maxWidth: 900, alignment: .leading)
-                if let a = server.address { Text(a).font(.caption.monospaced()).foregroundStyle(.secondary) }
+                if let a = link { Text(a).font(.caption.monospaced()).foregroundStyle(.secondary) }
                 if let f = server.failure { Text(f).foregroundStyle(.red) }
                 if let n = model.notice { Text("✓ " + n).foregroundStyle(.green) }
                 Text("Das Handy muss im selben WLAN sein. Die Seite ist nur erreichbar, solange diese Ansicht offen ist.")
                     .font(.caption).foregroundStyle(.secondary)
-                Button("Fertig") {}.hidden()
+                // Sichtbarer Fokusanker (A4/N6): ohne ihn hat die Seite nichts Fokussierbares.
+                Button("Fertig") { dismiss() }
+                    .focused($doneFocused)
+                    .accessibilityHint("Schließt die Handy-Eingabe")
             }
         }
         .padding(80)
-        .onAppear { model.notice = nil; server.start(model: model) }
+        .onAppear { model.notice = nil; server.start(model: model); doneFocused = true }
         .onDisappear { server.stop() }
     }
 
