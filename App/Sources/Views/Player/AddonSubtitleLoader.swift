@@ -22,10 +22,13 @@ extension AppModel {
             }
             return nil
         }
+        // Hash nur, wenn ein Addon genau diesen Titel bedient (sonst keine Range-Abrufe an die Quelle).
+        guard profile.addons.contains(where: { $0.manifest.supports("subtitles", type: request.type, id: request.id) })
+        else { return [] }
         var extra: [String: String] = [:]
-        // Höchstens 8 s für den Hash, dann ohne fragen.
+        // Höchstens 4 s für den Hash, dann ohne fragen.
         // `try?` glättet das doppelte Optional: nil bei Zeitablauf oder ohne Hash.
-        if let media, let h = try? await AddonClient.withTimeout(8, { await VideoHash.fetch(media, headers: headers) }) {
+        if let media, let h = try? await AddonClient.withTimeout(4, { await VideoHash.fetch(media, headers: headers) }) {
             extra = OpenSubtitlesHash.extras(hash: h.hash, size: h.size)
             RemoteLog.info("player", "Addon-UT: Datei-Hash \(h.hash) · \(h.size) B")
         }
@@ -42,6 +45,8 @@ enum VideoHash {
         guard let head = await range(url, headers, from: 0, to: n - 1),
               let size = OpenSubtitlesHash.totalSize(contentRange: head.contentRange), size >= n,
               let tail = await range(url, headers, from: size - n, to: size - 1),
+              OpenSubtitlesHash.rangeStart(contentRange: tail.contentRange) == size - n,
+              OpenSubtitlesHash.totalSize(contentRange: tail.contentRange) == size,
               let hash = OpenSubtitlesHash.compute(size: size, head: head.data, tail: tail.data) else { return nil }
         return (hash, size)
     }
@@ -75,12 +80,13 @@ extension PlayerControls {
         guard let addonSubtitles else { return }
         let selectedBefore = engine.activeSubtitleID
         let embedded = engine.subtitleTracks
-        guard let found = await addonSubtitles() else { return }
+        guard let found = await addonSubtitles(), !Task.isCancelled else { return }
         let audioLanguage = engine.audioTracks.first { $0.id == engine.activeAudioID }?.language
         let languages = AddonSubtitlePlan.languages(subtitleLanguage: profile.subtitleLanguage, audioLanguage: audioLanguage)
         let picked = AddonSubtitlePlan.select(found, languages: languages)
         var added: [(sub: AddonSubtitle, id: Int)] = []
         for (sub, name) in zip(picked, AddonSubtitlePlan.trackNames(picked)) {
+            guard !Task.isCancelled else { return }
             guard let url = URL(string: sub.url),
                   let id = engine.addExternalSubtitle(url: url, name: name, language: sub.languageCode, formatHint: sub.formatHint)
             else { continue }
@@ -95,7 +101,7 @@ extension PlayerControls {
                                                        wishLanguage: profile.subtitleLanguage, embedded: embedded),
               let id = added.first(where: { $0.sub == first })?.id else { return }
         // Inzwischen von Hand (oder von der Engine) gewählt: nicht überschreiben.
-        guard engine.activeSubtitleID == selectedBefore else { return }
+        guard !Task.isCancelled, engine.activeSubtitleID == selectedBefore else { return }
         engine.selectSubtitle(id)
         RemoteLog.info("player", "Addon-UT gewählt: \(id) · \(first.addonName) · \(first.languageCode ?? "?")")
     }

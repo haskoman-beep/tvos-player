@@ -213,6 +213,13 @@ public enum OpenSubtitlesHash {
         return n
     }
 
+    /// Start aus `Content-Range: bytes 934464-999999/1000000`; nil bei Unsinn.
+    public static func rangeStart(contentRange: String?) -> Int64? {
+        guard let s = contentRange?.trimmingCharacters(in: .whitespaces), s.lowercased().hasPrefix("bytes "),
+              let dash = s.firstIndex(of: "-") else { return nil }
+        return Int64(s[s.index(s.startIndex, offsetBy: 6)..<dash].trimmingCharacters(in: .whitespaces))
+    }
+
     /// Nur einzelne HTTP(S)-Dateien: kein HLS/DASH, kein Loopback, kein YouTube.
     public static func isHashable(_ url: URL) -> Bool {
         guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",

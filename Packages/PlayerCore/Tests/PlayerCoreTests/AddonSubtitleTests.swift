@@ -104,6 +104,10 @@ private struct SlowHTTP: HTTPFetching {
     var tail = Data(count: n); for i in 0..<8 { tail[i] = 0xFF }                   // 2^64 - 1 → Überlauf
     #expect(OpenSubtitlesHash.compute(size: 131_072, head: head, tail: tail) == "0100000000020000")
     #expect(OpenSubtitlesHash.compute(size: 1_000, head: zeros, tail: zeros) == nil)
+    // Nicht-Null-Muster, Sollwert unabhängig mit Python (struct '<Q') berechnet.
+    let pHead = Data((0..<n).map { UInt8($0 % 251) })
+    let pTail = Data((0..<n).map { UInt8(($0 * 7 + 3) % 256) })
+    #expect(OpenSubtitlesHash.compute(size: 1_000_000, head: pHead, tail: pTail) == "1a960f900b952903")
     #expect(OpenSubtitlesHash.compute(size: 131_072, head: Data(count: 10), tail: zeros) == nil)
 }
 
@@ -111,6 +115,10 @@ private struct SlowHTTP: HTTPFetching {
     #expect(OpenSubtitlesHash.totalSize(contentRange: "bytes 0-65535/1234567890") == 1_234_567_890)
     #expect(OpenSubtitlesHash.totalSize(contentRange: "bytes 0-65535/*") == nil)
     #expect(OpenSubtitlesHash.totalSize(contentRange: nil) == nil)
+    #expect(OpenSubtitlesHash.rangeStart(contentRange: "bytes 934464-999999/1000000") == 934_464)
+    #expect(OpenSubtitlesHash.rangeStart(contentRange: "bytes 0-65535/1000000") == 0)
+    #expect(OpenSubtitlesHash.rangeStart(contentRange: "bytes */1000000") == nil)
+    #expect(OpenSubtitlesHash.rangeStart(contentRange: nil) == nil)
     #expect(OpenSubtitlesHash.isHashable(URL(string: "https://cdn.example/f/Film.mkv")!))
     #expect(!OpenSubtitlesHash.isHashable(URL(string: "https://cdn.example/master.m3u8")!))
     #expect(!OpenSubtitlesHash.isHashable(URL(string: "http://127.0.0.1:8080/x.mkv")!))
