@@ -20,6 +20,8 @@ struct PlayerScreen: View {
     var onUserInput: () -> Void = {}
     /// „Noch da?“ steht an: kein Up-next-Countdown, die Abfrage kommt nach dem Ende.
     var holdsUpNext = false
+    /// Dateiname der Quelle (`behaviorHints.filename`) für den Untertitel-Abgleich; nil = aus der Adresse.
+    var releaseName: String? = nil
     @State private var backend: AetherBackend?
     @State private var initError: String?
     /// Kennzeichen beim Vorladen: solange ein Player offen ist, keine Vorlade-Abfragen.
@@ -55,7 +57,7 @@ struct PlayerScreen: View {
                                                        onTracksShown: { tracksOpen = $0 },
                                                        reresolve: { isTrailer ? nil : await model.freshStream(for: request) },
                                                        skipLookup: { isTrailer ? nil : await model.introDBQuery(for: request) },
-                                                       onUserInput: onUserInput) }
+                                                       onUserInput: onUserInput, releaseName: releaseName) }
             else { Text(initError ?? "Player wird gestartet …") }
         }
         .onDisappear {
@@ -122,6 +124,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
     @FocusState private var surfaceFocused: Bool
     /// Jeder Tastendruck („Noch da?“-Zähler).
     var onUserInput: () -> Void = {}
+    /// Dateiname der Quelle für den Untertitel-Abgleich (AddonSubtitleLoader); nil = aus der Adresse.
+    var releaseName: String? = nil
     /// Laufende Addon-UT-Abfrage; abgebrochen beim Verlassen und vor dem Neuladen.
     @State var addonSubTask: Task<Void, Never>?
     /// Laufendes Neuladen nach einem Fehler; abgebrochen beim Verlassen.

@@ -24,8 +24,8 @@ public struct SourceRankContext: Equatable, Sendable {
 /// 1. sicher nicht gecachte Quellen ("lädt erst") nach hinten,
 /// 2. Sprache: Wunschsprache genannt > Multi/Dual > keine Sprache oder nur Zweitsprachen > nur fremde Sprachen
 ///    (Englisch als Wunschsprache: Quellen ohne Angabe zählen wie Englisch, englische Releases nennen sie selten),
-/// 3. 4K-AV1 ohne Hardware-Dekoder nach hinten (Software-Dekodierung ruckelt),
-/// 4. innerhalb eines Blocks gleicher Auflösung: AV1 bei Dolby Vision bzw. ohne Hardware hinter die anderen,
+/// 3. AV1 ab 1440p ohne Hardware-Dekoder nach hinten (Software-Dekodierung ruckelt),
+/// 4. innerhalb gleicher Stufe und gleicher Auflösung (auch verstreut): AV1 bei Dolby Vision bzw. ohne Hardware hinter die anderen,
 ///    TorBox vor anderen Diensten, wenn die Liste mehr als einen Dienst enthält.
 public enum SourceRanking {
     /// Sprachklasse einer Quelle, höher = besser.
@@ -46,9 +46,9 @@ public enum SourceRanking {
         return .otherOnly
     }
 
-    /// AV1 in 4K ohne Hardware-Dekoder: stark abwerten (hinter alle gleichsprachigen Quellen).
+    /// AV1 ab 1440p ohne Hardware-Dekoder: stark abwerten (hinter alle gleichsprachigen Quellen).
     public static func isHeavyAV1(_ t: StreamTraits, av1Hardware: Bool) -> Bool {
-        t.videoCodec == "AV1" && !av1Hardware && t.resolution == "2160p"
+        t.videoCodec == "AV1" && !av1Hardware && ["2160p", "1440p"].contains(t.resolution ?? "")
     }
 
     /// AV1 innerhalb gleicher Auflösung hinten: ohne Hardware oder bei Dolby Vision (der Fernseher braucht HEVC-DV).
@@ -65,21 +65,25 @@ public enum SourceRanking {
             let ka = key(t[a], context), kb = key(t[b], context)
             return ka != kb ? ka.lexicographicallyPrecedes(kb) : a < b
         }
-        // Stufe 4: aufeinanderfolgende Blöcke gleicher Grundstufe und gleicher Auflösung.
-        var out: [Int] = []
-        var run: [Int] = []
-        func flush() {
-            out += run.enumerated().sorted { x, y in
-                let kx = runKey(t[x.element], context, multiService), ky = runKey(t[y.element], context, multiService)
+        // Stufe 4: innerhalb gleicher Grundstufe je Auflösung umordnen, auch wenn die Auflösungen gemischt kommen
+        // (2160p, 1080p, 2160p): die Plätze einer Auflösung bleiben, nur ihre Einträge tauschen untereinander.
+        var out = primary
+        var groups: [String: [Int]] = [:]   // "Grundstufe|Auflösung" → Plätze in `out`
+        var groupOrder: [String] = []
+        for (pos, i) in primary.enumerated() {
+            let g = key(t[i], context).map(String.init).joined(separator: ",") + "|" + (t[i].resolution ?? "")
+            if groups[g] == nil { groupOrder.append(g) }
+            groups[g, default: []].append(pos)
+        }
+        for g in groupOrder {
+            let positions = groups[g]!
+            guard positions.count > 1 else { continue }
+            let sorted = positions.enumerated().sorted { x, y in
+                let kx = runKey(t[primary[x.element]], context, multiService), ky = runKey(t[primary[y.element]], context, multiService)
                 return kx != ky ? kx.lexicographicallyPrecedes(ky) : x.offset < y.offset
-            }.map(\.element)
-            run = []
+            }.map { primary[$0.element] }
+            for (pos, i) in zip(positions, sorted) { out[pos] = i }
         }
-        for i in primary {
-            if let last = run.last, key(t[last], context) != key(t[i], context) || t[last].resolution != t[i].resolution { flush() }
-            run.append(i)
-        }
-        flush()
         return out.map { items[$0] }
     }
 

@@ -151,7 +151,7 @@ public struct StreamBehaviorHints: Codable, Sendable, Equatable {
     public var proxyHeaders: ProxyHeaders?
     /// AIOStreams-Zusatzfelder (optional; fehlen bei anderen Addons). Dienst-ID wie "torbox", "realdebrid".
     public var service: String?
-    /// Datei liegt beim Dienst bereit (sofort abspielbar). Nur zusammen mit `service` aussagekräftig.
+    /// Datei liegt beim Dienst bereit (sofort abspielbar); gilt auch ohne `service` (z. B. Usenet-/P2P-Einträge).
     public var cached: Bool?
     /// Laufzeit in Sekunden.
     public var duration: Double?

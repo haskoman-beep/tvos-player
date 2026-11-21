@@ -412,7 +412,8 @@ struct StreamListView: View {
                                                                              headers: s.behaviorHints?.proxyHeaders?.request ?? [:],
                                                                              onEnded: { ended(s, autoplay: $0) }, onFallback: { fallback(from: s, reason: $0) },
                                                                              onUserInput: { AutoNextState.userInput($autoNext) },
-                                                                             holdsUpNext: autoNext.promptDue(model.profile)).environmentObject(model) }
+                                                                             holdsUpNext: autoNext.promptDue(model.profile),
+                                                                             releaseName: s.behaviorHints?.filename).environmentObject(model) }
         }
         .modifier(StillWatchingAlert(state: $autoNext, note: $nextNote) { startNext($0.next, after: $0.stream, auto: false) })
     }

@@ -213,3 +213,14 @@ private let de = SourceRankContext(audioPriority: ["de", "en", "orig"], av1Hardw
     #expect(ISODate.germanDay("2024-03-05") == "05.03.2024")
     #expect(ISODate.germanDay("2024") == "2024")
 }
+
+@Test func torboxFirstAlsoWithMixedResolutions() {
+    // Auflösungen gemischt: die 2160p-Plätze (1, 3) tauschen untereinander, 1080p bleibt auf Platz 2.
+    let list = [st("[RD+] A 2160p"), st("[RD+] B 1080p"), st("[TB+] C 2160p")]
+    #expect(SourceRanking.order(list, context: de).map { $0.name!.split(separator: " ")[1] } == ["C", "B", "A"])
+}
+
+@Test func av1From1440pCountsAsHeavy() {
+    let list = [st("A 1440p AV1"), st("B 1080p HEVC")]
+    #expect(SourceRanking.order(list, context: de).map { String($0.name!.prefix(1)) } == ["B", "A"])
+}

@@ -16,8 +16,7 @@ struct DeviceCheckSettings: View {
                     Button {} label: {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
-                                Image(systemName: r.ok == nil ? "info.circle" : (r.ok! ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"))
-                                    .foregroundStyle(r.ok == nil ? Color.secondary : (r.ok! ? Color.green : Color.orange))
+                                Image(systemName: Self.icon(r.ok).name).foregroundStyle(Self.icon(r.ok).color)
                                 Text(r.title)
                                 Spacer()
                                 Text(r.value).foregroundStyle(.secondary)
@@ -40,6 +39,14 @@ struct DeviceCheckSettings: View {
                     }
                 }
             }
+        }
+    }
+
+    static func icon(_ ok: Bool?) -> (name: String, color: Color) {
+        switch ok {
+        case nil: return ("info.circle", .secondary)
+        case true?: return ("checkmark.circle.fill", .green)
+        case false?: return ("exclamationmark.triangle.fill", .orange)
         }
     }
 
@@ -87,7 +94,7 @@ struct DeviceCheck {
         if modes.contains(.hlg) { names.append("HLG") }
         rows.append(Row(id: "hdr", title: "HDR des Fernsehers", value: names.isEmpty ? "keins" : names.joined(separator: ", "),
                         ok: names.isEmpty ? false : true,
-                        hint: names.isEmpty ? "Kein HDR gemeldet: HDMI-Kabel, Eingang (z. B. „HDMI Deep Colour“ am LG) und Inhalt anpassen prüfen." : nil))
+                        hint: names.isEmpty ? "Kein HDR gemeldet: HDMI-Kabel, Eingang (z. B. „HDMI Deep Colour“/„UHD Deep Colour“ am Fernseher) und Inhalt anpassen prüfen." : nil))
         let session = AVAudioSession.sharedInstance()
         let outputs = session.currentRoute.outputs
         let port = outputs.first.map { $0.portType == .HDMI ? "HDMI" : $0.portName } ?? "keine"

@@ -176,10 +176,11 @@ public struct TraktClient: Sendable {
 
     /// Öffentliche oder eigene Liste. `user` nil = angemeldeter Nutzer ("me").
     /// `recommendations/movies` / `recommendations/shows` (nur mit Anmeldung) liefern Trakt-Empfehlungen.
-    public func list(user: String?, slug: String, token: SyncToken?) async throws -> [MetaPreview] {
+    /// `limit` gilt nur für Empfehlungen (Trakt liefert dort höchstens 100, ohne Angabe 20).
+    public func list(user: String?, slug: String, token: SyncToken?, limit: Int? = nil) async throws -> [MetaPreview] {
         if user == nil, Self.isRecommendations(slug) {
             guard let token else { return [] }
-            return try await recommendations(series: slug.hasSuffix("shows"), token: token)
+            return try await recommendations(series: slug.hasSuffix("shows"), limit: limit ?? 20, token: token)
         }
         let isWatchlist = slug == "watchlist" || slug == "watchlist/movies" || slug == "watchlist/shows"
         if let user, !Self.isSafeName(user) { throw TraktNameError(name: user) }
