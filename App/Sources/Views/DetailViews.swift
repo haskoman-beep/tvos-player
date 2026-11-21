@@ -357,6 +357,8 @@ struct StreamListView: View {
     @State private var fallbacks = 0
     /// „Noch da?“-Zähler, Addon je Quelle, offene Abfrage (StillWatchingPrompt.swift).
     @State private var autoNext = AutoNextState()
+    /// Welle D-b (M3): veralteter, lückenhafter Stand gezeigt, die Erneuerung läuft und wird übernommen.
+    @State private var refreshingPartial = false
 
     var body: some View {
         // Titel als Listenkopf (scrollt mit weg) statt navigationTitle: der große tvOS-Titel lag über den Zeilen.
@@ -364,6 +366,7 @@ struct StreamListView: View {
             Section {
                 if let nextNote { Text(nextNote).foregroundStyle(.secondary) }
                 if loading { ProgressView("Quellen werden geladen …") }
+                if refreshingPartial { ProgressView("Fehlende Quellen werden nachgeladen …") }
                 AddonSearchStatusLine(id: (current ?? request).id)
                 if !loading && streams.isEmpty {
                     Text(model.profile.addons.isEmpty ? "Kein Addon installiert (Einstellungen → Addons)." : "Keine abspielbaren Quellen.")
@@ -408,6 +411,13 @@ struct StreamListView: View {
                     nextNote = pick.note
                     RemoteLog.info("player", "Letzte Quelle nicht gefunden (\(last.fingerprint.prefix(60)))")
                 }
+            }
+            // Welle D-b (M3): lückenhafter alter Stand → Erneuerung abwarten und übernehmen (nur diese Liste).
+            if model.partialNeedsRefresh(id: request.id) {
+                refreshingPartial = true
+                let fresh = await model.refreshedPartialStreams(type: request.type, id: request.id)
+                refreshingPartial = false
+                if let fresh, !Task.isCancelled { streams = model.orderedStreams(fresh) }
             }
         }
         .onChange(of: playing) { _, s in

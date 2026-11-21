@@ -130,7 +130,8 @@ final class StreamPrefetcher {
         let t0 = Date()
         starts.append(t0)
         Task {
-            let list = await model.streams(type: job.type, id: job.id)
+            // Welle D-b (M3): veralteter, lückenhafter Stand → wirklich neu fragen (nicht nur den Cache-Treffer holen).
+            let list = await model.streams(type: job.type, id: job.id, revalidate: model.partialNeedsRefresh(id: job.id))
             self.running.remove(job.id)
             if !list.isEmpty { self.markPrefetched(job.id) }
             RemoteLog.info("prefetch", "prefetch → \(job.id) (\(Int(Date().timeIntervalSince(t0) * 1000)) ms, \(list.count) Quellen)")

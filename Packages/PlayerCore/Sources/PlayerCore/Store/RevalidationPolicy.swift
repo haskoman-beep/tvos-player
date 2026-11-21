@@ -122,3 +122,16 @@ extension StreamListMerge {
         }
     }
 }
+
+extension StreamCacheUpdate {
+    /// Welle D-b (M3): Ein lückenhaft abgelegter Stand (ein Addon ohne Antwort), der inzwischen veraltet ist, gilt
+    /// nicht als vollständig: Die offene Quellenliste übernimmt die Erneuerung im Hintergrund, und der Vorlader
+    /// fragt ihn wie einen fehlenden Eintrag neu. Frisch (die ersten 60 s) oder abgelaufen gilt das nicht, ebenso
+    /// nicht, solange eine Erneuerung gesperrt ist (Leer-Pause, Pause nach „alle Addons leer“).
+    public static func awaitsPartialRefresh(partial: Bool, storedAt: Date, emptyUntil: Date?, allEmptyAt: Date?,
+                                            pause: TimeInterval, now: Date = Date(),
+                                            policy: RevalidationPolicy = .streams) -> Bool {
+        guard partial, policy.state(storedAt: storedAt, now: now) == .stale else { return false }
+        return RevalidationPolicy.revalidationAllowed(emptyUntil: emptyUntil, allEmptyAt: allEmptyAt, pause: pause, now: now)
+    }
+}
