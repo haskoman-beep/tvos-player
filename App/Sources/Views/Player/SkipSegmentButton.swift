@@ -38,6 +38,8 @@ final class SkipSegmentController: ObservableObject {
     /// IntroDB einmal je Wiedergabe abfragen. Abgebrochen (Player verlassen/Panel) → beim nächsten Mal erneut.
     func lookup(_ query: (@MainActor () async -> IntroDBQuery?)?) async {
         guard let query, !lookupDone else { return }
+        // Kein `leaving`-Wächter nötig: hier wird nur Zustand dieses Controllers gesetzt (kein Start, kein Ausgang,
+        // keine Engine-Aufrufe). Beim Verlassen bricht `.task` ab, und der Controller stirbt mit PlayerControls.
         guard let q = await query() else { lookupDone = true; RemoteLog.info("skip", "IntroDB: keine Abfrage (Trailer oder ohne IMDb-ID)"); return }
         guard !Task.isCancelled else { return }
         if let hit = Self.cache[q] {
@@ -59,7 +61,8 @@ final class SkipSegmentController: ObservableObject {
     func update<E: PlaybackEngine>(engine: E) {
         let marks = engine.chapterMarks, d = engine.duration
         if marks != chapters || abs(d - duration) > 1 { chapters = marks; duration = d; rebuild() }
-        let pos = engine.currentTime, busy = engine.isLoading
+        // Ohne Laufzeit (vor dem Laden) oder bei Fehler nie ein Knopf: wie „Engine beschäftigt“ behandeln.
+        let pos = engine.currentTime, busy = engine.isLoading || engine.duration <= 0 || engine.errorText != nil
         planner.observe(position: pos, engineSeeking: busy, now: Self.now)
         let p = planner.prompt(at: pos, engineSeeking: busy)
         if p != prompt {
@@ -74,7 +77,7 @@ final class SkipSegmentController: ObservableObject {
         let target = planner.beginSkip(s, duration: engine.duration, now: Self.now)
         prompt = nil
         RemoteLog.info("skip", "\(s.kind.rawValue) übersprungen \(Int(engine.currentTime)) → \(Int(target))s")
-        await engine.seek(target)
+        await engine.seek(target, exact: true)
     }
 
     /// Menü/Zurück bei sichtbarem Knopf: Knopf weg (bis der Bereich verlassen wurde). true = Taste verbraucht.
@@ -108,22 +111,27 @@ struct SkipSegmentButton<E: PlaybackEngine>: View {
     @ObservedObject var controller: SkipSegmentController
     let engine: E
     var lookup: (@MainActor () async -> IntroDBQuery?)?
+    /// Vor dem Sprung: gesammelten ±10-s-Sprung in PlayerControls verwerfen.
+    var onBeforeSkip: () -> Void = {}
     @FocusState private var focused: Bool
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             Color.clear
             if let s = controller.prompt, let title = s.buttonTitle {
-                Button { Task { await controller.skip(engine: engine) } } label: {
+                Button { onBeforeSkip(); Task { await controller.skip(engine: engine) } } label: {
                     Label(title, systemImage: "forward.end.fill").font(.headline)
                 }
                 .focused($focused)
                 .padding(.trailing, 80).padding(.bottom, 300)
                 .transition(.opacity)
+                .onAppear { focused = true }
                 .task(id: s) {
-                    // Fokus nach dem Erscheinen setzen (eine Runde später, sobald der Knopf im Fokus-Baum ist).
-                    try? await Task.sleep(for: .milliseconds(50))
+                    // Fokus sofort und noch einmal eine Runde später (falls der Knopf beim ersten Mal noch nicht im
+                    // Fokus-Baum war): die Fläche ist ab jetzt nicht fokussierbar, ohne Knopf-Fokus gingen Befehle verloren.
                     focused = true
+                    try? await Task.sleep(for: .milliseconds(50))
+                    if !focused { focused = true }
                 }
             }
         }

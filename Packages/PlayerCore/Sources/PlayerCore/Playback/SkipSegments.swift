@@ -177,6 +177,9 @@ public struct SkipPlanner: Sendable {
         if duration > 10 { target = min(target, duration - 5) }
         target = max(0, target)
         seeking = (target, now)
+        // Ankunft zählt ab Ziel − 2 s, der Knopf stünde bis Ende − 1 s: ohne das flackerte er nach dem Sprung kurz auf.
+        // Wird aufgehoben, sobald die Position den Bereich verlassen hat (observe).
+        dismissed.insert(s)
         return target
     }
 

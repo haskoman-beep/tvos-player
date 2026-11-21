@@ -36,6 +36,8 @@ protocol PlaybackEngine: ObservableObject {
     func togglePlayPause()
     var stateText: String { get }
     func seek(_ seconds: Double) async
+    /// Bildgenauer Sprung (Überspringen-Knopf); Standard: normaler `seek` (PlayerLoadingSteps.swift).
+    func seek(_ seconds: Double, exact: Bool) async
     func selectAudio(_ id: Int)
     /// Wahl durch den Nutzer (Spur-Panel). Ab dann ändert keine Automatik mehr die Untertitel („Aus bleibt Aus“).
     func selectSubtitle(_ id: Int?)

@@ -6,6 +6,7 @@ import PlayerCore
 extension PlaybackEngine {
     var startupStatus: StartupStatus? { nil }
     var chapterMarks: [ChapterMark] { [] }
+    func seek(_ seconds: Double, exact: Bool) async { await seek(seconds) }
 }
 
 /// AetherEngine 7.71.2: `startupProgress` (#361, echte Schritte, nie auf Zeit), `isAwaitingDisplaySwitch` (AE#1000),
@@ -19,6 +20,7 @@ extension AetherBackend {
     var chapterMarks: [ChapterMark] {
         engine.mediaChapters.map { ChapterMark(name: $0.name, start: $0.startSeconds, duration: $0.durationSeconds) }
     }
+    func seek(_ seconds: Double, exact: Bool) async { await engine.seek(to: max(0, seconds), exact: exact) }
 }
 
 /// Ladeanzeige im Player: während des Starts Kreisel plus aktueller Schritt („Spuren werden gelesen 38 %“),
@@ -44,7 +46,7 @@ struct PlayerLoadingSteps<E: PlaybackEngine>: View {
             .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 24))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .animation(.easeInOut(duration: 0.2), value: line)
-            .onChange(of: line) { _, l in RemoteLog.info("player", "Start: \(l.text)\(l.percent.map { " \($0) %" } ?? "")") }
+            .onChange(of: line, initial: true) { _, l in RemoteLog.info("player", "Start: \(l.text)\(l.percent.map { " \($0) %" } ?? "")") }
         } else if engine.isLoading {
             ProgressView().scaleEffect(2)
         }

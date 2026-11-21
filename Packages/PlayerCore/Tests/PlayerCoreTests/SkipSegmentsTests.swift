@@ -206,3 +206,21 @@ private let episodeJSON = #"""
     #expect(StartupStep(rawValue: "openingContainer") == .openingContainer)
     #expect(StartupStep.allCases.count == 9)
 }
+
+@Test func plannerNoFlickerWhenArrivingJustBeforeEnd() {
+    let intro = SkipSegment(kind: .intro, start: 60, end: 150, source: .chapter)
+    var p = SkipPlanner(segments: [intro])
+    _ = p.beginSkip(intro, duration: 2600, now: 0)
+    // Engine landet 1,5 s vor dem Ziel (Keyframe): gilt als angekommen, Knopf bleibt trotzdem weg.
+    p.observe(position: 148.5, engineSeeking: false, now: 1)
+    #expect(p.seeking == nil)
+    #expect(p.prompt(at: 148.5, engineSeeking: false) == nil)
+    // Nach dem Bereich und wieder zurück: Knopf wieder da.
+    p.observe(position: 151, engineSeeking: false, now: 2)
+    #expect(p.prompt(at: 70, engineSeeking: false) == intro)
+}
+
+@Test func introDBIgnoresBooleanTimes() {
+    let list = IntroDBClient.parse(Data(#"{"intro":{"start_sec":true,"end_sec":40},"recap":{"start_sec":0,"end_sec":30}}"#.utf8))
+    #expect(list.map(\.kind) == [.recap])
+}

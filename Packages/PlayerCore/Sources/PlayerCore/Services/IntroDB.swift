@@ -64,7 +64,15 @@ public struct IntroDBClient: Sendable {
 
     /// Zahl, Zahl als Text oder „mm:ss“ / „hh:mm:ss“ (auch mit Nachkommastellen) → Sekunden.
     static func seconds(_ v: Any?) -> Double? {
-        if let n = v as? NSNumber { let d = n.doubleValue; return d.isFinite ? d : nil }
+        if let n = v as? NSNumber {
+            // JSON true/false kommt als NSNumber an (Darwin) und wäre sonst 1/0 Sekunden.
+            #if canImport(Darwin)
+            if CFGetTypeID(n) == CFBooleanGetTypeID() { return nil }
+            #else
+            if String(cString: n.objCType) == "c" { return nil }   // corelibs: Bool-NSNumber hat Typ „c“
+            #endif
+            let d = n.doubleValue; return d.isFinite ? d : nil
+        }
         guard let s = (v as? String)?.trimmingCharacters(in: .whitespaces), !s.isEmpty else { return nil }
         if let d = Double(s) { return d.isFinite ? d : nil }
         let parts = s.split(separator: ":", omittingEmptySubsequences: false)

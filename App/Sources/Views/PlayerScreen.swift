@@ -98,6 +98,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
     var skipLookup: (@MainActor () async -> IntroDBQuery?)? = nil
     /// Sprungbereiche, Überspringen-Knopf, Abspann-Zeitpunkt (`skip.upNextAt`); SkipSegmentButton.swift.
     @StateObject private var skip = SkipSegmentController()
+    /// Fokus der Spielerfläche; geht zurück, sobald der Überspringen-Knopf verschwindet.
+    @FocusState private var surfaceFocused: Bool
     /// Laufende Addon-UT-Abfrage; abgebrochen beim Verlassen und vor dem Neuladen.
     @State var addonSubTask: Task<Void, Never>?
     /// Laufendes Neuladen nach einem Fehler; abgebrochen beim Verlassen.
@@ -143,10 +145,13 @@ struct PlayerControls<E: PlaybackEngine>: View {
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { controlsHeight = $0 }
             }
             if let n = upNext, let t = nextTitle { upNextCard(n, t).transition(.move(edge: .trailing).combined(with: .opacity)) }
-            SkipSegmentButton(controller: skip, engine: engine, lookup: skipLookup)
+            SkipSegmentButton(controller: skip, engine: engine, lookup: skipLookup,
+                              onBeforeSkip: { seekTask?.cancel(); pendingSeek = nil })
         }
         // Steht der Überspringen-Knopf, bekommt er den Fokus; Befehle unten erreichen die Fläche weiterhin.
         .focusable(skip.prompt == nil)
+        .focused($surfaceFocused)
+        .onChange(of: skip.prompt) { _, p in if p == nil { surfaceFocused = true } }
         .onPlayPauseCommand { togglePlay() }
         .onTapGesture { togglePlay() }   // Klick auf das Touchpad (Mitte) pausiert ebenfalls
         .onMoveCommand { dir in
@@ -173,6 +178,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             upNextTick()
         }
         .onAppear {
+            surfaceFocused = true
             guard loadTask == nil else { return }
             loadTask = Task { await loadAndStart() }
         }
