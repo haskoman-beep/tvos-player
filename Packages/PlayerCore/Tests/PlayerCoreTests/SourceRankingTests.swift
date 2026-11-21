@@ -181,3 +181,35 @@ private let de = SourceRankContext(audioPriority: ["de", "en", "orig"], av1Hardw
     let pick = SubtitlePicker.pick([track], mode: .forcedOnly, preferredLanguage: "de", audioLanguage: "de")
     #expect(pick.track?.id == 9)
 }
+
+// MARK: #44 Trakt-Empfehlungen, #41 limit/hideTitle, #35 Datum
+
+@Test func traktRecommendationsRequestAndParse() async throws {
+    let http = FakeSender([(200, #"[{"title":"Film A","year":2020,"ids":{"imdb":"tt1","trakt":1}},{"title":"ohne IMDb","ids":{"trakt":2}}]"#)])
+    let t = TraktClient(clientID: "C", clientSecret: "S", http: http)
+    let tok = SyncToken(accessToken: "T", refreshToken: nil, expiresAt: Date().addingTimeInterval(3600))
+    let items = try await t.list(user: nil, slug: "recommendations/movies", token: tok)
+    #expect(items.map(\.id) == ["tt1"] && items[0].type == "movie")
+    #expect(http.sent[0].url.absoluteString.hasSuffix("/recommendations/movies?ignore_watchlisted=true&limit=20"))
+    #expect(http.sent[0].headers["Authorization"] == "Bearer T")
+    // Ohne Anmeldung: nichts gefragt, leer.
+    #expect(try await t.list(user: nil, slug: "recommendations/shows", token: nil).isEmpty)
+    #expect(http.sent.count == 1)
+}
+
+@Test func catalogLimitAndFolderTitle() {
+    let s = CatalogSource(id: "x", title: "X", kind: .watchlist, mediaType: .both, limit: 2)
+    #expect(s.applyingLimit([1, 2, 3]) == [1, 2])
+    #expect(CatalogSource(id: "x", title: "X", kind: .watchlist, mediaType: .both, limit: 0).limit == nil)
+    #expect(Folder(id: "f", title: "F", sources: [], hideTitle: false).showsTitleOverImage)
+    #expect(!Folder(id: "f", title: "F", sources: []).showsTitleOverImage)
+}
+
+@Test func sharedISODate() {
+    #expect(ISODate.dateTime("2024-01-02T03:04:05.123Z") != nil)
+    #expect(ISODate.dateTime("2024-01-02T03:04:05Z") == Date(timeIntervalSince1970: 1_704_164_645))
+    #expect(ISODate.parse("2024-01-02") == Date(timeIntervalSince1970: 1_704_153_600))
+    #expect(ISODate.parse("kaputt") == nil)
+    #expect(ISODate.germanDay("2024-03-05") == "05.03.2024")
+    #expect(ISODate.germanDay("2024") == "2024")
+}

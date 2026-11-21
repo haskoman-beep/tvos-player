@@ -37,6 +37,7 @@ struct AppearanceSettings: View {
                 Text("Groß").tag(CardSize.large)
             }
             Toggle("Poster aufklappen", isOn: model.binding(\.appearance.expandPosters))
+            SpoilerSettingsRow()
         }
         Section("Hero") {
             Toggle("Hero oben auf der Startseite", isOn: model.binding(\.appearance.heroEnabled))

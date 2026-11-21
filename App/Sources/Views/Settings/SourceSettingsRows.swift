@@ -14,3 +14,12 @@ struct SourceSettingsRows: View {
         }
     }
 }
+
+/// Welle C-d: Spoilerschutz für Folgenbilder (Teil der Kategorie „Aussehen“).
+struct SpoilerSettingsRow: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        Toggle("Bilder ungesehener Folgen weichzeichnen", isOn: model.binding(\.sources.blurUnwatchedStills))
+    }
+}

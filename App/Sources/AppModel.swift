@@ -298,6 +298,7 @@ final class AppModel: ObservableObject {
                 out = []
             }
         } catch { RemoteLog.error("katalog", "\(source.title): \(error)"); return [] }
+        out = source.applyingLimit(out)
         RemoteLog.info("katalog", "\(source.title): \(out.count) Einträge")
         // Nach Profilwechsel/Leeren nicht mehr ablegen; leere Erneuerung überschreibt keine gefüllte Liste.
         if refresh { cache.storeRefreshed(out, for: source.id, generation: generation) }

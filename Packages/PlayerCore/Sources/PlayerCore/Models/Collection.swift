@@ -26,14 +26,28 @@ public struct CatalogSource: Codable, Sendable, Hashable, Identifiable {
     public var mediaType: MediaType
     /// TMDB-Sortierung (z. B. `popularity.desc`); nil = Reihenfolge der Quelle.
     public var sortBy: String?
+    /// Höchstens so viele Einträge zeigen (Fusion `limit`); nil = alle.
+    public var limit: Int?
 
-    public init(id: String, title: String, kind: SourceKind, mediaType: MediaType, sortBy: String? = nil) {
+    public init(id: String, title: String, kind: SourceKind, mediaType: MediaType, sortBy: String? = nil, limit: Int? = nil) {
         self.id = id; self.title = title; self.kind = kind; self.mediaType = mediaType; self.sortBy = sortBy
+        self.limit = limit.flatMap { $0 > 0 ? $0 : nil }
+    }
+
+    /// Liste auf `limit` gekürzt.
+    public func applyingLimit<T>(_ items: [T]) -> [T] {
+        guard let limit, limit > 0, items.count > limit else { return items }
+        return Array(items.prefix(limit))
     }
 
     public static let continueWatching = CatalogSource(id: "builtin.continue", title: "Weiterschauen", kind: .continueWatching, mediaType: .both)
     public static let watchlist = CatalogSource(id: "builtin.watchlist", title: "Merkliste", kind: .watchlist, mediaType: .both)
     public static let upcoming = CatalogSource(id: "builtin.upcoming", title: "Heute neu", kind: .upcoming, mediaType: .series)
+    /// Trakt-Empfehlungen des angemeldeten Nutzers (ohne Merkliste), je 20.
+    public static let traktRecommendedMovies = CatalogSource(id: "builtin.trakt.recommended.movies", title: "Trakt-Empfehlungen · Filme",
+                                                             kind: .trakt(user: nil, list: "recommendations/movies"), mediaType: .movie)
+    public static let traktRecommendedShows = CatalogSource(id: "builtin.trakt.recommended.shows", title: "Trakt-Empfehlungen · Serien",
+                                                            kind: .trakt(user: nil, list: "recommendations/shows"), mediaType: .series)
 }
 
 public struct Folder: Codable, Sendable, Hashable, Identifiable {
@@ -43,10 +57,17 @@ public struct Folder: Codable, Sendable, Hashable, Identifiable {
     public var logo: String?
     public var backdrop: String?
     public var sources: [CatalogSource]
+    /// Titel auf der Kachel ausblenden (Fusion `hideTitle`). nil = wie bisher: Titel nur ohne Bild.
+    public var hideTitle: Bool?
 
-    public init(id: String, title: String, coverImage: String? = nil, logo: String? = nil, backdrop: String? = nil, sources: [CatalogSource]) {
+    public init(id: String, title: String, coverImage: String? = nil, logo: String? = nil, backdrop: String? = nil,
+                sources: [CatalogSource], hideTitle: Bool? = nil) {
         self.id = id; self.title = title; self.coverImage = coverImage; self.logo = logo; self.backdrop = backdrop; self.sources = sources
+        self.hideTitle = hideTitle
     }
+
+    /// Titel über dem Kachelbild zeigen: ohne Bild immer, mit Bild nur bei `hideTitle == false`.
+    public var showsTitleOverImage: Bool { hideTitle == false }
 }
 
 public struct MediaCollection: Codable, Sendable, Hashable, Identifiable {

@@ -280,6 +280,7 @@ struct DetailView: View {
                     } label: {
                         HStack(spacing: 24) {
                             RemoteImage(url: v.thumbnail, maxPixels: 560).frame(width: 280, height: 158).clipped()
+                                .spoilerBlur(model.profile.sources.blurUnwatchedStills && !model.progress.isWatched("\(imdb):\(season):\(v.episode ?? 0)"))
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack {
                                     Text("\(v.episode ?? 0). \(v.name ?? v.title ?? "Folge")").font(.headline)
@@ -709,8 +710,7 @@ struct DetailExtras: View {
     }
 
     static func germanDate(_ s: String) -> String? {
-        let p = s.split(separator: "-")
-        return p.count == 3 ? "\(p[2]).\(p[1]).\(p[0])" : s
+        ISODate.germanDay(s)
     }
 
     static func money(_ v: Int) -> String {

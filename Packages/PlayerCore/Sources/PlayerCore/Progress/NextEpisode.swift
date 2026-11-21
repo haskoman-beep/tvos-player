@@ -23,13 +23,7 @@ public struct EpisodeRef: Codable, Sendable, Hashable {
     }
 
     static func releaseDate(_ s: String) -> Date? {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = f.date(from: s) { return d }
-        f.formatOptions = [.withInternetDateTime]
-        if let d = f.date(from: s) { return d }
-        f.formatOptions = [.withFullDate]
-        return f.date(from: String(s.prefix(10)))
+        ISODate.parse(s)
     }
 
     /// Folge nach (season, episode); nil = Serie zu Ende.

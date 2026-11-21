@@ -31,12 +31,12 @@ private let noon = Date(timeIntervalSince1970: 1_795_262_400)
 
 @Test func fusionWidgetsMapToRows() throws {
     let c = try FusionImport.parse(Data(widgetsJSON.utf8), sourceKey: "src1", now: noon)
-    #expect(c.rows.map(\.id) == ["fusion.src1.trakt.A", "fusion.src1.trakt.B", "fusion.src1.collection.D"])
+    #expect(c.rows.map(\.id) == ["fusion.src1.trakt.A", "fusion.src1.trakt.B", "fusion.src1.trakt.rec.C", "fusion.src1.collection.D"])
 
     let top = c.rows[0]
     #expect(top.style == .top10 && top.title == "Trending Shows")
     #expect(top.content == .list(CatalogSource(id: "fusion.src1.trakt.A", title: "Trending Shows",
-                                               kind: .trakt(user: "someone", list: "trending-shows"), mediaType: .both)))
+                                               kind: .trakt(user: "someone", list: "trending-shows"), mediaType: .both, limit: 50)))
     #expect(top.needs == .traktID)
 
     let wl = c.rows[1]
@@ -44,17 +44,24 @@ private let noon = Date(timeIntervalSince1970: 1_795_262_400)
     #expect(ws.kind == .trakt(user: nil, list: "watchlist/shows") && ws.mediaType == .series && wl.style == .poster)
     #expect(wl.needs == [.traktID, .traktLogin])
 
-    let dec = c.rows[2]
+    let rec = c.rows[2]
+    guard case .list(let rs) = rec.body else { Issue.record("keine Liste"); return }
+    #expect(rs.kind == .trakt(user: nil, list: "recommendations/shows") && rs.mediaType == .series)
+    #expect(rec.needs == [.traktID, .traktLogin])
+
+    let dec = c.rows[3]
     #expect(dec.title == "Jahrzehnte" && dec.style == .collectionTiles && dec.content == .collection(id: "fusion.src1.collection.D"))
     guard case .collection(let col) = dec.body else { Issue.record("keine Collection"); return }
     #expect(col.folders.map(\.title) == ["1980s", "Action"])   // Kachel ohne Quellen entfällt
     #expect(col.folders[0].id == "fusion.src1.collection.D.I1" && col.folders[0].coverImage == "https://img.example/80s.jpg")
     #expect(col.folders[0].sources.map(\.title) == ["Popular 1980s Movies", "Popular 1980s Shows"])
     #expect(col.folders[1].coverImage == "https://img.example/a%20b.jpg")
+    #expect(col.folders[0].hideTitle == true && col.folders[1].hideTitle == nil)
+    #expect(!col.folders[0].showsTitleOverImage)
     #expect(dec.needs == [.traktID, .tmdb])
     #expect(dec.imageAspect == "poster" || dec.imageAspect == "wide")
 
-    #expect(c.warnings["traktRecommendations übersprungen"] == 1)
+    #expect(c.warnings["traktRecommendations übersprungen"] == nil)
     #expect(c.warnings["Kachel ohne Quellen"] == 2)
     #expect(c.warnings["Collection ohne Kacheln mit Quellen"] == 1)
     #expect(c.warnings["Quelle mdblist übersprungen"] == 1)
@@ -63,7 +70,7 @@ private let noon = Date(timeIntervalSince1970: 1_795_262_400)
 
 @Test func fusionTMDBDiscoverFilters() throws {
     let c = try FusionImport.parse(Data(widgetsJSON.utf8), sourceKey: "s", now: noon)
-    guard case .collection(let col) = c.rows[2].body, case .tmdbDiscover(let f) = col.folders[1].sources[0].kind else {
+    guard case .collection(let col) = c.rows[3].body, case .tmdbDiscover(let f) = col.folders[1].sources[0].kind else {
         Issue.record("kein Discover"); return
     }
     #expect(f == ["with_genres": "28,12", "sort_by": "popularity.desc", "with_release_type": "4", "release_date.lte": "2026-11-21"])
@@ -101,7 +108,8 @@ private let noon = Date(timeIntervalSince1970: 1_795_262_400)
     let c = try FusionImport.parse(Data(widgetsJSON.utf8), sourceKey: "s", now: noon)
     // Ohne Client ID: Trakt-Listen weg, Kachel-Reihe behält nur die TMDB-Kachel.
     #expect(c.rows[0].available(traktID: false, traktLogin: false) == nil)
-    let dec = try #require(c.rows[2].available(traktID: false, traktLogin: false))
+    #expect(c.rows[2].available(traktID: true, traktLogin: false) == nil)   // Empfehlungen brauchen die Anmeldung
+    let dec = try #require(c.rows[3].available(traktID: false, traktLogin: false))
     guard case .collection(let col) = dec.body else { Issue.record("keine Collection"); return }
     #expect(col.folders.map(\.title) == ["Action"])
     // Merkliste braucht zusätzlich die Anmeldung.
@@ -229,7 +237,7 @@ private func ids(_ l: HomeLayout) -> [String] { l.rows.map { FusionImport.kitID(
     var s = FusionKitSettings()
     let src = FusionKitSource(id: "s", title: "S", url: "https://x", custom: true)
     s.addAll(try kit("s"), source: src)
-    #expect(s.enabled && s.selected.count == 3 && s.sources == [src])
+    #expect(s.enabled && s.selected.count == 4 && s.sources == [src])   // mit Trakt-Empfehlungen (Welle C-d)
 }
 
 // MARK: Handy-Seite und Trakt
