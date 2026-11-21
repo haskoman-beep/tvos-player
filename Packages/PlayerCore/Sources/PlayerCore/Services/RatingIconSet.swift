@@ -51,3 +51,38 @@ public enum RatingIconSet {
         return u.scheme == "https" && u.host != nil
     }
 }
+
+/// Welle D-b (N-M3): Größe und Zeit schon während des Downloads begrenzen, nicht erst danach.
+extension RatingIconSet {
+    public enum DownloadError: Error, Equatable { case tooLarge, timedOut }
+
+    /// Antwort Byte für Byte einsammeln und abbrechen, sobald sie `limit` überschreitet. Eine angekündigte Länge
+    /// über der Grenze bricht sofort ab, ohne zu lesen (`expectedLength` < 0 = unbekannt).
+    public static func collect<S: AsyncSequence>(_ bytes: S, expectedLength: Int64 = -1,
+                                                 limit: Int = maxBytes) async throws -> Data where S.Element == UInt8 {
+        if expectedLength > Int64(limit) { throw DownloadError.tooLarge }
+        var out = Data()
+        out.reserveCapacity(expectedLength > 0 ? Int(expectedLength) : 16 * 1024)
+        for try await b in bytes {
+            if out.count >= limit { throw DownloadError.tooLarge }
+            out.append(b)
+        }
+        return out
+    }
+
+    /// Gesamtfrist für den ganzen Abruf (`URLRequest.timeoutInterval` ist nur eine Leerlaufgrenze: ein langsamer,
+    /// stetiger Strom liefe sonst endlos). Nach `seconds` wird `op` abgebrochen und `timedOut` geworfen.
+    public static func withDeadline<T: Sendable>(_ seconds: TimeInterval,
+                                                 _ op: @escaping @Sendable () async throws -> T) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await op() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
+                throw DownloadError.timedOut
+            }
+            defer { group.cancelAll() }
+            guard let first = try await group.next() else { throw DownloadError.timedOut }
+            return first
+        }
+    }
+}
