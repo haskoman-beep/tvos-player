@@ -6,6 +6,7 @@ import PlayerCore
 final class AppModel: ObservableObject {
     @Published private(set) var stored: StoredProfiles
     @Published var lastError: String?
+    @Published var notice: String?
     let store: ProfileStore
     let progressStore: ProgressStore
     /// Fortschritt des aktiven Profils.
@@ -86,7 +87,13 @@ final class AppModel: ObservableObject {
     func importNuvio(from urlString: String) async {
         do {
             guard let url = URL(string: urlString) else { throw AddonError.invalidManifestURL(urlString) }
-            let r = try NuvioImport.parse(try await URLSessionFetcher().data(from: url))
+            importNuvio(data: try await URLSessionFetcher().data(from: url))
+        } catch { lastError = "Import fehlgeschlagen: \(error)" }
+    }
+
+    func importNuvio(data: Data) {
+        do {
+            let r = try NuvioImport.parse(data)
             update { p in
                 for c in r.collections {
                     if let i = p.collections.firstIndex(where: { $0.title == c.title }) {
@@ -145,5 +152,29 @@ final class AppModel: ObservableObject {
     func streams(type: String, id: String) async -> [(addon: String, stream: StreamItem)] {
         let all = await addons.streams(from: profile.addons, type: type, id: id)
         return all.flatMap { r in playableStreams(r.streams).map { (r.addon.manifest.name, $0) } }
+    }
+
+    // MARK: Handy-Eingabe
+
+    func backupData() -> Data { (try? store.exportData(stored)) ?? Data() }
+
+    func apply(_ commands: [PhoneCommand]) async {
+        for c in commands {
+            switch c {
+            case .addAddon(let u): await installAddon(u)
+            case .setKey(let s, let v): update { $0.apiKeys[s] = v }; cache.removeAll()
+            case .importNuvioURL(let u): await importNuvio(from: u)
+            case .importNuvioJSON(let d): importNuvio(data: d)
+            case .addTMDBLink(let l):
+                if let s = TMDBLink.source(from: l) { update { $0.home.rows.append(HomeRow(content: .list(s), style: .poster)) } }
+                else { lastError = "TMDB-Link nicht erkannt: \(l)" }
+            case .importBackup(let d):
+                do {
+                    stored = try store.importData(d); save(); cache.removeAll()
+                    progress = progressStore.load(profile: profile.id)
+                } catch { lastError = "Sicherung ungültig: \(error)" }
+            }
+        }
+        if lastError == nil { notice = "\(commands.count) Eingabe(n) vom Handy übernommen." }
     }
 }

@@ -12,6 +12,9 @@ struct SettingsView: View {
 
     var body: some View {
         List {
+            Section {
+                NavigationLink("📱 Am Handy eingeben (QR-Code)") { PhoneInputView() }
+            }
             Section("Profil: \(model.profile.name)") {
                 ForEach(model.stored.profiles) { p in
                     Button { model.switchProfile(p.id) } label: {
