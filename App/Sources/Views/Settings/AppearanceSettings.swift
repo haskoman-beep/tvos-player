@@ -1,7 +1,7 @@
 import SwiftUI
 import PlayerCore
 
-/// Kategorie „Aussehen“: Navigation, Akzentfarbe, Kartengröße, Hero, Poster aufklappen.
+/// Kategorie „Aussehen“: Navigation, Akzentfarbe, Kartengröße, Hero, Poster aufklappen, Plaketten.
 struct AppearanceSettings: View {
     @EnvironmentObject var model: AppModel
 
@@ -48,7 +48,24 @@ struct AppearanceSettings: View {
             }
             .disabled(!model.profile.appearance.heroEnabled)
         }
+        Section("Plaketten") {
+            Picker("Plaketten-Stil", selection: model.binding(\.appearance.badges.style)) {
+                Text("Logo").tag(BadgeStyle.logo)
+                Text("Text").tag(BadgeStyle.text)
+            }
+            Toggle("Plaketten auf Postern", isOn: model.binding(\.appearance.badges.onPosters))
+            ForEach(Self.badgeTypes.indices, id: \.self) { i in
+                Toggle(Self.badgeTypes[i].0, isOn: model.binding((\Profile.appearance.badges).appending(path: Self.badgeTypes[i].1)))
+            }
+        }
     }
+
+    /// Einzeln abschaltbare Plaketten-Typen (Quellenliste, Detailseite, Poster).
+    private static let badgeTypes: [(String, WritableKeyPath<BadgeSettings, Bool>)] = [
+        ("Auflösung", \.resolution), ("HDR / Dolby Vision", \.hdr), ("Quelle (REMUX, BluRay, WEB)", \.source),
+        ("Videocodec", \.videoCodec), ("Tonformat", \.audio), ("Kanäle", \.channels), ("Sprachen", \.languages),
+        ("Größe", \.size), ("Cache-Status (sofort / lädt erst)", \.cacheStatus),
+    ]
 
     /// Zeigt „Automatisch“, wenn die gespeicherte Reihe keine Listen-Reihe (mehr) ist.
     private var heroSelection: Binding<UUID?> {

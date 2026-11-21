@@ -37,7 +37,8 @@ struct DetailView: View {
     @State private var season = 1
     @State private var loading = true
     @State private var ratings: ExternalRatings?
-    @State private var tech: [String] = []
+    /// Beste Technik-Werte über die Quellen (Plaketten nach Einstellungen in `techBadges`).
+    @State private var best: BestQuality?
     @State private var certification: String?
     @State private var extra: LocalizedMeta?
     @State private var trailer: TrailerPlay?
@@ -70,7 +71,7 @@ struct DetailView: View {
                     }
                     Text([meta?.releaseInfo ?? item.releaseInfo, meta?.runtime, meta?.genres?.prefix(3).joined(separator: ", ")]
                         .compactMap { $0 }.joined(separator: " · ")).foregroundStyle(.secondary)
-                    InfoBadges(ratings: ratings, tech: tech, certification: certification ?? ratings?.certification)
+                    InfoBadges(ratings: ratings, tech: techBadges, certification: certification ?? ratings?.certification)
                     if let t = extra?.tagline { Text(t).italic().foregroundStyle(.secondary) }
                     if !overview.isEmpty {
                         // Kurz halten; Klick zeigt den ganzen Text.
@@ -112,8 +113,8 @@ struct DetailView: View {
             if appeared == nil { appeared = Date() }
             // Quellen schon im Cache (z. B. zweiter Besuch): Technik-Plaketten im ersten Bild, nicht erst nach dem Laden.
             let id = imdb ?? (item.id.hasPrefix("tt") ? item.id : nil)
-            if tech.isEmpty, !isSeries, let id, let c = model.cachedStreams(id: id), !c.isEmpty {
-                tech = TechBadges.summary(c.map(\.stream))
+            if best == nil, !isSeries, let id, let b = QualityBadgeCache.shared.best(id: id, model: model) {
+                best = b
                 logFirstBadges("Technik aus Cache")
             }
         }
@@ -122,16 +123,16 @@ struct DetailView: View {
             let opened = appeared ?? Date()
             imdb = await model.imdbID(for: item)
             if let imdb {
-                if !isSeries, tech.isEmpty, let c = model.cachedStreams(id: imdb), !c.isEmpty {
-                    tech = TechBadges.summary(c.map(\.stream))
+                if !isSeries, best == nil, let b = QualityBadgeCache.shared.best(id: imdb, model: model) {
+                    best = b
                     logFirstBadges("Technik aus Cache")
-                } else if !isSeries, tech.isEmpty {
+                } else if !isSeries, best == nil {
                     // Quellen sofort und parallel holen (Technik-Plaketten; AppModel cached sie für die Quellenliste).
                     let id = imdb
                     Task {
                         let list = await model.streams(type: "movie", id: id)
-                        tech = TechBadges.summary(list.map(\.stream))
-                        if !tech.isEmpty { logFirstBadges("Technik") }
+                        best = QualityBadgeCache.shared.best(id: id, model: model)
+                        if !techBadges.isEmpty { logFirstBadges("Technik") }
                         RemoteLog.info("detail", "Plaketten nach \(Int(Date().timeIntervalSince(opened) * 1000)) ms (\(list.count) Quellen)")
                     }
                 }
@@ -185,6 +186,10 @@ struct DetailView: View {
     }
 
     private var overview: String { meta?.description ?? item.description ?? "" }
+
+    private var techBadges: [QualityBadge] {
+        best.map { QualityBadges.detail($0, settings: model.profile.appearance.badges) } ?? []
+    }
 
     private func trailerButton(_ key: String) -> some View {
         Button(trailerLoading ? "Trailer wird geladen …" : "🎬 Trailer") {
@@ -345,6 +350,11 @@ struct StreamListView: View {
             }
         }
         .listStyle(.grouped)
+        // Gerätefoto Build 28: farbiger Schimmer hinter der Liste (App-Akzent als Tönung der Zeilen/Glasflächen,
+        // durchscheinender Hintergrund). Neutral: keine Akzent-Tönung, eigener dunkler, deckender Hintergrund.
+        .tint(Color?.none)
+        .scrollContentBackground(.hidden)
+        .background(Color(white: 0.07).ignoresSafeArea())
         .task {
             streams = await model.streams(type: request.type, id: request.id)
             loading = false
@@ -422,25 +432,21 @@ extension StreamListView {
 }
 
 struct StreamRow: View {
+    @EnvironmentObject var model: AppModel
     let addon: String
     let stream: StreamItem
+    /// Fokussierte Zeile ist weiß: dann dunkle Schrift und dunkles Glas, sonst weiß auf hellem Glas.
+    @Environment(\.isFocused) private var focused
     var body: some View {
-        let t = StreamTraits.parse(stream)
+        let badges = QualityBadges.forStream(StreamTraits.parse(stream), settings: model.profile.appearance.badges)
+        let secondary = focused ? Color.black.opacity(0.65) : Color.white.opacity(0.65)
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
-                if let r = t.resolution { Badge(r, .blue) }
-                ForEach(t.hdr, id: \.self) { Badge($0, $0 == "DV" ? .purple : .orange) }
-                if let s = t.source { Badge(s, s == "REMUX" ? .indigo : .gray) }
-                if let c = t.videoCodec { Badge(t.tenBit ? "\(c) 10-bit" : c, .gray) }
-                ForEach(t.audio, id: \.self) { Badge($0, .gray) }
-                if let ch = t.channels { Badge(ch, .gray) }
-                ForEach(t.languages, id: \.self) { Badge($0.uppercased(), .teal) }
-                if let s = t.sizeBytes { Badge(ByteCountFormatter.string(fromByteCount: s, countStyle: .file), .gray) }
-                if t.cached == true { Badge("⚡ sofort", .green) } else if t.cached == false { Badge("lädt erst", .red) }
+                ForEach(badges) { QualityBadgeView(badge: $0, height: 38, surface: focused ? .light : .dark) }
                 Spacer()
-                Text(addon).font(.caption).foregroundStyle(.secondary)
+                Text(addon).font(.caption).foregroundStyle(secondary)
             }
-            Text(stream.label.isEmpty ? (stream.name ?? "") : stream.label).font(.caption).lineLimit(2).foregroundStyle(.secondary)
+            Text(stream.label.isEmpty ? (stream.name ?? "") : stream.label).font(.caption).lineLimit(2).foregroundStyle(secondary)
         }
     }
 }
@@ -497,11 +503,11 @@ struct SearchView: View {
     }
 }
 
-/// Infozeile der Detailseite: Technik gefüllt, Bewertungen/Freigabe mit Rahmen (Zwei-Stil-Regel nach Swiftfin).
+/// Infozeile der Detailseite: Technik als Glas-Plaketten, Bewertungen/Freigabe mit Rahmen (Zwei-Stil-Regel nach Swiftfin).
 /// Alle Plaketten einzeilig, gleich hoch; passt die Zeile nicht, bricht sie um (FlowLayout), statt abzuschneiden.
 struct InfoBadges: View {
     let ratings: ExternalRatings?
-    let tech: [String]
+    let tech: [QualityBadge]
     var certification: String?
     static let height: CGFloat = 44
 
@@ -512,11 +518,8 @@ struct InfoBadges: View {
           Color.clear.frame(height: Self.height)
           if !rated.isEmpty || !tech.isEmpty || certification != nil {
             FlowLayout(spacing: 14, lineSpacing: 14) {
-                ForEach(tech, id: \.self) { t in
-                    Text(t).foregroundStyle(.black)
-                        .modifier(BadgeShape())
-                        .background(Color.white.opacity(0.85), in: RoundedRectangle(cornerRadius: 6))
-                }
+                // Neutrales Glas wie in der Quellenliste (Task 8); Bewertungen behalten ihre Markenfarben.
+                ForEach(tech) { QualityBadgeView(badge: $0, height: Self.height, surface: .dark) }
                 if let c = certification {
                     Text(c)
                         .modifier(BadgeShape())

@@ -176,6 +176,7 @@ struct PosterCard: View {
             if item.poster == nil && !expanded { Text(item.name).font(.caption).padding(10) }
         }
         .overlay { CardStateOverlay(itemID: item.id) }
+        .overlay { PosterQualityBadges(item: item, scale: scale) }
         .task(id: focused && expandable) {
             guard focused && expandable else {
                 if expanded { withAnimation(.easeInOut(duration: 0.25)) { expanded = false } }
