@@ -103,11 +103,14 @@ final class AetherBackend: PlaybackEngine {
             let l = line.lowercased()
             let important = ["fail", "error", "revive", "restart", "cannot", "unrecoverable", "budget", "timeout"].contains { l.contains($0) }
             let noisy = ["accesslog", "audioroute", "memprobe", "cpuprobe", "ledger", "march-rate"].contains { l.contains($0) }
-            switch cat {
-            case .audioBridge, .muxer: break
-            case .engine: if noisy && !important { return }
-            case .session, .demux: if !important || l.contains("restarted=false") { return }
-            default: return
+            // Dolby Vision Profil 7 (Umwandlung nach 8.1, FEL-Meldung) immer durchlassen, egal aus welcher Kategorie.
+            if !l.contains("dv p7") {
+                switch cat {
+                case .audioBridge, .muxer: break
+                case .engine: if noisy && !important { return }
+                case .session, .demux: if !important || l.contains("restarted=false") { return }
+                default: return
+                }
             }
             Task { @MainActor in RemoteLog.info("engine.\(cat.rawValue)", line) }
         }

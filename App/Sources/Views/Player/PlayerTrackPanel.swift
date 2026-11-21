@@ -10,8 +10,9 @@ protocol PlaybackTechInfoSource {
 
 extension AetherBackend: PlaybackTechInfoSource {
     var trackPanelTech: PlaybackTechSnapshot {
-        PlaybackTechSnapshot(videoWidth: Int(engine.sourceVideoWidth),
-                             sourceFormat: "\(engine.sourceVideoFormat)",
+        // Auflösung und Quell-Dynamik aus den Protokollwerten (dieselben wie bei den Player-2-Plaketten).
+        PlaybackTechSnapshot(videoWidth: sourceVideoWidth,
+                             sourceFormat: sourceVideoFormatName,
                              outputFormat: "\(engine.videoFormat)",
                              dolbyVisionProfile: engine.sourceDVProfile,
                              videoCodec: engine.sourceVideoCodecName,
@@ -178,6 +179,8 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
     private var subtitleTab: some View {
         // Liste kommt live aus der Engine: nachgeladene (externe/Addon-)Spuren erscheinen von selbst.
         let groups = TrackPanelLogic.subtitleGroups(engine.subtitleTracks, preferredLanguage: profile.subtitleLanguage)
+        // selectSubtitle ist die Nutzerwahl (auch „Aus“): setzt subtitleChosenByUser, danach wählt keine Automatik
+        // mehr, auch der Addon-Loader nicht (der fügt dann nur noch Spuren hinzu).
         return ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 4) {
                 row(TrackRowLabel(title: "Aus", detail: nil, name: nil, badges: []), active: engine.activeSubtitleID == nil) {

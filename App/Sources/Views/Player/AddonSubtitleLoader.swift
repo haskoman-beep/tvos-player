@@ -32,6 +32,8 @@ extension AppModel {
             extra = OpenSubtitlesHash.extras(hash: h.hash, size: h.size)
             RemoteLog.info("player", "Addon-UT: Datei-Hash \(h.hash) · \(h.size) B")
         }
+        // Player verlassen oder neu geladen, während der Hash lief: keine Addon-Abfrage mehr.
+        guard !Task.isCancelled else { return [] }
         return await addons.subtitles(from: profile.addons, type: request.type, id: request.id, extra: extra)
     }
 }
@@ -75,10 +77,10 @@ enum VideoHash {
 
 extension PlayerControls {
     /// Nach dem Laden im Hintergrund: Addon-Untertitel in UT-Sprache, Tonsprache und Englisch (je höchstens 3) anhängen.
-    /// Fehlt eine eingebettete Spur in der Wunschsprache und sind Untertitel gewünscht, die erste passende Addon-Spur wählen.
+    /// Fehlt eine eingebettete Spur in der Wunschsprache und steht Untertitel auf „Immer“, wird die Wahl nach den
+    /// Player-1-Regeln (`reconsiderSubtitles`) über alle Spuren neu bewertet. Nach einer Nutzerwahl nur hinzufügen.
     func loadAddonSubtitles() async {
         guard let addonSubtitles else { return }
-        let selectedBefore = engine.activeSubtitleID
         let embedded = engine.subtitleTracks
         guard let found = await addonSubtitles(), !Task.isCancelled else { return }
         let audioLanguage = engine.audioTracks.first { $0.id == engine.activeAudioID }?.language
@@ -96,13 +98,15 @@ extension PlayerControls {
         for a in added { if let c = a.sub.languageCode, !addedLanguages.contains(c) { addedLanguages.append(c) } }
         RemoteLog.info("player", "Addon-UT: \(found.count) gefunden, \(added.count) hinzugefügt (Sprachen " +
             "\(addedLanguages.isEmpty ? "-" : addedLanguages.joined(separator: ", ")); gesucht \(languages.joined(separator: ", ")))")
-        // CONTROLLER (Player-1): `profile.subtitlesEnabled` durch „SubtitleMode == immer“ ersetzen.
-        guard let first = AddonSubtitlePlan.autoSelect(added.map(\.sub), subtitlesWanted: profile.subtitlesEnabled,
-                                                       wishLanguage: profile.subtitleLanguage, embedded: embedded),
-              let id = added.first(where: { $0.sub == first })?.id else { return }
-        // Inzwischen von Hand (oder von der Engine) gewählt: nicht überschreiben.
-        guard !Task.isCancelled, engine.activeSubtitleID == selectedBefore else { return }
-        engine.selectSubtitle(id)
-        RemoteLog.info("player", "Addon-UT gewählt: \(id) · \(first.addonName) · \(first.languageCode ?? "?")")
+        // Automatisch nur bei „Immer“ und ohne volle eingebettete Spur in der Wunschsprache (bei „Aus“ und
+        // „Nur erzwungene“ bleibt die Start-Wahl). Die Wahl selbst trifft SubtitlePicker wie beim Start
+        // (Wunschsprache, Zweitsprache, Nicht-SDH vor SDH, nie Kommentar). Hat der Nutzer im Panel gewählt
+        // (selectSubtitle setzt subtitleChosenByUser), tut reconsiderSubtitles nichts: Spuren nur hinzugefügt.
+        guard !added.isEmpty, profile.subtitleMode == .always,
+              !AddonSubtitlePlan.hasEmbeddedTrack(in: profile.subtitleLanguage, tracks: embedded),
+              !Task.isCancelled else { return }
+        guard let track = engine.reconsiderSubtitles(audioLanguage: audioLanguage)?.track,
+              let chosen = added.first(where: { $0.id == track.id }) else { return }
+        RemoteLog.info("player", "Addon-UT gewählt: \(chosen.id) · \(chosen.sub.addonName) · \(chosen.sub.languageCode ?? "?")")
     }
 }

@@ -115,6 +115,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                 Text("Fehler: \(e)").padding(30).background(.red.opacity(0.8), in: RoundedRectangle(cornerRadius: 16))
             }
             if showOverlay {
+                // Höhe der Steuerleiste (Titel, Folge, Plaketten, Zeitleiste, Hinweis) → controlsInset der Untertitel.
                 overlay.transition(.opacity)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { controlsHeight = $0 }
             }
@@ -181,7 +182,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                 engine.subtitlePreferences = SubtitlePreferences(profile: profile)
                 engine.reconsiderSubtitles(audioLanguage: (best ?? engine.audioTracks.first(where: { $0.id == engine.activeAudioID }))?.language)
                 addonSubTask = Task { await loadAddonSubtitles() }
-                RemoteLog.info("player", "Spielt · Tonspur \(engine.activeAudioID.map(String.init) ?? "-") · UT \(engine.activeSubtitleID.map(String.init) ?? "aus")")
+                RemoteLog.info("player", "Spielt · Tonspur \(engine.activeAudioID.map(String.init) ?? "-") · UT \(engine.activeSubtitleID.map(String.init) ?? "aus") · \(engine.infoText)")
                 engine.play()
                 poke()
             } catch {
@@ -303,6 +304,11 @@ struct PlayerControls<E: PlaybackEngine>: View {
             }
             if engine.activeSubtitleID != sub {
                 if subByUser { engine.selectSubtitle(sub) } else { engine.autoSelectSubtitle(sub) }
+            }
+            // Addon-UT neu holen, wenn keine externe Spur mehr da ist (Fallback-load verliert sie, oder die
+            // Abfrage wurde oben abgebrochen, bevor sie fertig war); reloadAtCurrentPosition behält sie.
+            if !engine.subtitleTracks.contains(where: \.isExternal) {
+                addonSubTask = Task { await loadAddonSubtitles() }
             }
             engine.play()
         }
