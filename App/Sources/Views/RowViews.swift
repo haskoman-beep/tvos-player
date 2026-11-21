@@ -47,7 +47,7 @@ struct HomeRowView: View {
                 Text(row.content == .list(.continueWatching) ? "Noch nichts angefangen." : model.tmdb == nil ? "TMDB-Key fehlt (Einstellungen)" : "Keine Einträge")
                     .foregroundStyle(.secondary).padding(.leading, 60).frame(height: 120)
             } else {
-                Strip {
+                Strip(expands: row.style == .poster) {
                     ForEach(Array((row.style == .top10 ? Array(items.prefix(10)) : items).enumerated()), id: \.element.id) { i, m in
                         card(route(for: m)) {
                             switch row.style {
@@ -108,12 +108,15 @@ extension EnvironmentValues {
 
 struct Strip<C: View>: View {
     @EnvironmentObject var model: AppModel
+    /// Nur Posterreihen klappen auf (und bekommen den Platz am Reihenende).
+    var expands = false
     @ViewBuilder let content: C
     /// Aufklappende Poster ändern die Reihenbreite: die Reihe bleibt am fokussierten Element verankert.
     @State private var anchorID: String?
     var body: some View {
         let a = model.profile.appearance
         let s = a.cardSize.scale
+        let expand = a.expandPosters && expands
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(spacing: 40 * s) { content }
                 .scrollTargetLayout()
@@ -121,10 +124,10 @@ struct Strip<C: View>: View {
         }
         .contentMargins(.leading, 60, for: .scrollContent)
         // Platz rechts, damit auch die letzten Karten aufgeklappt (640·s) an den linken Rand rücken können.
-        .contentMargins(.trailing, a.expandPosters ? max(60, 1920 - 60 - 640 * s) : 60, for: .scrollContent)
+        .contentMargins(.trailing, expand ? max(60, 1920 - 60 - 640 * s) : 60, for: .scrollContent)
         .scrollPosition(id: $anchorID, anchor: .leading)
         .environment(\.cardScale, s)
-        .environment(\.expandPosters, a.expandPosters)
+        .environment(\.expandPosters, expand)
         // Ohne eigene Animation: läuft in der Transaktion des Aufklappens mit, damit nur eine Bewegung entsteht.
         .environment(\.anchorFocusedCard, { id in
             guard anchorID != id else { return }
