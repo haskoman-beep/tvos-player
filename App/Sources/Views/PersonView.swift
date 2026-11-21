@@ -22,7 +22,7 @@ struct PersonView: View {
                         if let k = person?.knownFor { Text("Bekannt für: \(Self.department(k))").foregroundStyle(.secondary) }
                         if let b = person?.biography {
                             Button { showBio = true } label: {
-                                FocusHighlight { Text(b).font(.callout).foregroundStyle(.primary).lineLimit(4).multilineTextAlignment(.leading) }
+                                FocusHighlight { Text(b).font(.callout).foregroundStyle(.white).lineLimit(4).multilineTextAlignment(.leading) }
                             }
                             .buttonStyle(.plain)
                         }

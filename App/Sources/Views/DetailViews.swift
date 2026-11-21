@@ -45,8 +45,12 @@ struct DetailView: View {
     @State private var trailerNote: String?
     @State private var showFullText = false
     @State private var trailerTask: Task<Void, Never>?
+    /// Daten schon geladen: `.task` läuft bei jeder Rückkehr auf die Seite erneut, dann nichts neu laden/zurücksetzen.
+    @State private var loaded = false
+    /// Startfokus nur einmal setzen, sonst springt er bei der Rückkehr (z. B. von Folge 7 auf Folge 1).
+    @State private var didInitialFocus = false
     /// Startfokus auf der Hauptaktion, nicht auf der (darüber liegenden) Beschreibung.
-    enum Focus: Hashable { case play, episode(String) }
+    enum Focus: Hashable { case play, episode(String), overview }
     @FocusState private var focus: Focus?
 
     private var isSeries: Bool { item.type == "series" }
@@ -64,12 +68,12 @@ struct DetailView: View {
                     Text([meta?.releaseInfo ?? item.releaseInfo, meta?.runtime, meta?.genres?.prefix(3).joined(separator: ", ")]
                         .compactMap { $0 }.joined(separator: " · ")).foregroundStyle(.secondary)
                     InfoBadges(ratings: ratings, tech: tech, certification: certification ?? ratings?.certification)
-                        .frame(minHeight: InfoBadges.height, alignment: .leading)   // Platz halten, damit nichts springt
                     if let t = extra?.tagline { Text(t).italic().foregroundStyle(.secondary) }
                     if !overview.isEmpty {
                         // Kurz halten; Klick zeigt den ganzen Text.
-                        Button { showFullText = true } label: { FocusHighlight { Text(overview).font(.callout).foregroundStyle(.primary).lineLimit(3).multilineTextAlignment(.leading) } }
+                        Button { showFullText = true } label: { FocusHighlight { Text(overview).font(.callout).foregroundStyle(.white).lineLimit(3).multilineTextAlignment(.leading) } }
                             .buttonStyle(.plain)
+                            .focused($focus, equals: .overview)
                             .frame(maxWidth: 1100, alignment: .leading)
                     }
 
@@ -103,6 +107,7 @@ struct DetailView: View {
             .tint(Color?.none)
         }
         .task {
+            guard !loaded else { return }
             let opened = Date()
             imdb = await model.imdbID(for: item)
             if let imdb {
@@ -121,11 +126,17 @@ struct DetailView: View {
                 certification = extra?.certification
                 ratings = await r
             }
+            if Task.isCancelled { return }   // Seite verlassen: beim nächsten Erscheinen vollständig neu laden
             season = imdb.flatMap { model.progress.latest(forItem: $0)?.season } ?? seasons.first ?? 1
             loading = false
+            loaded = true
             // Während des Ladens war die Beschreibung das einzige fokussierbare Element: Fokus auf die Hauptaktion holen.
             try? await Task.sleep(for: .milliseconds(50))
-            focus = .play
+            guard !Task.isCancelled else { return }
+            if !didInitialFocus {
+                didInitialFocus = true
+                if focus == nil || focus == .overview { focus = .play }
+            }
             await translateSeason()
         }
         .onChange(of: season) { Task { await translateSeason() } }
@@ -150,6 +161,8 @@ struct DetailView: View {
 
     private func trailerButton(_ key: String) -> some View {
         Button(trailerLoading ? "Trailer wird geladen …" : "🎬 Trailer") {
+            // Doppeldruck: laufende Auflösung behalten, sonst ginge der Abbruch-Griff verloren.
+            guard !trailerLoading else { return }
             trailerTask = Task { await playTrailer(key) }
         }
     }
@@ -308,6 +321,7 @@ struct StreamListView: View {
                     .textCase(nil).lineLimit(2).padding(.bottom, 10)
             }
         }
+        .listStyle(.grouped)
         .task {
             streams = await model.streams(type: request.type, id: request.id)
             loading = false
@@ -470,7 +484,10 @@ struct InfoBadges: View {
 
     var body: some View {
         let rated = ratings.map(MDBList.badges) ?? []
-        if !rated.isEmpty || !tech.isEmpty || certification != nil {
+        // Immer vorhandener Platzhalter hält die Zeilenhöhe, auch bevor die erste Plakette kommt.
+        ZStack(alignment: .leading) {
+          Color.clear.frame(height: Self.height)
+          if !rated.isEmpty || !tech.isEmpty || certification != nil {
             FlowLayout(spacing: 14, lineSpacing: 14) {
                 ForEach(tech, id: \.self) { t in
                     Text(t).foregroundStyle(.black)
@@ -493,6 +510,7 @@ struct InfoBadges: View {
             }
             .frame(maxWidth: 1400, alignment: .leading)
             .transition(.opacity)
+          }
         }
     }
 
