@@ -37,3 +37,16 @@ import Testing
              StreamItem(name: "🎫 2160p", title: "Film.2160p.HDR10+", url: "https://c")]
     #expect(TechBadges.summary(s) == ["4K", "Dolby Vision", "HDR", "Dolby Atmos", "7.1"])
 }
+
+@Test func cardStates() {
+    var b = ProgressBook()
+    let film = MetaPreview(id: "tt1", type: "movie", name: "F")
+    let show = MetaPreview(id: "tt2", type: "series", name: "S")
+    b.record(id: "tt1", item: film, position: 1800, duration: 6000)
+    #expect(b.cardState(itemID: "tt1") == CardState(fraction: 0.3, remainingSeconds: 4200))
+    b.record(id: "tt1", item: film, position: 5900, duration: 6000)
+    #expect(b.cardState(itemID: "tt1")?.watched == true)
+    b.record(id: "tt2:1:3", item: show, season: 1, episode: 3, position: 600, duration: 2400)
+    #expect(b.cardState(itemID: "tt2") == CardState(fraction: 0.25, remainingSeconds: 1800, episode: "S1 F3"))
+    #expect(b.cardState(itemID: "tt9") == nil)
+}

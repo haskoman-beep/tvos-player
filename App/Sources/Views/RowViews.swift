@@ -122,6 +122,7 @@ struct PosterCard: View {
             .overlay(alignment: .bottomLeading) {
                 if item.poster == nil { Text(item.name).font(.caption).padding(10) }
             }
+            .overlay { CardStateOverlay(itemID: item.id) }
     }
 }
 
@@ -131,8 +132,9 @@ struct LandscapeCard: View {
         RemoteImage(url: item.background ?? item.poster, maxPixels: 900)
             .frame(width: 440, height: 248).clipped()
             .overlay(alignment: .bottomLeading) {
-                Text(item.name).font(.headline).shadow(radius: 6).padding(14)
+                Text(item.name).font(.headline).shadow(radius: 6).padding(.horizontal, 14).padding(.bottom, 24)
             }
+            .overlay { CardStateOverlay(itemID: item.id) }
     }
 }
 
@@ -182,6 +184,43 @@ struct FolderTile: View {
                 .overlay(alignment: .bottomLeading) {
                     if folder.coverImage == nil { Text(folder.title).font(.headline).padding(14) }
                 }
+        }
+    }
+}
+
+/// Kachelzustand: Haken (gesehen), Folge + Restzeit oben, Fortschrittsbalken unten.
+struct CardStateOverlay: View {
+    @EnvironmentObject var model: AppModel
+    let itemID: String
+
+    var body: some View {
+        if let st = model.progress.cardState(itemID: itemID) {
+            ZStack {
+                if st.watched {
+                    Image(systemName: "checkmark.circle.fill").font(.title3)
+                        .symbolRenderingMode(.palette).foregroundStyle(.black, .white)
+                        .shadow(radius: 4).padding(10)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                }
+                let top = [st.episode, st.remainingSeconds.map { "noch \(max(1, Int($0 / 60))) min" }].compactMap { $0 }.joined(separator: " · ")
+                if !top.isEmpty {
+                    Text(top).font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(.black.opacity(0.65), in: Capsule()).padding(8)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                }
+                if let f = st.fraction, f > 0 {
+                    GeometryReader { g in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(.white.opacity(0.3))
+                            Capsule().fill(.white).frame(width: g.size.width * min(1, f))
+                        }
+                    }
+                    .frame(height: 6).padding(.horizontal, 10).padding(.bottom, 10)
+                    .frame(maxHeight: .infinity, alignment: .bottom)
+                }
+            }
+            .allowsHitTesting(false)
         }
     }
 }

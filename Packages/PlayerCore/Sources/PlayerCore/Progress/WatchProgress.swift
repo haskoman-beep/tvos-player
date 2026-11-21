@@ -88,6 +88,21 @@ public struct ProgressBook: Codable, Sendable, Equatable {
 
     public func isWatched(_ id: String) -> Bool { entries[id]?.finished == true }
 
+    /// Zustand für eine Kachel: Fortschritt, Restzeit, gesehen, Folge.
+    public func cardState(itemID: String) -> CardState? {
+        if let e = entries[itemID], e.season == nil {
+            if e.finished { return CardState(watched: true) }
+            guard e.position >= Self.minimumSeconds || (e.remoteFraction ?? 0) > 0 else { return nil }
+            return CardState(fraction: e.fraction, remainingSeconds: e.duration > 0 ? max(0, e.duration - e.position) : nil)
+        }
+        guard let e = latest(forItem: itemID), let s = e.season, let ep = e.episode else { return nil }
+        let label = "S\(s) F\(ep)"
+        if e.finished { return CardState(episode: label) }
+        let started = e.position >= Self.minimumSeconds || (e.remoteFraction ?? 0) > 0
+        return CardState(fraction: started ? e.fraction : nil,
+                         remainingSeconds: started && e.duration > 0 ? max(0, e.duration - e.position) : nil, episode: label)
+    }
+
     /// Nur Anteil bekannt (aus Trakt/Simkl): Player springt nach dem Laden dorthin.
     public func resumeFraction(for id: String) -> Double? {
         guard let e = entries[id], !e.finished, e.duration == 0, let f = e.remoteFraction, f > 0.01, f < Self.finishedAt else { return nil }
@@ -156,5 +171,15 @@ public struct LastSource: Codable, Sendable, Hashable {
         if let e = ready.first(where: { $0.addon == addon && $0.stream.name == name
                                         && StreamTraits.parse($0.stream).resolution == res }) { return e.stream }
         return nil
+    }
+}
+
+public struct CardState: Sendable, Equatable {
+    public var fraction: Double?
+    public var remainingSeconds: Double?
+    public var watched = false
+    public var episode: String?
+    public init(fraction: Double? = nil, remainingSeconds: Double? = nil, watched: Bool = false, episode: String? = nil) {
+        self.fraction = fraction; self.remainingSeconds = remainingSeconds; self.watched = watched; self.episode = episode
     }
 }
