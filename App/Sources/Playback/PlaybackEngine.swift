@@ -17,6 +17,8 @@ protocol PlaybackEngine: ObservableObject {
     var subtitleTracks: [AudioTrackInfo] { get }
     var activeSubtitleID: Int? { get }
     var errorText: String? { get }
+    /// Fehler mit Art und Code für die Fehlerleiter (Standard und Aether-Umsetzung in PlaybackFailureMapping.swift).
+    var playbackFailure: PlaybackFailure? { get }
     var infoText: String { get }
     var errorDetail: String { get }
     /// Bildbreite der Quelle in Pixeln (für die Auflösungs-Plakette); nil vor dem Laden oder ohne Video.
