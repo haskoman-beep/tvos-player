@@ -32,6 +32,7 @@ actor RatingsStore {
               let (data, resp) = try? await URLSession.shared.data(from: url) else { return old }
         switch MDBList.parse(status: (resp as? HTTPURLResponse)?.statusCode ?? 0, data: data) {
         case .ratings(let r):
+            await MainActor.run { RemoteLog.info("bewertung", "\(imdb): \(r.values.keys.sorted().joined(separator: ",")) · Freigabe \(r.certification ?? "-")") }
             entries[key] = Entry(storedAt: Date(), ratings: r); save(); return r
         case .notFound:
             entries[key] = Entry(storedAt: Date(), ratings: nil); save(); return nil

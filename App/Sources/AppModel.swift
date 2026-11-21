@@ -310,10 +310,15 @@ final class AppModel: ObservableObject {
     /// TMDB in Profilsprache (Titel, Text, Poster, Logo, FSK); nil ohne TMDB-Key.
     func localized(imdb: String, series: Bool) async -> LocalizedMeta? {
         if let c = localizedCache[imdb] { return c }
-        guard let tmdb else { return nil }
+        guard let tmdb else { RemoteLog.info("tmdb", "kein TMDB-Key – keine Übersetzung"); return nil }
         do {
-            guard let id = try await tmdb.tmdbID(imdb: imdb, series: series),
-                  let l = try await tmdb.localized(tmdbID: id, series: series) else { return nil }
+            guard let id = try await tmdb.tmdbID(imdb: imdb, series: series) else {
+                RemoteLog.info("tmdb", "\(imdb): kein TMDB-Treffer (\(series ? "tv" : "movie"))"); return nil
+            }
+            guard let l = try await tmdb.localized(tmdbID: id, series: series) else {
+                RemoteLog.info("tmdb", "\(imdb) → \(id): Antwort unlesbar"); return nil
+            }
+            RemoteLog.info("tmdb", "\(imdb) → \(id) · \(tmdb.language) · Titel \(l.name ?? "-") · Text \(l.overview == nil ? "nein" : "ja") · Logo \(l.logo == nil ? "nein" : "ja") · Freigabe \(l.certification ?? "-")")
             localizedCache[imdb] = l
             return l
         } catch { RemoteLog.error("tmdb", "Übersetzung \(imdb): \(error)"); return nil }
