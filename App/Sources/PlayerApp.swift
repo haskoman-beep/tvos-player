@@ -69,6 +69,8 @@ struct RootView: View {
     @State private var pickedProfile = false
     /// Gewählte Einstellungs-Kategorie; liegt hier, damit sie den Neuaufbau beim Wechsel der Navigationsart übersteht.
     @State private var settingsCategory: SettingsCategory = .profile
+    /// Bereich, aus dem die Einstellungen geöffnet wurden; Zurück in der obersten Ebene der Einstellungen führt dorthin.
+    @State private var settingsCameFrom: AppTab = .home
 
     var body: some View {
         Group {
@@ -103,8 +105,16 @@ struct RootView: View {
                 stack($calendarPath) { CalendarView() }
             }
             Tab("Einstellungen", systemImage: "gearshape", value: AppTab.settings) {
-                stack($settingsPath) { SettingsView(selected: $settingsCategory) }
+                stack($settingsPath) {
+                    SettingsView(selected: $settingsCategory) {
+                        RemoteLog.info("nav", "Einstellungen: Zurück → \(settingsCameFrom)")
+                        tab = settingsCameFrom
+                    }
+                }
             }
+        }
+        .onChange(of: tab) { old, new in
+            if new == .settings && old != .settings { settingsCameFrom = old }
         }
     }
 

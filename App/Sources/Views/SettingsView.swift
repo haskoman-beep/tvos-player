@@ -37,6 +37,8 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
 struct SettingsView: View {
     @EnvironmentObject var model: AppModel
     @Binding var selected: SettingsCategory
+    /// Zurück in der obersten Ebene: verlässt die Einstellungen (RootView wechselt in den vorherigen Bereich).
+    var leave: () -> Void = {}
     @FocusState private var focused: LeftFocus?
 
     /// Fokusziele der linken Spalte (QR-Eintrag zählt mit, damit „von außen“ eindeutig ist).
@@ -68,6 +70,9 @@ struct SettingsView: View {
 
             List {
                 Section {
+                    // Seitentitel als Listenzeile (scrollt mit weg) statt navigationTitle: der große tvOS-Titel lag
+                    // beim Scrollen der rechten Spalte über den Zeilen (gleiches Muster wie die Quellenliste).
+                    Text("Einstellungen").font(.title.bold())
                     Text(selected.title).font(.title2.bold())
                 }
                 content(selected)
@@ -85,7 +90,17 @@ struct SettingsView: View {
                 selected = c
             }
         }
-        .navigationTitle("Einstellungen")
+        // Zurück (Menu): Unterseiten (QR-Seite, Auswahllisten) liegen im NavigationStack und schließen sich vorher
+        // selbst, Tastatur/Alerts ebenso. Hier also nur die beiden Spalten: aus dem Inhalt erst auf die aktive
+        // Kategorie, aus der Kategorienliste hinaus in den vorherigen Bereich. Ohne diese Behandlung kam man mit
+        // Zurück nicht aus den Einstellungen (Build 35).
+        .onExitCommand {
+            if focused == nil {
+                focused = .category(selected)
+            } else {
+                leave()
+            }
+        }
     }
 
     @ViewBuilder private func content(_ c: SettingsCategory) -> some View {
