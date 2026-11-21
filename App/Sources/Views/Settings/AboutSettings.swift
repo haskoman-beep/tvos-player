@@ -17,6 +17,7 @@ struct AboutSettings: View {
                 .font(.caption).foregroundStyle(.secondary)
         }
         UpdateSettings()
+        DeviceCheckSettings()
         Section("Danksagungen / Lizenzen") {
             // Zeilen als Knöpfe ohne Aktion: so erreicht der Fokus sie und die Liste scrollt bis ans Ende.
             ForEach(Self.credits, id: \.name) { c in
