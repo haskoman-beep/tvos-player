@@ -25,6 +25,8 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     public var apiKeys: [String: String]
     /// Nächste Folge automatisch starten.
     public var autoplayNext: Bool
+    /// „Noch da?“ nach so vielen automatisch gestarteten Folgen ohne Tastendruck (0 = aus, Standard 3).
+    public var stillWatchingAfter: Int
     /// Anmeldungen bei "trakt" / "simkl".
     public var syncTokens: [String: SyncToken]
     /// Aussehen (Navigation, Akzent, Kachelgröße, Hero).
@@ -33,18 +35,19 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     public init(id: UUID = UUID(), name: String, language: AppLanguage = .de, audioPriority: [String] = ["de", "en", "orig"],
                 subtitleMode: SubtitleMode = .forcedOnly, subtitleLanguage: String = "de", progressSource: ProgressSource = .local,
                 addons: [InstalledAddon] = [], collections: [MediaCollection] = [], home: HomeLayout = HomeLayout(),
-                apiKeys: [String: String] = [:], autoplayNext: Bool = true, syncTokens: [String: SyncToken] = [:],
+                apiKeys: [String: String] = [:], autoplayNext: Bool = true, stillWatchingAfter: Int = StillWatchingCounter.defaultLimit, syncTokens: [String: SyncToken] = [:],
                 appearance: Appearance = Appearance()) {
         self.id = id; self.name = name; self.language = language; self.audioPriority = audioPriority
         self.subtitleMode = subtitleMode; self.subtitleLanguage = subtitleLanguage
         self.progressSource = progressSource; self.addons = addons; self.collections = collections
         self.home = home; self.apiKeys = apiKeys; self.autoplayNext = autoplayNext
+        self.stillWatchingAfter = stillWatchingAfter
         self.syncTokens = syncTokens; self.appearance = appearance
     }
 
     enum CodingKeys: String, CodingKey {
         case id, name, language, audioPriority, subtitleMode, subtitleLanguage, progressSource
-        case addons, collections, home, apiKeys, autoplayNext, syncTokens, appearance
+        case addons, collections, home, apiKeys, autoplayNext, stillWatchingAfter, syncTokens, appearance
     }
     /// Nur zum Lesen alter Profile.
     private enum LegacyKeys: String, CodingKey { case subtitlesEnabled }
@@ -71,6 +74,7 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         home = try c.decodeIfPresent(HomeLayout.self, forKey: .home) ?? d.home
         apiKeys = try c.decodeIfPresent([String: String].self, forKey: .apiKeys) ?? [:]
         autoplayNext = try c.decodeIfPresent(Bool.self, forKey: .autoplayNext) ?? d.autoplayNext
+        stillWatchingAfter = try c.decodeIfPresent(Int.self, forKey: .stillWatchingAfter) ?? d.stillWatchingAfter
         syncTokens = try c.decodeIfPresent([String: SyncToken].self, forKey: .syncTokens) ?? [:]
         appearance = try c.decodeIfPresent(Appearance.self, forKey: .appearance) ?? d.appearance
     }

@@ -16,6 +16,10 @@ struct PlayerScreen: View {
     var isTrailer = false
     /// Adresse ist ein entferntes HLS-Master (AVPlayer direkt, ohne Demuxer-Probe).
     var remoteHLS = false
+    /// Jeder Tastendruck im Player („Noch da?“-Zähler zurücksetzen).
+    var onUserInput: () -> Void = {}
+    /// „Noch da?“ steht an: kein Up-next-Countdown, die Abfrage kommt nach dem Ende.
+    var holdsUpNext = false
     @State private var backend: AetherBackend?
     @State private var initError: String?
     /// Kennzeichen beim Vorladen: solange ein Player offen ist, keine Vorlade-Abfragen.
@@ -41,7 +45,7 @@ struct PlayerScreen: View {
                                                        onEnded: { tracksOpen = false; onEnded($0) },
                                                        onFallback: { tracksOpen = false; onFallback($0) },
                                                        onPause: { if !isTrailer { model.scrobblePause(request) } },
-                                                       nextTitle: !isTrailer && model.profile.autoplayNext ? request.nextRequest?.title : nil,
+                                                       nextTitle: !isTrailer && !holdsUpNext && model.profile.autoplayNext ? request.nextRequest?.title : nil,
                                                        onNextSoon: {
                                                            guard let n = request.nextRequest else { return }
                                                            Task { _ = await model.streams(type: n.type, id: n.id) }
@@ -49,7 +53,8 @@ struct PlayerScreen: View {
                                                        addonSubtitles: { await model.addonSubtitles(for: request, media: url, headers: headers, enabled: !isTrailer) },
                                                        onTracksShown: { tracksOpen = $0 },
                                                        reresolve: { isTrailer ? nil : await model.freshStream(for: request) },
-                                                       skipLookup: { isTrailer ? nil : await model.introDBQuery(for: request) }) }
+                                                       skipLookup: { isTrailer ? nil : await model.introDBQuery(for: request) },
+                                                       onUserInput: onUserInput) }
             else { Text(initError ?? "Player wird gestartet …") }
         }
         .onDisappear {
@@ -114,6 +119,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
     @StateObject private var skip = SkipSegmentController()
     /// Fokus der Spielerfläche; geht zurück, sobald der Überspringen-Knopf verschwindet.
     @FocusState private var surfaceFocused: Bool
+    /// Jeder Tastendruck („Noch da?“-Zähler).
+    var onUserInput: () -> Void = {}
     /// Laufende Addon-UT-Abfrage; abgebrochen beim Verlassen und vor dem Neuladen.
     @State var addonSubTask: Task<Void, Never>?
     /// Laufendes Neuladen nach einem Fehler; abgebrochen beim Verlassen.
@@ -165,9 +172,10 @@ struct PlayerControls<E: PlaybackEngine>: View {
         .focusable(skip.prompt == nil)
         .focused($surfaceFocused)
         .onChange(of: skip.prompt) { _, p in if p == nil { surfaceFocused = true } }
-        .onPlayPauseCommand { togglePlay() }
-        .onTapGesture { togglePlay() }   // Klick auf das Touchpad (Mitte) pausiert ebenfalls
+        .onPlayPauseCommand { onUserInput(); togglePlay() }
+        .onTapGesture { onUserInput(); togglePlay() }   // Klick auf das Touchpad (Mitte) pausiert ebenfalls
         .onMoveCommand { dir in
+            onUserInput()
             if upNext != nil {
                 withAnimation { upNext = nil }; upNextCancelled = true
                 RemoteLog.info("player", "Up-next abgebrochen"); return
