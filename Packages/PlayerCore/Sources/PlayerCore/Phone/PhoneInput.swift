@@ -75,6 +75,8 @@ public enum PhoneCommand: Equatable, Sendable {
     case importNuvioJSON(Data)
     case addTMDBLink(String)
     case importBackup(Data)
+    /// Fusion-Kit-Datei („Copy JSON URL“ auf kit.betterer.cc): Reihen auf die Startseite.
+    case importFusionURL(String)
 }
 
 /// Seitenlogik ohne Netzwerk: Token prüfen, Formular lesen, Befehle erzeugen.
@@ -110,6 +112,7 @@ public struct PhoneInputPage: Sendable {
             if let j = val("nuvio_json") { cmds.append(.importNuvioJSON(Data(j.utf8))) }
             if let l = val("tmdb_link") { cmds.append(.addTMDBLink(l)) }
             if let b = val("backup_json") { cmds.append(.importBackup(Data(b.utf8))) }
+            if let k = val("kit_url") { cmds.append(.importFusionURL(k)) }
             let note = cmds.isEmpty ? "leer" : "\(cmds.count)"
             return (HTTPResponse(status: 303, body: Data(), extraHeaders: ["Location": "/?t=\(token)&ok=\(note)"]), cmds)
         default:
@@ -136,6 +139,8 @@ public struct PhoneInputPage: Sendable {
         \(field("key_trakt_id", "Trakt Client ID", ""))\(field("key_trakt_secret", "Trakt Client Secret", ""))\(field("key_simkl_id", "Simkl Client ID", ""))
         <h2>Collections</h2>\(field("nuvio_url", "Nuvio-Export (URL)", "https://…json"))\(field("nuvio_json", "… oder Nuvio-JSON einfügen", "{…}", area: true))
         \(field("tmdb_link", "TMDB- oder Trakt-Liste, Filmreihe, Studio als Reihe", "https://www.themoviedb.org/list/… oder https://trakt.tv/users/…/lists/…"))
+        \(field("kit_url", "Fusion-Kit: „Copy JSON URL“ einfügen (braucht meist die Trakt Client ID)", "https://raw.githubusercontent.com/…json"))
+        <p><a href="\(FusionKitCatalog.siteURL)">Kit-Katalog öffnen</a></p>
         <h2>Sicherung</h2><p><a href="/export?t=\(token)">Alle Profile herunterladen (JSON)</a></p>
         \(field("backup_json", "Sicherung wiederherstellen (ersetzt alle Profile!)", "{…}", area: true))
         <button>An den Fernseher senden</button>

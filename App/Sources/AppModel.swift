@@ -32,6 +32,7 @@ final class AppModel: ObservableObject {
         stored = store.load()
         progressStore = ProgressStore(storage: storage)
         progress = progressStore.load(profile: profile.id)
+        FusionKitStore.shared.attach(self)   // Welle A e: Kit-Reihen der Startseite (AppModel+FusionKit)
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         RemoteLog.info("start", "App \(v) · \(stored.profiles.count) Profil(e) · Addons \(profile.addons.map(\.manifest.name)) · Reihen \(profile.home.rows.count) · Quelle \(profile.progressSource.rawValue)")
         observeCatalogWake()
@@ -264,7 +265,7 @@ final class AppModel: ObservableObject {
         update { p in if !p.collections.contains(where: { $0.id == c.id }) { p.collections.append(c) } }
     }
 
-    func collection(_ id: String) -> MediaCollection? { profile.collections.first { $0.id == id } }
+    func collection(_ id: String) -> MediaCollection? { profile.collections.first { $0.id == id } ?? FusionKitStore.shared.collection(id) }
 
     // MARK: Kataloge
 
@@ -289,7 +290,7 @@ final class AppModel: ObservableObject {
                 guard let a = profile.addons.first(where: { $0.manifest.id == addonId }) else { return [] }
                 out = try await addons.catalog(a, type: type, id: catalogId)
             case .trakt(let user, let list):
-                guard let trakt else { return [] }
+                guard let trakt = trakt ?? traktPublic else { return [] }   // öffentliche Listen: Client ID reicht
                 out = try await trakt.list(user: user, slug: list, token: await token("trakt"))
             case .watchlist:
                 out = try await watchlistItems()
@@ -411,6 +412,7 @@ final class AppModel: ObservableObject {
             case .importNuvioJSON: return "nuvio-json"
             case .addTMDBLink(let l): return "link \(l)"
             case .importBackup: return "backup"
+            case .importFusionURL: return "kit-url"
             }
         }.joined(separator: ", "))
         for c in commands {
@@ -427,6 +429,7 @@ final class AppModel: ObservableObject {
                     stored = try store.importData(d); save(); cache.removeAll()
                     progress = progressStore.load(profile: profile.id)
                 } catch { lastError = "Sicherung ungültig: \(error)" }
+            case .importFusionURL(let u): await importFusionKit(from: u)
             }
         }
         if lastError == nil { notice = "\(commands.count) Eingabe(n) vom Handy übernommen." }
