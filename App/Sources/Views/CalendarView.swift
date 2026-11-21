@@ -71,7 +71,7 @@ struct CalendarTile: View {
 struct UpcomingTodayCard: View {
     let item: MetaPreview
     var landscape = false
-    /// Kartengröße aus der Darstellung (von `Strip` gesetzt, sonst 1).
+    /// Kartengröße aus der Darstellung (von `Strip` gesetzt, sonst 1); nur Querformat, Hochformat skaliert `PosterCard` selbst.
     @Environment(\.cardScale) private var scale
 
     var body: some View {
@@ -83,11 +83,8 @@ struct UpcomingTodayCard: View {
                         Text(item.name).font(.headline).shadow(radius: 6).padding(.horizontal, 14).padding(.bottom, 24)
                     }
             } else {
-                RemoteImage(url: item.poster)
-                    .frame(width: 240 * scale, height: 360 * scale).clipped()
-                    .overlay(alignment: .bottomLeading) {
-                        if item.poster == nil { Text(item.name).font(.caption).padding(10) }
-                    }
+                // Hochformat wie alle Poster-Reihen: Kartengröße, Aufklappen, Scroll-Anker.
+                PosterCard(item: item)
             }
         }
         .overlay(alignment: .topLeading) {
