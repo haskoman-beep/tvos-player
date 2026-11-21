@@ -252,6 +252,8 @@ private struct TextRoleModifier: ViewModifier {
 /// Knopfstil der Bedienzeilen: ruhend `bg.row`, fokussiert weiß mit leichtem Anheben, Radius `radius.row`.
 /// Die Texte im Label wählen ihre Farbe selbst über `textRoleInRow` (liest denselben Fokus).
 /// `maxWidth` begrenzt die ganze Fläche (Standard: Textbreite 1100), damit der Wert rechts am Flächenende steht.
+/// Wer den Stil übernimmt, richtet das Label selbst links aus (`VStack(alignment: .leading)`, mehrzeilige Texte
+/// `.multilineTextAlignment(.leading)`): der Stil legt nur das Label als Ganzes links in die Fläche, nicht dessen Inhalt.
 struct ThemeRowButtonStyle: ButtonStyle {
     var minHeight: CGFloat = Theme.Layout.rowMinHeight
     var maxWidth: CGFloat = Theme.Layout.contentMaxWidth
