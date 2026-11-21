@@ -114,33 +114,95 @@ extension EnvironmentValues {
 }
 
 struct Strip<C: View>: View {
+    @EnvironmentObject var model: AppModel
     @ViewBuilder let content: C
+    /// Aufklappende Poster ändern die Reihenbreite: die Reihe bleibt am fokussierten Element verankert.
+    @State private var anchorID: String?
     var body: some View {
+        let a = model.profile.appearance
+        let s = a.cardSize.scale
         ScrollView(.horizontal, showsIndicators: false) {
-            LazyHStack(spacing: 40) { content }
-                .padding(.horizontal, 60).padding(.vertical, 30)
+            LazyHStack(spacing: 40 * s) { content }
+                .scrollTargetLayout()
+                .padding(.vertical, 30 * s)
         }
+        .contentMargins(.horizontal, 60, for: .scrollContent)
+        .scrollPosition(id: $anchorID, anchor: .leading)
+        .environment(\.cardScale, s)
+        .environment(\.expandPosters, a.expandPosters)
+        .environment(\.anchorFocusedCard, { id in
+            guard anchorID != id else { return }
+            withAnimation(.easeInOut(duration: 0.25)) { anchorID = id }
+        })
     }
 }
 
 
 struct PosterCard: View {
     let item: MetaPreview
+    @Environment(\.isFocused) private var focused
+    @Environment(\.cardScale) private var scale
+    @Environment(\.expandPosters) private var expandable
+    @Environment(\.anchorFocusedCard) private var anchor
+    /// Fokus + 350 ms Ruhe → Querformat mit Hintergrund und Logo.
+    @State private var expanded = false
+
     var body: some View {
-        RemoteImage(url: item.poster)
-            .frame(width: 240, height: 360).clipped()
-            .overlay(alignment: .bottomLeading) {
-                if item.poster == nil { Text(item.name).font(.caption).padding(10) }
+        let h = 360 * scale
+        ZStack(alignment: .leading) {
+            RemoteImage(url: item.poster)
+                .frame(width: 240 * scale, height: h).clipped()
+            if expanded { ExpandedPoster(item: item).transition(.opacity) }
+        }
+        .frame(width: (expanded ? h * 16 / 9 : 240 * scale), height: h, alignment: .leading).clipped()
+        .overlay(alignment: .bottomLeading) {
+            if item.poster == nil && !expanded { Text(item.name).font(.caption).padding(10) }
+        }
+        .overlay { CardStateOverlay(itemID: item.id) }
+        .onChange(of: focused) { _, f in if f && expandable { anchor(item.id) } }
+        .task(id: focused && expandable) {
+            guard focused && expandable else {
+                if expanded { withAnimation(.easeInOut(duration: 0.25)) { expanded = false } }
+                return
             }
-            .overlay { CardStateOverlay(itemID: item.id) }
+            // Schnelles Durchscrollen bricht hier ab: kein Aufklappen, keine Bildanforderung.
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeInOut(duration: 0.25)) { expanded = true }
+        }
+    }
+}
+
+/// Aufgeklappter Inhalt: Hintergrundbild + Logo (oder Titel). Existiert erst nach der Ruhezeit,
+/// deshalb wird das Bild auch erst dann angefordert.
+private struct ExpandedPoster: View {
+    let item: MetaPreview
+    var body: some View {
+        GeometryReader { g in
+            ZStack(alignment: .bottomLeading) {
+                RemoteImage(url: item.background ?? item.poster, maxPixels: 900)
+                    .frame(width: g.size.width, height: g.size.height).clipped()
+                LinearGradient(colors: [.black.opacity(0.75), .clear], startPoint: .bottom, endPoint: .center)
+                Group {
+                    if let logo = item.logo {
+                        RemoteImage(url: logo, maxPixels: 600, fit: true)
+                            .frame(maxWidth: g.size.width * 0.6, maxHeight: g.size.height * 0.3, alignment: .bottomLeading)
+                    } else {
+                        Text(item.name).font(.headline).lineLimit(2).shadow(radius: 6)
+                    }
+                }
+                .padding(.horizontal, 18).padding(.bottom, 26)
+            }
+        }
     }
 }
 
 struct LandscapeCard: View {
     let item: MetaPreview
+    @Environment(\.cardScale) private var scale
     var body: some View {
         RemoteImage(url: item.background ?? item.poster, maxPixels: 900)
-            .frame(width: 440, height: 248).clipped()
+            .frame(width: 440 * scale, height: 248 * scale).clipped()
             .overlay(alignment: .bottomLeading) {
                 Text(item.name).font(.headline).shadow(radius: 6).padding(.horizontal, 14).padding(.bottom, 24)
             }
@@ -169,9 +231,10 @@ struct HeroCard: View {
 struct Top10Card: View {
     let item: MetaPreview
     let rank: Int
+    @Environment(\.cardScale) private var scale
     var body: some View {
-        HStack(alignment: .bottom, spacing: -30) {
-            Text("\(rank)").font(.system(size: 220, weight: .black)).foregroundStyle(.white.opacity(0.85))
+        HStack(alignment: .bottom, spacing: -30 * scale) {
+            Text("\(rank)").font(.system(size: 220 * scale, weight: .black)).foregroundStyle(.white.opacity(0.85))
                 .shadow(radius: 8)
             PosterCard(item: item)
         }
@@ -181,16 +244,17 @@ struct Top10Card: View {
 struct FolderTile: View {
     let folder: Folder
     let logoStyle: Bool
+    @Environment(\.cardScale) private var scale
     var body: some View {
         if logoStyle {
             ZStack {
                 Color.white.opacity(0.08)
-                if let l = folder.logo { RemoteImage(url: l, maxPixels: 800, fit: true).padding(30) } else { Text(folder.title).font(.headline) }
+                if let l = folder.logo { RemoteImage(url: l, maxPixels: 800, fit: true).padding(30 * scale) } else { Text(folder.title).font(.headline) }
             }
-            .frame(width: 320, height: 180)
+            .frame(width: 320 * scale, height: 180 * scale)
         } else {
             RemoteImage(url: folder.coverImage ?? folder.backdrop)
-                .frame(width: 440, height: 248).clipped()
+                .frame(width: 440 * scale, height: 248 * scale).clipped()
                 .overlay(alignment: .bottomLeading) {
                     if folder.coverImage == nil { Text(folder.title).font(.headline).padding(14) }
                 }
@@ -232,5 +296,29 @@ struct CardStateOverlay: View {
             }
             .allowsHitTesting(false)
         }
+    }
+}
+
+// MARK: - Kartengröße und Aufklappen (Umgebung, von `Strip` gesetzt)
+
+private struct CardScaleKey: EnvironmentKey { static let defaultValue: CGFloat = 1 }
+/// Außerhalb der Startseiten-Reihen (Detail, Person) klappt nichts auf.
+private struct ExpandPostersKey: EnvironmentKey { static let defaultValue = false }
+private struct AnchorFocusedCardKey: EnvironmentKey { static let defaultValue: (String) -> Void = { _ in } }
+
+extension EnvironmentValues {
+    /// `appearance.cardSize.scale` für die Kartenmaße.
+    var cardScale: CGFloat {
+        get { self[CardScaleKey.self] }
+        set { self[CardScaleKey.self] = newValue }
+    }
+    var expandPosters: Bool {
+        get { self[ExpandPostersKey.self] }
+        set { self[ExpandPostersKey.self] = newValue }
+    }
+    /// Fokussierte, aufklappbare Karte meldet ihre ID; die Reihe verankert die Scrollposition daran.
+    var anchorFocusedCard: (String) -> Void {
+        get { self[AnchorFocusedCardKey.self] }
+        set { self[AnchorFocusedCardKey.self] = newValue }
     }
 }
