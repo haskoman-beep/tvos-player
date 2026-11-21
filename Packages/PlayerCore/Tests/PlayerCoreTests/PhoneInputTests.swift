@@ -14,6 +14,9 @@ private func post(_ path: String, _ body: String) -> HTTPRequest {
 private let a = UUID(uuidString: "00000000-0000-0000-0000-00000000000A")!
 private let b = UUID(uuidString: "00000000-0000-0000-0000-00000000000B")!
 private let c = UUID(uuidString: "00000000-0000-0000-0000-00000000000C")!
+private let d = UUID(uuidString: "00000000-0000-0000-0000-00000000000D")!
+private let hiddenRow = HomeRow(id: d, content: .list(CatalogSource(id: "tmdb:list:7", title: "Meine Liste", kind: .continueWatching, mediaType: .both)),
+                                style: .top10)
 
 private func layout() -> HomeLayout {
     HomeLayout(rows: [HomeRow(id: a, content: .list(.continueWatching)),
@@ -25,7 +28,7 @@ private let options: [RowContent] = [.collection(id: "x"), .collection(id: "y"),
                                      .list(.upcoming), .collection(id: "y")]
 
 private func state() -> PhoneHomeState {
-    PhoneHomeState.make(layout: layout(), options: options, title: { o in
+    PhoneHomeState.make(layout: layout(), hiddenRows: [hiddenRow], options: options, title: { o in
         switch o { case .list(let s): s.title; case .collection(let id): id == "y" ? "<Kino & Co>" : "Coll \(id)" }
     }, detail: { o in if case .collection = o { "Collection" } else { "Liste" } })
 }
@@ -48,6 +51,7 @@ private func state() -> PhoneHomeState {
     }
     // Schlüsselfelder sind leer: die Seite gibt nie gespeicherte Werte zurück.
     #expect(!html.contains("value=\"K"))
+    #expect(html.contains("<meta name=\"referrer\" content=\"no-referrer\">"))
 }
 
 @Test func orderSectionListsRowsEscapedWithButtons() {
@@ -56,14 +60,23 @@ private func state() -> PhoneHomeState {
     let html = String(data: resp.body, encoding: .utf8)!
     #expect(cmds.isEmpty)
     #expect(html.contains("Startseite ordnen") && html.contains("action=\"/home?t=tok\""))
-    #expect(html.contains("value=\"up:\(b.uuidString)\"") && html.contains("value=\"hide:\(c.uuidString)\""))
-    #expect(html.contains("value=\"top:\(a.uuidString)\" aria-label=\"Ganz nach oben\" title=\"Ganz nach oben\" disabled"))
-    #expect(html.contains("value=\"bottom:\(c.uuidString)\" aria-label=\"Ganz nach unten\" title=\"Ganz nach unten\" disabled"))
-    // Ausgeblendet: nur Angebote, die nicht auf der Startseite liegen, ohne Doppelte; Titel maskiert.
-    #expect(state().hidden.map(\.id) == ["collection:y", "list:builtin.upcoming"])
+    // Knöpfe senden nur absolute Ziele.
+    #expect(html.contains("value=\"to:\(b.uuidString):0\" aria-label=\"Nach oben\""))
+    #expect(html.contains("value=\"to:\(b.uuidString):2\" aria-label=\"Nach unten\"") && html.contains("value=\"hide:\(c.uuidString)\""))
+    #expect(html.contains("value=\"to:\(a.uuidString):0\" aria-label=\"Ganz nach oben\" title=\"Ganz nach oben\" disabled"))
+    #expect(html.contains("value=\"to:\(c.uuidString):2\" aria-label=\"Ganz nach unten\" title=\"Ganz nach unten\" disabled"))
+    #expect(!html.contains("value=\"up:") && !html.contains("value=\"top:"))
+    // Ausgeblendet: gemerkte Reihe mit „Wieder einblenden“.
+    #expect(state().hidden.map(\.id) == [d.uuidString])
+    #expect(html.contains("value=\"restore:\(d.uuidString)\" aria-label=\"Wieder einblenden\""))
+    #expect(html.contains("Ausgeblendet (1)") && html.contains("Meine Liste"))
+    // Weitere Angebote: ohne Gezeigte, Ausgeblendete und Doppelte; Titel maskiert.
+    #expect(state().more.map(\.id) == ["collection:y", "list:builtin.upcoming"])
     #expect(html.contains("&lt;Kino &amp; Co&gt;") && !html.contains("<Kino"))
-    #expect(html.contains("Ausgeblendet (2)"))
-    #expect(html.contains("pointerdown"))
+    #expect(html.contains("Weitere Reihen (2)"))
+    // Skript: Ziehen, Sperre während eines Zugs, Neuladen statt erneut senden.
+    #expect(html.contains("pointerdown") && html.contains("classList.add('busy')") && html.contains("location.replace"))
+    #expect(!html.contains("f.submit()"))
 }
 
 @Test func orderSectionEmptyAndNotes() {
@@ -72,8 +85,9 @@ private func state() -> PhoneHomeState {
     let h1 = String(data: r1.body, encoding: .utf8)!
     #expect(h1.contains("Keine Reihen auf der Startseite.") && h1.contains("✓ Am Fernseher geändert.") && !h1.contains("Eingabe(n)"))
     // Die Rückmeldung `ok` wird nicht roh in die Seite geschrieben.
-    let (r2, _) = page.handle(req("GET /?t=tok&ok=%3Cscript%3E HTTP/1.1\r\n\r\n"), profileName: "Ich") { Data() }
-    #expect(!String(data: r2.body, encoding: .utf8)!.contains("<script>x") && String(data: r2.body, encoding: .utf8)!.contains("&lt;script&gt;"))
+    let (r2, _) = page.handle(req("GET /?t=tok&ok=%3Cimg%20onerror%3Dx%3E HTTP/1.1\r\n\r\n"), profileName: "Ich") { Data() }
+    let h2 = String(data: r2.body, encoding: .utf8)!
+    #expect(!h2.contains("<img") && h2.contains("&lt;img onerror=x&gt;"))
 }
 
 @Test func homePostProducesOneCommandAndRedirectsToOrder() {
@@ -81,42 +95,81 @@ private func state() -> PhoneHomeState {
     func run(_ op: String) -> (HTTPResponse, [PhoneCommand]) {
         page.handle(post("/home?t=tok", "op=" + op.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!), profileName: "Ich", home: state()) { Data() }
     }
-    let (resp, cmds) = run("up:\(b.uuidString)")
+    let (resp, cmds) = run("to:\(b.uuidString):0")
     #expect(cmds == [.moveRow(id: b, to: 0)] && resp.status == 303 && resp.extraHeaders["Location"] == "/?t=tok&ok=home#order")
-    #expect(run("down:\(b.uuidString)").1 == [.moveRow(id: b, to: 2)])
-    #expect(run("top:\(c.uuidString)").1 == [.moveRow(id: c, to: 0)])
-    #expect(run("bottom:\(a.uuidString)").1 == [.moveRow(id: a, to: 2)])
     #expect(run("to:\(a.uuidString):1").1 == [.moveRow(id: a, to: 1)])
     #expect(run("to:\(a.uuidString.lowercased()):99").1 == [.moveRow(id: a, to: 2)])
+    #expect(run("to:\(c.uuidString):-3").1 == [.moveRow(id: c, to: 0)])
     #expect(run("hide:\(b.uuidString)").1 == [.removeRow(b)])
+    #expect(run("restore:\(d.uuidString)").1 == [.restoreRow(d)])
     #expect(run("show:list:builtin.upcoming").1 == [.addRow(key: "list:builtin.upcoming")])
-    // Leerlauf und Unbekanntes: kein Befehl, eigene Rückmeldung.
-    let (r0, c0) = run("up:\(a.uuidString)")
+    // Leerlauf und Unbekanntes: kein Befehl, eigene Rückmeldung. Relative Züge gibt es nicht mehr.
+    let (r0, c0) = run("to:\(a.uuidString):0")
     #expect(c0.isEmpty && r0.extraHeaders["Location"] == "/?t=tok&ok=home0#order")
-    for bad in ["show:list:builtin.continue", "show:collection:zz", "hide:\(UUID().uuidString)", "up:kaputt", "to:\(a.uuidString):x", "fly:\(a.uuidString)", "", "top"] {
+    for bad in ["show:list:builtin.continue", "show:collection:zz", "show:list:tmdb:list:7", "hide:\(UUID().uuidString)", "hide:\(d.uuidString)",
+                "restore:\(a.uuidString)", "restore:kaputt", "up:\(b.uuidString)", "top:\(c.uuidString)", "to:\(a.uuidString):x",
+                "to:kaputt:1", "fly:\(a.uuidString)", "", "top"] {
         #expect(run(bad).1.isEmpty, "\(bad)")
     }
     // Ohne Token kein Befehl.
     let (forbidden, none) = page.handle(post("/home?t=falsch", "op=hide:\(b.uuidString)"), profileName: "Ich", home: state()) { Data() }
     #expect(forbidden.status == 403 && none.isEmpty)
-    #expect(cmds.allSatisfy(\.isHomeEdit) && !PhoneCommand.addAddon("x").isHomeEdit && PhoneCommand.removeRow(a).isHomeEdit)
+    #expect(cmds.allSatisfy(\.isHomeEdit) && !PhoneCommand.addAddon("x").isHomeEdit && PhoneCommand.removeRow(a).isHomeEdit
+            && PhoneCommand.restoreRow(a).isHomeEdit)
 }
 
 @Test func layoutAppliesPhoneCommands() {
     var l = layout()
-    #expect(l.applyPhone(.moveRow(id: c, to: 0), options: options) == .moved(from: 2, to: 0))
+    var hidden: [HomeRow] = []
+    let rowC = l.rows[2]
+    #expect(l.applyPhone(.moveRow(id: c, to: 0), hidden: &hidden, options: options) == .moved(rowC, from: 2, to: 0))
     #expect(l.rows.map(\.id) == [c, a, b])
-    #expect(l.applyPhone(.moveRow(id: c, to: -5), options: options) == nil)
-    #expect(l.applyPhone(.moveRow(id: c, to: 99), options: options) == .moved(from: 0, to: 2))
+    #expect(l.applyPhone(.moveRow(id: c, to: -5), hidden: &hidden, options: options) == nil)
+    #expect(l.applyPhone(.moveRow(id: c, to: 99), hidden: &hidden, options: options) == .moved(rowC, from: 0, to: 2))
     #expect(l.rows.map(\.id) == [a, b, c])
-    #expect(l.applyPhone(.removeRow(b), options: options) == .removed(at: 1))
-    #expect(l.rows.map(\.id) == [a, c])
-    #expect(l.applyPhone(.removeRow(b), options: options) == nil)
-    // Einblenden hängt unten an (Nutzerentscheidung), keine Doppelten, nur bekannte Angebote.
-    #expect(l.applyPhone(.addRow(key: "collection:y"), options: options) == .added(at: 2))
-    #expect(l.rows.last?.content == .collection(id: "y") && l.rows.last?.style == .collectionTiles)
-    #expect(l.applyPhone(.addRow(key: "collection:y"), options: options) == nil)
-    #expect(l.applyPhone(.addRow(key: "collection:nix"), options: options) == nil)
-    #expect(l.applyPhone(.addAddon("x"), options: options) == nil)
-    #expect(l.rows.count == 3)
+    // Ausblenden merkt die Reihe vollständig (ID und Stil).
+    var styled = l.rows[1]; styled.style = .landscape; l.rows[1] = styled
+    #expect(l.applyPhone(.removeRow(b), hidden: &hidden, options: options) == .removed(styled, at: 1))
+    #expect(l.rows.map(\.id) == [a, c] && hidden == [styled])
+    #expect(l.applyPhone(.removeRow(b), hidden: &hidden, options: options) == nil)
+    // Wieder einblenden: unverändert unten an, aus „Ausgeblendet“ heraus; zweimal wirkt nicht doppelt.
+    #expect(l.applyPhone(.restoreRow(b), hidden: &hidden, options: options) == .restored(styled, at: 2))
+    #expect(l.rows.map(\.id) == [a, c, b] && l.rows[2].style == .landscape && hidden.isEmpty)
+    #expect(l.applyPhone(.restoreRow(b), hidden: &hidden, options: options) == nil)
+    // Hinzufügen eines Angebots hängt unten an, keine Doppelten, nur bekannte Angebote.
+    guard case .added(let added, at: 3)? = l.applyPhone(.addRow(key: "collection:y"), hidden: &hidden, options: options) else {
+        Issue.record("addRow"); return
+    }
+    #expect(l.rows.last == added && added.style == .collectionTiles)
+    #expect(l.applyPhone(.addRow(key: "collection:y"), hidden: &hidden, options: options) == nil)
+    #expect(l.applyPhone(.addRow(key: "collection:nix"), hidden: &hidden, options: options) == nil)
+    #expect(l.applyPhone(.addAddon("x"), hidden: &hidden, options: options) == nil)
+    #expect(l.rows.count == 4)
+}
+
+@Test func hiddenRowsCappedAndRestoreSkipsDuplicates() {
+    var l = HomeLayout(rows: (0..<(HomeLayout.hiddenLimit + 5)).map { HomeRow(content: .collection(id: "c\($0)")) })
+    var hidden: [HomeRow] = []
+    let ids = l.rows.map(\.id)
+    for id in ids { l.applyPhone(.removeRow(id), hidden: &hidden, options: []) }
+    #expect(l.rows.isEmpty && hidden.count == HomeLayout.hiddenLimit && hidden.first?.id == ids[5] && hidden.last?.id == ids.last)
+    // Inhalt liegt inzwischen wieder auf der Startseite: Wiederherstellen fügt nichts doppelt ein, nimmt ihn aber aus der Liste.
+    let back = hidden[0]
+    l.rows.append(HomeRow(content: back.content))
+    #expect(l.applyPhone(.restoreRow(back.id), hidden: &hidden, options: []) == nil)
+    #expect(l.rows.count == 1 && !hidden.contains { $0.id == back.id })
+    // Hinzufügen eines Angebots räumt eine gemerkte Reihe mit gleichem Inhalt ab.
+    let other = hidden[0]
+    l.applyPhone(.addRow(key: other.content.key), hidden: &hidden, options: [other.content])
+    #expect(!hidden.contains { $0.content.key == other.content.key })
+}
+
+@Test func profileDecodesHiddenRowsWithDefault() throws {
+    var p = Profile.makeDefault()
+    #expect(p.hiddenRows.isEmpty)
+    p.hiddenRows = [hiddenRow]
+    let back = try JSONDecoder().decode(Profile.self, from: JSONEncoder().encode(p))
+    #expect(back.hiddenRows == [hiddenRow])
+    let old = try JSONDecoder().decode(Profile.self, from: Data(#"{"id":"00000000-0000-0000-0000-000000000001","name":"Alt"}"#.utf8))
+    #expect(old.hiddenRows.isEmpty && old.name == "Alt")
 }

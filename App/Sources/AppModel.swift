@@ -458,7 +458,7 @@ final class AppModel: ObservableObject {
             case .addTMDBLink(let l): return "link \(l)"
             case .importBackup: return "backup"
             case .importFusionURL: return "kit-url"
-            case .moveRow, .removeRow, .addRow: return "startseite"
+            case .moveRow, .removeRow, .restoreRow, .addRow: return "startseite"
             }
         }.joined(separator: ", "))
         for c in commands {
@@ -481,7 +481,7 @@ final class AppModel: ObservableObject {
                     progress = progressStore.load(profile: profile.id)
                 } catch { lastError = "Sicherung ungültig: \(error)" }
             case .importFusionURL(let u): await importFusionKit(from: u)
-            case .moveRow, .removeRow, .addRow: applyHome([c])   // Welle F-e; PhoneServer übernimmt sie sonst schon vorab
+            case .moveRow, .removeRow, .restoreRow, .addRow: applyHome([c])   // Welle F-e; PhoneServer übernimmt sie sonst schon vorab
             }
         }
         if lastError == nil { notice = "\(commands.count) Eingabe(n) vom Handy übernommen." }

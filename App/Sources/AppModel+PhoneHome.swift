@@ -19,12 +19,8 @@ extension AppModel {
     }
 
     func phoneHomeState() -> PhoneHomeState {
-        PhoneHomeState.make(layout: profile.home, options: phoneRowOptions, title: { o in
-            switch o {
-            case .list(let s): s.title
-            case .collection(let id): self.collection(id)?.title ?? "Collection"
-            }
-        }, detail: { o in
+        PhoneHomeState.make(layout: profile.home, hiddenRows: profile.hiddenRows, options: phoneRowOptions,
+                            title: { self.rowTitle($0) }, detail: { o in
             switch o {
             case .list: "Liste"
             case .collection(let id): "Collection · \(self.collection(id)?.folders.count ?? 0) Ordner"
@@ -37,22 +33,21 @@ extension AppModel {
         let options = phoneRowOptions
         var changed = false
         for c in commands where c.isHomeEdit {
-            var home = profile.home
-            let title = home.rows.first { row in
-                if case .moveRow(let id, _) = c { return row.id == id }
-                if case .removeRow(let id) = c { return row.id == id }
-                return false
-            }.map { rowTitle($0.content) }
-            guard let edit = home.applyPhone(c, options: options) else {
+            var home = profile.home, hidden = profile.hiddenRows
+            let edit = home.applyPhone(c, hidden: &hidden, options: options)
+            if home != profile.home || hidden != profile.hiddenRows {
+                update { $0.home = home; $0.hiddenRows = hidden }
+            }
+            guard let edit else {
                 RemoteLog.info("home", "Handy: Zug ohne Wirkung (Liste veraltet)")
                 continue
             }
-            update { $0.home = home }
             changed = true
             switch edit {
-            case let .moved(from, to): RemoteLog.info("home", "Reihe verschoben \(from)→\(to) (Handy): \(title ?? "?")")
-            case let .removed(at): RemoteLog.info("home", "Reihe ausgeblendet an \(at) (Handy): \(title ?? "?")")
-            case let .added(at): RemoteLog.info("home", "Reihe hinzugefügt an \(at) (Handy): \(home.rows.last.map { rowTitle($0.content) } ?? "?")")
+            case let .moved(row, from, to): RemoteLog.info("home", "Reihe verschoben \(from)→\(to) (Handy): \(rowTitle(row.content))")
+            case let .removed(row, at): RemoteLog.info("home", "Reihe ausgeblendet an \(at) (Handy): \(rowTitle(row.content))")
+            case let .restored(row, at): RemoteLog.info("home", "Reihe wieder eingeblendet an \(at) (Handy): \(rowTitle(row.content))")
+            case let .added(row, at): RemoteLog.info("home", "Reihe hinzugefügt an \(at) (Handy): \(rowTitle(row.content))")
             }
         }
         if changed { notice = "Startseite vom Handy geändert." }

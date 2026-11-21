@@ -79,9 +79,11 @@ public enum PhoneCommand: Equatable, Sendable {
     case importFusionURL(String)
     /// Welle F-e, „Startseite ordnen“: Reihe an Position (0-basiert) schieben.
     case moveRow(id: UUID, to: Int)
-    /// Reihe ausblenden (von der Startseite nehmen; bleibt einblendbar).
+    /// Reihe ausblenden: von der Startseite nehmen und vollständig unter „Ausgeblendet“ merken.
     case removeRow(UUID)
-    /// Ausgeblendete Reihe einblenden (`RowContent.key`), kommt ans Ende.
+    /// Ausgeblendete Reihe unverändert wieder einblenden (gleiche ID und Stil), kommt ans Ende.
+    case restoreRow(UUID)
+    /// Weitere Reihe aus den Angeboten (`RowContent.key`) hinzufügen, kommt ans Ende.
     case addRow(key: String)
 }
 
@@ -208,19 +210,27 @@ public struct PhoneInputPage: Sendable {
             for (i, r) in home.shown.enumerated() {
                 let id = Self.escape(r.id)
                 out += "<li data-id=\"\(id)\"><span class=grip role=img aria-label=\"Ziehen zum Verschieben\">≡</span>\(text(r))<span class=btns>"
-                out += button("top:\(r.id)", "⤒", "Ganz nach oben", disabled: i == 0)
-                out += button("up:\(r.id)", "↑", "Nach oben", disabled: i == 0)
-                out += button("down:\(r.id)", "↓", "Nach unten", disabled: i == last)
-                out += button("bottom:\(r.id)", "⤓", "Ganz nach unten", disabled: i == last)
+                // Nur absolute Ziele: ein wiederholter Zug wirkt nicht doppelt.
+                out += button("to:\(r.id):0", "⤒", "Ganz nach oben", disabled: i == 0)
+                out += button("to:\(r.id):\(max(i - 1, 0))", "↑", "Nach oben", disabled: i == 0)
+                out += button("to:\(r.id):\(min(i + 1, last))", "↓", "Nach unten", disabled: i == last)
+                out += button("to:\(r.id):\(last)", "⤓", "Ganz nach unten", disabled: i == last)
                 out += button("hide:\(r.id)", "✕", "Ausblenden")
                 out += "</span></li>"
             }
             out += "</ol>"
         }
         if !home.hidden.isEmpty {
-            out += "<details><summary>Ausgeblendet (\(home.hidden.count)) – Einblenden hängt unten an</summary><ul class=rows>"
+            out += "<h3>Ausgeblendet (\(home.hidden.count))</h3><p class=hint>Kommt unverändert unten wieder an.</p><ul class=rows>"
             for r in home.hidden {
-                out += "<li>\(text(r))<span class=btns>\(button("show:\(r.id)", "＋", "Einblenden"))</span></li>"
+                out += "<li>\(text(r))<span class=btns>\(button("restore:\(r.id)", "↩", "Wieder einblenden"))</span></li>"
+            }
+            out += "</ul>"
+        }
+        if !home.more.isEmpty {
+            out += "<details><summary>Weitere Reihen (\(home.more.count)) – hängt unten an</summary><ul class=rows>"
+            for r in home.more {
+                out += "<li>\(text(r))<span class=btns>\(button("show:\(r.id)", "＋", "Hinzufügen"))</span></li>"
             }
             out += "</ul></details>"
         }
@@ -228,18 +238,20 @@ public struct PhoneInputPage: Sendable {
     }
 
     /// Ziehen per Touch (Pointer-Events am Griff) und Knöpfe ohne Neuladen: Zug per fetch an /home,
-    /// danach wird nur der Abschnitt `#order` aus der Antwortseite ersetzt. Fehler → normales Absenden.
+    /// danach wird nur der Abschnitt `#order` aus der Antwortseite ersetzt. Während eines Zugs ist die Liste gesperrt;
+    /// ein Fehler lädt die Seite neu, statt den Zug noch einmal zu senden.
     static let orderScript = """
-    (function(){var f=document.getElementById('homeform');if(!f||!window.fetch)return;
-    function fallback(op){var i=document.createElement('input');i.type='hidden';i.name='op';i.value=op;f.appendChild(i);f.submit();}
-    function send(op){fetch(f.action,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'op='+encodeURIComponent(op)})
+    (function(){var f=document.getElementById('homeform');if(!f||!window.fetch)return;var busy=false;
+    function reload(){location.replace(f.action.replace('/home?','/?')+'&r='+Date.now()+'#order');}
+    function send(op){if(busy)return;busy=true;var o=document.getElementById('order');if(o)o.classList.add('busy');
+    fetch(f.action,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'op='+encodeURIComponent(op)})
     .then(function(r){if(!r.ok)throw 0;return r.text();}).then(function(h){var n=new DOMParser().parseFromString(h,'text/html').getElementById('order'),o=document.getElementById('order');
-    if(!n||!o)throw 0;var d=o.querySelector('details'),open=d&&d.open;o.replaceWith(n);var d2=n.querySelector('details');if(d2&&open)d2.open=true;bind();})
-    .catch(function(){fallback(op);});}
+    if(!n||!o)throw 0;var d=o.querySelector('details'),open=d&&d.open;o.replaceWith(n);var d2=n.querySelector('details');if(d2&&open)d2.open=true;busy=false;bind();})
+    .catch(function(){reload();});}
     function bind(){var o=document.getElementById('order');if(!o)return;
     o.querySelectorAll('button[name=op]').forEach(function(b){b.addEventListener('click',function(e){e.preventDefault();send(b.value);});});
     var list=document.getElementById('rowlist');if(!list)return;
-    list.querySelectorAll('.grip').forEach(function(g){g.addEventListener('pointerdown',function(e){var li=g.parentNode,kids=function(){return[].slice.call(list.children);},from=kids().indexOf(li),next=li.nextSibling;
+    list.querySelectorAll('.grip').forEach(function(g){g.addEventListener('pointerdown',function(e){if(busy)return;var li=g.parentNode,kids=function(){return[].slice.call(list.children);},from=kids().indexOf(li),next=li.nextSibling;
     e.preventDefault();try{g.setPointerCapture(e.pointerId);}catch(x){}li.classList.add('drag');
     function move(ev){var y=ev.clientY,before=null,s=kids().filter(function(x){return x!==li;});
     for(var i=0;i<s.length;i++){var r=s[i].getBoundingClientRect();if(y<r.top+r.height/2){before=s[i];break;}}
@@ -256,7 +268,7 @@ public struct PhoneInputPage: Sendable {
 
     static func html(_ title: String, _ body: String) -> String {
         """
-        <!doctype html><html lang=de><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+        <!doctype html><html lang=de><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer">
         <title>\(title)</title><style>
         body{font:17px -apple-system,system-ui,sans-serif;margin:0 auto;max-width:640px;padding:16px;background:#111;color:#eee}
         h1{font-size:24px}h2{font-size:18px;margin-top:28px;color:#aaa}label{display:block;margin:10px 0}
@@ -268,7 +280,7 @@ public struct PhoneInputPage: Sendable {
         .rows li.drag{background:#2c3e57;box-shadow:0 4px 14px #000}.grip{touch-action:none;user-select:none;-webkit-user-select:none;font-size:24px;padding:4px 8px;color:#aaa;cursor:grab}
         .t{flex:1;min-width:0;overflow-wrap:anywhere}.t small{display:block;color:#999;font-size:13px}.btns{display:flex;gap:4px}
         .btns button{margin:0;width:38px;height:38px;padding:0;font-size:18px;border-radius:8px;background:#333}.btns button:disabled{opacity:.3}
-        summary{margin-top:12px;color:#ccc}
+        summary{margin-top:12px;color:#ccc}.busy{pointer-events:none;opacity:.6}
         </style><h1>\(title)</h1>\(body)</html>
         """
     }
