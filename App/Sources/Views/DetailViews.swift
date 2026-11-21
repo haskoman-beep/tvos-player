@@ -38,6 +38,7 @@ struct DetailView: View {
     @State private var loading = true
     @State private var ratings: ExternalRatings?
     @State private var tech: [String] = []
+    @State private var certification: String?
 
     private var isSeries: Bool { item.type == "series" }
 
@@ -53,7 +54,7 @@ struct DetailView: View {
                     }
                     Text([meta?.releaseInfo ?? item.releaseInfo, meta?.runtime, meta?.genres?.prefix(3).joined(separator: ", ")]
                         .compactMap { $0 }.joined(separator: " · ")).foregroundStyle(.secondary)
-                    InfoBadges(ratings: ratings, tech: tech)
+                    InfoBadges(ratings: ratings, tech: tech, certification: certification ?? ratings?.certification)
                     Text(meta?.description ?? item.description ?? "").frame(maxWidth: 1100, alignment: .leading)
 
                     if loading {
@@ -78,6 +79,7 @@ struct DetailView: View {
             if let imdb {
                 async let r = model.ratings(imdb: imdb, series: isSeries)
                 meta = await model.meta(type: isSeries ? "series" : "movie", imdb: imdb)
+                certification = await model.localized(imdb: imdb, series: isSeries)?.certification
                 ratings = await r
                 if !isSeries {
                     let id = imdb
@@ -86,7 +88,16 @@ struct DetailView: View {
             }
             season = imdb.flatMap { model.progress.latest(forItem: $0)?.season } ?? seasons.first ?? 1
             loading = false
+            await translateSeason()
         }
+        .onChange(of: season) { Task { await translateSeason() } }
+    }
+
+    private func translateSeason() async {
+        guard isSeries, let imdb, meta != nil else { return }
+        let s = season
+        let eps = await model.localizedSeason(imdb: imdb, season: s)
+        if !eps.isEmpty { meta = meta?.applying(season: s, episodes: eps) }
     }
 
     /// Eintrag mit IMDb-ID, damit Weiterschauen direkt Cinemeta/Streams nutzen kann.
@@ -327,17 +338,18 @@ struct SearchView: View {
 struct InfoBadges: View {
     let ratings: ExternalRatings?
     let tech: [String]
+    var certification: String?
 
     var body: some View {
         let rated = ratings.map(MDBList.badges) ?? []
-        if !rated.isEmpty || !tech.isEmpty || ratings?.certification != nil {
+        if !rated.isEmpty || !tech.isEmpty || certification != nil {
             HStack(spacing: 14) {
                 ForEach(tech, id: \.self) { t in
                     Text(t).font(.caption.weight(.bold)).foregroundStyle(.black)
                         .padding(.horizontal, 12).padding(.vertical, 5)
                         .background(Color.white.opacity(0.85), in: RoundedRectangle(cornerRadius: 6))
                 }
-                if let c = ratings?.certification {
+                if let c = certification {
                     Text(c).font(.caption.weight(.semibold))
                         .padding(.horizontal, 10).padding(.vertical, 4)
                         .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.6), lineWidth: 2))

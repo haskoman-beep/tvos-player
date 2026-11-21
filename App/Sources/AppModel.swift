@@ -299,7 +299,34 @@ final class AppModel: ObservableObject {
     }
 
     func meta(type: String, imdb: String) async -> MetaDetail? {
-        try? await addons.meta(Self.cinemeta, type: type, id: imdb)
+        guard var m = try? await addons.meta(Self.cinemeta, type: type, id: imdb) else { return nil }
+        if let l = await localized(imdb: imdb, series: type == "series") { m = m.applying(l) }
+        return m
+    }
+
+    private var localizedCache: [String: LocalizedMeta] = [:]
+    private var seasonCache: [String: [Int: LocalizedEpisode]] = [:]
+
+    /// TMDB in Profilsprache (Titel, Text, Poster, Logo, FSK); nil ohne TMDB-Key.
+    func localized(imdb: String, series: Bool) async -> LocalizedMeta? {
+        if let c = localizedCache[imdb] { return c }
+        guard let tmdb else { return nil }
+        do {
+            guard let id = try await tmdb.tmdbID(imdb: imdb, series: series),
+                  let l = try await tmdb.localized(tmdbID: id, series: series) else { return nil }
+            localizedCache[imdb] = l
+            return l
+        } catch { RemoteLog.error("tmdb", "Übersetzung \(imdb): \(error)"); return nil }
+    }
+
+    /// Folgennamen/-texte einer Staffel in Profilsprache.
+    func localizedSeason(imdb: String, season: Int) async -> [Int: LocalizedEpisode] {
+        let key = "\(imdb):\(season)"
+        if let c = seasonCache[key] { return c }
+        guard let tmdb, let id = await localized(imdb: imdb, series: true)?.tmdbID,
+              let eps = try? await tmdb.season(tmdbID: id, season: season) else { return [:] }
+        seasonCache[key] = eps
+        return eps
     }
 
     func streams(type: String, id: String) async -> [(addon: String, stream: StreamItem)] {

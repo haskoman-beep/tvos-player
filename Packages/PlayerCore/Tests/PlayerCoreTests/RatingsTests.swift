@@ -60,3 +60,24 @@ import Testing
     let c = StreamTraits.parse(StreamItem(name: "720p", title: "Film.HDRip.x264", url: "https://c"))
     #expect(c.hdr.isEmpty); #expect(c.videoCodec == "H.264")
 }
+
+@Test func tmdbLocalizedParsing() {
+    let json = #"""
+    {"id":27205,"title":"Inception","overview":"Dom Cobb ist ein Dieb …","poster_path":"/de.jpg","backdrop_path":"/bg.jpg",
+     "genres":[{"name":"Action"},{"name":"Science Fiction"}],
+     "images":{"logos":[{"iso_639_1":"en","file_path":"/en.png"},{"iso_639_1":"de","file_path":"/de.png"}]},
+     "release_dates":{"results":[{"iso_3166_1":"US","release_dates":[{"certification":"PG-13"}]},
+                                 {"iso_3166_1":"DE","release_dates":[{"certification":""},{"certification":"12"}]}]}}
+    """#
+    let m = TMDBClient.parseLocalized(Data(json.utf8), lang: "de", region: "DE", series: false)
+    #expect(m?.logo == "https://image.tmdb.org/t/p/w500/de.png")
+    #expect(m?.certification == "FSK 12")
+    #expect(m?.name == "Inception")
+    let s = TMDBClient.parseSeason(Data(#"{"episodes":[{"episode_number":1,"name":"Der Anfang","overview":""},{"episode_number":2,"name":"Folge 2"}]}"#.utf8))
+    #expect(s[1]?.name == "Der Anfang"); #expect(s[1]?.overview == nil); #expect(s[2]?.name == nil)
+}
+
+@Test func tmdbClientUsesShortImageLanguage() throws {
+    let c = TMDBClient(apiKey: "k", language: "de-DE")
+    #expect(c.languageCode == "de"); #expect(c.regionCode == "DE")
+}
