@@ -54,4 +54,22 @@ extension AppModel {
         let fresh = await streams(type: type, id: id, revalidate: true)
         return fresh.isEmpty ? list : fresh
     }
+
+    /// Welle D-b (M3): Stand wurde lückenhaft abgelegt und ist inzwischen veraltet (Erneuerung erlaubt).
+    func partialNeedsRefresh(id: String, now: Date = Date()) -> Bool {
+        guard let c = streamCache[id] else { return false }
+        return StreamCacheUpdate.awaitsPartialRefresh(partial: streamPartial.contains(id), storedAt: c.at,
+                                                      emptyUntil: streamEmptyUntil[id], allEmptyAt: streamsAllEmptyAt,
+                                                      pause: StreamPrefetcher.allEmptyPause, now: now)
+    }
+
+    /// Welle D-b (M3): Zeigt die Quellenliste einen veralteten, lückenhaften Stand, wartet sie danach auf dessen
+    /// Erneuerung (legt sich mit der schon angestoßenen zusammen) und übernimmt sie. nil = nichts zu übernehmen
+    /// (Stand vollständig, frisch, gesperrt oder Erneuerung leer).
+    func refreshedPartialStreams(type: String, id: String) async -> [(addon: String, stream: StreamItem)]? {
+        guard partialNeedsRefresh(id: id) else { return nil }
+        RemoteLog.info("streams", "\(id): lückenhafter Stand gezeigt, Liste übernimmt die Erneuerung")
+        let fresh = await streams(type: type, id: id, revalidate: true)
+        return fresh.isEmpty ? nil : fresh
+    }
 }

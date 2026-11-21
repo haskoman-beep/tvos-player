@@ -37,6 +37,15 @@ final class StreamPrefetcher {
 
     var playerActive: Bool { !players.isEmpty }
 
+    /// Welle D-b (Mi2): Profilwechsel – Plätze der alten Suchen freigeben (sie laufen aus, ohne etwa abzulegen),
+    /// damit das neue Profil dieselben Titel gleich vorladen kann.
+    func reset() {
+        running.removeAll(); waiting.removeAll(); prefetched.removeAll()
+        generation += 1; resets += 1
+    }
+    /// Zählt `reset()`: ein Vorladen von vor dem Wechsel gibt keinen Platz des neuen Profils frei.
+    private var resets = 0
+
     /// Diese ID wird gerade vorgeladen (Log: Detailseite wartet auf das Vorladen).
     func isRunning(_ id: String) -> Bool { running.contains(id) }
 
@@ -129,8 +138,11 @@ final class StreamPrefetcher {
         running.insert(job.id)
         let t0 = Date()
         starts.append(t0)
+        let epoch = resets
         Task {
-            let list = await model.streams(type: job.type, id: job.id)
+            // Welle D-b (M3): veralteter, lückenhafter Stand → wirklich neu fragen (nicht nur den Cache-Treffer holen).
+            let list = await model.streams(type: job.type, id: job.id, revalidate: model.partialNeedsRefresh(id: job.id))
+            guard epoch == self.resets else { return }
             self.running.remove(job.id)
             if !list.isEmpty { self.markPrefetched(job.id) }
             RemoteLog.info("prefetch", "prefetch → \(job.id) (\(Int(Date().timeIntervalSince(t0) * 1000)) ms, \(list.count) Quellen)")

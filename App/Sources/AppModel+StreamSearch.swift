@@ -9,6 +9,9 @@ final class StreamSearchStatus: ObservableObject {
     private var updatedAt: [String: Date] = [:]
     private init() {}
 
+    /// Welle D-b (I1): Profilwechsel – kein Zwischenstand eines anderen Profils bleibt sichtbar.
+    func reset() { progress.removeAll(); updatedAt.removeAll() }
+
     func update(_ id: String, _ p: AddonSearchProgress) {
         progress[id] = p
         updatedAt[id] = Date()
@@ -31,16 +34,26 @@ extension AppModel {
     /// Direkt aus dem Ergebnis bestimmt, nicht aus dem globalen Status (der kann inzwischen verdrängt sein).
     /// Läuft als ungebundene Aufgabe in `streams()` (geteilt mit Vorladen und Cache) und endet spätestens nach der
     /// Addon-Frist; Verlassen der Liste bricht sie deshalb bewusst nicht ab.
-    func searchAddons(type: String, id: String) async -> (results: [(addon: InstalledAddon, streams: [StreamItem])], failed: Set<String>) {
+    /// Welle D-b (I1): Zwischenstände nur melden, solange Profil (`owner`) und Stand (`epoch`) noch gelten; eine
+    /// alte Suche nach dem Profilwechsel füllt sonst die Quellenliste des neuen Profils.
+    func searchAddons(type: String, id: String, owner: UUID, epoch: Int) async -> (results: [(addon: InstalledAddon, streams: [StreamItem])], failed: Set<String>) {
         let timeout = profile.addonTimeout
         let asked = profile.addons.filter { $0.manifest.supports("stream", type: type, id: id) }.map(\.manifest.name)
         let result = await addons.streams(from: profile.addons, type: type, id: id, timeout: timeout) { p in
-            await MainActor.run { StreamSearchStatus.shared.update(id, p) }
+            await MainActor.run {
+                guard self.searchStillCurrent(owner: owner, epoch: epoch) else { return }
+                StreamSearchStatus.shared.update(id, p)
+            }
         }
-        if let p = StreamSearchStatus.shared.progress[id] {
+        if searchStillCurrent(owner: owner, epoch: epoch), let p = StreamSearchStatus.shared.progress[id] {
             RemoteLog.info("streams", "\(id): Addon-Status \(p.logText) · Grenze \(Int(timeout)) s")
         }
         return (result, Set(asked).subtracting(result.map(\.addon.manifest.name)))
+    }
+
+    /// Welle D-b: Suche gehört noch zum aktiven Profil und wurde nicht durch einen Profilwechsel vergessen.
+    func searchStillCurrent(owner: UUID, epoch: Int) -> Bool {
+        profile.id == owner && streamTasks.isCurrent(epoch: epoch)
     }
 }
 

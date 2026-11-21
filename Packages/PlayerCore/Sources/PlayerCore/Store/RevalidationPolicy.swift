@@ -122,3 +122,39 @@ extension StreamListMerge {
         }
     }
 }
+
+extension StreamCacheUpdate {
+    /// Welle D-b (M3): Ein lückenhaft abgelegter Stand (ein Addon ohne Antwort), der inzwischen veraltet ist, gilt
+    /// nicht als vollständig: Die offene Quellenliste übernimmt die Erneuerung im Hintergrund, und der Vorlader
+    /// fragt ihn wie einen fehlenden Eintrag neu. Frisch (die ersten 60 s) oder abgelaufen gilt das nicht, ebenso
+    /// nicht, solange eine Erneuerung gesperrt ist (Leer-Pause, Pause nach „alle Addons leer“).
+    public static func awaitsPartialRefresh(partial: Bool, storedAt: Date, emptyUntil: Date?, allEmptyAt: Date?,
+                                            pause: TimeInterval, now: Date = Date(),
+                                            policy: RevalidationPolicy = .streams) -> Bool {
+        guard partial, policy.state(storedAt: storedAt, now: now) == .stale else { return false }
+        return RevalidationPolicy.revalidationAllowed(emptyUntil: emptyUntil, allEmptyAt: allEmptyAt, pause: pause, now: now)
+    }
+}
+
+extension StreamListMerge {
+    /// Welle D-b (I2): Herkunft einer Quelle unabhängig vom Beschreibungstext (Seeder-Zahl und Cache-Marker im
+    /// `label` ändern sich zwischen zwei Abfragen, `StreamItem.id` damit auch): Addon plus Adresse, ohne Adresse
+    /// Addon plus infoHash und Dateiname.
+    public static func sourceKey(addon: String, stream: StreamItem) -> String {
+        if let u = stream.url, !u.isEmpty { return "\(addon)|u|\(u)" }
+        return "\(addon)|h|\((stream.infoHash ?? "").lowercased())|\(stream.behaviorHints?.filename ?? "")"
+    }
+
+    /// Welle D-b (I2): Erneuerung in eine schon gezeigte Liste übernehmen, ohne sie zu ersetzen: bestehende Zeilen
+    /// bleiben in Reihenfolge und Identität (Fokus, Fehlermerker und automatischer Wechsel behalten ihren Bezug),
+    /// nur Quellen, deren Herkunft noch nicht in der Liste steht, kommen dazu (in der Reihenfolge von `fresh`).
+    public static func additions(to existing: [(addon: String, stream: StreamItem)],
+                                 from fresh: [(addon: String, stream: StreamItem)]) -> [(addon: String, stream: StreamItem)] {
+        var seen = Set(existing.map { sourceKey(addon: $0.addon, stream: $0.stream) })
+        var ids = Set(existing.map(\.stream.id))
+        return fresh.filter { e in
+            // Auch keine zweite Zeile mit gleicher `id` (die Liste nutzt sie als ForEach-Identität).
+            seen.insert(sourceKey(addon: e.addon, stream: e.stream)).inserted && ids.insert(e.stream.id).inserted
+        }
+    }
+}

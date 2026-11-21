@@ -211,9 +211,15 @@ final class AppModel: ObservableObject {
     // MARK: Profile
 
     func switchProfile(_ id: UUID) {
+        // Welle D-b (Mi3): das schon aktive Profil erneut wählen ändert nichts (laufende Suchen bleiben gültig).
+        guard id != stored.activeProfileID else { return }
         stored.activeProfileID = id; cache.removeAll(); save()
         // Quellen des vorigen Profils (andere Addons) nicht ungefiltert als Cache-Treffer liefern.
         streamCache.removeAll(); streamAddonFetchedAt.removeAll()
+        // Welle D-b (M1): laufende Suchen des alten Profils vergessen (sie legen nichts mehr ab, niemand wartet neu
+        // auf sie), Leer-Pausen und Lückenmerker gelten nur für das Profil, in dem sie entstanden.
+        streamTasks.reset(); streamEmptyUntil.removeAll(); streamsAllEmptyAt = nil; streamPartial.removeAll()
+        StreamSearchStatus.shared.reset(); StreamPrefetcher.shared.reset()
         restoreCatalogSnapshot()
         progress = progressStore.load(profile: id)
         Task { await syncRemoteProgress() }
@@ -375,15 +381,23 @@ final class AppModel: ObservableObject {
             RemoteLog.info("streams", "\(id): Cache-Treffer\(fresh ? "" : " (veraltet, Erneuerung läuft)")\(StreamPrefetcher.shared.wasPrefetched(id) ? " (vorgeladen)" : "") · \(list.count) Quellen")
             return list
         }
+        // Welle D-b (M1): Profil und Stand beim Start merken; nach einem Profilwechsel kein Ergebnis des alten Profils
+        // ablegen oder an einen Aufrufer geben.
+        let owner = profile.id, epoch = streamTasks.currentEpoch
         if let t = streamTasks[id] {
             RemoteLog.info("streams", "\(id): wartet auf laufende Abfrage\(StreamPrefetcher.shared.isRunning(id) ? " (Vorladen)" : "")")
-            return await t.value
+            let list = await t.value
+            return profile.id == owner ? list : []
         }
         let task = Task { () -> [(addon: String, stream: StreamItem)] in
             // Welle C-a: Zeitgrenze und Status je Addon; `failed` = Addons mit Fehler oder Zeitüberschreitung.
-            let search = await searchAddons(type: type, id: id)
+            let search = await searchAddons(type: type, id: id, owner: owner, epoch: epoch)
             let all = search.results
             RemoteLog.info("streams", "\(type) \(id): " + all.map { "\($0.addon.manifest.name)=\($0.streams.count)" }.joined(separator: ", "))
+            guard searchStillCurrent(owner: owner, epoch: epoch) else {
+                RemoteLog.info("streams", "\(id): Profil gewechselt, Ergebnis der alten Suche verworfen")
+                return []
+            }
             // Rohergebnis aller Addons leer (fehlgeschlagene fehlen in `all`, zählen also als leer): vermutlich
             // Ratenbegrenzung → Vorladen pausiert. Bewusst vor dem Filtern auf abspielbare Quellen.
             if !profile.addons.isEmpty, all.allSatisfy({ $0.streams.isEmpty }) { streamsAllEmptyAt = Date() }
@@ -391,10 +405,10 @@ final class AppModel: ObservableObject {
             // Welle C-b: Addons ohne Antwort behalten ihre alten Einträge; leer ersetzt keinen Stand.
             return storeStreams(id: id, fresh: list, answered: Set(all.map { $0.addon.manifest.name }), failed: search.failed)
         }
-        streamTasks[id] = task
+        let ticket = streamTasks.begin(id, task)
         let list = await task.value
-        streamTasks[id] = nil
-        return list
+        streamTasks.finish(id, ticket)
+        return profile.id == owner ? list : []
     }
 
     /// Nur der Cache, ohne Abfrage: erlaubt Technik-Plaketten schon im ersten Bild der Detailseite.
@@ -412,7 +426,10 @@ final class AppModel: ObservableObject {
 
     /// Welle C-b: nicht privat, damit AppModel+StreamRevalidate den Stand lesen kann.
     var streamCache: [String: (at: Date, list: [(addon: String, stream: StreamItem)])] = [:]
-    var streamTasks: [String: Task<[(addon: String, stream: StreamItem)], Never>] = [:]
+    /// Welle D-b (M1): laufende Abfragen je ID; `reset()` beim Profilwechsel.
+    var streamTasks = TaskSlots<[(addon: String, stream: StreamItem)]>()
+    /// Welle D-b (M3): IDs, deren Stand lückenhaft abgelegt wurde (ein Addon ohne Antwort).
+    var streamPartial: Set<String> = []
     /// Welle C-b: Abrufzeitpunkt je Addon im Stand von `streamCache[id]` (behaltene Einträge laufen nach ihm ab).
     var streamAddonFetchedAt: [String: [String: Date]] = [:]
     /// Leeres/fehlgeschlagenes Ergebnis: bis dahin kein Vorladen dieser ID (die Detailseite fragt trotzdem).
@@ -510,7 +527,11 @@ extension AppModel {
 
     func streamCacheState(id: String) -> StreamCacheState {
         let now = Date()
-        if let c = streamCache[id], RevalidationPolicy.streams.isUsable(storedAt: c.at, now: now) { return .cached }
+        if let c = streamCache[id], RevalidationPolicy.streams.isUsable(storedAt: c.at, now: now) {
+            // Welle D-b (M3): veralteter, lückenhafter Stand zählt fürs Vorladen nicht als vollständig gecacht.
+            guard partialNeedsRefresh(id: id, now: now) else { return .cached }
+            return streamTasks[id] != nil ? .running : .missing
+        }
         if streamTasks[id] != nil { return .running }
         if let u = streamEmptyUntil[id], u > now { return .emptyRecently }
         return .missing
@@ -547,6 +568,8 @@ extension AppModel {
             }
             streamAddonFetchedAt = streamAddonFetchedAt.filter { streamCache[$0.key] != nil }
             streamAddonFetchedAt[id] = fetchedAt
+            streamPartial = streamPartial.filter { streamCache[$0] != nil }
+            if !failed.isEmpty { streamPartial.insert(id) } else { streamPartial.remove(id) }   // Mi1
             QualityBadgeCache.shared.streamsStored(id: id)
             return list
         }
