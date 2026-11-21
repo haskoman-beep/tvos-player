@@ -7,7 +7,7 @@ public enum AppPhase: String, Sendable {
 
 /// Player-Verhalten bei TV aus / Home-Taste / Bildschirmschoner (testbar, ohne Engine).
 /// - inaktiv oder Hintergrund: Wiedergabe pausieren (auch während des Ladens: dann nicht von selbst starten).
-/// - zurück: pausiert lassen; nach echtem Hintergrund die Sitzung neu aufbauen (tvOS gibt Video-/Netz-Sitzungen frei).
+/// - zurück: pausiert lassen; nach echtem Hintergrund die Sitzung erst beim Play-Druck neu aufbauen.
 /// - länger als `closeAfter` im Hintergrund: Player schließen.
 public struct PlaybackLifecycle: Sendable {
     public enum Action: Equatable, Sendable {
@@ -15,8 +15,9 @@ public struct PlaybackLifecycle: Sendable {
         case pause
         /// Hintergrund ohne laufende Wiedergabe: nur merken.
         case none
-        /// Zurück aus dem Hintergrund: Sitzung an der Stelle neu aufbauen und pausiert lassen.
-        case reloadPaused
+        /// Zurück aus dem Hintergrund: pausiert lassen. Hat die Engine das Bild freigegeben, erst beim Play-Druck
+        /// neu aufbauen (der Neuaufbau startet sonst von selbst).
+        case returnedFromBackground
         /// Zu lange im Hintergrund: Player schließen.
         case close
     }
@@ -44,7 +45,7 @@ public struct PlaybackLifecycle: Sendable {
         case .active:
             defer { backgroundSince = nil }
             guard let since = backgroundSince else { return .none }
-            return now.timeIntervalSince(since) >= closeAfter ? .close : .reloadPaused
+            return now.timeIntervalSince(since) >= closeAfter ? .close : .returnedFromBackground
         }
     }
 

@@ -5,6 +5,8 @@ import PlayerCore
 extension PlaybackEngine {
     /// Backends ohne Fehlerarten: nur der Text (Einordnung „unbekannt“, bisheriges Verhalten).
     var playbackFailure: PlaybackFailure? { errorText.map { PlaybackFailure(message: $0) } }
+    /// Backends ohne Hintergrund-Abbau müssen nie neu aufbauen.
+    var needsForegroundVideoRestore: Bool { false }
 }
 
 extension AetherBackend {
@@ -16,4 +18,7 @@ extension AetherBackend {
         }
         return errorText.map { PlaybackFailure(message: $0) }
     }
+
+    /// AetherEngine: Bild im Hintergrund freigegeben, Quelle/Stelle/Spurwahl behalten („rebuild before play()“).
+    var needsForegroundVideoRestore: Bool { engine.needsForegroundVideoRestore }
 }

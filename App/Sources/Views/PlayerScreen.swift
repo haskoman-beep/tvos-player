@@ -48,7 +48,7 @@ struct PlayerScreen: View {
                                                        },
                                                        addonSubtitles: { await model.addonSubtitles(for: request, media: url, headers: headers, enabled: !isTrailer) },
                                                        onTracksShown: { tracksOpen = $0 },
-                                                       reresolve: { isTrailer ? nil : await model.freshStreamURL(for: request) }) }
+                                                       reresolve: { isTrailer ? nil : await model.freshStream(for: request) }) }
             else { Text(initError ?? "Player wird gestartet …") }
         }
         .onDisappear {
@@ -95,13 +95,17 @@ struct PlayerControls<E: PlaybackEngine>: View {
     /// Spur-Panel auf/zu (für PlayerScreen: onDisappear bei offenem Panel ist kein Verlassen).
     var onTracksShown: (Bool) -> Void = { _ in }
     /// Abgelaufenen Link derselben Quelle neu auflösen (nil = geht nicht, z. B. Trailer).
-    var reresolve: (@MainActor () async -> URL?)? = nil
+    var reresolve: (@MainActor () async -> (url: URL, headers: [String: String])?)? = nil
     /// Fehlerleiter, TV-aus-Verhalten, Fehlermeldung, neu aufgelöster Link (Logik in PlayerCore, PlayerLifecycle.swift).
     @State private var recoveryPlan = RecoveryPlanner()
     @State var life = PlaybackLifecycle()
     @State var lifeTask: Task<Void, Never>?
     @State private var failureNotice: String?
     @State private var resolvedURL: URL?
+    /// Ladewünsche mit den Kopfzeilen der neu aufgelösten Quelle (nil = `prefs`).
+    @State private var resolvedPrefs: LoadPrefs?
+    /// Nach dem Hintergrund: Engine hat das Bild freigegeben, Neuaufbau erst beim Play-Druck (PlayerLifecycle.swift).
+    @State var restorePending = false
     /// Laufende Addon-UT-Abfrage; abgebrochen beim Verlassen und vor dem Neuladen.
     @State var addonSubTask: Task<Void, Never>?
     /// Laufendes Neuladen nach einem Fehler; abgebrochen beim Verlassen.
@@ -166,7 +170,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
         .onExitCommand { leave { saveProgress(); engine.stop(); dismiss() } }
         .onReceive(timer) { _ in
             tick &+= 1
-            if engine.isPlaying, engine.errorText == nil { lastGoodTime = engine.currentTime; recoveryPlan.notePlaying(at: lastGoodTime) }
+            if engine.isPlaying, engine.errorText == nil { lastGoodTime = engine.currentTime; recoveryPlan.notePlaying() }
             if tick % 10 == 0 && engine.isPlaying { saveProgress() }
             upNextTick()
         }
@@ -180,7 +184,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             // Neuladen weiter. Bei einem Ausgang (leave) ist es echt, auch wenn das Panel noch offen ist.
             RemoteLog.info("player", "Verlassen (Panel \(showTracks ? "offen" : "zu")\(leaving ? ", Ausgang" : ""))")
             guard !showTracks || leaving else { return }
-            loadTask?.cancel(); addonSubTask?.cancel(); recoverTask?.cancel()
+            loadTask?.cancel(); addonSubTask?.cancel(); recoverTask?.cancel(); lifeTask?.cancel()
         }
         .onChange(of: engine.errorText) { _, e in
             guard let e else { return }
@@ -312,6 +316,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
         if upNext != nil { startNext(); return }
         let before = engine.stateText
         if engine.errorText != nil { recoveryPlan.reset(); recover("Neuer Versuch per Play/Pause", manual: true); return }
+        if restorePending { restoreAndPlay(); poke(); return }
         engine.togglePlayPause()
         RemoteLog.info("player", "Play/Pause gedrückt · Zustand vorher \(before)")
         Task {
@@ -324,6 +329,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
 
     /// ±10 s sammeln und nach 450 ms einmal springen.
     private func queueSeek(_ delta: Double) {
+        // Bild nach dem Hintergrund freigegeben: erst Play baut neu auf (ein Neuaufbau würde von selbst starten).
+        guard !restorePending else { RemoteLog.info("player", "Sprung gesperrt bis Play (nach Hintergrund)"); return }
         let base = pendingSeek ?? engine.currentTime
         let limit = engine.duration > 10 ? engine.duration - 5 : .greatestFiniteMagnitude
         let target = min(max(0, base + delta), limit)
@@ -345,7 +352,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
         addonSubTask?.cancel()
         recoveryPlan.canReresolve = reresolve != nil
         let failure = engine.playbackFailure ?? PlaybackFailure(message: reason)
-        let (cls, planned) = recoveryPlan.next(for: failure, at: lastGoodTime)
+        let (cls, planned) = recoveryPlan.next(for: failure)
         var step = planned
         if case .giveUp = planned {
             // Trailer: nie stehen bleiben (zurück zur Detailseite mit Hinweis); Nutzerwunsch: trotzdem versuchen.
@@ -360,6 +367,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
         case .retrySame, .reresolve: break
         }
         failureNotice = nil
+        // Neu laden baut die Sitzung ohnehin neu auf.
+        restorePending = false
         // Vor dem ersten Bild (Fehler beim Start) gilt die gewünschte Startstelle, nicht 0.
         let pos = lastGoodTime > 0 ? lastGoodTime : (start ?? 0)
         // UT-Wahl VOR dem Abbau merken (danach ist sie weg) und nach dem Neuladen wieder setzen. Eine Addon-Spur
@@ -385,7 +394,12 @@ struct PlayerControls<E: PlaybackEngine>: View {
                     saveProgress(); engine.stop(); leave { onFallback("\(cls.label): \(reason)") }; return
                 }
                 RemoteLog.info("player", "Frischer Link · load ab \(Int(pos))s")
-                do { try await engine.load(fresh, start: pos, prefs: prefs); resolvedURL = fresh; reloaded = true }
+                var freshPrefs = prefs
+                freshPrefs.headers = fresh.headers
+                do {
+                    try await engine.load(fresh.url, start: pos, prefs: freshPrefs)
+                    resolvedURL = fresh.url; resolvedPrefs = freshPrefs; reloaded = true
+                }
                 catch { await escalate(after: error); return }
             } else {
                 do { try await engine.recover() }
@@ -393,7 +407,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                     // Inzwischen verlassen (z. B. Menü): kein Ersatz-Laden und keine nächste Quelle.
                     guard !Task.isCancelled, !leaving else { return }
                     RemoteLog.error("player", "reloadAtCurrentPosition fehlgeschlagen: \(error) → load ab \(Int(pos))s")
-                    do { try await engine.load(resolvedURL ?? url, start: pos, prefs: prefs); reloaded = true }
+                    do { try await engine.load(resolvedURL ?? url, start: pos, prefs: resolvedPrefs ?? prefs); reloaded = true }
                     catch { await escalate(after: error); return }
                 }
             }

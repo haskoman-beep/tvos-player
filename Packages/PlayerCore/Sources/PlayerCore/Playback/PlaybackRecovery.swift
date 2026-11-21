@@ -10,10 +10,14 @@ public struct PlaybackFailure: Equatable, Sendable {
     public var code: Int?
     /// Negativer FFmpeg-Fehlercode, falls vorhanden.
     public var ffmpegCode: Int?
+    /// URL-Fehlercode tiefer in der Kette (z. B. unter AVFoundation −11800), falls das Backend ihn kennt.
+    public var underlyingURLCode: Int?
     public var message: String
 
-    public init(kind: String? = nil, domain: String? = nil, code: Int? = nil, ffmpegCode: Int? = nil, message: String = "") {
-        self.kind = kind; self.domain = domain; self.code = code; self.ffmpegCode = ffmpegCode; self.message = message
+    public init(kind: String? = nil, domain: String? = nil, code: Int? = nil, ffmpegCode: Int? = nil,
+                underlyingURLCode: Int? = nil, message: String = "") {
+        self.kind = kind; self.domain = domain; self.code = code; self.ffmpegCode = ffmpegCode
+        self.underlyingURLCode = underlyingURLCode; self.message = message
     }
 
     /// Kurz fürs Log (ohne Meldungstext, der Links enthalten kann).
@@ -99,6 +103,10 @@ public enum PlaybackErrorClassifier {
         if unsupportedKinds.contains(kind) { return .unsupported }
         if timeoutKinds.contains(kind) { return .timeout }
         if f.domain == "NSURLErrorDomain", let c = f.code, let cls = urlClass(c) { return cls }
+        // AVPlayer-Weg: CoreMedia meldet HTTP-Fehler als eigene Codes (−12660 = 403, −12938 = 404).
+        if f.domain == "CoreMediaErrorDomain", f.code == -12660 || f.code == -12938 { return .linkExpired }
+        // AVFoundation −11800 („unbekannt“): der URL-Fehler darunter entscheidet.
+        if f.domain == "AVFoundationErrorDomain", f.code == -11800, let u = f.underlyingURLCode, let cls = urlClass(u) { return cls }
         if kind == "sourceOpenFailed", f.ffmpegCode == ffmpegInvalidData {
             return .unsupported
         }
@@ -127,22 +135,23 @@ public enum PlaybackErrorClassifier {
 }
 
 /// Fehlerleiter je Wiedergabe: je Fehlerklasse eine Strategie, begrenzte Versuche, kein Endlos-Kreisen.
-/// Nach `healthySeconds` störungsfreier Wiedergabe seit dem letzten Versuch beginnt die Leiter neu.
+/// Nach `healthySeconds` echt gespielten Sekunden seit dem letzten Versuch beginnt die Leiter neu. Gezählt wird
+/// Spielzeit (ein Takt je Sekunde), nicht der Positionsabstand: Sprünge und Fortsetzen an `start` zählen nicht.
 public struct RecoveryPlanner: Sendable {
     /// Höchstens so viele Neuversuche (gleiche Quelle oder neu aufgelöst) je Leiter, über alle Klassen.
     public var maxAttempts = 4
     public var healthySeconds: Double = 120
     public private(set) var attempts: [PlaybackErrorClass: Int] = [:]
     public private(set) var total = 0
-    /// Position beim letzten Versuch (für die Gesund-Prüfung).
-    private var anchor: Double?
+    /// Fehlerfrei gespielte Sekunden seit dem letzten Versuch.
+    public private(set) var playedSinceAttempt: Double = 0
     /// true = Link-Neuauflösen ist möglich (Addon-Quelle, kein Trailer).
     public var canReresolve: Bool
 
     public init(canReresolve: Bool = true) { self.canReresolve = canReresolve }
 
-    /// Nächster Schritt für diesen Fehler an Position `position` (Sekunden).
-    public mutating func next(for failure: PlaybackFailure, at position: Double) -> (PlaybackErrorClass, RecoveryStep) {
+    /// Nächster Schritt für diesen Fehler.
+    public mutating func next(for failure: PlaybackFailure) -> (PlaybackErrorClass, RecoveryStep) {
         let cls = PlaybackErrorClassifier.classify(failure)
         let n = attempts[cls, default: 0]
         var step = Self.ladder(cls, attempt: n, canReresolve: canReresolve)
@@ -152,21 +161,22 @@ public struct RecoveryPlanner: Sendable {
                 // Budget aufgebraucht: wo die Klasse sonst weiterschaltet, nächste Quelle; Netz → Meldung.
                 step = cls == .network ? .giveUp(message: Self.message(cls)) : .nextSource
             } else {
-                attempts[cls] = n + 1; total += 1; anchor = position
+                attempts[cls] = n + 1; total += 1; playedSinceAttempt = 0
             }
         case .nextSource, .giveUp: break
         }
         return (cls, step)
     }
 
-    /// Jede Sekunde mit laufender, fehlerfreier Wiedergabe: nach genug Strecke seit dem Versuch neu beginnen.
-    public mutating func notePlaying(at position: Double) {
-        guard let a = anchor, position - a >= healthySeconds else { return }
-        reset()
+    /// Ein Takt laufender, fehlerfreier Wiedergabe (`seconds` = Taktlänge): nach genug Spielzeit neu beginnen.
+    public mutating func notePlaying(seconds: Double = 1) {
+        guard total > 0 else { return }
+        playedSinceAttempt += seconds
+        if playedSinceAttempt >= healthySeconds { reset() }
     }
 
     /// Neuer Anlauf (Nutzer drückt „Erneut versuchen“ oder Play/Pause).
-    public mutating func reset() { attempts = [:]; total = 0; anchor = nil }
+    public mutating func reset() { attempts = [:]; total = 0; playedSinceAttempt = 0 }
 
     /// Strategie je Klasse und Versuch (0 = erster Fehler dieser Klasse).
     public static func ladder(_ cls: PlaybackErrorClass, attempt n: Int, canReresolve: Bool) -> RecoveryStep {
@@ -202,10 +212,16 @@ public struct RecoveryPlanner: Sendable {
 }
 
 extension LastSource {
-    /// Link neu auflösen: genau dieselbe Datei (Dateiname bzw. Beschreibung) in einer frischen Addon-Antwort.
-    /// Kein Ausweichen auf ähnliche Quellen (bingeGroup, Auflösung): das macht der normale Fallback.
+    /// Link neu auflösen: genau dieselbe Datei (Dateiname bzw. Beschreibung) in einer frischen Addon-Antwort,
+    /// bei mehreren Treffern die mit gleichem Namen (Dienst/Auflösung). Kein Ausweichen auf ähnliche Quellen
+    /// (bingeGroup, Auflösung): das macht der normale Fallback. Leerer Fingerabdruck: nie ein Treffer.
+    public func exactStream(in streams: [StreamItem]) -> StreamItem? {
+        guard !fingerprint.isEmpty else { return nil }
+        let hits = playableStreams(streams).filter { ($0.behaviorHints?.filename ?? $0.label) == fingerprint }
+        return hits.first { $0.name == name } ?? hits.first
+    }
+
     public func exactURL(in streams: [StreamItem]) -> URL? {
-        let hit = playableStreams(streams).first { ($0.behaviorHints?.filename ?? $0.label) == fingerprint }
-        return hit?.url.flatMap(URL.init(string:))
+        exactStream(in: streams)?.url.flatMap(URL.init(string:))
     }
 }

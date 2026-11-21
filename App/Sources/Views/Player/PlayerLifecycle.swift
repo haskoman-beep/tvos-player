@@ -32,8 +32,8 @@ extension View {
 }
 
 extension PlayerControls {
-    /// Inaktiv/Hintergrund: pausieren, Fortschritt speichern, Scrobble-Pause. Zurück: pausiert lassen; nach echtem
-    /// Hintergrund die Sitzung neu aufbauen (die Engine gibt Video und Verbindungen frei). Zu lange weg: schließen.
+    /// Inaktiv/Hintergrund: pausieren, Fortschritt speichern, Scrobble-Pause. Zurück: pausiert lassen; hat die Engine
+    /// das Bild freigegeben, baut erst der Play-Druck neu auf. Zu lange weg: schließen.
     func handlePhase(_ phase: AppPhase) {
         guard !leaving else { return }
         let action = life.phaseChanged(to: phase, isActiveMedia: engine.isPlaying || engine.isLoading)
@@ -44,18 +44,11 @@ extension PlayerControls {
             engine.pause(); saveProgress(); onPause()
         case .close:
             closeAfterBackground()
-        case .reloadPaused:
-            // Fehlerzustand: das regelt recover bzw. die Fehlerkarte.
-            guard engine.errorText == nil else { break }
-            recoverTask?.cancel()
-            recoverTask = Task {
-                do { try await engine.recover() } catch {
-                    RemoteLog.error("player", "Neuaufbau nach Hintergrund fehlgeschlagen: \(error)"); return
-                }
-                guard !Task.isCancelled, !leaving else { return }
-                if life.holdsPlayback { engine.pause() }
-                RemoteLog.info("player", "Nach Hintergrund neu aufgebaut · \(engine.stateText) bei \(Int(engine.currentTime))s")
-            }
+        case .returnedFromBackground:
+            // Kein Neuaufbau jetzt: AetherEngine spielt danach von selbst weiter. Erst Play baut neu auf
+            // (restoreAndPlay); Fehlerzustand regelt recover bzw. die Fehlerkarte.
+            restorePending = engine.errorText == nil && engine.needsForegroundVideoRestore
+            RemoteLog.info("player", "Zurück aus dem Hintergrund · Neuaufbau \(restorePending ? "beim nächsten Play" : "nicht nötig")")
         }
         // Zeitgeber nur für den Fall, dass die App im Hintergrund nicht ausgesetzt wird; sonst prüft die Rückkehr.
         lifeTask?.cancel()
@@ -64,6 +57,25 @@ extension PlayerControls {
             try? await Task.sleep(for: .seconds(life.closeAfter))
             guard !Task.isCancelled, life.shouldClose() else { return }
             closeAfterBackground()
+        }
+    }
+
+    /// Play nach dem Hintergrund: Sitzung an der Stelle neu aufbauen; der Neuaufbau spielt los.
+    func restoreAndPlay() {
+        guard !leaving else { return }
+        restorePending = false
+        life.userResumed()
+        recoverTask?.cancel()
+        recoverTask = Task {
+            do { try await engine.recover() } catch {
+                guard !Task.isCancelled, !leaving else { return }
+                RemoteLog.error("player", "Neuaufbau nach Hintergrund fehlgeschlagen: \(error)")
+                engine.play()   // Engine meldet den Fehler selbst, die Fehlerleiter übernimmt
+                return
+            }
+            guard !Task.isCancelled, !leaving else { return }
+            if !engine.isPlaying { engine.play() }
+            RemoteLog.info("player", "Nach Hintergrund neu aufgebaut · \(engine.stateText) bei \(Int(engine.currentTime))s")
         }
     }
 
