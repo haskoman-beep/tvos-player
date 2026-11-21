@@ -1,0 +1,323 @@
+import SwiftUI
+import PlayerCore
+
+/// Designsystem der App (Plan §4.1–4.4): Textrollen, Abstände, Radien, Flächen und Farben.
+/// Views nehmen diese Tokens statt fester Zahlen. Noch an keiner bestehenden Stelle eingesetzt (Welle F-0);
+/// F-a, F-b2 und F-d stellen die Bildschirme darauf um.
+enum Theme {
+
+    // MARK: Textrollen (§4.2)
+
+    /// Sechs Textrollen auf tvOS-Textstilen. Höchstens zwei Gewichte pro Bildschirm (regular und semibold/bold).
+    enum TextRole: CaseIterable {
+        /// largeTitle bold (76): Filmtitel ohne Logo, Profilwahl.
+        case display
+        /// title2 bold (48): „Einstellungen“, „Reihen & Collections“, Titel der Quellenliste.
+        case pageTitle
+        /// title3 semibold (38): Reihentitel auf Start, „Besetzung“, Kategoriekopf rechts.
+        case sectionTitle
+        /// body (29): Listenzeilen, Kartenunterschrift.
+        case rowTitle
+        /// headline (29, semibold): hervorgehobene Listenzeile, Statuskarte, Fokusanker.
+        case rowTitleEmphasis
+        /// subheadline (29), sekundär: Beschreibungen, Zeilenwerte, Meta-Zeile.
+        case rowDetail
+        /// caption bold (25): Plakettentext.
+        case badge
+
+        var font: Font {
+            switch self {
+            case .display: .largeTitle.bold()
+            case .pageTitle: .title2.bold()
+            case .sectionTitle: .title3.weight(.semibold)
+            case .rowTitle: .body
+            case .rowTitleEmphasis: .headline
+            case .rowDetail: .subheadline
+            case .badge: .caption.bold()
+            }
+        }
+
+        /// Sekundäre Rollen tragen `fg.secondary` (bzw. Schwarz 60 % in fokussierten Zeilen).
+        var isSecondary: Bool { self == .rowDetail }
+    }
+
+    // MARK: Abstände (§4.3)
+
+    enum Space {
+        /// 8: Plakette ↔ Plakette, Symbol ↔ Text.
+        static let xs: CGFloat = 8
+        /// 12: innerhalb einer Zeile.
+        static let s: CGFloat = 12
+        /// 20: Zeile ↔ Zeile in Karten, Karte ↔ Karte in einer Reihe.
+        static let m: CGFloat = 20
+        /// 32: Abschnitt ↔ Abschnitt.
+        static let l: CGFloat = 32
+        /// 48: Reihe ↔ Reihe auf Start, Spalte ↔ Spalte.
+        static let xl: CGFloat = 48
+        /// 80: tvOS-Sicherheitsrand waagrecht (Titel, Plaketten und Reihen starten auf einer Linie).
+        static let edge: CGFloat = 80
+        /// 60: tvOS-Sicherheitsrand senkrecht.
+        static let edgeVertical: CGFloat = 60
+    }
+
+    /// Feste Maße der Bedienseiten (§4.3, §4.6).
+    enum Layout {
+        /// Linke Spalte der Einstellungen bzw. des Browsers („Am Handy einrichten“ bricht sonst um).
+        static let categoryColumnWidth: CGFloat = 560
+        /// Größte Textbreite der rechten Spalte.
+        static let contentMaxWidth: CGFloat = 1100
+        /// Mindesthöhe einer `SettingsRow`.
+        static let rowMinHeight: CGFloat = 80
+        /// Symbolkachel einer Zeile (48×48) und Symbolgröße darin (32 pt).
+        static let iconTile: CGFloat = 48
+        static let iconSize: CGFloat = 32
+        /// Breite der Akzentmarke an der aktiven Kategorie.
+        static let accentMarkWidth: CGFloat = 6
+        /// Mindesthöhe eines Eintrags der linken Spalte (`CategoryList`).
+        static let categoryRowMinHeight: CGFloat = 72
+        /// Kreis links in der `StatusCard` (Initiale bzw. Symbol).
+        static let statusMark: CGFloat = 72
+    }
+
+    /// Fokuseffekt der Bedienzeilen (`ThemeRowButtonStyle`).
+    enum Focus {
+        /// Anheben bei Fokus bzw. Eindrücken beim Klick.
+        static let scale: CGFloat = 1.02
+        static let pressedScale: CGFloat = 0.98
+        /// Schatten der fokussierten Zeile.
+        static let shadowOpacity: Double = 0.35
+        static let shadowRadius: CGFloat = 14
+        static let shadowY: CGFloat = 8
+        /// Dauer der Fokus-Übergänge (auch Ein- und Ausblenden der Zeilenbeschreibung).
+        static let duration: Double = 0.15
+        static let pressDuration: Double = 0.1
+    }
+
+    // MARK: Radien (§4.4)
+
+    /// Drei Radien. `card` ist bewusst keine Zahl: Poster, Querformat und Kacheln nehmen den Systemstil
+    /// `.buttonStyle(.card)` mit dessen eigenem Eckradius und Fokuseffekt.
+    enum Radius {
+        /// 8: Plaketten.
+        static let badge: CGFloat = 8
+        /// 20: Listenzeilen, Quellenzeilen, Statuskarte, Plus-Kachel.
+        static let row: CGFloat = 20
+        // card: Systemradius von `.buttonStyle(.card)`; Karten setzen keinen eigenen Radius.
+    }
+
+    // MARK: Flächen und Farben (§4.4)
+
+    enum Palette {
+        /// `bg.base`: App-Hintergrund.
+        static let base = Color.black
+        /// `bg.surface`: dunkler, ruhiger Grund der Bedienseiten (Einstellungen, Verwalter, Quellen).
+        /// Weiß 7 % über Schwarz, deckend gemischt, damit kein Bildgrund oder Glas durchscheint (Nutzerentscheidung 3).
+        static let surface = Color(white: 0.07)
+        /// `bg.row`: ruhende Zeilen (Weiß 10 %).
+        static let row = Color.white.opacity(0.10)
+        /// Fokussierte Zeile: Systemweiß wie beim tvOS-Fokus.
+        static let rowFocused = Color.white
+        /// `fg.primary`.
+        static let primary = Color.white
+        /// `fg.secondary`: Weiß 65 % (nicht `.secondary`, das auf Glas unter 3:1 fällt).
+        static let secondary = Color.white.opacity(0.65)
+        /// Text auf fokussierter (weißer) Zeile.
+        static let primaryOnFocus = Color.black
+        /// Untertitel und Werte auf fokussierter Zeile: Schwarz 60 % (A3).
+        static let secondaryOnFocus = Color.black.opacity(0.6)
+        /// Neutrale Plakettenfläche (Technik): Weiß 18 %.
+        static let badgeFill = Color.white.opacity(0.18)
+        /// Status-Kapsel auf Bildern: Schwarz 65 %.
+        static let badgeOnImage = Color.black.opacity(0.65)
+
+        /// Vordergrund je nach Fokus der Zeile.
+        static func foreground(secondary: Bool, focused: Bool) -> Color {
+            switch (secondary, focused) {
+            case (false, false): primary
+            case (true, false): self.secondary
+            case (false, true): primaryOnFocus
+            case (true, true): secondaryOnFocus
+            }
+        }
+    }
+
+    /// Zustandsfarben. Rot, Grün und Orange tragen nur Zustände, nie Dekoration; Farbe ist nie der einzige
+    /// Träger (A5), deshalb hat jeder Zustand auch ein Symbol und einen Namen für VoiceOver.
+    /// Token `state.*`. Name `Tone` statt `State`, damit es nicht mit SwiftUIs `@State` kollidiert.
+    enum Tone: CaseIterable {
+        /// „sofort“, „Verbunden“.
+        case ok
+        /// Fehlender Schlüssel, Zeitüberschreitung.
+        case warn
+        /// Fehler, destruktive Knöpfe.
+        case error
+
+        var color: Color {
+            switch self {
+            case .ok: .green          // Systemgrün; das alte (0.16, 0.56, 0.30) ist für Text zu dunkel
+            case .warn: .orange
+            case .error: .red
+            }
+        }
+
+        /// Textfarbe des Zustands auf dunklen Flächen (bg.row, Status-Kapsel): mindestens 4,5:1.
+        /// Systemrot liegt dort bei rund 4,2:1, deshalb ein helleres Rot (≈ 5,3:1); `color` bleibt für Flächen
+        /// und destruktive Knöpfe.
+        var textColor: Color {
+            switch self {
+            case .ok, .warn: color
+            case .error: Color(red: 1, green: 0.45, blue: 0.42)
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .ok: "checkmark.circle.fill"
+            case .warn: "exclamationmark.triangle.fill"
+            case .error: "xmark.octagon.fill"
+            }
+        }
+
+        var accessibilityName: String {
+            switch self {
+            case .ok: "In Ordnung"
+            case .warn: "Warnung"
+            case .error: "Fehler"
+            }
+        }
+    }
+
+    /// Feste Kachelfarben der Kategoriesymbole (§4.6), unabhängig von der Akzentfarbe.
+    /// Das Symbol darauf ist weiß und gefüllt (kein Neon-Glow wie bei umrissenen Akzentsymbolen).
+    enum CategoryTint: CaseIterable {
+        case profile, addons, home, appearance, playback, audio, system
+
+        var color: Color {
+            switch self {
+            case .profile: .blue
+            case .addons: .purple
+            case .home: .orange
+            case .appearance: .pink
+            case .playback: .green
+            case .audio: .teal
+            case .system: .gray
+            }
+        }
+    }
+
+    /// Akzent: nur „aktiv/gewählt“, Hauptknopf und Akzentmarke, nie das einzige Fokuszeichen (A6).
+    /// Die Farbe kommt aus der Profilwahl über `.tint` (RootView); hier nur die Regel für die Marke:
+    /// auf fokussierter (weißer) Zeile wird sie dunkel gezeichnet, sonst wäre ein weißer Akzent unsichtbar.
+    static func accentMark(focused: Bool) -> AnyShapeStyle {
+        focused ? AnyShapeStyle(Palette.primaryOnFocus) : AnyShapeStyle(TintShapeStyle())
+    }
+}
+
+// MARK: - Modifikatoren
+
+extension View {
+    /// Schrift einer Textrolle; sekundäre Rollen bekommen `fg.secondary`.
+    func textRole(_ role: Theme.TextRole) -> some View {
+        modifier(TextRoleModifier(role: role, focusAware: false))
+    }
+
+    /// Wie `textRole`, aber mit Fokusfarben, wenn der Text im Label eines fokussierten Knopfs liegt
+    /// (Schwarz bzw. Schwarz 60 % auf der weißen Fokusfläche).
+    func textRoleInRow(_ role: Theme.TextRole) -> some View {
+        modifier(TextRoleModifier(role: role, focusAware: true))
+    }
+
+    /// Dunkler, ruhiger Grund für Bedienseiten (Einstellungen, Verwalter, Quellen) statt heller Glasfläche.
+    /// (`scrollContentBackground` gibt es auf tvOS nicht; tvOS-Listen zeichnen ohnehin keinen eigenen Grund.)
+    func settingsSurface() -> some View {
+        self
+            .background(Theme.Palette.surface.ignoresSafeArea())
+    }
+}
+
+private struct TextRoleModifier: ViewModifier {
+    let role: Theme.TextRole
+    let focusAware: Bool
+    @Environment(\.isFocused) private var focused
+
+    func body(content: Content) -> some View {
+        content
+            .font(role.font)
+            .foregroundStyle(focusAware
+                             ? Theme.Palette.foreground(secondary: role.isSecondary, focused: focused)
+                             : (role.isSecondary ? Theme.Palette.secondary : Theme.Palette.primary))
+    }
+}
+
+/// Knopfstil der Bedienzeilen: ruhend `bg.row`, fokussiert weiß mit leichtem Anheben, Radius `radius.row`.
+/// Die Texte im Label wählen ihre Farbe selbst über `textRoleInRow` (liest denselben Fokus).
+/// `maxWidth` begrenzt die ganze Fläche (Standard: Textbreite 1100), damit der Wert rechts am Flächenende steht.
+struct ThemeRowButtonStyle: ButtonStyle {
+    var minHeight: CGFloat = Theme.Layout.rowMinHeight
+    var maxWidth: CGFloat = Theme.Layout.contentMaxWidth
+
+    func makeBody(configuration: Configuration) -> some View {
+        RowBody(configuration: configuration, minHeight: minHeight, maxWidth: maxWidth)
+    }
+
+    private struct RowBody: View {
+        let configuration: Configuration
+        let minHeight: CGFloat
+        let maxWidth: CGFloat
+        @Environment(\.isFocused) private var focused
+
+        var body: some View {
+            configuration.label
+                .padding(.horizontal, Theme.Space.m)
+                .padding(.vertical, Theme.Space.s)
+                .frame(maxWidth: maxWidth, minHeight: minHeight, alignment: .leading)
+                .background(focused ? Theme.Palette.rowFocused : Theme.Palette.row,
+                            in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
+                .scaleEffect(configuration.isPressed ? Theme.Focus.pressedScale : (focused ? Theme.Focus.scale : 1))
+                .shadow(color: .black.opacity(focused ? Theme.Focus.shadowOpacity : 0),
+                        radius: focused ? Theme.Focus.shadowRadius : 0, y: focused ? Theme.Focus.shadowY : 0)
+                .animation(.easeOut(duration: Theme.Focus.duration), value: focused)
+                .animation(.easeOut(duration: Theme.Focus.pressDuration), value: configuration.isPressed)
+        }
+    }
+}
+
+/// Symbolkachel 48×48 in Kategoriefarbe mit weißem, gefülltem Symbol (32 pt).
+struct IconTile: View {
+    let symbol: String
+    let color: Color
+
+    var body: some View {
+        Image(systemName: symbol)
+            .symbolVariant(.fill)
+            .font(.system(size: Theme.Layout.iconSize, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: Theme.Layout.iconTile, height: Theme.Layout.iconTile)
+            .background(color, in: RoundedRectangle(cornerRadius: Theme.Radius.badge, style: .continuous))
+            .accessibilityHidden(true)
+    }
+}
+
+#Preview("Tokens") {
+    ScrollView {
+        VStack(alignment: .leading, spacing: Theme.Space.l) {
+            Text("Display").textRole(.display)
+            Text("Seitentitel").textRole(.pageTitle)
+            Text("Abschnitt").textRole(.sectionTitle)
+            Text("Zeilentitel").textRole(.rowTitle)
+            Text(DesignText.metaLine(["2018", "97 min", "FSK 0", "Animation"])).textRole(.rowDetail)
+            Text("PLAKETTE").textRole(.badge)
+            HStack(spacing: Theme.Space.xs) {
+                ForEach(Theme.CategoryTint.allCases, id: \.self) { IconTile(symbol: "gearshape", color: $0.color) }
+            }
+            HStack(spacing: Theme.Space.m) {
+                ForEach(Theme.Tone.allCases, id: \.self) { s in
+                    Label(s.accessibilityName, systemImage: s.symbol).foregroundStyle(s.color)
+                }
+            }
+        }
+        .padding(.horizontal, Theme.Space.edge)
+        .padding(.vertical, Theme.Space.edgeVertical)
+    }
+    .settingsSurface()
+}
