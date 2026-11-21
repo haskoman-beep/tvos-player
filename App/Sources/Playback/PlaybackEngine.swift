@@ -23,6 +23,8 @@ protocol PlaybackEngine: ObservableObject {
     func load(_ url: URL, start: Double?) async throws
     func play()
     func pause()
+    func togglePlayPause()
+    var stateText: String { get }
     func seek(_ seconds: Double) async
     func selectAudio(_ id: Int)
     func selectSubtitle(_ id: Int?)
@@ -69,6 +71,9 @@ final class AetherBackend: PlaybackEngine {
     func load(_ url: URL, start: Double?) async throws { _ = try await engine.load(url: url, startPosition: start) }
     func play() { engine.play() }
     func pause() { engine.pause() }
+    /// Engine liest den echten AVPlayer-Zustand (der veröffentlichte `state` kann hinterherhinken).
+    func togglePlayPause() { engine.togglePlayPause() }
+    var stateText: String { "\(engine.state)" }
     func seek(_ seconds: Double) async { await engine.seek(to: max(0, seconds)) }
     func selectAudio(_ id: Int) { engine.selectAudioTrack(index: id) }
     func selectSubtitle(_ id: Int?) {

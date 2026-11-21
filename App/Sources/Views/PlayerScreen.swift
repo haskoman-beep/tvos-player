@@ -129,8 +129,9 @@ struct PlayerControls<E: PlaybackEngine>: View {
     }
 
     private func togglePlay() {
-        if engine.isPlaying { engine.pause() } else { engine.play() }
-        RemoteLog.info("player", engine.isPlaying ? "Weiter" : "Pause")
+        let before = engine.stateText
+        engine.togglePlayPause()
+        RemoteLog.info("player", "Play/Pause gedrückt · Zustand vorher \(before)")
         poke()
     }
 
