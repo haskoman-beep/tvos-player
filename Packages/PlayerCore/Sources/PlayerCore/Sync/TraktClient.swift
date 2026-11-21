@@ -158,7 +158,8 @@ public struct TraktClient: Sendable {
     /// Öffentliche oder eigene Liste. `user` nil = angemeldeter Nutzer ("me").
     public func list(user: String?, slug: String, token: SyncToken?) async throws -> [MetaPreview] {
         let path: String
-        if slug == "watchlist" { path = "/users/\(user ?? "me")/watchlist" }
+        // Merkliste, auch nach Typ (`watchlist/movies`, `watchlist/shows` – Fusion-Kit).
+        if slug == "watchlist" || slug == "watchlist/movies" || slug == "watchlist/shows" { path = "/users/\(user ?? "me")/\(slug)" }
         else if user == nil, Int(slug) != nil { path = "/lists/\(slug)/items" }   // Listen-ID (z. B. aus Nuvio)
         else { path = "/users/\(user ?? "me")/lists/\(slug)/items" }
         let arr = try await json(request("GET", path, token: token), token: token) as? [[String: Any]] ?? []

@@ -14,5 +14,6 @@ struct HomeSettings: View {
             Text("Reihen ordnen: auf der Startseite „Startseite bearbeiten“ wählen oder eine Kachel lange drücken.")
                 .foregroundStyle(.secondary)
         }
+        FusionKitSettingsView()
     }
 }

@@ -1,0 +1,321 @@
+import Foundation
+
+// Fusion-Startseiten-Kit (kit.betterer.cc, Format `fusionWidgets` v1) → unsere Reihen.
+// Kit-Dateien haben keine Lizenz: sie werden nur zur Laufzeit per URL geladen, nichts davon liegt im Repo.
+
+/// Was eine Quelle zum Laden braucht.
+public struct FusionNeeds: OptionSet, Sendable, Hashable {
+    public let rawValue: Int
+    public init(rawValue: Int) { self.rawValue = rawValue }
+    /// Öffentliche Trakt-Liste: die Trakt Client ID reicht.
+    public static let traktID = FusionNeeds(rawValue: 1)
+    /// Eigene Trakt-Merkliste: zusätzlich Anmeldung.
+    public static let traktLogin = FusionNeeds(rawValue: 2)
+    public static let tmdb = FusionNeeds(rawValue: 4)
+
+    public static func of(_ s: CatalogSource) -> FusionNeeds {
+        switch s.kind {
+        case .trakt(let user, let list):
+            return user == nil && FusionImport.isWatchlistSlug(list) ? [.traktID, .traktLogin] : .traktID
+        case .watchlist: return []
+        case .tmdbDiscover, .tmdbList, .tmdbCompany, .tmdbCollection: return .tmdb
+        default: return []
+        }
+    }
+}
+
+/// Eine Reihe aus dem Kit: Titelliste (`row.classic`) oder Kachel-Reihe (`collection.row`).
+public struct FusionKitRow: Sendable, Hashable, Identifiable {
+    public enum Body: Sendable, Hashable {
+        case list(CatalogSource)
+        case collection(MediaCollection)
+    }
+
+    /// `fusion.<quelle>.<widget-id>`; zugleich ID der Quelle bzw. der Collection.
+    public var id: String
+    public var title: String
+    public var style: RowStyle
+    public var body: Body
+    /// Seitenverhältnis der Kachelbilder laut Kit (`wide`, `poster`, `square`); nil bei Titellisten.
+    public var imageAspect: String?
+
+    public init(id: String, title: String, style: RowStyle, body: Body, imageAspect: String? = nil) {
+        self.id = id; self.title = title; self.style = style; self.body = body; self.imageAspect = imageAspect
+    }
+
+    public var content: RowContent {
+        switch body {
+        case .list(let s): .list(s)
+        case .collection(let c): .collection(id: c.id)
+        }
+    }
+
+    public var needs: FusionNeeds {
+        switch body {
+        case .list(let s): FusionNeeds.of(s)
+        case .collection(let c): c.folders.flatMap(\.sources).reduce(into: FusionNeeds()) { $0.formUnion(.of($1)) }
+        }
+    }
+
+    /// Nur Quellen, die mit den vorhandenen Diensten laden (Trakt ohne Client ID bzw. ohne Anmeldung fällt weg);
+    /// Kacheln ohne Quelle entfallen. nil = nichts bleibt übrig, Reihe ausblenden.
+    public func available(traktID: Bool, traktLogin: Bool) -> FusionKitRow? {
+        func ok(_ s: CatalogSource) -> Bool {
+            let n = FusionNeeds.of(s)
+            if n.contains(.traktID) && !traktID { return false }
+            if n.contains(.traktLogin) && !traktLogin { return false }
+            return true
+        }
+        switch body {
+        case .list(let s):
+            return ok(s) ? self : nil
+        case .collection(var c):
+            c.folders = c.folders.compactMap { f in
+                var f = f
+                f.sources = f.sources.filter(ok)
+                return f.sources.isEmpty ? nil : f
+            }
+            guard !c.folders.isEmpty else { return nil }
+            var r = self
+            r.body = .collection(c)
+            return r
+        }
+    }
+}
+
+/// Gelesene Kit-Datei.
+public struct FusionKitContent: Sendable, Hashable {
+    public var rows: [FusionKitRow]
+    /// Hinweise mit Anzahl, z. B. `traktRecommendations übersprungen` oder `Kachel ohne Quellen`.
+    public var warnings: [String: Int]
+
+    public init(rows: [FusionKitRow], warnings: [String: Int] = [:]) { self.rows = rows; self.warnings = warnings }
+
+    public func row(_ id: String) -> FusionKitRow? { rows.first { $0.id == id } }
+}
+
+public enum FusionImportError: Error, Equatable, CustomStringConvertible {
+    case unknownFormat
+    case iconPack
+
+    public var description: String {
+        switch self {
+        case .unknownFormat: "kein Fusion-Kit-Format (fusionWidgets oder Collection-Liste erwartet)"
+        case .iconPack: "Bewertungs-Icon-Satz – wird (noch) nicht unterstützt"
+        }
+    }
+}
+
+/// Liest Kit-Dateien: `{"exportType":"fusionWidgets","widgets":[…]}` (Setups und Kachel-Reihen) oder die
+/// flache Collection-Liste `[{"name","backgroundImageURL","dataSources"}]`. Unbekanntes wird gezählt, nie abgebrochen.
+public enum FusionImport {
+    public static let idPrefix = "fusion."
+
+    public static func isKitID(_ id: String) -> Bool { id.hasPrefix(idPrefix) }
+
+    /// Quellen-Schlüssel aus einer ID `fusion.<quelle>.<…>`.
+    public static func sourceKey(ofID id: String) -> String? {
+        guard isKitID(id) else { return nil }
+        let rest = id.dropFirst(idPrefix.count)
+        guard let dot = rest.firstIndex(of: "."), dot > rest.startIndex else { return nil }
+        return String(rest[..<dot])
+    }
+
+    /// Kit-ID einer Startseiten-Reihe (nil = eigene Reihe des Nutzers).
+    public static func kitID(of row: HomeRow) -> String? {
+        switch row.content {
+        case .list(let s): isKitID(s.id) ? s.id : nil
+        case .collection(let id): isKitID(id) ? id : nil
+        }
+    }
+
+    /// Eigene Trakt-Merkliste (`watchlist`, `watchlist/movies`, `watchlist/shows`).
+    static func isWatchlistSlug(_ s: String) -> Bool { s == "watchlist" || s.hasPrefix("watchlist/") }
+
+    /// - Parameters:
+    ///   - sourceKey: Schlüssel der Kit-Datei (Teil aller IDs, damit zwei Dateien sich nicht in die Quere kommen).
+    ///   - title: Reihentitel für die flache Collection-Liste (die hat keinen eigenen).
+    ///   - now: für „schon erschienen“ (TMDB-Datumsfilter); beim Laden eingesetzt.
+    public static func parse(_ data: Data, sourceKey: String, title: String = "Kit", now: Date = Date()) throws -> FusionKitContent {
+        let any = try JSONSerialization.jsonObject(with: data)
+        var warnings: [String: Int] = [:]
+        let warn: (String) -> Void = { warnings[$0, default: 0] += 1 }
+        let ctx = Context(sourceKey: sourceKey, today: day(now), warn: warn)
+        var rows: [FusionKitRow] = []
+
+        if let obj = any as? [String: Any] {
+            guard obj["exportType"] as? String == "fusionWidgets" || obj["widgets"] != nil else { throw FusionImportError.unknownFormat }
+            if let v = obj["exportVersion"] as? Int, v != 1 { warn("exportVersion \(v) unbekannt") }
+            let export = try JSONDecoder().decode(RawExport.self, from: data)
+            var seen = Set<String>()
+            for (i, w) in (export.widgets ?? []).enumerated() {
+                let rowID = idPrefix + sourceKey + "." + (w.id ?? "w\(i)")
+                guard seen.insert(rowID).inserted else { warn("doppelte Reihe"); continue }
+                if let r = row(w, id: rowID, ctx: ctx) { rows.append(r) }
+            }
+        } else if let arr = any as? [[String: Any]] {
+            if let first = arr.first, first["url"] != nil, first["dataSources"] == nil, first["dataSource"] == nil {
+                throw FusionImportError.iconPack
+            }
+            let items = try JSONDecoder().decode([RawItem].self, from: data)
+            let rowID = idPrefix + sourceKey + ".collection"
+            let folders = folders(items, rowID: rowID, ctx: ctx)
+            if folders.isEmpty { warn("Collection ohne Kacheln mit Quellen") } else {
+                rows.append(FusionKitRow(id: rowID, title: germanTitle(title), style: .collectionTiles,
+                                         body: .collection(MediaCollection(id: rowID, title: germanTitle(title), folders: folders)),
+                                         imageAspect: aspect(items)))
+            }
+        } else {
+            throw FusionImportError.unknownFormat
+        }
+        return FusionKitContent(rows: rows, warnings: warnings)
+    }
+
+    struct Context {
+        let sourceKey: String
+        let today: String
+        let warn: (String) -> Void
+    }
+
+    static func row(_ w: RawWidget, id: String, ctx: Context) -> FusionKitRow? {
+        let title = germanTitle(w.title ?? "?")
+        guard let ds = w.dataSource else { ctx.warn("Reihe ohne Quelle"); return nil }
+        if ds.kind == "collection" {
+            let items = ds.payload?.items ?? []
+            let folders = folders(items, rowID: id, ctx: ctx)
+            guard !folders.isEmpty else { ctx.warn("Collection ohne Kacheln mit Quellen"); return nil }
+            return FusionKitRow(id: id, title: title, style: .collectionTiles,
+                                body: .collection(MediaCollection(id: id, title: title, folders: folders)), imageAspect: aspect(items))
+        }
+        let style: RowStyle
+        switch w.type {
+        case "row.classic.numbered": style = .top10
+        case "row.classic", nil: style = .poster
+        case let t?: ctx.warn("Reihentyp \(t) als Poster-Reihe"); style = .poster
+        }
+        guard let s = source(ds, id: id, title: title, ctx: ctx) else { return nil }
+        return FusionKitRow(id: id, title: title, style: style, body: .list(s))
+    }
+
+    static func folders(_ items: [RawItem], rowID: String, ctx: Context) -> [Folder] {
+        var out: [Folder] = []
+        var seen = Set<String>()
+        for (j, it) in items.enumerated() {
+            let fid = rowID + "." + (it.id ?? "i\(j)")
+            guard seen.insert(fid).inserted else { ctx.warn("doppelte Kachel"); continue }
+            let ftitle = it.title ?? it.name ?? "?"
+            let raw = it.dataSources ?? it.dataSource.map { [$0] } ?? []
+            var sources: [CatalogSource] = []
+            for (k, s) in raw.enumerated() {
+                if let c = source(s, id: "\(fid).\(k)", title: s.payload?.listName ?? ftitle, ctx: ctx) { sources.append(c) }
+            }
+            guard !sources.isEmpty else { ctx.warn("Kachel ohne Quellen"); continue }
+            out.append(Folder(id: fid, title: ftitle, coverImage: imageURL(it.imageURL ?? it.backgroundImageURL), sources: sources))
+        }
+        return out
+    }
+
+    /// Bild-URL wie geliefert; nur wenn sie so nicht gültig ist (Leerzeichen, Umlaute), prozent-kodiert.
+    static func imageURL(_ s: String?) -> String? {
+        guard let s, !s.isEmpty else { return nil }
+        // Vorhandene `%xx` bleiben, nur unzulässige Zeichen werden kodiert (kein doppeltes Kodieren).
+        let allowed = CharacterSet.urlFragmentAllowed.union(CharacterSet(charactersIn: "%#"))
+        if s.unicodeScalars.allSatisfy(allowed.contains) { return s }
+        return s.addingPercentEncoding(withAllowedCharacters: allowed)
+    }
+
+    /// Häufigstes Seitenverhältnis der Kacheln (`imageAspect` bzw. `layout` der Collection-Liste).
+    static func aspect(_ items: [RawItem]) -> String? {
+        var n: [String: Int] = [:]
+        for it in items { if let a = (it.imageAspect ?? it.layout)?.lowercased() { n[a, default: 0] += 1 } }
+        return n.max { $0.value == $1.value ? $0.key > $1.key : $0.value < $1.value }?.key
+    }
+
+    static func source(_ r: RawSource, id: String, title: String, ctx: Context) -> CatalogSource? {
+        let p = r.payload
+        switch r.kind {
+        case "traktList":
+            guard let user = p?.username, !user.isEmpty, let slug = p?.listSlug, !slug.isEmpty else {
+                ctx.warn("Trakt-Liste ohne Nutzer/Slug"); return nil
+            }
+            guard user == "__me__" else {
+                return CatalogSource(id: id, title: title, kind: .trakt(user: user, list: slug), mediaType: .both)
+            }
+            // Eigene Merkliste des angemeldeten Nutzers (Fusion: `__me__` + `__watchlist_*__`).
+            switch slug {
+            case "__watchlist_all__": return CatalogSource(id: id, title: title, kind: .trakt(user: nil, list: "watchlist"), mediaType: .both)
+            case "__watchlist_movies__": return CatalogSource(id: id, title: title, kind: .trakt(user: nil, list: "watchlist/movies"), mediaType: .movie)
+            case "__watchlist_shows__": return CatalogSource(id: id, title: title, kind: .trakt(user: nil, list: "watchlist/shows"), mediaType: .series)
+            default: ctx.warn("eigene Trakt-Liste \(slug) übersprungen"); return nil
+            }
+        case "tmdbDiscover":
+            guard let p else { ctx.warn("TMDB-Discover ohne Angaben"); return nil }
+            let mt: MediaType = ["tv", "show", "shows", "series"].contains(p.type?.lowercased() ?? "") ? .series : .movie
+            var f: [String: String] = [:]
+            if let g = p.includeGenres, !g.isEmpty { f["with_genres"] = g.map { String($0) }.joined(separator: ",") }
+            if let g = p.excludeGenres, !g.isEmpty { f["without_genres"] = g.map { String($0) }.joined(separator: ",") }
+            if let s = NuvioImport.convertSort(p.sortBy, mediaType: mt) { f["sort_by"] = s }
+            if mt == .movie, let rc = p.releaseChannel {
+                switch rc {
+                case "theatrical": f["with_release_type"] = "2|3"
+                case "digital": f["with_release_type"] = "4"
+                case "physical": f["with_release_type"] = "5"
+                default: ctx.warn("releaseChannel \(rc) ignoriert")
+                }
+            }
+            if let rs = p.releaseStatus {
+                if rs == "released" {
+                    // Mit Veröffentlichungsart gilt `release_date` (Datum dieser Art), sonst das Erstdatum.
+                    let key = mt == .series ? "first_air_date.lte" : (f["with_release_type"] != nil ? "release_date.lte" : "primary_release_date.lte")
+                    f[key] = ctx.today
+                } else { ctx.warn("releaseStatus \(rs) ignoriert") }
+            }
+            let suffix = mt == .series ? "Serien" : "Filme"
+            return CatalogSource(id: id, title: "\(title) · \(suffix)", kind: .tmdbDiscover(filters: f), mediaType: mt, sortBy: f["sort_by"])
+        case "traktRecommendations":
+            ctx.warn("traktRecommendations übersprungen"); return nil
+        case let k?:
+            ctx.warn("Quelle \(k) übersprungen"); return nil
+        case nil:
+            ctx.warn("Quelle ohne Art"); return nil
+        }
+    }
+
+    /// Kit-Titel der Kachel-Reihen auf Deutsch; Variantenzusatz wie „(Color)“ entfällt. Unbekanntes bleibt.
+    static func germanTitle(_ t: String) -> String {
+        var base = t.trimmingCharacters(in: .whitespaces)
+        if base.hasSuffix(")"), let open = base.lastIndex(of: "("), open > base.startIndex {
+            base = String(base[..<open]).trimmingCharacters(in: .whitespaces)
+        }
+        let map = ["Decades": "Jahrzehnte", "Directors": "Regie", "Awards": "Preise", "Genres": "Genres", "Streaming": "Streaming",
+                   "Streaming Services": "Streaming-Dienste", "Movie Genres": "Film-Genres", "Movie Collections": "Filmreihen",
+                   "Popular Genres": "Beliebte Genres", "Popular Decades": "Beliebte Jahrzehnte", "Discover": "Entdecken"]
+        return map[base] ?? t
+    }
+
+    /// `yyyy-MM-dd` (UTC) für TMDB-Datumsfilter.
+    static func day(_ d: Date) -> String {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        let c = cal.dateComponents([.year, .month, .day], from: d)
+        func pad(_ n: Int?, _ w: Int) -> String { let s = String(n ?? 1); return String(repeating: "0", count: max(0, w - s.count)) + s }
+        return "\(pad(c.year, 4))-\(pad(c.month, 2))-\(pad(c.day, 2))"
+    }
+
+    // MARK: Roh-Format (nur die Felder, die wir brauchen; Rest wird ignoriert)
+
+    struct RawExport: Decodable { var widgets: [RawWidget]? }
+    struct RawWidget: Decodable { var id: String?; var title: String?; var type: String?; var dataSource: RawSource? }
+    struct RawSource: Decodable { var kind: String?; var payload: RawPayload? }
+    struct RawPayload: Decodable {
+        var username: String?; var listSlug: String?; var listName: String?
+        var type: String?; var includeGenres: [Int]?; var excludeGenres: [Int]?; var sortBy: String?
+        var releaseChannel: String?; var releaseStatus: String?
+        var items: [RawItem]?
+    }
+    struct RawItem: Decodable {
+        var id: String?; var title: String?; var name: String?
+        var imageURL: String?; var backgroundImageURL: String?; var imageAspect: String?; var layout: String?
+        var dataSources: [RawSource]?; var dataSource: RawSource?
+    }
+}
