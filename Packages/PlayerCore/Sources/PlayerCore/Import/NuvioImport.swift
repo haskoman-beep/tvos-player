@@ -1,7 +1,7 @@
 import Foundation
 
 public struct NuvioImportResult: Sendable {
-    public var collections: [Collection]
+    public var collections: [MediaCollection]
     public var skippedSources: Int
     /// Addon-Kataloge ohne bekannte Manifest-URL; werden aktiv, sobald das Addon installiert ist.
     public var pendingAddonSources: [CatalogSource]
@@ -14,7 +14,7 @@ public enum NuvioImport {
         var skipped = 0
         var pending: [CatalogSource] = []
         var order: [String] = []
-        var byTitle: [String: Collection] = [:]
+        var byTitle: [String: MediaCollection] = [:]
 
         for rc in raw {
             var folders: [Folder] = []
@@ -35,7 +35,7 @@ public enum NuvioImport {
                 byTitle[title] = existing
             } else {
                 order.append(title)
-                byTitle[title] = Collection(id: rc.id ?? UUID().uuidString, title: title,
+                byTitle[title] = MediaCollection(id: rc.id ?? UUID().uuidString, title: title,
                                             folders: mergeFolders([], folders))
             }
         }
@@ -44,7 +44,7 @@ public enum NuvioImport {
         return NuvioImportResult(collections: order.compactMap { byTitle[$0] }, skippedSources: skipped, pendingAddonSources: pending)
     }
 
-    static func mergeFolders(_ a: [Folder], _ b: [Folder]) -> [Folder] {
+    public static func mergeFolders(_ a: [Folder], _ b: [Folder]) -> [Folder] {
         var out = a
         for f in b {
             if let i = out.firstIndex(where: { $0.title == f.title }) {

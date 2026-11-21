@@ -1,0 +1,37 @@
+name: Player
+options:
+  bundleIdPrefix: de.haskoman
+  deploymentTarget:
+    tvOS: "18.0"
+packages:
+  AetherEngine:
+    url: https://github.com/superuser404notfound/AetherEngine
+    from: 7.71.2
+  PlayerCore:
+    path: ../Packages/PlayerCore
+targets:
+  Player:
+    type: application
+    platform: tvOS
+    sources: [Sources]
+    dependencies:
+      - package: AetherEngine
+      - package: PlayerCore
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: Player
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UIUserInterfaceStyle: Dark
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: de.haskoman.player
+        SWIFT_VERSION: "5.0"
+        CODE_SIGNING_ALLOWED: "NO"
+        CODE_SIGNING_REQUIRED: "NO"
+        CODE_SIGN_IDENTITY: ""

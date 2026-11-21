@@ -46,7 +46,7 @@ public struct Folder: Codable, Sendable, Hashable, Identifiable {
     }
 }
 
-public struct Collection: Codable, Sendable, Hashable, Identifiable {
+public struct MediaCollection: Codable, Sendable, Hashable, Identifiable {
     public var id: String
     public var title: String
     public var folders: [Folder]

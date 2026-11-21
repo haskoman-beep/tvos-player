@@ -5,7 +5,7 @@ import Testing
 @Test func profileRoundTrip() throws {
     var p = Profile.makeDefault()
     let src = CatalogSource(id: "s1", title: "Neu", kind: .tmdbDiscover(filters: ["with_watch_providers": "8|1796"]), mediaType: .movie)
-    p.collections = [Collection(id: "c1", title: "Streaming", folders: [Folder(id: "f1", title: "Netflix", sources: [src])])]
+    p.collections = [MediaCollection(id: "c1", title: "Streaming", folders: [Folder(id: "f1", title: "Netflix", sources: [src])])]
     p.home.rows.append(HomeRow(content: .collection(id: "c1")))
     let back = try JSONDecoder().decode(Profile.self, from: JSONEncoder().encode(p))
     #expect(back == p)

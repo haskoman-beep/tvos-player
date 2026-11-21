@@ -1,0 +1,43 @@
+name: build-ipa
+on:
+  push:
+    paths: ['App/**', 'Packages/**', '.github/workflows/**']
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xcode
+        run: |
+          ls /Applications | grep -i xcode
+          ls -d /Applications/Xcode*.app
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_27*.app /Applications/Xcode_26.3*.app 2>/dev/null | sort -V | tail -1)"
+          xcodebuild -version
+          xcodebuild -showsdks | grep -i tvos
+      - name: XcodeGen
+        run: brew install xcodegen && cd App && xcodegen generate
+      - name: Build
+        run: |
+          set -o pipefail
+          cd App && xcodebuild -project Player.xcodeproj -scheme Player -configuration Release \
+            -sdk appletvos -destination 'generic/platform=tvOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build > build.log 2>&1 || { grep -E 'error:|BUILD FAILED' build.log | head -80; exit 1; }
+          tail -5 build.log
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          cp -R App/build/Build/Products/Release-appletvos/Player.app Payload/
+          zip -qry Player.ipa Payload
+          ls -la Player.ipa
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: build-log
+          path: App/build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Player-ipa
+          path: Player.ipa
+          retention-days: 14

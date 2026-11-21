@@ -35,7 +35,7 @@ func threeRows() -> HomeLayout {
     var e = HomeEditor(layout: l, grabbing: l.rows[1].id)
     e.removeGrabbed()
     #expect(e.grabbed == nil && e.layout.rows.count == 2)
-    let avail = e.availableToAdd(collections: [Collection(id: "c1", title: "S", folders: [])], extraLists: [.watchlist])
+    let avail = e.availableToAdd(collections: [MediaCollection(id: "c1", title: "S", folders: [])], extraLists: [.watchlist])
     #expect(avail == [.collection(id: "c1")])
     let id = e.add(.collection(id: "c1"))
     #expect(e.layout.rows.last?.id == id && e.grabbed == id)

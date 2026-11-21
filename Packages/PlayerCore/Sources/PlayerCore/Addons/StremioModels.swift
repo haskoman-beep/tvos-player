@@ -100,7 +100,7 @@ public struct CatalogExtra: Codable, Sendable, Equatable {
 }
 
 /// Kurzform eines Titels in Katalogen (`metas`).
-public struct MetaPreview: Codable, Sendable, Equatable, Identifiable {
+public struct MetaPreview: Codable, Sendable, Hashable, Identifiable {
     public var id: String
     public var type: String
     public var name: String

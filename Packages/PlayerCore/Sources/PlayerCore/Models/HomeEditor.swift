@@ -57,7 +57,7 @@ public struct HomeEditor: Sendable {
     public func cancel() -> HomeLayout { original }
 
     /// Alles, was nicht auf der Startseite liegt: Collections zuerst, dann Listen.
-    public func availableToAdd(collections: [Collection], extraLists: [CatalogSource]) -> [RowContent] {
+    public func availableToAdd(collections: [MediaCollection], extraLists: [CatalogSource]) -> [RowContent] {
         let used = Set(layout.rows.map(\.content.key))
         let all = collections.map { RowContent.collection(id: $0.id) } + extraLists.map { RowContent.list($0) }
         return all.filter { !used.contains($0.key) }
