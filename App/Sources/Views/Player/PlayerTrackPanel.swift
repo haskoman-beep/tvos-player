@@ -1,5 +1,5 @@
 import SwiftUI
-import AetherEngine
+import AetherFEL
 import PlayerCore
 
 /// Backends, die Technik-Rohwerte für den Info-Reiter liefern (Auflösung, Dynamik, Tonkette).

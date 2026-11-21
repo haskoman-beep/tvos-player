@@ -34,6 +34,20 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build > build.log 2>&1 || { grep -E 'error:|BUILD FAILED' build.log | head -80; exit 1; }
           tail -5 build.log
           /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' -c 'Print :PlayerBuildCommit' -c 'Print :PlayerBuildBranch' build/Build/Products/Release-appletvos/Player.app/Info.plist
+      - name: Nachweis Dolby Vision FEL
+        # Packages/AetherFEL schaltet den Engine-Trait DolbyVisionFelCurves ein. Harte Prüfung ist dort der
+        # Bauwächter FelBuildGuard.swift (ohne Trait kein FelCurveFoldResult, der Bau bricht ab); hier zusätzlich
+        # der Nachweis im Bau-Log: Wächter übersetzt und die Trait-Bedingung im Compileraufruf der Engine.
+        run: |
+          cd App
+          guard=$(grep -c 'FelBuildGuard.swift' build.log || true)
+          flag=$(grep -o -E -- '-D ?DolbyVisionFelCurves' build.log | sort | uniq -c | tr '\n' ' ' || true)
+          any=$(grep -c 'DolbyVisionFelCurves' build.log || true)
+          echo "FelBuildGuard.swift im Log: $guard · Trait-Bedingung: ${flag:-keine} · Trait-Name gesamt: $any"
+          # Fehler nur, wenn beides fehlt: Xcode kann Bedingungen in Antwortdateien legen, der Wächter entscheidet.
+          if [ "$guard" -eq 0 ] && [ "$any" -eq 0 ]; then echo "::error title=FEL::Weder Wächter noch Trait im Build-Log"; exit 1; fi
+          if [ "$any" -eq 0 ]; then echo "::warning title=FEL::Trait-Name nicht im Build-Log (Wächter übersetzt: $guard×)"; exit 0; fi
+          echo "::notice title=FEL::DolbyVisionFelCurves im Build (Wächter $guard×, Bedingung: ${flag:-nur Name $any×})"
       - name: Package IPA
         run: |
           mkdir -p Payload

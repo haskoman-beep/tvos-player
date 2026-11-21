@@ -4,10 +4,10 @@ options:
   deploymentTarget:
     tvOS: "18.0"
 packages:
-  AetherEngine:
-    url: https://github.com/superuser404notfound/AetherEngine
-    # Genau dieser Stand (öffentliches Release; alle Player-Regeln sind gegen 7.71.2 geprüft).
-    exactVersion: 7.71.2
+  # AetherEngine 7.71.2 (genauer Stand) über die lokale Hülle mit Trait DolbyVisionFelCurves (Dolby Vision FEL):
+  # XcodeGen verwirft `traits:`, deshalb setzt Packages/AetherFEL/Package.swift den Trait und exportiert die Engine.
+  AetherFEL:
+    path: ../Packages/AetherFEL
   PlayerCore:
     path: ../Packages/PlayerCore
 targets:
@@ -16,7 +16,7 @@ targets:
     platform: tvOS
     sources: [Sources]
     dependencies:
-      - package: AetherEngine
+      - package: AetherFEL
       - package: PlayerCore
     info:
       path: Sources/Info.plist
