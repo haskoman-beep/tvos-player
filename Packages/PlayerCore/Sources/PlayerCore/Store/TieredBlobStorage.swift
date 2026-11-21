@@ -13,19 +13,24 @@ public protocol KeyValueBlobs: Sendable {
 /// (sonst SIGABRT beim Start). Kleine Blöcke bleiben dort (dauerhaft), große gehen nur in Dateien.
 ///
 /// Regeln:
-/// - Jeder Schreibvorgang landet als Datei im ersten beschreibbaren Ordner (`directories`, z. B.
-///   Application Support vor Caches); Kopien in den anderen Ordnern werden entfernt.
-/// - Zusätzlich in UserDefaults nur, wenn der komprimierte Block unter `limit(name)` bleibt und die Summe
-///   aller Blöcke dort `budget` nicht überschreitet; sonst wird der Defaults-Eintrag gelöscht.
-/// - Lesen: Defaults-Eintrag zuerst (jeder Schreibvorgang hält ihn aktuell oder löscht ihn), sonst die erste Datei.
+/// - Jeder Schreibvorgang landet als Datei in JEDEM beschreibbaren Ordner (`directories`, z. B.
+///   Application Support und Caches); beim Lesen gewinnt die jüngste Kopie (Änderungsdatum).
+/// - Profile (`profiles.json`) haben in UserDefaults einen festen Vorbehalt von `profileLimit`:
+///   sie passen immer, solange sie darunter bleiben – Caches darf tvOS leeren, Profile dürfen nie nur dort liegen.
+/// - Andere Blöcke nur bis `smallLimit` je Block und zusammen höchstens `budget - profileLimit`.
+/// - Nach dem Schreiben in UserDefaults wird gegengelesen; weicht der Wert ab, wird der Eintrag gelöscht.
+/// - Lesen: Defaults-Eintrag zuerst (jeder Schreibvorgang hält ihn aktuell oder löscht ihn), sonst die jüngste Datei.
 public struct TieredBlobStorage: BlobStorage {
     public static let prefix = "blob."
-    /// Normale Blöcke: höchstens 16 KB komprimiert in UserDefaults.
-    public static let smallLimit = 16 * 1024
-    /// Profile (Einstellungen, Schlüssel) sind wichtig genug für mehr Platz – Caches darf tvOS leeren.
-    public static let profileLimit = 128 * 1024
-    /// Summe aller Blöcke in UserDefaults – weit unter der ~1-MB-Grenze von tvOS.
-    public static let budget = 256 * 1024
+    public static let profileName = "profiles.json"
+    /// Normale Blöcke: höchstens 96 KB komprimiert in UserDefaults (sofern das Restbudget reicht).
+    public static let smallLimit = 96 * 1024
+    /// Fester Vorbehalt für die Profile (Einstellungen, Schlüssel).
+    public static let profileLimit = 512 * 1024
+    /// Summe aller Blöcke in UserDefaults – unter der ~1-MB-Grenze von tvOS.
+    public static let budget = 640 * 1024
+    /// Was alle anderen Blöcke zusammen belegen dürfen.
+    public static var othersBudget: Int { budget - profileLimit }
 
     public let defaults: KeyValueBlobs
     public let directories: [FileBlobStorage]
@@ -42,7 +47,7 @@ public struct TieredBlobStorage: BlobStorage {
     /// Höchstgröße (komprimiert) eines Blocks in UserDefaults; 0 = nur Datei.
     public static func limit(_ name: String) -> Int {
         if name.hasSuffix(".bak") { return 0 }
-        if name == "profiles.json" { return profileLimit }
+        if name == profileName { return profileLimit }
         return smallLimit
     }
 
@@ -50,19 +55,19 @@ public struct TieredBlobStorage: BlobStorage {
 
     public func read(_ name: String) -> Data? {
         if let z = defaults.data(forKey: key(name)), let d = decompress(z) { return d }
-        for dir in directories { if let d = dir.read(name) { return d } }
-        return nil
+        return newestFile(name)
     }
 
     public func write(_ name: String, _ data: Data) throws {
         let fileOK = writeFile(name, data)
-        let z = compress(data)
-        if let z, fitsDefaults(name, bytes: z.count) {
+        if let z = compress(data), fitsDefaults(name, bytes: z.count) {
             defaults.set(z, forKey: key(name))
-            return
+            if defaults.data(forKey: key(name)) == z { return }
+            defaults.remove(forKey: key(name))   // Schreiben nicht angekommen: nur Datei gilt
+        } else {
+            defaults.remove(forKey: key(name))
         }
-        guard fileOK else { throw StorageFull(bytes: z?.count ?? data.count) }
-        defaults.remove(forKey: key(name))
+        guard fileOK else { throw StorageFull(bytes: data.count) }
     }
 
     public func remove(_ name: String) {
@@ -70,22 +75,32 @@ public struct TieredBlobStorage: BlobStorage {
         for dir in directories { dir.remove(name) }
     }
 
-    /// In den ersten Ordner schreiben, der es annimmt; ältere Kopien anderswo löschen.
+    /// In jeden Ordner schreiben, der es annimmt (Caches als zweite Kopie); true, wenn mindestens einer klappte.
     @discardableResult
     func writeFile(_ name: String, _ data: Data) -> Bool {
-        for (i, dir) in directories.enumerated() {
-            guard (try? dir.write(name, data)) != nil else { continue }
-            for (j, other) in directories.enumerated() where j != i { other.remove(name) }
-            return true
+        var ok = false
+        for dir in directories where (try? dir.write(name, data)) != nil { ok = true }
+        return ok
+    }
+
+    /// Jüngste Kopie über alle Ordner (Änderungsdatum); bei Gleichstand der erste Ordner.
+    func newestFile(_ name: String) -> Data? {
+        var best: (data: Data, date: Date)?
+        for dir in directories {
+            guard let d = dir.read(name) else { continue }
+            let date = (try? FileManager.default.attributesOfItem(atPath: dir.url(name).path)[.modificationDate] as? Date) ?? .distantPast
+            if best == nil || date > best!.date { best = (d, date) }
         }
-        return false
+        return best?.data
     }
 
     func fitsDefaults(_ name: String, bytes: Int) -> Bool {
         guard bytes <= Self.limit(name) else { return false }
-        let others = defaults.keys(withPrefix: Self.prefix).filter { $0 != key(name) }
+        if name == Self.profileName { return true }   // eigener Vorbehalt
+        let others = defaults.keys(withPrefix: Self.prefix)
+            .filter { $0 != key(name) && $0 != key(Self.profileName) }
             .reduce(0) { $0 + (defaults.data(forKey: $1)?.count ?? 0) }
-        return others + bytes <= Self.budget
+        return others + bytes <= Self.othersBudget
     }
 
     /// Bytes aller Blöcke in UserDefaults, je Name.
@@ -103,21 +118,19 @@ public struct TieredBlobStorage: BlobStorage {
     }
 
     /// Einmalig beim Start: zu große oder überzählige Blöcke aus UserDefaults in Dateien verschieben
-    /// (lesen → Datei → Gegenprobe → aus Defaults löschen). Profile haben Vorrang, sonst kleinste zuerst.
+    /// (lesen → Datei → Gegenprobe → aus Defaults löschen). Profile bleiben, solange sie unter ihrem
+    /// Vorbehalt liegen; von den übrigen werden die kleinsten zuerst behalten.
     @discardableResult
     public func migrate() -> Migration {
         var m = Migration()
         let sizes = defaultsSizes()
-        let order = sizes.keys.sorted { a, b in
-            let pa = a == "profiles.json", pb = b == "profiles.json"
-            if pa != pb { return pa }
-            return sizes[a]! != sizes[b]! ? sizes[a]! < sizes[b]! : a < b
-        }
-        var total = 0
+        let order = sizes.keys.sorted { a, b in sizes[a]! != sizes[b]! ? sizes[a]! < sizes[b]! : a < b }
+        var others = 0
         for name in order {
             let bytes = sizes[name]!
-            if bytes <= Self.limit(name), total + bytes <= Self.budget {
-                total += bytes; m.kept.append(name); continue
+            if name == Self.profileName, bytes <= Self.profileLimit { m.kept.append(name); continue }
+            if name != Self.profileName, bytes <= Self.limit(name), others + bytes <= Self.othersBudget {
+                others += bytes; m.kept.append(name); continue
             }
             let z = defaults.data(forKey: key(name)) ?? Data()
             // Nicht entpackbar: Rohdaten beiseitelegen statt verwerfen.
@@ -128,6 +141,7 @@ public struct TieredBlobStorage: BlobStorage {
                 m.failed.append(name)
             }
         }
+        m.kept.sort { ($0 == Self.profileName ? 0 : 1, $0) < ($1 == Self.profileName ? 0 : 1, $1) }
         return m
     }
 
@@ -152,9 +166,11 @@ public extension FileBlobStorage {
 public final class MemoryKeyValueBlobs: KeyValueBlobs, @unchecked Sendable {
     private var values: [String: Data] = [:]
     private let lock = NSLock()
+    /// Test: Schreibvorgänge kommen nicht an (wie ein verweigerndes cfprefsd).
+    public var dropsWrites = false
     public init(_ values: [String: Data] = [:]) { self.values = values }
     public func data(forKey key: String) -> Data? { lock.withLock { values[key] } }
-    public func set(_ data: Data, forKey key: String) { lock.withLock { values[key] = data } }
+    public func set(_ data: Data, forKey key: String) { lock.withLock { if !dropsWrites { values[key] = data } } }
     public func remove(forKey key: String) { _ = lock.withLock { values.removeValue(forKey: key) } }
     public func keys(withPrefix prefix: String) -> [String] { lock.withLock { values.keys.filter { $0.hasPrefix(prefix) } } }
 }

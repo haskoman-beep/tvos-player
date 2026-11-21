@@ -21,7 +21,7 @@ extension AppModel {
             guard let at = cache.storedAt(s.id) else { return }   // inzwischen geleert (Profilwechsel …)
             guard at != before else {
                 cache.markFailed(s.id)
-                RemoteLog.info("katalog", "\(s.title): Erneuerung fehlgeschlagen, alter Stand bleibt")
+                RemoteLog.info("katalog", "\(s.title): Erneuerung ohne neuen Stand (Fehler oder leer), alter Stand bleibt")
                 return
             }
             catalogRevisions[s.id, default: 0] += 1

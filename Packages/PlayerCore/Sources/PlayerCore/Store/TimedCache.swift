@@ -13,6 +13,9 @@ public struct TimedCache<Value: Sendable>: Sendable {
     public var lifetime: TimeInterval
     public var retryAfter: TimeInterval
     public private(set) var entries: [String: Entry] = [:]
+    /// Steigt bei jedem `removeAll` (Profilwechsel, neues Addon …). Ein Abruf, der vorher begonnen hat,
+    /// legt sein Ergebnis über `store(_:for:generation:)` dann nicht mehr ab.
+    public private(set) var generation = 0
 
     public init(lifetime: TimeInterval = 24 * 3600, retryAfter: TimeInterval = 10 * 60) {
         self.lifetime = lifetime; self.retryAfter = retryAfter
@@ -43,10 +46,28 @@ public struct TimedCache<Value: Sendable>: Sendable {
         entries[key] = Entry(value: value, storedAt: now, failedAt: nil)
     }
 
+    /// Nur ablegen, wenn seit Beginn des Abrufs nicht geleert wurde. Gibt zurück, ob abgelegt wurde.
+    @discardableResult
+    public mutating func store(_ value: Value, for key: String, generation: Int, now: Date = Date()) -> Bool {
+        guard generation == self.generation else { return false }
+        store(value, for: key, now: now)
+        return true
+    }
+
     /// Erneuerung fehlgeschlagen: alten Wert behalten, später wieder versuchen.
     public mutating func markFailed(_ key: String, now: Date = Date()) {
         entries[key]?.failedAt = now
     }
 
-    public mutating func removeAll() { entries.removeAll() }
+    public mutating func removeAll() { entries.removeAll(); generation += 1 }
+}
+
+public extension TimedCache where Value: Collection {
+    /// Hintergrund-Erneuerung ablegen: wie `store(_:for:generation:)`, aber eine leere Antwort
+    /// überschreibt keine gefüllte Liste (gedrosselte Addons liefern gern `[]`).
+    @discardableResult
+    mutating func storeRefreshed(_ value: Value, for key: String, generation: Int, now: Date = Date()) -> Bool {
+        if value.isEmpty, let old = self[key], !old.isEmpty { return false }
+        return store(value, for: key, generation: generation, now: now)
+    }
 }

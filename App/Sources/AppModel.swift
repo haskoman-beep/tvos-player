@@ -277,6 +277,7 @@ final class AppModel: ObservableObject {
         if case .continueWatching = source.kind { return progress.continueWatching().map(\.item) }
         if case .upcoming = source.kind { return await upcomingToday() }   // eigener 6-h-Cache (AppModel+Upcoming)
         if !refresh, let c = cache[source.id] { refreshCatalogIfStale(source); return c }
+        let generation = cache.generation
         var out: [MetaPreview] = []
         do {
             switch source.kind {
@@ -296,8 +297,9 @@ final class AppModel: ObservableObject {
             }
         } catch { RemoteLog.error("katalog", "\(source.title): \(error)"); return [] }
         RemoteLog.info("katalog", "\(source.title): \(out.count) Einträge")
-        // Erneuerung nach Profilwechsel/Leeren (Eintrag weg) nicht mehr ablegen.
-        if !refresh || cache[source.id] != nil { cache.store(out, for: source.id) }
+        // Nach Profilwechsel/Leeren nicht mehr ablegen; leere Erneuerung überschreibt keine gefüllte Liste.
+        if refresh { cache.storeRefreshed(out, for: source.id, generation: generation) }
+        else { cache.store(out, for: source.id, generation: generation) }
         return out
     }
 

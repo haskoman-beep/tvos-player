@@ -1,10 +1,10 @@
 import Foundation
 import PlayerCore
 
-/// App-Ablage: kleine Blöcke LZFSE-komprimiert in UserDefaults (dauerhaft), große nur als Datei
-/// (Regeln in `TieredBlobStorage`). tvOS bricht die App ab, wenn die UserDefaults-Domäne ~1 MB übersteigt.
-/// Dateien: Application Support, falls dort wirklich schreibbar (tvOS verweigert es oft mit Code 513),
-/// sonst Caches/Player (darf das System bei Platzmangel leeren).
+/// App-Ablage: kleine Blöcke LZFSE-komprimiert in UserDefaults (dauerhaft, Profile mit festem Vorbehalt),
+/// große nur als Datei (Regeln in `TieredBlobStorage`). tvOS bricht die App ab, wenn die UserDefaults-Domäne
+/// ~1 MB übersteigt. Dateien: Application Support, falls dort wirklich schreibbar (tvOS verweigert es oft
+/// mit Code 513), und immer Caches/Player als zweite Kopie (darf das System bei Platzmangel leeren).
 struct DefaultsStorage: BlobStorage {
     let tiered: TieredBlobStorage
 
@@ -23,7 +23,8 @@ struct DefaultsStorage: BlobStorage {
         if !m.moved.isEmpty || !m.failed.isEmpty {
             RemoteLog.info("speicher", "Migration: verschoben \(m.moved) · behalten \(m.kept) · fehlgeschlagen \(m.failed)")
         }
-        RemoteLog.info("speicher", Self.summary(tiered: tiered, filesIn: supportOK ? "Application Support" : "Caches"))
+        RemoteLog.info("speicher", Self.summary(tiered: tiered, filesIn: supportOK ? "Application Support + Caches" : "Caches"))
+        if tiered.read(TieredBlobStorage.profileName) == nil { RemoteLog.error("speicher", "Profile fehlen – Standard angelegt") }
     }
 
     func read(_ name: String) -> Data? { tiered.read(name) }

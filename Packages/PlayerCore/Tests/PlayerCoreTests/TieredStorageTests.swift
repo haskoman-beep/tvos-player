@@ -45,12 +45,31 @@ private func blockedDir() -> FileBlobStorage {
 @Test func budgetCapsTotalDefaults() throws {
     let (s, kv, _) = tiered()
     try s.write("profiles.json", bytes(TieredBlobStorage.profileLimit))
-    try s.write("profiles2.json", bytes(1))           // normaler Name, passt noch
-    for i in 0..<20 { try s.write("p\(i).json", bytes(TieredBlobStorage.smallLimit)) }
-    let total = s.defaultsSizes().values.reduce(0, +)
-    #expect(total <= TieredBlobStorage.budget)
-    for i in 0..<20 { #expect(s.read("p\(i).json") == bytes(TieredBlobStorage.smallLimit)) }
-    #expect(kv.keys(withPrefix: "blob.").count < 22)
+    for i in 0..<20 { try s.write("p\(i).json", bytes(30_000)) }
+    let sizes = s.defaultsSizes()
+    #expect(sizes.values.reduce(0, +) <= TieredBlobStorage.budget)
+    #expect(sizes.filter { $0.key != "profiles.json" }.values.reduce(0, +) <= TieredBlobStorage.othersBudget)
+    for i in 0..<20 { #expect(s.read("p\(i).json") == bytes(30_000)) }
+    #expect(kv.keys(withPrefix: "blob.").count < 21)
+}
+
+@Test func profilesAlwaysFitEvenWhenOthersFillBudget() throws {
+    let (s, kv, _) = tiered()
+    for i in 0..<10 { try s.write("progress-\(i).json", bytes(40_000)) }   // füllt das Restbudget
+    #expect(s.defaultsSizes().values.reduce(0, +) <= TieredBlobStorage.othersBudget)
+    try s.write("profiles.json", bytes(400_000, 5))
+    #expect(kv.data(forKey: "blob.profiles.json") == bytes(400_000, 5))
+    #expect(s.defaultsSizes().values.reduce(0, +) <= TieredBlobStorage.budget)
+}
+
+@Test func normalBlobUsesRemainingBudgetUpToLimit() throws {
+    let (s, kv, _) = tiered()
+    try s.write("progress-a.json", bytes(90_000))
+    #expect(kv.data(forKey: "blob.progress-a.json") != nil)
+    try s.write("progress-b.json", bytes(TieredBlobStorage.othersBudget - 90_000))
+    #expect(kv.data(forKey: "blob.progress-b.json") != nil)
+    try s.write("progress-c.json", bytes(1))
+    #expect(kv.data(forKey: "blob.progress-c.json") == nil && s.read("progress-c.json") == bytes(1))
 }
 
 @Test func unwritablePreferredDirFallsBackToSecond() throws {
@@ -63,17 +82,39 @@ private func blockedDir() -> FileBlobStorage {
     #expect(s.read("progress-a.json")?.count == 50_000)
 }
 
-@Test func writingRemovesStaleCopyInOtherDir() throws {
+@Test func fileGoesToEveryWritableDir() throws {
     let (s, _, d) = tiered()
-    try d[1].write("progress-a.json", bytes(50_000, 1))   // alte Kopie im Ersatzordner
-    try s.write("progress-a.json", bytes(50_000, 2))
-    #expect(d[1].read("progress-a.json") == nil)
-    #expect(s.read("progress-a.json") == bytes(50_000, 2))
+    try s.write("progress-a.json", bytes(200_000, 2))
+    #expect(d.allSatisfy { $0.read("progress-a.json") == bytes(200_000, 2) })
+}
+
+@Test func readPicksNewestFileCopy() throws {
+    let (s, _, d) = tiered()
+    try d[0].write("progress-a.json", bytes(200_000, 1))
+    try d[1].write("progress-a.json", bytes(200_000, 2))
+    let fm = FileManager.default
+    try fm.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -3600)], ofItemAtPath: d[0].url("progress-a.json").path)
+    try fm.setAttributes([.modificationDate: Date()], ofItemAtPath: d[1].url("progress-a.json").path)
+    #expect(s.read("progress-a.json") == bytes(200_000, 2))
+    try fm.setAttributes([.modificationDate: Date(timeIntervalSinceNow: 60)], ofItemAtPath: d[0].url("progress-a.json").path)
+    #expect(s.read("progress-a.json") == bytes(200_000, 1))
+}
+
+@Test func droppedDefaultsWriteFallsBackToFile() throws {
+    let kv = MemoryKeyValueBlobs(["blob.progress-a.json": bytes(10, 1)])
+    let (s, _, _) = tiered(kv)
+    kv.dropsWrites = true
+    try s.write("progress-a.json", bytes(10, 2))
+    #expect(kv.data(forKey: "blob.progress-a.json") == nil)        // alter Stand gelöscht
+    #expect(s.read("progress-a.json") == bytes(10, 2))
+    // Ohne beschreibbare Datei ist das ein Fehler.
+    let s2 = TieredBlobStorage(defaults: kv, directories: [blockedDir()])
+    #expect(throws: TieredBlobStorage.StorageFull.self) { try s2.write("progress-b.json", bytes(10)) }
 }
 
 @Test func largeBlobWithoutAnyWritableFileThrows() {
     let s = TieredBlobStorage(defaults: MemoryKeyValueBlobs(), directories: [blockedDir()])
-    #expect(throws: TieredBlobStorage.StorageFull.self) { try s.write("progress-a.json", bytes(50_000)) }
+    #expect(throws: TieredBlobStorage.StorageFull.self) { try s.write("progress-a.json", bytes(200_000)) }
     // Kleine Blöcke gehen ohne Datei trotzdem (UserDefaults).
     #expect((try? s.write("progress-b.json", bytes(10))) != nil)
     #expect(s.read("progress-b.json") == bytes(10))
@@ -122,19 +163,20 @@ private func blockedDir() -> FileBlobStorage {
 }
 
 @Test func migrationRespectsBudgetProfilesFirst() {
-    var vals: [String: Data] = ["blob.profiles.json": bytes(100_000)]
+    var vals: [String: Data] = ["blob.profiles.json": bytes(500_000)]
     for i in 0..<15 { vals["blob.progress-\(i).json"] = bytes(15_000) }
     let kv = MemoryKeyValueBlobs(vals)
     let (s, _, _) = tiered(kv)
     let m = s.migrate()
-    #expect(m.kept.first == "profiles.json")
+    #expect(m.kept.first == "profiles.json" && !m.moved.contains("profiles.json"))
+    #expect(kv.data(forKey: "blob.profiles.json") != nil)
     #expect(s.defaultsSizes().values.reduce(0, +) <= TieredBlobStorage.budget)
     #expect(!m.moved.isEmpty)
     for i in 0..<15 { #expect(s.read("progress-\(i).json") == bytes(15_000)) }
 }
 
 @Test func migrationKeepsEntryWhenNoFileWritable() {
-    let kv = MemoryKeyValueBlobs(["blob.progress-a.json": bytes(50_000)])
+    let kv = MemoryKeyValueBlobs(["blob.progress-a.json": bytes(200_000)])
     let s = TieredBlobStorage(defaults: kv, directories: [blockedDir()])
     let m = s.migrate()
     #expect(m.failed == ["progress-a.json"])
@@ -142,11 +184,11 @@ private func blockedDir() -> FileBlobStorage {
 }
 
 @Test func migrationSavesUndecodableRawBlob() {
-    let kv = MemoryKeyValueBlobs(["blob.progress-a.json": bytes(50_000)])
+    let kv = MemoryKeyValueBlobs(["blob.progress-a.json": bytes(200_000)])
     let dir = FileBlobStorage(directory: tempDir())
     let s = TieredBlobStorage(defaults: kv, directories: [dir], decompress: { _ in nil })
     #expect(s.migrate().moved == ["progress-a.json"])
-    #expect(dir.read("progress-a.json.defaults-raw") == bytes(50_000))
+    #expect(dir.read("progress-a.json.defaults-raw") == bytes(200_000))
 }
 
 @Test func profileAndProgressStoresWorkOnTieredStorage() throws {
@@ -181,6 +223,28 @@ private func blockedDir() -> FileBlobStorage {
     #expect(c["a"] == [2] && !c.needsRefresh("a", now: t0 + 150) && c.storedAt("a") == t0 + 111)
     c.removeAll()
     #expect(c["a"] == nil)
+}
+
+@Test func timedCacheGenerationBlocksStoreAfterClear() {
+    var c = TimedCache<[Int]>()
+    let g = c.generation
+    let r1 = c.store([1], for: "a", generation: g); #expect(r1)
+    c.removeAll()
+    #expect(c.generation == g + 1)
+    let r2 = c.store([2], for: "a", generation: g); #expect(!r2)   // Abruf von vor dem Leeren
+    #expect(c["a"] == nil)
+    let r3 = c.store([3], for: "a", generation: c.generation); #expect(r3 && c["a"] == [3])
+}
+
+@Test func timedCacheEmptyRefreshKeepsFilledList() {
+    var c = TimedCache<[Int]>()
+    let t0 = Date(timeIntervalSince1970: 0)
+    c.store([1, 2], for: "a", now: t0)
+    let e1 = c.storeRefreshed([], for: "a", generation: c.generation, now: t0 + 10); #expect(!e1)
+    #expect(c["a"] == [1, 2] && c.storedAt("a") == t0)
+    let e2 = c.storeRefreshed([3], for: "a", generation: c.generation, now: t0 + 20); #expect(e2 && c["a"] == [3])
+    c.store([], for: "b")
+    let e3 = c.storeRefreshed([], for: "b", generation: c.generation); #expect(e3)   // leer → leer ist in Ordnung
 }
 
 @Test func timedCacheDefaultLifetimeIsADay() {
