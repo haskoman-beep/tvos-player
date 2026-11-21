@@ -11,6 +11,8 @@ struct HomeView: View {
     @State private var longPressFired = false
     @State private var focus = HomeFocus()
     @State private var slides = HeroSlides()
+    /// Welle C-b (#19): Fokus-Gedächtnis je Reihe; verdeckt, solange eine andere Seite darüber liegt.
+    @State private var rowFocus = HomeRowFocusMemory()
 
     var body: some View {
         if editor != nil {
@@ -33,6 +35,9 @@ struct HomeView: View {
                     }
                 }
             }
+            .environment(\.homeRowFocusMemory, rowFocus)
+            .onAppear { rowFocus.state.covered = false }
+            .onDisappear { rowFocus.state.covered = true }
             .task(id: hero.map { "\($0.id)|\($0.content.key)" } ?? "-") {
                 guard let hero else { return }
                 let items = await model.heroItems(for: hero)
@@ -57,6 +62,7 @@ struct HomeView: View {
                 .padding(.top, 24)
                 .padding(.bottom, 60)
             }
+            .environment(\.heroBackdropShared, true)
             // Weicher Rand oben, damit hochgescrollte Reihen nicht hart an der Info abreißen.
             .mask {
                 VStack(spacing: 0) {

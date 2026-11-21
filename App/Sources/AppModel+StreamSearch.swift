@@ -27,26 +27,20 @@ final class StreamSearchStatus: ObservableObject {
 extension AppModel {
     /// Quellensuche mit Zeitgrenze je Addon (Profil `addonTimeout`); meldet jeden Zwischenstand an `StreamSearchStatus`.
     /// Ergebnis wie `addons.streams(from:type:id:)`: nur Addons mit Antwort, in Addon-Reihenfolge.
-    /// `partial`: mindestens ein Addon fehlt (Fehler, Zeitüberschreitung) → nur kurz zwischenspeichern.
+    /// `failed`: gefragte Addons ohne Antwort (Fehler, Zeitüberschreitung); nicht leer = lückenhaft → nur kurz frisch.
+    /// Direkt aus dem Ergebnis bestimmt, nicht aus dem globalen Status (der kann inzwischen verdrängt sein).
     /// Läuft als ungebundene Aufgabe in `streams()` (geteilt mit Vorladen und Cache) und endet spätestens nach der
     /// Addon-Frist; Verlassen der Liste bricht sie deshalb bewusst nicht ab.
-    func searchAddons(type: String, id: String) async -> (results: [(addon: InstalledAddon, streams: [StreamItem])], partial: Bool) {
+    func searchAddons(type: String, id: String) async -> (results: [(addon: InstalledAddon, streams: [StreamItem])], failed: Set<String>) {
         let timeout = profile.addonTimeout
+        let asked = profile.addons.filter { $0.manifest.supports("stream", type: type, id: id) }.map(\.manifest.name)
         let result = await addons.streams(from: profile.addons, type: type, id: id, timeout: timeout) { p in
             await MainActor.run { StreamSearchStatus.shared.update(id, p) }
         }
-        let p = StreamSearchStatus.shared.progress[id]
-        if let p { RemoteLog.info("streams", "\(id): Addon-Status \(p.logText) · Grenze \(Int(timeout)) s") }
-        return (result, p?.isPartial ?? false)
-    }
-
-    /// Lückenhaftes Ergebnis: Zeitstempel so zurückdatieren, dass es nach `AddonSearch.partialCacheSeconds` statt nach
-    /// 10 min abläuft (alle Cache-Prüfungen rechnen mit 600 s).
-    func shortenStreamCache(_ entry: (at: Date, list: [(addon: String, stream: StreamItem)])?, partial: Bool)
-        -> (at: Date, list: [(addon: String, stream: StreamItem)])? {
-        guard partial, let entry else { return entry }
-        RemoteLog.info("streams", "Ergebnis lückenhaft → Cache nur \(Int(AddonSearch.partialCacheSeconds)) s")
-        return (Date().addingTimeInterval(AddonSearch.partialCacheSeconds - 600), entry.list)
+        if let p = StreamSearchStatus.shared.progress[id] {
+            RemoteLog.info("streams", "\(id): Addon-Status \(p.logText) · Grenze \(Int(timeout)) s")
+        }
+        return (result, Set(asked).subtracting(result.map(\.addon.manifest.name)))
     }
 }
 

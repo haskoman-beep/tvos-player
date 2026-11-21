@@ -19,6 +19,8 @@ final class AppModel: ObservableObject {
     @Published var catalogRevisions: [String: Int] = [:]
     /// Erhöht beim Zurückkehren in die App, wenn Kataloge abgelaufen sind.
     @Published var catalogWake = 0
+    /// Welle C-b: Plattenstand der Kataloge (AppModel+CatalogDisk).
+    let catalogDisk = CatalogDiskStore()
 
     /// Cinemeta liefert Metadaten/Folgenlisten für IMDb-IDs (kostenlos, ohne Key).
     static let cinemeta = InstalledAddon(
@@ -37,6 +39,7 @@ final class AppModel: ObservableObject {
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         RemoteLog.info("start", "App \(v) · \(stored.profiles.count) Profil(e) · Addons \(profile.addons.map(\.manifest.name)) · Reihen \(profile.home.rows.count) · Quelle \(profile.progressSource.rawValue)")
         observeCatalogWake()
+        restoreCatalogSnapshot()
     }
 
     // MARK: Fortschritt
@@ -89,7 +92,7 @@ final class AppModel: ObservableObject {
     func hasClient(_ s: String) -> Bool { s == "trakt" ? trakt != nil : simkl != nil }
     func isConnected(_ s: String) -> Bool { profile.syncTokens[s] != nil && hasClient(s) }
 
-    func disconnect(_ s: String) { update { $0.syncTokens[s] = nil }; cache.removeAll() }
+    func disconnect(_ s: String) { update { $0.syncTokens[s] = nil }; clearCatalogCache() }
 
     func startLogin(_ s: String) async throws -> DeviceCode {
         if s == "trakt", let trakt { return try await trakt.deviceCode() }
@@ -109,7 +112,7 @@ final class AppModel: ObservableObject {
         RemoteLog.info("sync", "\(s) Login: \(String(describing: r).prefix(while: { $0 != "(" }))")
         if case .success(let t) = r {
             update { $0.syncTokens[s] = t }
-            cache.removeAll()
+            clearCatalogCache()
             await syncRemoteProgress()
         }
         return r
@@ -209,6 +212,7 @@ final class AppModel: ObservableObject {
 
     func switchProfile(_ id: UUID) {
         stored.activeProfileID = id; cache.removeAll(); save()
+        restoreCatalogSnapshot()
         progress = progressStore.load(profile: id)
         Task { await syncRemoteProgress() }
     }
@@ -222,8 +226,9 @@ final class AppModel: ObservableObject {
     func deleteProfile(_ id: UUID) {
         guard stored.profiles.count > 1 else { return }
         stored.profiles.removeAll { $0.id == id }
-        if stored.activeProfileID == id { stored.activeProfileID = stored.profiles.first?.id }
-        save()
+        removeCatalogFile(profile: id)
+        // Aktives Profil gelöscht: über den Profilwechsel (Cache leeren, Stand des neuen Profils lesen).
+        if stored.activeProfileID == id, let next = stored.profiles.first?.id { switchProfile(next) } else { save() }
     }
 
     // MARK: Addons
@@ -235,7 +240,7 @@ final class AppModel: ObservableObject {
                 p.addons.removeAll { $0.manifestURL == a.manifestURL }
                 p.addons.append(a)
             }
-            cache.removeAll()
+            clearCatalogCache()
         } catch { lastError = "Addon nicht geladen: \(error)" }
     }
 
@@ -279,6 +284,7 @@ final class AppModel: ObservableObject {
     func items(_ source: CatalogSource, refresh: Bool = false) async -> [MetaPreview] {
         if case .continueWatching = source.kind { return progress.continueWatching().map(\.item) }
         if case .upcoming = source.kind { return await upcomingToday() }   // eigener 6-h-Cache (AppModel+Upcoming)
+        if !refresh { await awaitCatalogSnapshot() }   // Welle C-b: Plattenstand zuerst
         if !refresh, let c = cache[source.id] { refreshCatalogIfStale(source); return c }
         let generation = cache.generation
         var out: [MetaPreview] = []
@@ -303,6 +309,7 @@ final class AppModel: ObservableObject {
         // Nach Profilwechsel/Leeren nicht mehr ablegen; leere Erneuerung überschreibt keine gefüllte Liste.
         if refresh { cache.storeRefreshed(out, for: source.id, generation: generation) }
         else { cache.store(out, for: source.id, generation: generation) }
+        scheduleCatalogSave()
         return out
     }
 
@@ -356,42 +363,57 @@ final class AppModel: ObservableObject {
         return eps
     }
 
-    func streams(type: String, id: String) async -> [(addon: String, stream: StreamItem)] {
-        // Kurzer Cache: Detailseite holt vorab (für die Technik-Plaketten), die Quellenliste nutzt das Ergebnis.
-        if let c = streamCache[id], Date().timeIntervalSince(c.at) < 600 {   // 10 min
-            RemoteLog.info("streams", "\(id): Cache-Treffer\(StreamPrefetcher.shared.wasPrefetched(id) ? " (vorgeladen)" : "") · \(c.list.count) Quellen")
-            return c.list
+    /// `revalidate`: Cache überspringen (Hintergrund-Erneuerung, AppModel+StreamRevalidate).
+    func streams(type: String, id: String, revalidate: Bool = false) async -> [(addon: String, stream: StreamItem)] {
+        // Detailseite holt vorab (für die Technik-Plaketten), die Quellenliste nutzt das Ergebnis.
+        // Welle C-b: frisch → direkt; veraltet → sofort zeigen + im Hintergrund erneuern; abgelaufen → neu laden.
+        if !revalidate, let c = streamCache[id], case let list = usableStreams(id: id, c), !list.isEmpty,
+           let fresh = streamCacheHit(type: type, id: id, at: c.at) {
+            RemoteLog.info("streams", "\(id): Cache-Treffer\(fresh ? "" : " (veraltet, Erneuerung läuft)")\(StreamPrefetcher.shared.wasPrefetched(id) ? " (vorgeladen)" : "") · \(list.count) Quellen")
+            return list
         }
         if let t = streamTasks[id] {
             RemoteLog.info("streams", "\(id): wartet auf laufende Abfrage\(StreamPrefetcher.shared.isRunning(id) ? " (Vorladen)" : "")")
             return await t.value
         }
         let task = Task { () -> [(addon: String, stream: StreamItem)] in
-            let all = await searchAddons(type: type, id: id).results   // Welle C-a: Zeitgrenze und Status je Addon
+            // Welle C-a: Zeitgrenze und Status je Addon; `failed` = Addons mit Fehler oder Zeitüberschreitung.
+            let search = await searchAddons(type: type, id: id)
+            let all = search.results
             RemoteLog.info("streams", "\(type) \(id): " + all.map { "\($0.addon.manifest.name)=\($0.streams.count)" }.joined(separator: ", "))
             // Rohergebnis aller Addons leer (fehlgeschlagene fehlen in `all`, zählen also als leer): vermutlich
             // Ratenbegrenzung → Vorladen pausiert. Bewusst vor dem Filtern auf abspielbare Quellen.
             if !profile.addons.isEmpty, all.allSatisfy({ $0.streams.isEmpty }) { streamsAllEmptyAt = Date() }
-            return all.flatMap { r in playableStreams(r.streams).map { (r.addon.manifest.name, $0) } }
+            let list = all.flatMap { r in playableStreams(r.streams).map { (r.addon.manifest.name, $0) } }
+            // Welle C-b: Addons ohne Antwort behalten ihre alten Einträge; leer ersetzt keinen Stand.
+            return storeStreams(id: id, fresh: list, answered: Set(all.map { $0.addon.manifest.name }), failed: search.failed)
         }
         streamTasks[id] = task
         let list = await task.value
         streamTasks[id] = nil
-        storeStreams(id: id, list: list)
-        streamCache[id] = shortenStreamCache(streamCache[id], partial: StreamSearchStatus.shared.progress[id]?.isPartial ?? false)   // Welle C-a
         return list
     }
 
     /// Nur der Cache, ohne Abfrage: erlaubt Technik-Plaketten schon im ersten Bild der Detailseite.
     func cachedStreams(id: String) -> [(addon: String, stream: StreamItem)]? {
-        guard let c = streamCache[id], Date().timeIntervalSince(c.at) < 600 else { return nil }
-        return c.list
+        guard let c = streamCache[id], RevalidationPolicy.streams.isUsable(storedAt: c.at) else { return nil }
+        let list = usableStreams(id: id, c)
+        return list.isEmpty ? nil : list
     }
 
-    private var streamCache: [String: (at: Date, list: [(addon: String, stream: StreamItem)])] = [:]
-    private var streamTasks: [String: Task<[(addon: String, stream: StreamItem)], Never>] = [:]
+    /// Welle C-b M-A: behaltene Einträge auch beim Lesen nach der letzten Antwort ihres Addons begrenzen.
+    func usableStreams(id: String, _ c: (at: Date, list: [(addon: String, stream: StreamItem)])) -> [(addon: String, stream: StreamItem)] {
+        StreamListMerge.usable(c.list, fetchedAt: streamAddonFetchedAt[id] ?? [:], storedAt: c.at,
+                               maxAge: RevalidationPolicy.streams.usableFor)
+    }
+
+    /// Welle C-b: nicht privat, damit AppModel+StreamRevalidate den Stand lesen kann.
+    var streamCache: [String: (at: Date, list: [(addon: String, stream: StreamItem)])] = [:]
+    var streamTasks: [String: Task<[(addon: String, stream: StreamItem)], Never>] = [:]
+    /// Welle C-b: Abrufzeitpunkt je Addon im Stand von `streamCache[id]` (behaltene Einträge laufen nach ihm ab).
+    var streamAddonFetchedAt: [String: [String: Date]] = [:]
     /// Leeres/fehlgeschlagenes Ergebnis: bis dahin kein Vorladen dieser ID (die Detailseite fragt trotzdem).
-    private var streamEmptyUntil: [String: Date] = [:]
+    private(set) var streamEmptyUntil: [String: Date] = [:]
     /// Letztes Ergebnis, bei dem alle Addons leer blieben (vermutlich Ratenbegrenzung): Vorladen pausiert.
     private(set) var streamsAllEmptyAt: Date?
 
@@ -423,7 +445,7 @@ final class AppModel: ObservableObject {
             case .setKey(let s, let v):
                 update { $0.apiKeys[s] = v }
                 // Pi-Adresse für „App aktualisieren“ betrifft keine Katalog-/Quellendaten.
-                if s != AtvloadlyAddress.key { cache.removeAll() }
+                if s != AtvloadlyAddress.key { clearCatalogCache() }
             case .importNuvioURL(let u): await importNuvio(from: u)
             case .importNuvioJSON(let d): importNuvio(data: d)
             case .addTMDBLink(let l):
@@ -431,7 +453,9 @@ final class AppModel: ObservableObject {
                 else { lastError = "Link nicht erkannt: \(l)" }
             case .importBackup(let d):
                 do {
-                    stored = try store.importData(d); save(); cache.removeAll()
+                    let before = stored.profiles.map(\.id)
+                    stored = try store.importData(d); save(); clearCatalogCache()
+                    removeCatalogFiles(profiles: before + stored.profiles.map(\.id))
                     progress = progressStore.load(profile: profile.id)
                 } catch { lastError = "Sicherung ungültig: \(error)" }
             case .importFusionURL(let u): await importFusionKit(from: u)
@@ -483,30 +507,46 @@ extension AppModel {
 
     func streamCacheState(id: String) -> StreamCacheState {
         let now = Date()
-        if let c = streamCache[id], now.timeIntervalSince(c.at) < 600 { return .cached }
+        if let c = streamCache[id], RevalidationPolicy.streams.isUsable(storedAt: c.at, now: now) { return .cached }
         if streamTasks[id] != nil { return .running }
         if let u = streamEmptyUntil[id], u > now { return .emptyRecently }
         return .missing
     }
 
-    /// Ergebnis ablegen: Treffer in den 10-min-Cache (abgelaufene raus, höchstens 40, älteste zuerst raus),
-    /// leere Ergebnisse 120 s als „leer“ merken. Ein Treffer hebt die Pause nach „alle Addons leer“ auf.
-    fileprivate func storeStreams(id: String, list: [(addon: String, stream: StreamItem)]) {
+    /// Ergebnis ablegen (`StreamCacheUpdate`): Treffer in den Cache (`RevalidationPolicy.streams`; abgelaufene raus,
+    /// höchstens 40, älteste zuerst raus), Addons mit Fehler/Zeitüberschreitung behalten ihre alten Einträge, ein
+    /// lückenhaftes Ergebnis ist nur kurz frisch. Leer (auch nach dem Behalten): 120 s als „leer“ merken, ein
+    /// vorhandener Stand bleibt unverändert. Ein Treffer hebt die Pause nach „alle Addons leer“ auf.
+    /// Rückgabe: der abgelegte Stand (leer bei leerem Ergebnis).
+    fileprivate func storeStreams(id: String, fresh: [(addon: String, stream: StreamItem)],
+                                  answered: Set<String>, failed: Set<String>) -> [(addon: String, stream: StreamItem)] {
         let now = Date()
         streamEmptyUntil = streamEmptyUntil.filter { $0.value > now }
-        if list.isEmpty {
+        switch StreamCacheUpdate.apply(fresh: fresh, answered: answered, failed: failed, previous: streamCache[id],
+                                       previousFetchedAt: streamAddonFetchedAt[id] ?? [:], now: now) {
+        case .keepPrevious:
             streamEmptyUntil[id] = now.addingTimeInterval(Self.emptyStreamsTTL)
-            return
+            return []
+        case let .store(at, list, fetchedAt):
+            if list.count != fresh.count {
+                RemoteLog.info("streams", "\(id): \(list.count - fresh.count) Quellen ohne Antwort ihres Addons aus dem alten Stand behalten")
+            }
+            if at != now {
+                RemoteLog.info("streams", "\(id): Ergebnis lückenhaft → nur \(Int(AddonSearch.partialCacheSeconds)) s frisch")
+            }
+            streamEmptyUntil[id] = nil
+            streamsAllEmptyAt = nil
+            streamCache = streamCache.filter { RevalidationPolicy.streams.isUsable(storedAt: $0.value.at, now: now) }
+            streamCache[id] = (at, list)
+            if streamCache.count > StreamPrefetcher.cacheLimit {
+                let drop = streamCache.sorted { $0.value.at < $1.value.at }.prefix(streamCache.count - StreamPrefetcher.cacheLimit)
+                for (k, _) in drop { streamCache[k] = nil }
+            }
+            streamAddonFetchedAt = streamAddonFetchedAt.filter { streamCache[$0.key] != nil }
+            streamAddonFetchedAt[id] = fetchedAt
+            QualityBadgeCache.shared.streamsStored(id: id)
+            return list
         }
-        streamEmptyUntil[id] = nil
-        streamsAllEmptyAt = nil
-        streamCache = streamCache.filter { now.timeIntervalSince($0.value.at) < 600 }
-        streamCache[id] = (now, list)
-        if streamCache.count > StreamPrefetcher.cacheLimit {
-            let drop = streamCache.sorted { $0.value.at < $1.value.at }.prefix(streamCache.count - StreamPrefetcher.cacheLimit)
-            for (k, _) in drop { streamCache[k] = nil }
-        }
-        QualityBadgeCache.shared.streamsStored(id: id)
     }
 
     static let emptyStreamsTTL: TimeInterval = 120

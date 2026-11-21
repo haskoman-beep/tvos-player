@@ -87,6 +87,7 @@ extension Route {
 /// Hintergrund + Info des angezeigten Titels; steuert den Diashow-Takt.
 struct HeroLayer: View {
     @Environment(HomeFocus.self) private var focus
+    @Environment(\.displayScale) private var displayScale
     let slides: HeroSlides
 
     private var shown: MetaPreview? {
@@ -114,7 +115,7 @@ struct HeroLayer: View {
         .onChange(of: slides.index, initial: true) {
             // Nächste Folie schon laden, damit die Überblendung ohne Lücke läuft.
             guard let n = slides.next, let s = n.background ?? n.poster, let u = URL(string: s) else { return }
-            Task { await ImagePipeline.shared.prefetch([u], maxPixels: 1920) }
+            Task { await ImagePipeline.shared.prefetch([u], target: .fullScreen(scale: displayScale)) }
         }
     }
 }
@@ -122,6 +123,7 @@ struct HeroLayer: View {
 /// Vollbild-Hintergrund; das neue Bild wird erst geladen und dann in 0,6 s übergeblendet.
 struct HeroBackdrop: View {
     let url: String?
+    @Environment(\.displayScale) private var displayScale
     @State private var shown: Shown?
 
     private struct Shown: Equatable {
@@ -154,8 +156,20 @@ struct HeroBackdrop: View {
                 return
             }
             if shown?.url == s { return }
-            guard let img = await ImagePipeline.shared.image(u, maxPixels: 1920), !Task.isCancelled else { return }
+            let target = ImageTarget.fullScreen(scale: displayScale)
+            // Speichercache-Treffer nach dem Freigeben (Rückkehr): sofort, ohne Überblendung.
+            if shown == nil, let hit = ImagePipeline.shared.cachedImage(u, target: target) {
+                shown = Shown(url: s, image: hit)
+                return
+            }
+            guard let img = await ImagePipeline.shared.image(u, target: target), !Task.isCancelled else { return }
             withAnimation(.easeInOut(duration: 0.6)) { shown = Shown(url: s, image: img) }
+        }
+        // Verdeckt (Detailseite, Wiedergabe): Vollbild-Bitmap nicht außerhalb des Cache-Budgets halten.
+        // Beim Wiederkommen startet `.task(id:)` neu und holt es aus dem Speicher- oder Plattencache.
+        .onDisappear {
+            guard let img = shown?.image, ImagePipeline.cost(img) >= RemoteImage.releaseBytes else { return }
+            shown = nil
         }
     }
 }
@@ -343,5 +357,12 @@ struct HeroButtons: View {
         guard !done else { return }
         done = true
         RemoteLog.info("fokus", "Start: \(reason)")
+    }
+}
+
+extension ImageTarget {
+    /// Vollbild-Hintergrund (1920×1080 Punkte × Bildschirmfaktor; auf 4K also 3840 px breit), Welle C-b #16.
+    static func fullScreen(scale: CGFloat) -> ImageTarget {
+        ImageTarget(points: 1920, 1080, scale: Double(scale), fit: false) ?? ImageTarget(width: 1920, height: 1280, fit: false)
     }
 }

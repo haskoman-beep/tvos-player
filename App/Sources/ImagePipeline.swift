@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import ImageIO
+import CoreImage
 import os
 import PlayerCore
 
@@ -16,7 +17,8 @@ actor ImagePipeline {
 
     private let session: URLSession
     private let urlCache: URLCache
-    private let memory = NSCache<NSString, UIImage>()
+    /// NSCache ist threadsicher: `cachedImage` liest ohne Umweg über den Actor (Bild ohne Überblendung zeigen).
+    nonisolated(unsafe) private let memory = NSCache<NSString, UIImage>()
     /// Belegung des Speichercaches (Verdrängen meldet NSCache über den Delegate).
     private let tracker = CacheCostTracker()
     private var costLimit = ImageCacheBudget.maximum
@@ -48,11 +50,18 @@ actor ImagePipeline {
 
     /// Bild in höchstens `maxPixels` Kantenlänge (längere Seite).
     func image(_ url: URL, maxPixels: Int) async -> UIImage? {
-        let key = "\(url.absoluteString)#\(maxPixels)"
+        await image(url, target: .square(maxPixels))
+    }
+
+    /// Bild für eine Zielgröße (Welle C-b, #16): dekodiert so groß wie gezeichnet, nicht größer als das Original.
+    /// Adressen bekannter Bilddienste werden auf die passende Größenvariante umgeschrieben (#23), mit der
+    /// Original-Adresse als Ersatz. `blur` > 0: einmal vorberechneter Weichzeichner (Radius in Pixeln, #34).
+    func image(_ url: URL, target: ImageTarget, blur: Int = 0) async -> UIImage? {
+        let key = Self.memoryKey(url, target: target, blur: blur)
         if let img = memory.object(forKey: key as NSString) { return img }
         if let t = failed[key], Date().timeIntervalSince(t) < 300 { return nil }
         if let running = inFlight[key] { return await running.value }
-        let task = Task<UIImage?, Never> { await self.fetch(url, maxPixels: maxPixels) }
+        let task = Task<UIImage?, Never> { await self.fetch(url, target: target, blur: blur) }
         inFlight[key] = task
         let img = await task.value
         inFlight[key] = nil
@@ -63,6 +72,15 @@ actor ImagePipeline {
             updateBudget()
         } else { failed[key] = Date() }
         return img
+    }
+
+    nonisolated static func memoryKey(_ url: URL, target: ImageTarget, blur: Int) -> String {
+        "\(url.absoluteString)#\(target.cacheKey)\(blur > 0 ? "#b\(blur)" : "")"
+    }
+
+    /// Nur der Speichercache, synchron: Treffer erscheinen sofort ohne Überblendung (kein Aufploppen, kein Grau).
+    nonisolated func cachedImage(_ url: URL, target: ImageTarget, blur: Int = 0) -> UIImage? {
+        memory.object(forKey: Self.memoryKey(url, target: target, blur: blur) as NSString)
     }
 
     /// Wiedergabe beginnt/endet: Speichercache leeren und klein halten bzw. wieder freigeben.
@@ -129,12 +147,34 @@ actor ImagePipeline {
         for u in urls { Task { _ = await image(u, maxPixels: maxPixels) } }
     }
 
-    private func fetch(_ url: URL, maxPixels: Int) async -> UIImage? {
-        guard let (data, resp) = try? await session.data(from: url),
-              (resp as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true else { return nil }
-        await acquire()
-        defer { release() }
-        return await Task.detached(priority: .utility) { Self.downsample(data, maxPixels: maxPixels) }.value
+    func prefetch(_ urls: [URL], target: ImageTarget) {
+        for u in urls { Task { _ = await image(u, target: target) } }
+    }
+
+    /// Größenvariante zuerst, bei Fehlschlag die Original-Adresse.
+    private func fetch(_ url: URL, target: ImageTarget, blur: Int) async -> UIImage? {
+        let candidates = ImageURLVariant.candidates(for: url.absoluteString, neededWidth: target.neededSourceWidth).compactMap(URL.init(string:))
+        for (i, u) in candidates.enumerated() {
+            guard let (data, resp) = try? await session.data(from: u),
+                  (resp as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true else {
+                if i + 1 < candidates.count { noteVariantMiss(u) }
+                continue
+            }
+            await acquire()
+            let img = await Task.detached(priority: .utility) { Self.downsample(data, target: target, blur: blur) }.value
+            release()
+            if let img { return img }
+        }
+        return nil
+    }
+
+    /// Fehlende Größenvarianten melden (höchstens 5 Zeilen je Start), damit falsche Stufen auffallen.
+    private var variantMisses = 0
+    private func noteVariantMiss(_ u: URL) {
+        variantMisses += 1
+        guard variantMisses <= 5 else { return }
+        let line = "Größenvariante nicht geladen (\(u.host ?? "?") \(u.pathComponents.dropFirst().prefix(3).joined(separator: "/"))), nehme Original"
+        Task { @MainActor in RemoteLog.info("bilder", line) }
     }
 
     private func acquire() async {
@@ -146,8 +186,27 @@ actor ImagePipeline {
         if waiters.isEmpty { decoding -= 1 } else { waiters.removeFirst().resume() }
     }
 
+    nonisolated static func downsample(_ data: Data, target: ImageTarget, blur: Int) -> UIImage? {
+        guard let src = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
+        let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any]
+        var w = (props?[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue ?? 0
+        var h = (props?[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue ?? 0
+        // EXIF-Drehung 5–8: Breite und Höhe tauschen die Rollen.
+        if let o = (props?[kCGImagePropertyOrientation] as? NSNumber)?.intValue, (5...8).contains(o) { swap(&w, &h) }
+        var maxPixels = target.decodeMaxPixels(imageWidth: w, imageHeight: h)
+        // Weichgezeichnet sieht ein Viertel der Auflösung gleich aus und kostet ein Sechzehntel.
+        if blur > 0 { maxPixels = max(64, maxPixels / 4) }
+        guard let img = downsample(src, maxPixels: maxPixels) else { return nil }
+        guard blur > 0 else { return img }
+        return blurred(img, radius: max(1, Double(blur) / 4)) ?? img
+    }
+
     nonisolated static func downsample(_ data: Data, maxPixels: Int) -> UIImage? {
         guard let src = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
+        return downsample(src, maxPixels: maxPixels)
+    }
+
+    nonisolated private static func downsample(_ src: CGImageSource, maxPixels: Int) -> UIImage? {
         let opts: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
@@ -156,6 +215,17 @@ actor ImagePipeline {
         ]
         guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) else { return nil }
         return UIImage(cgImage: cg)
+    }
+
+    /// Weichzeichner einmal auf das kleine Bitmap (Ränder fortgesetzt, damit sie nicht ausbleichen).
+    nonisolated(unsafe) private static let ciContext = CIContext(options: [.cacheIntermediates: false])
+
+    nonisolated private static func blurred(_ img: UIImage, radius: Double) -> UIImage? {
+        guard let cg = img.cgImage else { return nil }
+        let input = CIImage(cgImage: cg)
+        let out = input.clampedToExtent().applyingGaussianBlur(sigma: radius).cropped(to: input.extent)
+        guard let res = ciContext.createCGImage(out, from: input.extent) else { return nil }
+        return UIImage(cgImage: res)
     }
 
     nonisolated static func cost(_ img: UIImage) -> Int {
@@ -181,14 +251,32 @@ private final class CacheCostTracker: NSObject, NSCacheDelegate, @unchecked Send
     }
 }
 
-/// Bild aus dem Netz über `ImagePipeline`. `maxPixels` = längere Seite in Pixeln (tvOS 1080p/4K-UI ≈ Punkte × 2).
+/// Bild aus dem Netz über `ImagePipeline`. Dekodiert nach der gezeichneten Größe × Bildschirmfaktor (#16);
+/// solange die Größe unbekannt ist (erster Layout-Durchlauf), wird nichts angefordert.
+/// `maxPixels` begrenzt optional die längere Seite. Große Bitmaps (Vollbild-Hintergründe) gibt die Ansicht
+/// beim Verschwinden frei (eine verdeckte Seite hält dann kein 4K-Bitmap); beim Wiederkommen kommt es aus dem Cache.
 struct RemoteImage: View {
     let url: String?
-    var maxPixels: Int = 720
+    var maxPixels: Int? = nil
     /// Logos: ganz zeigen statt beschneiden.
     var fit = false
+    /// Vorberechneter Weichzeichner in Punkten (0 = aus); kein Live-Effekt je Bild (#34).
+    var blur: CGFloat = 0
+    /// Feste Zielgröße statt der gezeichneten (aufgeklappte Karte nutzt die Variante des Vollbild-Hintergrunds:
+    /// ein Download, ein Bitmap im Speichercache für beide).
+    var fixedTarget: ImageTarget? = nil
+    @Environment(\.displayScale) private var displayScale
     @State private var image: UIImage?
     @State private var loadedURL: String?
+    @State private var target: ImageTarget?
+
+    /// Ab dieser Bitmap-Größe gibt die Ansicht beim Verschwinden frei (≈ 2560×1600 und größer).
+    static let releaseBytes = 16 << 20
+
+    private struct LoadKey: Equatable {
+        let url: String?
+        let target: ImageTarget?
+    }
 
     var body: some View {
         ZStack {
@@ -199,12 +287,30 @@ struct RemoteImage: View {
                 Color.white.opacity(0.08)
             }
         }
-        .task(id: url) {
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
+            guard fixedTarget == nil else { return }
+            guard var t = ImageTarget(points: size.width, size.height, scale: displayScale, fit: fit) else { return }
+            if let cap = maxPixels { t.width = min(t.width, cap); t.height = min(t.height, cap) }
+            if t != target { target = t }
+        }
+        .task(id: LoadKey(url: url, target: fixedTarget ?? target)) {
             guard let s = url, let u = URL(string: s) else { image = nil; return }
+            guard let target = fixedTarget ?? target else { return }   // Größe noch unbekannt: nicht winzig dekodieren
+            let blurPx = Int((blur * displayScale).rounded())
+            // Speichercache-Treffer (auch nach dem Freigeben beim Zurückkehren): sofort, ohne Überblendung.
+            if let hit = ImagePipeline.shared.cachedImage(u, target: target, blur: blurPx) {
+                image = hit; loadedURL = s
+                return
+            }
             if loadedURL != s { image = nil }
-            let img = await ImagePipeline.shared.image(u, maxPixels: maxPixels)
+            let img = await ImagePipeline.shared.image(u, target: target, blur: blurPx)
             guard !Task.isCancelled else { return }
             withAnimation(.easeOut(duration: 0.2)) { image = img; loadedURL = s }
+        }
+        .onDisappear {
+            guard let image, ImagePipeline.cost(image) >= Self.releaseBytes else { return }
+            self.image = nil
+            loadedURL = nil
         }
     }
 }

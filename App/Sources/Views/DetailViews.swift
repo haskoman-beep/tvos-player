@@ -61,7 +61,7 @@ struct DetailView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            RemoteImage(url: meta?.background ?? item.background, maxPixels: 1920).ignoresSafeArea().overlay(Color.black.opacity(0.55))
+            RemoteImage(url: meta?.background ?? item.background).ignoresSafeArea().overlay(Color.black.opacity(0.55))
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 28) {
                     if let logo = meta?.logo {
@@ -387,7 +387,9 @@ struct StreamListView: View {
         .background(Color(white: 0.07).ignoresSafeArea())
         .streamSearchPartials(id: request.id, loading: loading && current == nil) { streams = $0 }
         .task {
-            streams = await model.streams(type: request.type, id: request.id)
+            streams = request.resumeLastSource && playing == nil
+                ? await model.streamsForAutoplay(type: request.type, id: request.id)
+                : await model.streams(type: request.type, id: request.id)
             loading = false
             if request.type == "series", request.episodes.isEmpty, let base = request.id.split(separator: ":").first {
                 // Aus Weiterschauen: Folgenliste nachladen, damit die nächste Folge automatisch kommt.
@@ -479,7 +481,7 @@ extension StreamListView {
         nextNote = "Nächste Folge wird gesucht: \(next.title) …"
         let ref = autoNext.releaseProfile(stream, listAddon: streams.first { $0.stream.id == stream.id }?.addon)
         Task {
-            let list = await model.streams(type: next.type, id: next.id)
+            let list = await model.streamsForAutoplay(type: next.type, id: next.id)
             // Während der Suche von Hand eine Quelle gestartet: Liste und Folge so lassen, nichts ersetzen.
             guard playing == nil else { nextNote = nil; return }
             guard let s = nextEpisodeStream(PlaybackStability.shared.autoCandidates(list, title: next.id), matching: ref) else {

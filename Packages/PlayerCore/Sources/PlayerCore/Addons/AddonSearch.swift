@@ -88,7 +88,7 @@ public enum AddonSearch {
     public static let defaultTimeout: Double = 15
     /// Auswahl in den Einstellungen.
     public static let timeoutChoices: [Double] = [8, 12, 15, 20, 30, 45]
-    /// Lückenhaftes Ergebnis (ein Addon fehlt) so lange im Quellen-Cache statt der vollen 10 min.
+    /// Lückenhaftes Ergebnis (ein Addon fehlt) nur so lange frisch, danach veraltet (zeigen, im Hintergrund neu fragen).
     public static let partialCacheSeconds: TimeInterval = 60
 
     /// Gespeicherter Wert → nächstliegende Auswahl (alte oder fremde Werte zeigen sonst keine Auswahl).

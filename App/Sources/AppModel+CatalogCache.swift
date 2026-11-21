@@ -33,7 +33,8 @@ extension AppModel {
     func observeCatalogWake() {
         _ = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, !self.cache.keysNeedingRefresh().isEmpty else { return }
+                // Nur je gezeigte Reihen: übernommene, nie gezeigte Plattencache-Reihen erneuern sich beim ersten Zeigen.
+                guard let self, !self.cache.keysNeedingRefresh(includingRestored: false).isEmpty else { return }
                 self.catalogWake += 1
             }
         }
