@@ -80,7 +80,7 @@ public enum TrackPanelLogic {
         var order: [String?] = []
         var byCode: [String?: [AudioTrackInfo]] = [:]
         for t in tracks {
-            let c = MediaLabels.languageCode(t.language)
+            let c = groupKey(t.language)
             if byCode[c] == nil { order.append(c); byCode[c] = [] }
             byCode[c]?.append(t)
         }
@@ -118,6 +118,14 @@ public enum TrackPanelLogic {
         groupByLanguage(tracks, preferred: preferredLanguage.map { [$0] } ?? [])
     }
 
+    /// Gruppenschlüssel: normalisierter Code; was als "Unbekannt" heißt ("und", "qaa", nil), landet in einer Gruppe (nil, zuletzt).
+    static func groupKey(_ language: String?) -> String? {
+        guard let c = MediaLabels.languageCode(language), !isUnknownLanguage(c) else { return nil }
+        return c
+    }
+
+    static func isUnknownLanguage(_ language: String?) -> Bool { MediaLabels.languageName(language) == "Unbekannt" }
+
     static func trackRank(_ t: AudioTrackInfo) -> Int {
         if t.isCommentary || t.isVisualImpaired { return 2 }
         if t.isHearingImpaired { return 1 }
@@ -127,23 +135,39 @@ public enum TrackPanelLogic {
     // MARK: Zeilen
 
     /// Tonzeile: Titel Sprache, Detail "Format · Kanäle", Name nur wenn nicht generisch.
-    public static func audioRow(_ t: AudioTrackInfo) -> TrackRowLabel {
-        let format = MediaLabels.audioFormat(codec: t.codec, profile: t.profile, isAtmos: t.isAtmos, isDTSX: t.isDTSX)
-        let detail = [format, MediaLabels.channels(t.channels, layout: t.channelLayout)].compactMap { $0 }.joined(separator: " · ")
-        return TrackRowLabel(title: MediaLabels.languageName(t.language), detail: detail.isEmpty ? nil : detail,
-                             name: meaningfulName(t),
-                             badges: MediaLabels.trackBadges(isForced: t.isForced, isHearingImpaired: t.isHearingImpaired,
-                                                             isCommentary: t.isCommentary, isVisualImpaired: t.isVisualImpaired,
-                                                             isDefault: t.isDefault, isExternal: t.isExternal))
+    /// Unbekannte Sprache: Titel ist der Spurname, sonst das Format, sonst "Spur n" (`number`, Standard id + 1); kein Extra-Name.
+    public static func audioRow(_ t: AudioTrackInfo, number: Int? = nil) -> TrackRowLabel {
+        let rawFormat = MediaLabels.audioFormat(codec: t.codec, profile: t.profile, isAtmos: t.isAtmos, isDTSX: t.isDTSX)
+        let format: String? = rawFormat == "Unbekannt" ? nil : rawFormat
+        let channels = MediaLabels.channels(t.channels, layout: t.channelLayout)
+        let badges = MediaLabels.trackBadges(isForced: t.isForced, isHearingImpaired: t.isHearingImpaired,
+                                             isCommentary: t.isCommentary, isVisualImpaired: t.isVisualImpaired,
+                                             isDefault: t.isDefault, isExternal: t.isExternal)
+        func detail(_ parts: [String?]) -> String? {
+            let d = parts.compactMap { $0 }.joined(separator: " · ")
+            return d.isEmpty ? nil : d
+        }
+        guard isUnknownLanguage(t.language) else {
+            return TrackRowLabel(title: MediaLabels.languageName(t.language), detail: detail([format, channels]),
+                                 name: meaningfulName(t), badges: badges)
+        }
+        if let n = meaningfulName(t) {
+            return TrackRowLabel(title: n, detail: detail([format, channels]), name: nil, badges: badges)
+        }
+        if let f = format { return TrackRowLabel(title: f, detail: detail([channels]), name: nil, badges: badges) }
+        return TrackRowLabel(title: "Spur \(number ?? t.id + 1)", detail: detail([channels]), name: nil, badges: badges)
     }
 
-    /// Untertitelzeile: Titel Sprache, Detail Format ("SRT", "PGS · Bild"), Name nur wenn nicht generisch.
-    public static func subtitleRow(_ t: AudioTrackInfo) -> TrackRowLabel {
-        TrackRowLabel(title: MediaLabels.languageName(t.language), detail: subtitleFormat(codec: t.codec, isImage: t.isImage),
-                      name: meaningfulName(t),
-                      badges: MediaLabels.trackBadges(isForced: t.isForced, isHearingImpaired: t.isHearingImpaired,
-                                                      isCommentary: t.isCommentary, isDefault: t.isDefault,
-                                                      isExternal: t.isExternal))
+    /// Untertitelzeile innerhalb ihrer Sprachgruppe (die Sprache steht schon im Gruppenkopf, daher nie im Titel):
+    /// Titel ist der Spurname, sonst das Format ("SRT", "PGS · Bild"), sonst "Spur n" (`number`, Standard id + 1).
+    /// Detail ist das Format, wenn es nicht schon der Titel ist. Kein Extra-Name.
+    public static func subtitleRow(_ t: AudioTrackInfo, number: Int? = nil) -> TrackRowLabel {
+        let format = subtitleFormat(codec: t.codec, isImage: t.isImage)
+        let badges = MediaLabels.trackBadges(isForced: t.isForced, isHearingImpaired: t.isHearingImpaired,
+                                             isCommentary: t.isCommentary, isDefault: t.isDefault, isExternal: t.isExternal)
+        if let n = meaningfulName(t) { return TrackRowLabel(title: n, detail: format, name: nil, badges: badges) }
+        if let f = format { return TrackRowLabel(title: f, detail: nil, name: nil, badges: badges) }
+        return TrackRowLabel(title: "Spur \(number ?? t.id + 1)", detail: nil, name: nil, badges: badges)
     }
 
     static func meaningfulName(_ t: AudioTrackInfo) -> String? {
@@ -184,6 +208,14 @@ public enum TrackPanelLogic {
             return join("Dolby Digital+", ch, "(umgewandelt)")
         }
         if p.contains("→ FLAC") || p.contains("-> FLAC") { return join("FLAC", src, "(umgewandelt, verlustfrei)") }
+        // Objekt-Ton als Lautsprecherbett: "TRUEHD Atmos → PCM 7.1.4", "DTS:X → APAC 5.1.4", "EAC3 Atmos → PCM 7.1.4 (system decoder)".
+        let target = p.components(separatedBy: "→").last.map { $0.components(separatedBy: "->").last ?? $0 } ?? p
+        let words = target.split(separator: " ").map(String.init)
+        if words.count >= 2, words[0] == "PCM" || words[0] == "APAC",
+           words[1].split(separator: ".").count >= 2, words[1].allSatisfy({ $0.isNumber || $0 == "." }) {
+            let object = p.contains("DTS:X") ? "DTS:X" : p.contains("ATMOS") ? "Atmos" : nil
+            return "\(words[0]) \(words[1]) (\(object.map { "\($0) gerendert" } ?? "umgewandelt"))"
+        }
         if p.contains("APAC") { return "APAC (umgewandelt)" }
         if p.contains("PCM") || p.contains("COREAUDIO") { return join("PCM", src, "(dekodiert)") }
         return nil

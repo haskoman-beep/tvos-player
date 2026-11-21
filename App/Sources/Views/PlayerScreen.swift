@@ -42,6 +42,7 @@ struct PlayerScreen: View {
         }
         .onDisappear { if !isTrailer { model.endPlayback(request) } }
         .onAppear {
+            guard backend == nil else { return }
             do { backend = try AetherBackend() } catch { initError = "Player-Start fehlgeschlagen: \(error)"; RemoteLog.error("player", initError ?? "") }
         }
     }

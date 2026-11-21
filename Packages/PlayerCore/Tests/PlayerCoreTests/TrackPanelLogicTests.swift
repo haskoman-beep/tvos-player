@@ -53,16 +53,49 @@ private func t(_ id: Int, _ lang: String?, name: String? = nil, ch: Int? = nil, 
 }
 
 @Test func subtitleRowLabel() {
+    // Sprache steht im Gruppenkopf: nie im Zeilentitel.
     let s = AudioTrackInfo(id: 3, language: "ger", name: "German (SDH)", codec: "hdmv_pgs_subtitle",
                            isHearingImpaired: true, isImage: true)
     let r = TrackPanelLogic.subtitleRow(s)
-    #expect(r.title == "Deutsch")
+    #expect(r.title == "German (SDH)")
     #expect(r.detail == "PGS · Bild")
+    #expect(r.name == nil)
     #expect(r.badges == ["SDH"])
     let e = TrackPanelLogic.subtitleRow(t(9, "en", name: "OpenSubtitles", codec: "subrip", ext: true))
+    #expect(e.title == "OpenSubtitles")
     #expect(e.detail == "SRT")
     #expect(e.badges == ["Extern"])
-    #expect(e.name == "OpenSubtitles")
+    #expect(e.name == nil)
+    let plain = TrackPanelLogic.subtitleRow(t(4, "ger", name: "Deutsch", codec: "subrip"))
+    #expect(plain.title == "SRT")
+    #expect(plain.detail == nil)
+    let bare = TrackPanelLogic.subtitleRow(t(5, "eng"), number: 2)
+    #expect(bare.title == "Spur 2")
+    #expect(TrackPanelLogic.subtitleRow(t(5, nil)).title == "Spur 6")
+}
+
+@Test func audioRowUnknownLanguageNoUnbekannt() {
+    let named = TrackPanelLogic.audioRow(AudioTrackInfo(id: 1, language: "und", name: "Director's Cut Mix", channels: 6, codec: "ac3"))
+    #expect(named.title == "Director's Cut Mix")
+    #expect(named.name == nil)
+    #expect(named.detail == "Dolby Digital · 5.1")
+    let format = TrackPanelLogic.audioRow(AudioTrackInfo(id: 1, language: nil, name: "Surround", channels: 2, codec: "aac"))
+    #expect(format.title == "AAC")
+    #expect(format.detail == "Stereo")
+    #expect(format.name == nil)
+    let bare = TrackPanelLogic.audioRow(AudioTrackInfo(id: 1, language: "qaa"), number: 3)
+    #expect(bare.title == "Spur 3")
+    #expect(bare.detail == nil)
+    #expect(TrackPanelLogic.audioRow(AudioTrackInfo(id: 1, language: nil)).title == "Spur 2")
+    for r in [named, format, bare] { #expect(r.title != "Unbekannt") }
+}
+
+@Test func unknownLanguagesShareOneLastGroup() {
+    let tracks = [t(0, "qaa"), t(1, "eng"), t(2, nil), t(3, "und"), t(4, "ger")]
+    let g = TrackPanelLogic.groupByLanguage(tracks, preferred: ["de"])
+    #expect(g.map(\.code) == ["de", "en", nil])
+    #expect(g.last?.name == "Unbekannt")
+    #expect(g.last?.tracks.map(\.id) == [0, 2, 3])
 }
 
 @Test func subtitleFormats() {
@@ -85,6 +118,12 @@ private func t(_ id: Int, _ lang: String?, name: String? = nil, ch: Int? = nil, 
             == "FLAC 7.1 (umgewandelt, verlustfrei)")
     #expect(TrackPanelLogic.audioOutput(pipeline: "libavcodec OPUS → CoreAudio", delivery: "decoded", sourceChannels: 2)
             == "PCM Stereo (dekodiert)")
+    #expect(TrackPanelLogic.audioOutput(pipeline: "TRUEHD Atmos → PCM 7.1.4", delivery: "bridged", sourceChannels: 8)
+            == "PCM 7.1.4 (Atmos gerendert)")
+    #expect(TrackPanelLogic.audioOutput(pipeline: "DTS:X → APAC 5.1.4", delivery: "bridged", sourceChannels: 8)
+            == "APAC 5.1.4 (DTS:X gerendert)")
+    #expect(TrackPanelLogic.audioOutput(pipeline: "EAC3 Atmos → PCM 7.1.4 (system decoder)", delivery: "bridged", sourceChannels: 6)
+            == "PCM 7.1.4 (Atmos gerendert)")
     #expect(TrackPanelLogic.audioOutput(pipeline: "Stream-copy (EAC3+JOC Atmos)", delivery: "streamCopy", sourceChannels: 6) == nil)
     #expect(TrackPanelLogic.audioOutput(pipeline: nil, delivery: "bridged", sourceChannels: 6) == nil)
 }

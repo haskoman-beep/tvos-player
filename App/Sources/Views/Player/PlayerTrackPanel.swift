@@ -44,6 +44,8 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
     @Environment(\.dismiss) private var dismiss
     @State private var tab: PlayerTrackTab = .audio
     @FocusState private var focus: Focus?
+    /// Nutzer hat den Fokus bewegt (dann den Startfokus nicht mehr nachziehen).
+    @State private var userMoved = false
 
     private enum Focus: Hashable {
         case tab(PlayerTrackTab)
@@ -59,6 +61,12 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
         return .tab(.audio)
     }
 
+    /// Aktive Untertitelzeile ("Aus", wenn keiner läuft oder die Spur fehlt).
+    private var activeSubtitleFocus: Focus {
+        if let id = engine.activeSubtitleID, engine.subtitleTracks.contains(where: { $0.id == id }) { return .subtitle(id) }
+        return .subtitleOff
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             tabBar.focusSection()
@@ -72,14 +80,24 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .defaultFocus($focus, initialFocus)
         .onChange(of: focus) { old, new in
-            guard case .tab(let t)? = new, t != tab else { return }
-            // Von einer Zeile nach oben: zurück auf den offenen Reiter, nicht den nächstgelegenen.
-            if let old, !isTab(old) { focus = .tab(tab) } else { tab = t }
+            // Erster Fokus beim Öffnen (old == nil) ist kein Nutzerschritt: nichts umschalten.
+            guard let old, let new else { return }
+            userMoved = true
+            if case .tab(let t) = new {
+                guard t != tab else { return }
+                // Von einer Zeile nach oben: zurück auf den offenen Reiter, nicht den nächstgelegenen.
+                if !isTab(old) { focus = .tab(tab) } else { tab = t }
+                return
+            }
+            // Vom Reiter in die Untertitel-Liste: auf die aktive Zeile.
+            if isTab(old), tab == .subtitles, new != activeSubtitleFocus { focus = activeSubtitleFocus }
         }
         .task {
             try? await Task.sleep(for: .milliseconds(80))
-            if focus == nil { focus = initialFocus }
+            if !userMoved, focus != initialFocus { tab = .audio; focus = initialFocus }
         }
+        .onAppear { RemoteLog.info("player", "Panel auf") }
+        .onDisappear { RemoteLog.info("player", "Panel zu") }
         .onExitCommand { dismiss() }
         .presentationBackground(.clear)
     }
@@ -144,8 +162,8 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
         return ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 4) {
                 if tracks.isEmpty { Text("Keine Tonspuren").foregroundStyle(.secondary).padding(16) }
-                ForEach(tracks, id: \.id) { t in
-                    row(TrackPanelLogic.audioRow(t), active: t.id == engine.activeAudioID) {
+                ForEach(Array(tracks.enumerated()), id: \.element.id) { i, t in
+                    row(TrackPanelLogic.audioRow(t, number: i + 1), active: t.id == engine.activeAudioID) {
                         RemoteLog.info("player", "Tonspur gewählt: \(t.id)")
                         engine.selectAudio(t.id); dismiss()
                     }
@@ -171,8 +189,8 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
                     Text(g.header)
                         .font(.callout.bold()).foregroundStyle(.secondary)
                         .padding(.horizontal, 16).padding(.top, 18)
-                    ForEach(g.tracks, id: \.id) { t in
-                        row(TrackPanelLogic.subtitleRow(t), active: t.id == engine.activeSubtitleID) {
+                    ForEach(Array(g.tracks.enumerated()), id: \.element.id) { i, t in
+                        row(TrackPanelLogic.subtitleRow(t, number: i + 1), active: t.id == engine.activeSubtitleID) {
                             RemoteLog.info("player", "Untertitel gewählt: \(t.id)")
                             engine.selectSubtitle(t.id); dismiss()
                         }
