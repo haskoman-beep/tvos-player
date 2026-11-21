@@ -9,6 +9,8 @@ public struct StreamTraits: Equatable, Sendable {
     public var sizeBytes: Int64?
     /// true = sofort abspielbar (Debrid-Cache), false = muss erst laden, nil = unbekannt.
     public var cached: Bool?
+    /// "7.1" / "5.1" / "2.0" laut Name.
+    public var channels: String?
 
     public static func parse(_ s: StreamItem) -> StreamTraits {
         let text = [s.name, s.title, s.description, s.behaviorHints?.filename].compactMap { $0 }.joined(separator: " ")
@@ -30,6 +32,7 @@ public struct StreamTraits: Equatable, Sendable {
         if up.contains("DDP") || up.contains("DD+") || up.contains("EAC3") || up.contains("E-AC-3") { t.audio.append("DD+") }
         else if containsToken(up, "DD") || up.contains("AC3") { t.audio.append("DD") }
         if containsToken(up, "AAC") { t.audio.append("AAC") }
+        for ch in ["7.1", "5.1", "2.0"] where t.channels == nil && containsToken(up, ch) { t.channels = ch }
 
         for (flag, code) in [("🇩🇪", "de"), ("🇬🇧", "en"), ("🇺🇸", "en"), ("🇯🇵", "ja"), ("🇫🇷", "fr"), ("🇪🇸", "es"), ("🇮🇹", "it")]
         where text.contains(flag) && !t.languages.contains(code) { t.languages.append(code) }

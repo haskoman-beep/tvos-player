@@ -36,6 +36,8 @@ struct DetailView: View {
     @State private var meta: MetaDetail?
     @State private var season = 1
     @State private var loading = true
+    @State private var ratings: ExternalRatings?
+    @State private var tech: [String] = []
 
     private var isSeries: Bool { item.type == "series" }
 
@@ -51,6 +53,7 @@ struct DetailView: View {
                     }
                     Text([meta?.releaseInfo ?? item.releaseInfo, meta?.runtime, meta?.genres?.prefix(3).joined(separator: ", ")]
                         .compactMap { $0 }.joined(separator: " · ")).foregroundStyle(.secondary)
+                    InfoBadges(ratings: ratings, tech: tech)
                     Text(meta?.description ?? item.description ?? "").frame(maxWidth: 1100, alignment: .leading)
 
                     if loading {
@@ -72,7 +75,15 @@ struct DetailView: View {
         }
         .task {
             imdb = await model.imdbID(for: item)
-            if let imdb { meta = await model.meta(type: isSeries ? "series" : "movie", imdb: imdb) }
+            if let imdb {
+                async let r = model.ratings(imdb: imdb, series: isSeries)
+                meta = await model.meta(type: isSeries ? "series" : "movie", imdb: imdb)
+                ratings = await r
+                if !isSeries {
+                    let id = imdb
+                    Task { tech = TechBadges.summary(await model.streams(type: "movie", id: id).map(\.stream)) }
+                }
+            }
             season = imdb.flatMap { model.progress.latest(forItem: $0)?.season } ?? seasons.first ?? 1
             loading = false
         }
@@ -306,5 +317,52 @@ struct SearchView: View {
         searching = true
         results = (try? await tmdb.search(query)) ?? []
         searching = false
+    }
+}
+
+/// Infozeile der Detailseite: Technik gefüllt, Bewertungen/Freigabe mit Rahmen (Zwei-Stil-Regel nach Swiftfin).
+struct InfoBadges: View {
+    let ratings: ExternalRatings?
+    let tech: [String]
+
+    var body: some View {
+        let rated = ratings.map(MDBList.badges) ?? []
+        if !rated.isEmpty || !tech.isEmpty || ratings?.certification != nil {
+            HStack(spacing: 14) {
+                ForEach(tech, id: \.self) { t in
+                    Text(t).font(.caption.weight(.bold)).foregroundStyle(.black)
+                        .padding(.horizontal, 12).padding(.vertical, 5)
+                        .background(Color.white.opacity(0.85), in: RoundedRectangle(cornerRadius: 6))
+                }
+                if let c = ratings?.certification {
+                    Text(c).font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.6), lineWidth: 2))
+                }
+                ForEach(rated) { b in
+                    HStack(spacing: 6) {
+                        Text(b.label).font(.caption.weight(.heavy)).foregroundStyle(labelColor(b.source))
+                        Text(b.text).font(.caption.weight(.semibold))
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(scoreColor(b.score).opacity(0.8), lineWidth: 2))
+                }
+            }
+            .transition(.opacity)
+        }
+    }
+
+    private func labelColor(_ source: String) -> Color {
+        switch source {
+        case "imdb": Color(red: 0.96, green: 0.77, blue: 0.09)
+        case "letterboxd": Color(red: 0.0, green: 0.88, blue: 0.33)
+        case "trakt": Color(red: 0.93, green: 0.11, blue: 0.14)
+        case "tmdb": Color(red: 0.0, green: 0.82, blue: 0.85)
+        default: .white
+        }
+    }
+
+    private func scoreColor(_ s: Double) -> Color {
+        s >= 70 ? .green : s >= 50 ? .yellow : .red
     }
 }

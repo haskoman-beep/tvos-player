@@ -303,9 +303,28 @@ final class AppModel: ObservableObject {
     }
 
     func streams(type: String, id: String) async -> [(addon: String, stream: StreamItem)] {
-        let all = await addons.streams(from: profile.addons, type: type, id: id)
-        RemoteLog.info("streams", "\(type) \(id): " + all.map { "\($0.addon.manifest.name)=\($0.streams.count)" }.joined(separator: ", "))
-        return all.flatMap { r in playableStreams(r.streams).map { (r.addon.manifest.name, $0) } }
+        // Kurzer Cache: Detailseite holt vorab (für die Technik-Plaketten), die Quellenliste nutzt das Ergebnis.
+        if let c = streamCache[id], Date().timeIntervalSince(c.at) < 300 { return c.list }
+        if let t = streamTasks[id] { return await t.value }
+        let task = Task { () -> [(addon: String, stream: StreamItem)] in
+            let all = await addons.streams(from: profile.addons, type: type, id: id)
+            RemoteLog.info("streams", "\(type) \(id): " + all.map { "\($0.addon.manifest.name)=\($0.streams.count)" }.joined(separator: ", "))
+            return all.flatMap { r in playableStreams(r.streams).map { (r.addon.manifest.name, $0) } }
+        }
+        streamTasks[id] = task
+        let list = await task.value
+        streamTasks[id] = nil
+        if !list.isEmpty { streamCache[id] = (Date(), list) }
+        return list
+    }
+
+    private var streamCache: [String: (at: Date, list: [(addon: String, stream: StreamItem)])] = [:]
+    private var streamTasks: [String: Task<[(addon: String, stream: StreamItem)], Never>] = [:]
+
+    /// MDBList-Bewertungen (nil ohne Key oder ohne Treffer).
+    func ratings(imdb: String, series: Bool) async -> ExternalRatings? {
+        guard let k = profile.apiKeys["mdblist"], !k.isEmpty else { return nil }
+        return await RatingsStore.shared.ratings(imdb: imdb, series: series, apiKey: k)
     }
 
     // MARK: Handy-Eingabe
