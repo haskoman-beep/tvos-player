@@ -17,8 +17,10 @@ struct CategoryEntry {
 ///   nicht auf dem geometrisch nächsten.
 /// - Menu (N3): aus der rechten Spalte auf den aktiven Eintrag, aus der linken Spalte `onExit`.
 ///
-/// `header` steht über den Einträgen (z. B. die Kopfkachel „Am Handy einrichten“) und sollte genau ein
-/// Fokusziel enthalten; es zählt als linke Spalte.
+/// `header` steht über den Einträgen (z. B. die Kopfkachel „Am Handy einrichten“). **Die Wurzel des Kopfs muss
+/// selbst genau ein Knopf sein** (z. B. eine `SettingsRow`), kein Container mit einem Knopf darin: nur dann greift
+/// `.focused(_, equals: .header)`. Sonst bliebe `focused == nil`, Menu auf dem Kopf spränge auf den aktiven
+/// Eintrag statt `onExit`, und „runter“ vom Kopf würde auf den aktiven Eintrag umgelenkt.
 struct CategoryList<Item: Hashable, Header: View, Content: View>: View {
     let items: [Item]
     @Binding var selected: Item
@@ -56,10 +58,10 @@ struct CategoryList<Item: Hashable, Header: View, Content: View>: View {
                         Button { selected = item } label: {
                             CategoryEntryLabel(entry: e, active: active)
                         }
-                        .buttonStyle(ThemeRowButtonStyle(minHeight: 72))
+                        .buttonStyle(ThemeRowButtonStyle(minHeight: Theme.Layout.categoryRowMinHeight, maxWidth: .infinity))
                         .focused($focused, equals: .item(item))
                         .accessibilityLabel(e.title)
-                        .accessibilityValue(e.count.map { "\($0) Einträge" } ?? "")
+                        .accessibilityValue(e.count.map { $0 == 1 ? "1 Eintrag" : "\($0) Einträge" } ?? "")
                         .accessibilityAddTraits(active ? .isSelected : [])
                     }
                 }
@@ -145,7 +147,7 @@ private struct CategoryEntryLabel: View {
                  onExit: {},
                  header: {
                      SettingsRow(symbol: "qrcode", tint: Theme.CategoryTint.system.color, title: "Am Handy einrichten",
-                                 detail: "Addons, Schlüssel, Importe", detailAlwaysVisible: true) {}
+                                 detail: "Addons, Schlüssel, Importe", accessory: .chevron, detailAlwaysVisible: true) {}
                  },
                  content: { item in
                      VStack(alignment: .leading, spacing: Theme.Space.s) {

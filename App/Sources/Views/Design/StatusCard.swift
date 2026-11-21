@@ -39,7 +39,7 @@ struct StatusCard: View {
             HStack(alignment: .center, spacing: Theme.Space.m) {
                 leadingMark
                 VStack(alignment: .leading, spacing: Theme.Space.xs / 2) {
-                    Text(title).font(Theme.TextRole.rowTitleEmphasis).foregroundStyle(Theme.Palette.primary).lineLimit(1)
+                    Text(title).textRole(.rowTitleEmphasis).lineLimit(1)
                     if let subtitle, !subtitle.isEmpty {
                         Text(subtitle).textRole(.rowDetail).lineLimit(1)
                     }
@@ -69,7 +69,7 @@ struct StatusCard: View {
     }
 
     @ViewBuilder private var leadingMark: some View {
-        let size: CGFloat = 72
+        let size = Theme.Layout.statusMark
         switch leading {
         case .initial(let text, let color):
             Text(String(text.prefix(1)).uppercased())
@@ -93,7 +93,7 @@ struct StatusCard: View {
         if let tone = m.tone {
             Label(m.text, systemImage: tone.symbol)
                 .font(Theme.TextRole.rowDetail.font)
-                .foregroundStyle(tone.color)
+                .foregroundStyle(tone.textColor)
                 .monospacedDigit()
                 .lineLimit(1)
         } else {

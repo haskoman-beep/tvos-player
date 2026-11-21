@@ -34,6 +34,9 @@ enum SettingsRowAccessory: Equatable {
 /// Beschreibung (`rowDetail`, 1–2 Zeilen) · rechts Wert / Chevron / An-Aus.
 /// Als Label in `Button` oder `NavigationLink` mit `ThemeRowButtonStyle` einsetzen (oder fertig als `SettingsRow`).
 /// Die Beschreibung steht bei der fokussierten Zeile immer, sonst nur mit `detailAlwaysVisible` (wichtige Hinweise).
+/// `reserveDetailSpace` (Standard an): die Beschreibung bleibt im Layout und wird nur ein- und ausgeblendet,
+/// damit die Zeilenhöhe beim Fokuswechsel nicht springt. Aus: die Zeile wächst bei Fokus (dichte Listen).
+/// Die Breite begrenzt `ThemeRowButtonStyle` für die ganze Fläche.
 struct SettingsRowLabel: View {
     let symbol: String
     let tint: Color
@@ -41,17 +44,25 @@ struct SettingsRowLabel: View {
     var detail: String? = nil
     var accessory: SettingsRowAccessory = .none
     var detailAlwaysVisible = false
+    var reserveDetailSpace = true
     @Environment(\.isFocused) private var focused
+
+    private var detailShown: Bool { focused || detailAlwaysVisible }
 
     var body: some View {
         HStack(alignment: .center, spacing: Theme.Space.m) {
             IconTile(symbol: symbol, color: tint)
             VStack(alignment: .leading, spacing: Theme.Space.xs / 2) {
                 Text(title).textRoleInRow(.rowTitle).lineLimit(1)
-                if let detail, !detail.isEmpty, focused || detailAlwaysVisible {
-                    Text(detail).textRoleInRow(.rowDetail).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                if let detail, !detail.isEmpty {
+                    if reserveDetailSpace {
+                        detailText(detail).opacity(detailShown ? 1 : 0)
+                    } else if detailShown {
+                        detailText(detail).transition(.opacity)
+                    }
                 }
             }
+            .animation(.easeOut(duration: Theme.Focus.duration), value: detailShown)
             Spacer(minLength: Theme.Space.m)
             if let value = accessory.valueText {
                 Text(value).textRoleInRow(.rowDetail).monospacedDigit().lineLimit(1)
@@ -63,7 +74,10 @@ struct SettingsRowLabel: View {
                     .accessibilityHidden(true)
             }
         }
-        .frame(maxWidth: Theme.Layout.contentMaxWidth, alignment: .leading)
+    }
+
+    private func detailText(_ text: String) -> some View {
+        Text(text).textRoleInRow(.rowDetail).lineLimit(2).fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -73,14 +87,16 @@ struct SettingsRow: View {
     let tint: Color
     let title: String
     var detail: String? = nil
-    var accessory: SettingsRowAccessory = .chevron
+    var accessory: SettingsRowAccessory = .none
     var detailAlwaysVisible = false
+    var reserveDetailSpace = true
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             SettingsRowLabel(symbol: symbol, tint: tint, title: title, detail: detail,
-                             accessory: accessory, detailAlwaysVisible: detailAlwaysVisible)
+                             accessory: accessory, detailAlwaysVisible: detailAlwaysVisible,
+                             reserveDetailSpace: reserveDetailSpace)
         }
         .buttonStyle(ThemeRowButtonStyle())
         .settingsRowAccessibility(title: title, detail: detail, accessory: accessory)
@@ -94,12 +110,14 @@ struct SettingsToggleRow: View {
     let title: String
     var detail: String? = nil
     var detailAlwaysVisible = false
+    var reserveDetailSpace = true
     @Binding var isOn: Bool
 
     var body: some View {
         Button { isOn.toggle() } label: {
             SettingsRowLabel(symbol: symbol, tint: tint, title: title, detail: detail,
-                             accessory: .toggle(isOn), detailAlwaysVisible: detailAlwaysVisible)
+                             accessory: .toggle(isOn), detailAlwaysVisible: detailAlwaysVisible,
+                             reserveDetailSpace: reserveDetailSpace)
         }
         .buttonStyle(ThemeRowButtonStyle())
         .settingsRowAccessibility(title: title, detail: detail, accessory: .toggle(isOn))

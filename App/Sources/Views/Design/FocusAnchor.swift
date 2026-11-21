@@ -35,6 +35,8 @@ struct FocusAnchor: View {
     var title: String? = nil
     /// Eigene Aktion; `nil` schließt die Seite.
     var action: (() -> Void)? = nil
+    /// VoiceOver-Hinweis zur eigenen Aktion; ohne eigene Aktion gilt der Standardhinweis der Art.
+    var hint: String? = nil
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -43,11 +45,11 @@ struct FocusAnchor: View {
             if let action { action() } else { dismiss() }
         } label: {
             Label(text, systemImage: kind.symbol)
-                .font(Theme.TextRole.rowTitleEmphasis)
+                .font(Theme.TextRole.rowTitleEmphasis.font)
                 .padding(.horizontal, Theme.Space.s)
         }
         .accessibilityLabel(text)
-        .accessibilityHint(kind.hint)
+        .accessibilityHint(hint ?? (action == nil ? kind.hint : ""))
     }
 }
 

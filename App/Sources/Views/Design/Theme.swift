@@ -18,6 +18,8 @@ enum Theme {
         case sectionTitle
         /// body (29): Listenzeilen, Kartenunterschrift.
         case rowTitle
+        /// headline (29, semibold): hervorgehobene Listenzeile, Statuskarte, Fokusanker.
+        case rowTitleEmphasis
         /// subheadline (29), sekundär: Beschreibungen, Zeilenwerte, Meta-Zeile.
         case rowDetail
         /// caption bold (25): Plakettentext.
@@ -29,13 +31,11 @@ enum Theme {
             case .pageTitle: .title2.bold()
             case .sectionTitle: .title3.weight(.semibold)
             case .rowTitle: .body
+            case .rowTitleEmphasis: .headline
             case .rowDetail: .subheadline
             case .badge: .caption.bold()
             }
         }
-
-        /// Hervorgehobene Listenzeile (`rowTitle` als headline).
-        static let rowTitleEmphasis: Font = .headline
 
         /// Sekundäre Rollen tragen `fg.secondary` (bzw. Schwarz 60 % in fokussierten Zeilen).
         var isSecondary: Bool { self == .rowDetail }
@@ -73,6 +73,24 @@ enum Theme {
         static let iconSize: CGFloat = 32
         /// Breite der Akzentmarke an der aktiven Kategorie.
         static let accentMarkWidth: CGFloat = 6
+        /// Mindesthöhe eines Eintrags der linken Spalte (`CategoryList`).
+        static let categoryRowMinHeight: CGFloat = 72
+        /// Kreis links in der `StatusCard` (Initiale bzw. Symbol).
+        static let statusMark: CGFloat = 72
+    }
+
+    /// Fokuseffekt der Bedienzeilen (`ThemeRowButtonStyle`).
+    enum Focus {
+        /// Anheben bei Fokus bzw. Eindrücken beim Klick.
+        static let scale: CGFloat = 1.02
+        static let pressedScale: CGFloat = 0.98
+        /// Schatten der fokussierten Zeile.
+        static let shadowOpacity: Double = 0.35
+        static let shadowRadius: CGFloat = 14
+        static let shadowY: CGFloat = 8
+        /// Dauer der Fokus-Übergänge (auch Ein- und Ausblenden der Zeilenbeschreibung).
+        static let duration: Double = 0.15
+        static let pressDuration: Double = 0.1
     }
 
     // MARK: Radien (§4.4)
@@ -139,6 +157,16 @@ enum Theme {
             case .ok: .green          // Systemgrün; das alte (0.16, 0.56, 0.30) ist für Text zu dunkel
             case .warn: .orange
             case .error: .red
+            }
+        }
+
+        /// Textfarbe des Zustands auf dunklen Flächen (bg.row, Status-Kapsel): mindestens 4,5:1.
+        /// Systemrot liegt dort bei rund 4,2:1, deshalb ein helleres Rot (≈ 5,3:1); `color` bleibt für Flächen
+        /// und destruktive Knöpfe.
+        var textColor: Color {
+            switch self {
+            case .ok, .warn: color
+            case .error: Color(red: 1, green: 0.45, blue: 0.42)
             }
         }
 
@@ -223,29 +251,33 @@ private struct TextRoleModifier: ViewModifier {
 
 /// Knopfstil der Bedienzeilen: ruhend `bg.row`, fokussiert weiß mit leichtem Anheben, Radius `radius.row`.
 /// Die Texte im Label wählen ihre Farbe selbst über `textRoleInRow` (liest denselben Fokus).
+/// `maxWidth` begrenzt die ganze Fläche (Standard: Textbreite 1100), damit der Wert rechts am Flächenende steht.
 struct ThemeRowButtonStyle: ButtonStyle {
     var minHeight: CGFloat = Theme.Layout.rowMinHeight
+    var maxWidth: CGFloat = Theme.Layout.contentMaxWidth
 
     func makeBody(configuration: Configuration) -> some View {
-        RowBody(configuration: configuration, minHeight: minHeight)
+        RowBody(configuration: configuration, minHeight: minHeight, maxWidth: maxWidth)
     }
 
     private struct RowBody: View {
         let configuration: Configuration
         let minHeight: CGFloat
+        let maxWidth: CGFloat
         @Environment(\.isFocused) private var focused
 
         var body: some View {
             configuration.label
                 .padding(.horizontal, Theme.Space.m)
                 .padding(.vertical, Theme.Space.s)
-                .frame(maxWidth: .infinity, minHeight: minHeight, alignment: .leading)
+                .frame(maxWidth: maxWidth, minHeight: minHeight, alignment: .leading)
                 .background(focused ? Theme.Palette.rowFocused : Theme.Palette.row,
                             in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
-                .scaleEffect(configuration.isPressed ? 0.98 : (focused ? 1.02 : 1))
-                .shadow(color: .black.opacity(focused ? 0.35 : 0), radius: focused ? 14 : 0, y: focused ? 8 : 0)
-                .animation(.easeOut(duration: 0.15), value: focused)
-                .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
+                .scaleEffect(configuration.isPressed ? Theme.Focus.pressedScale : (focused ? Theme.Focus.scale : 1))
+                .shadow(color: .black.opacity(focused ? Theme.Focus.shadowOpacity : 0),
+                        radius: focused ? Theme.Focus.shadowRadius : 0, y: focused ? Theme.Focus.shadowY : 0)
+                .animation(.easeOut(duration: Theme.Focus.duration), value: focused)
+                .animation(.easeOut(duration: Theme.Focus.pressDuration), value: configuration.isPressed)
         }
     }
 }
@@ -261,7 +293,7 @@ struct IconTile: View {
             .font(.system(size: Theme.Layout.iconSize, weight: .semibold))
             .foregroundStyle(.white)
             .frame(width: Theme.Layout.iconTile, height: Theme.Layout.iconTile)
-            .background(color, in: RoundedRectangle(cornerRadius: Theme.Radius.badge * 1.5, style: .continuous))
+            .background(color, in: RoundedRectangle(cornerRadius: Theme.Radius.badge, style: .continuous))
             .accessibilityHidden(true)
     }
 }

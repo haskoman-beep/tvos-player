@@ -33,3 +33,25 @@ import Testing
             == "Tonsprache, Deutsch → Englisch, Welche Tonspur zuerst gewählt wird.")
     #expect(DesignText.accessibilityLabel(["", " "]) == "")
 }
+
+@Test func designDecimalRoundingIsPinned() {
+    // String(format:) rundet exakte Hälften auf die gerade Ziffer; dieses Verhalten ist gewollt festgehalten.
+    #expect(DesignText.decimal(0.25) == "0,2")
+    #expect(DesignText.decimal(0.35) == "0,3" || DesignText.decimal(0.35) == "0,4")  // 0.35 ist binär nicht exakt
+    #expect(DesignText.decimal(2.5, fractionDigits: 0) == "2")
+    #expect(DesignText.decimal(3.5, fractionDigits: 0) == "4")
+    #expect(DesignText.decimal(0.75) == "0,8")
+}
+
+@Test func designDecimalParsingAndTextRating() {
+    #expect(DesignText.decimal(parsing: "7.1") == "7,1")
+    #expect(DesignText.decimal(parsing: " 7,1 ") == "7,1")
+    #expect(DesignText.decimal(parsing: "8") == "8,0")
+    #expect(DesignText.decimal(parsing: "") == nil)
+    #expect(DesignText.decimal(parsing: nil) == nil)
+    #expect(DesignText.decimal(parsing: "n/a") == nil)
+    #expect(DesignText.decimal(parsing: "inf") == nil)
+    #expect(DesignText.rating(source: "IMDb", text: "7.1") == "IMDb 7,1")
+    #expect(DesignText.rating(source: "IMDb", text: nil) == "")
+    #expect(DesignText.rating(source: nil, text: "6.85", fractionDigits: 1) == "6,8" || DesignText.rating(source: nil, text: "6.85") == "6,9")
+}

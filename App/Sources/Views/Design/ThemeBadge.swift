@@ -64,7 +64,7 @@ struct ThemeBadge: View {
         case .status(let tone, let onImage):
             label
                 .font(Theme.TextRole.badge.font)
-                .foregroundStyle(onImage ? Theme.Palette.primary : (tone?.color ?? Theme.Palette.primary))
+                .foregroundStyle(onImage ? Theme.Palette.primary : (tone?.textColor ?? Theme.Palette.primary))
                 .padding(.horizontal, Theme.Space.s)
                 .padding(.vertical, Theme.Space.xs / 2)
                 .background(statusFill(tone: tone, onImage: onImage), in: Capsule())
