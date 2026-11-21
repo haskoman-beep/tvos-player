@@ -26,8 +26,11 @@ public struct EpisodeRef: Codable, Sendable, Hashable {
 }
 
 /// Stream für die nächste Folge: gleiche `bingeGroup` (gleiche Qualität/Quelle) bevorzugt, sonst der erste.
+/// Sicher nicht gecachte Quellen ("lädt erst") werden übersprungen, solange es andere gibt.
 public func nextEpisodeStream(_ streams: [StreamItem], bingeGroup: String?) -> StreamItem? {
-    let playable = playableStreams(streams)
+    let all = playableStreams(streams)
+    let ready = all.filter { StreamTraits.parse($0).cached != false }
+    let playable = ready.isEmpty ? all : ready
     if let g = bingeGroup, let same = playable.first(where: { $0.behaviorHints?.bingeGroup == g }) { return same }
     return playable.first
 }

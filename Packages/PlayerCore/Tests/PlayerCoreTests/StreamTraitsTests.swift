@@ -41,3 +41,40 @@ import Testing
     #expect(preferredAudioTrack([tracks[0]], priority: ["de", "en", "orig"])?.id == 0)
     #expect(preferredAudioTrack([], priority: ["de"]) == nil)
 }
+
+@Test func preferredAudioTrackPrefersPassthroughSurround() {
+    let tracks = [AudioTrackInfo(id: 1, language: "ger", channels: 6, codec: "dts"),
+                  AudioTrackInfo(id: 2, language: "ger", channels: 6, codec: "eac3"),
+                  AudioTrackInfo(id: 3, language: "ger", channels: 2, codec: "aac"),
+                  AudioTrackInfo(id: 4, language: "eng", channels: 8, codec: "truehd")]
+    #expect(preferredAudioTrack(tracks, priority: ["de", "en"])?.id == 2)
+    // Surround schlägt Stereo, auch wenn Stereo durchreichbar wäre.
+    let t2 = [AudioTrackInfo(id: 1, language: "de", channels: 2, codec: "ac3"),
+              AudioTrackInfo(id: 2, language: "de", channels: 6, codec: "dts")]
+    #expect(preferredAudioTrack(t2, priority: ["de"])?.id == 2)
+}
+
+@Test func placeholderDetection() {
+    #expect(isPlaceholderVideo(duration: 30, expectedRuntimeMinutes: nil))
+    #expect(!isPlaceholderVideo(duration: 5400, expectedRuntimeMinutes: nil))
+    #expect(isPlaceholderVideo(duration: 1800, expectedRuntimeMinutes: 117))
+    #expect(!isPlaceholderVideo(duration: 6900, expectedRuntimeMinutes: 117))
+    #expect(!isPlaceholderVideo(duration: 0, expectedRuntimeMinutes: nil))
+}
+
+@Test func runtimeParsing() {
+    #expect(parseRuntimeMinutes("117 min") == 117)
+    #expect(parseRuntimeMinutes("1h 57min") == 117)
+    #expect(parseRuntimeMinutes("2 h") == 120)
+    #expect(parseRuntimeMinutes(nil) == nil)
+    #expect(parseRuntimeMinutes("n/a") == nil)
+}
+
+@Test func nextEpisodeSkipsUncached() {
+    let a = StreamItem(name: "TB", title: "⏳ 2160p", url: "https://x/a",
+                       behaviorHints: StreamBehaviorHints(bingeGroup: "g1"))
+    let b = StreamItem(name: "TB", title: "⚡ 1080p", url: "https://x/b",
+                       behaviorHints: StreamBehaviorHints(bingeGroup: "g2"))
+    #expect(nextEpisodeStream([a, b], bingeGroup: "g1")?.url == "https://x/b")
+    #expect(nextEpisodeStream([a], bingeGroup: "g1")?.url == "https://x/a")
+}

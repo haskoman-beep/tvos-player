@@ -7,7 +7,10 @@ struct PlayerScreen: View {
     @EnvironmentObject var model: AppModel
     let url: URL
     let request: PlayRequest
+    var headers: [String: String] = [:]
     var onEnded: () -> Void = {}
+    /// Quelle taugt nicht (Platzhalter, Fehler nach Neustart): nächste Quelle versuchen.
+    var onFallback: (String) -> Void = { _ in }
     @State private var backend: AetherBackend?
     @State private var initError: String?
 
@@ -16,8 +19,12 @@ struct PlayerScreen: View {
             if let backend { PlayerControls(engine: backend, url: url, title: request.title, profile: model.profile,
                                                        start: model.progress.resumePosition(for: request.id),
                                                        startFraction: model.progress.resumeFraction(for: request.id),
+                                                       runtimeMinutes: request.runtimeMinutes,
+                                                       prefs: LoadPrefs(audioLanguages: model.profile.audioPriority.filter { $0 != "orig" },
+                                                                        subtitleLanguages: model.profile.subtitlesEnabled ? [model.profile.subtitleLanguage] : [],
+                                                                        headers: headers),
                                                        report: { pos, dur in model.recordProgress(request, position: pos, duration: dur) },
-                                                       onEnded: onEnded) }
+                                                       onEnded: onEnded, onFallback: onFallback) }
             else { Text(initError ?? "Player wird gestartet …") }
         }
         .onDisappear { model.endPlayback(request) }
@@ -34,8 +41,11 @@ struct PlayerControls<E: PlaybackEngine>: View {
     let profile: Profile
     let start: Double?
     var startFraction: Double? = nil
+    var runtimeMinutes: Double? = nil
+    var prefs = LoadPrefs()
     let report: (Double, Double) -> Void
     let onEnded: () -> Void
+    var onFallback: (String) -> Void = { _ in }
     @Environment(\.dismiss) private var dismiss
     @State private var showOverlay = true
     @State private var showTracks = false
@@ -43,6 +53,12 @@ struct PlayerControls<E: PlaybackEngine>: View {
     @State private var loadError: String?
     @State private var tick = 0
     @State private var fractionApplied = false
+    /// Gesammeltes Sprungziel: mehrere ±10-s-Drücke werden zu einem Sprung (Muxer-Neustarts sparen).
+    @State private var pendingSeek: Double?
+    @State private var seekTask: Task<Void, Never>?
+    @State private var lastToggle = Date.distantPast
+    @State private var recoveries = 0
+    @State private var lastGoodTime: Double = 0
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -60,8 +76,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
         .onTapGesture { togglePlay() }   // Klick auf das Touchpad (Mitte) pausiert ebenfalls
         .onMoveCommand { dir in
             switch dir {
-            case .left: RemoteLog.info("player", "−10 s bei \(Int(engine.currentTime))"); Task { await engine.seek(engine.currentTime - 10) }
-                case .right: RemoteLog.info("player", "+10 s bei \(Int(engine.currentTime))"); Task { await engine.seek(engine.currentTime + 10) }
+            case .left: queueSeek(-10)
+            case .right: queueSeek(10)
             case .down: showTracks = true
             default: break
             }
@@ -70,10 +86,15 @@ struct PlayerControls<E: PlaybackEngine>: View {
         .onExitCommand { saveProgress(); engine.stop(); dismiss() }
         .onReceive(timer) { _ in
             tick &+= 1
+            if engine.isPlaying, engine.errorText == nil { lastGoodTime = engine.currentTime }
             if tick % 10 == 0 && engine.isPlaying { saveProgress() }
         }
         .onDisappear { saveProgress(); RemoteLog.info("player", "Verlassen") }
-        .onChange(of: engine.errorText) { _, e in if let e { RemoteLog.error("player", "Engine: \(e) · \(engine.infoText) · \(engine.errorDetail)") } }
+        .onChange(of: engine.errorText) { _, e in
+            guard let e else { return }
+            RemoteLog.error("player", "Engine: \(e) · \(engine.infoText) · \(engine.errorDetail) · bei \(Int(lastGoodTime))s")
+            recover(e)
+        }
         .onChange(of: engine.duration) { _, d in
             // Stand aus Trakt/Simkl kennt nur den Anteil: springen, sobald die Laufzeit da ist.
             guard d > 0, !fractionApplied, start == nil, let f = startFraction else { return }
@@ -90,7 +111,11 @@ struct PlayerControls<E: PlaybackEngine>: View {
         .task {
             do {
                 RemoteLog.info("player", "Laden \(title) · Start \(start.map { Int($0) } ?? 0)s · \(url.host ?? "?")")
-                try await engine.load(url, start: start)
+                try await engine.load(url, start: start, prefs: prefs)
+                if isPlaceholderVideo(duration: engine.duration, expectedRuntimeMinutes: runtimeMinutes) {
+                    RemoteLog.info("player", "Platzhalter erkannt (\(Int(engine.duration))s, erwartet \(runtimeMinutes.map { Int($0) } ?? 0) min) → nächste Quelle")
+                    engine.stop(); onFallback("Quelle noch nicht bereit (Platzhalter)"); return
+                }
                 RemoteLog.info("player", "Geladen · \(Int(engine.duration))s · \(engine.infoText) · Ton: " +
                     engine.audioTracks.map { "\($0.id):\($0.language ?? "?")/\($0.channels ?? 0)ch" }.joined(separator: " ") +
                     " · UT: \(engine.subtitleTracks.count)")
@@ -115,9 +140,9 @@ struct PlayerControls<E: PlaybackEngine>: View {
         let d = max(engine.duration, 1)
         return VStack(alignment: .leading, spacing: 14) {
             Text(title).font(.title3.bold())
-            ProgressView(value: min(engine.currentTime, d), total: d)
+            ProgressView(value: min(pendingSeek ?? engine.currentTime, d), total: d)
             HStack {
-                Text(fmt(engine.currentTime)); Spacer()
+                Text(fmt(pendingSeek ?? engine.currentTime)); Spacer()
                 Text(engine.infoText).font(.caption).foregroundStyle(.secondary)
                 Spacer(); Text("-" + fmt(d - engine.currentTime))
             }
@@ -129,10 +154,55 @@ struct PlayerControls<E: PlaybackEngine>: View {
     }
 
     private func togglePlay() {
+        // Ein Druck kann doppelt ankommen (Play/Pause-Taste + Systembefehl): zweiten innerhalb 350 ms ignorieren.
+        let now = Date()
+        if now.timeIntervalSince(lastToggle) < 0.35 { RemoteLog.info("player", "Play/Pause doppelt, ignoriert"); return }
+        lastToggle = now
         let before = engine.stateText
+        if engine.errorText != nil { recoveries = 0; recover("Neuer Versuch per Play/Pause"); return }
         engine.togglePlayPause()
         RemoteLog.info("player", "Play/Pause gedrückt · Zustand vorher \(before)")
+        Task {
+            try? await Task.sleep(for: .milliseconds(700))
+            RemoteLog.info("player", "Play/Pause · Zustand danach \(engine.stateText)")
+        }
         poke()
+    }
+
+    /// ±10 s sammeln und nach 450 ms einmal springen.
+    private func queueSeek(_ delta: Double) {
+        let base = pendingSeek ?? engine.currentTime
+        let limit = engine.duration > 10 ? engine.duration - 5 : .greatestFiniteMagnitude
+        let target = min(max(0, base + delta), limit)
+        pendingSeek = target
+        seekTask?.cancel()
+        seekTask = Task {
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled else { return }
+            RemoteLog.info("player", "Sprung \(Int(engine.currentTime)) → \(Int(target))s")
+            await engine.seek(target)
+            pendingSeek = nil
+        }
+    }
+
+    /// Fehler mitten im Film: einmal an der Stelle neu laden (frisches Muxer-Budget), sonst nächste Quelle.
+    private func recover(_ reason: String) {
+        guard recoveries < 1 else {
+            RemoteLog.error("player", "Neu laden half nicht → nächste Quelle")
+            saveProgress(); engine.stop(); onFallback("Wiedergabefehler: \(reason)"); return
+        }
+        recoveries += 1
+        let pos = lastGoodTime
+        RemoteLog.info("player", "Neu laden an \(Int(pos))s nach: \(reason)")
+        Task {
+            do { try await engine.recover() }
+            catch {
+                RemoteLog.error("player", "reloadAtCurrentPosition fehlgeschlagen: \(error) → load ab \(Int(pos))s")
+                do { try await engine.load(url, start: pos, prefs: prefs) }
+                catch { engine.stop(); onFallback("Wiedergabefehler: \(reason)"); return }
+            }
+            engine.play()
+        }
     }
 
     private func saveProgress() {

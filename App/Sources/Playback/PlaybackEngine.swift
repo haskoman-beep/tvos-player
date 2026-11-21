@@ -20,7 +20,9 @@ protocol PlaybackEngine: ObservableObject {
     var infoText: String { get }
     var errorDetail: String { get }
 
-    func load(_ url: URL, start: Double?) async throws
+    func load(_ url: URL, start: Double?, prefs: LoadPrefs) async throws
+    /// Neue Sitzung an der aktuellen Stelle (frisches Fehlerbudget der Engine).
+    func recover() async throws
     func play()
     func pause()
     func togglePlayPause()
@@ -33,6 +35,13 @@ protocol PlaybackEngine: ObservableObject {
     func surface() -> Surface
 }
 
+/// Wünsche für das Laden, unabhängig vom Backend.
+struct LoadPrefs {
+    var audioLanguages: [String] = []
+    var subtitleLanguages: [String] = []
+    var headers: [String: String] = [:]
+}
+
 /// AetherEngine-Backend.
 @MainActor
 final class AetherBackend: PlaybackEngine {
@@ -42,6 +51,21 @@ final class AetherBackend: PlaybackEngine {
     init() throws {
         engine = try AetherEngine()
         bag = engine.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        Self.installEngineLog()
+    }
+
+    /// Engine-Meldungen (Muxer-Neustarts, Ton-Bridge, Sitzung) ins Fern-Log.
+    private static var logInstalled = false
+    private static func installEngineLog() {
+        guard !logInstalled else { return }
+        logInstalled = true
+        EngineLog.structuredHandler = { line, cat, _ in
+            switch cat {
+            case .engine, .session, .muxer, .audioBridge, .demux:
+                Task { @MainActor in RemoteLog.info("engine.\(cat.rawValue)", line) }
+            default: break
+            }
+        }
     }
 
     var isPlaying: Bool { engine.state == .playing }
@@ -50,7 +74,7 @@ final class AetherBackend: PlaybackEngine {
     var currentTime: Double { engine.clock.currentTime }
     var duration: Double { engine.duration }
     var audioTracks: [AudioTrackInfo] {
-        engine.audioTracks.map { AudioTrackInfo(id: $0.id, language: $0.language, name: $0.name, channels: $0.channels) }
+        engine.audioTracks.map { AudioTrackInfo(id: $0.id, language: $0.language, name: $0.name, channels: $0.channels, codec: $0.codec) }
     }
     var activeAudioID: Int? { engine.activeAudioTrackIndex }
     var subtitleTracks: [AudioTrackInfo] {
@@ -68,7 +92,18 @@ final class AetherBackend: PlaybackEngine {
 
     var errorDetail: String { engine.errorInfo.map { String(describing: $0) } ?? "-" }
 
-    func load(_ url: URL, start: Double?) async throws { _ = try await engine.load(url: url, startPosition: start) }
+    func load(_ url: URL, start: Double?, prefs: LoadPrefs) async throws {
+        var o = LoadOptions()
+        o.preferredAudioLanguages = prefs.audioLanguages
+        o.preferredSubtitleLanguages = prefs.subtitleLanguages
+        o.httpHeaders = prefs.headers
+        // Schnellerer Start bei Fernquellen (Werte wie NuvioTVOS): 8 MiB / 5 s statt 50 MB / 60 s.
+        o.probesize = 8 * 1024 * 1024
+        o.maxAnalyzeDuration = 5_000_000
+        o.skipsContainerAttachments = true
+        _ = try await engine.load(url: url, startPosition: start, options: o)
+    }
+    func recover() async throws { try await engine.reloadAtCurrentPosition() }
     func play() { engine.play() }
     func pause() { engine.pause() }
     /// Engine liest den echten AVPlayer-Zustand (der veröffentlichte `state` kann hinterherhinken).

@@ -30,6 +30,8 @@ struct PlayRequest: Hashable {
     var episode: Int?
     /// Alle Folgen der Serie (für die nächste Folge).
     var episodes: [EpisodeRef] = []
+    /// Erwartete Laufzeit in Minuten (für die Platzhalter-Erkennung), falls bekannt.
+    var runtimeMinutes: Double? = nil
 
     var nextRequest: PlayRequest? {
         guard let s = season, let e = episode, let n = EpisodeRef.next(after: s, e, in: episodes),

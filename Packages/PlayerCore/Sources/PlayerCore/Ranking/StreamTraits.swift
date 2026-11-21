@@ -81,12 +81,23 @@ public struct AudioTrackInfo: Equatable, Sendable {
     public var language: String?
     public var name: String?
     public var channels: Int?
-    public init(id: Int, language: String?, name: String? = nil, channels: Int? = nil) {
-        self.id = id; self.language = language; self.name = name; self.channels = channels
+    /// libavcodec-Name, z. B. "eac3", "ac3", "dts", "truehd".
+    public var codec: String?
+    public init(id: Int, language: String?, name: String? = nil, channels: Int? = nil, codec: String? = nil) {
+        self.id = id; self.language = language; self.name = name; self.channels = channels; self.codec = codec
     }
+
+    /// Über ARC unverändert durchreichbar (kein Umkodieren nötig).
+    public var isPassthrough: Bool { ["eac3", "ac3"].contains(codec?.lowercased() ?? "") }
 }
 
-/// Sprache nach Vorrang ("de", "en", "orig" = erste Spur); bei gleicher Sprache die mit mehr Kanälen.
+/// Rangfolge innerhalb einer Sprache: Surround vor Stereo, dann DD/DD+ (ohne Umkodieren über ARC) vor DTS/TrueHD, dann Kanäle.
+func audioScore(_ t: AudioTrackInfo) -> Int {
+    let ch = t.channels ?? 0
+    return (ch >= 6 ? 1000 : 0) + (t.isPassthrough ? 100 : 0) + ch
+}
+
+/// Sprache nach Vorrang ("de", "en", "orig" = erste Spur); bei gleicher Sprache die beste nach `audioScore`.
 public func preferredAudioTrack(_ tracks: [AudioTrackInfo], priority: [String]) -> AudioTrackInfo? {
     func norm(_ l: String?) -> String? {
         guard let l = l?.lowercased() else { return nil }
@@ -97,7 +108,33 @@ public func preferredAudioTrack(_ tracks: [AudioTrackInfo], priority: [String]) 
     for p in priority {
         if p == "orig" { return tracks.first }
         let m = tracks.filter { norm($0.language) == p }
-        if let best = m.max(by: { ($0.channels ?? 0) < ($1.channels ?? 0) }) { return best }
+        if let best = m.max(by: { audioScore($0) < audioScore($1) }) { return best }
     }
     return tracks.first
+}
+
+/// "Nicht gecacht"-Platzhalter von AIOStreams/TorBox: kurze Clips statt Film/Folge.
+/// Unter 50 % der erwarteten Laufzeit oder (ohne Laufzeit) höchstens 121 s.
+public func isPlaceholderVideo(duration: Double, expectedRuntimeMinutes: Double?) -> Bool {
+    guard duration > 0 else { return false }
+    if let r = expectedRuntimeMinutes, r > 0 { return duration < r * 60 * 0.5 }
+    return duration <= 121
+}
+
+/// "117 min", "1h 57min", "2 h" → Minuten. Zahl gefolgt von "h" zählt als Stunden, sonst als Minuten.
+public func parseRuntimeMinutes(_ s: String?) -> Double? {
+    guard let s = s?.lowercased() else { return nil }
+    let chars = Array(s)
+    var total = 0.0, i = 0
+    while i < chars.count {
+        guard chars[i].isNumber else { i += 1; continue }
+        var j = i
+        while j < chars.count, chars[j].isNumber { j += 1 }
+        let v = Double(String(chars[i..<j])) ?? 0
+        var k = j
+        while k < chars.count, chars[k] == " " { k += 1 }
+        total += (k < chars.count && chars[k] == "h") ? v * 60 : v
+        i = j
+    }
+    return total > 0 ? total : nil
 }

@@ -59,7 +59,7 @@ struct DetailView: View {
                         if isSeries { episodes(imdb) } else {
                             let resume = model.progress.resumePosition(for: imdb)
                             Button(resume.map { "▶ Fortsetzen ab \(timeText($0))" } ?? "▶ Abspielen") {
-                                navigate(.streams(PlayRequest(type: "movie", id: imdb, title: item.name, item: progressItem(imdb))))
+                                navigate(.streams(PlayRequest(type: "movie", id: imdb, title: item.name, item: progressItem(imdb), runtimeMinutes: parseRuntimeMinutes(meta?.runtime))))
                             }
                         }
                     } else {
@@ -141,6 +141,9 @@ struct StreamListView: View {
     @State private var streams: [(addon: String, stream: StreamItem)] = []
     @State private var loading = true
     @State private var playing: StreamItem?
+    /// Quellen, die in dieser Liste schon versagt haben, und Zahl der automatischen Wechsel.
+    @State private var failed: Set<String> = []
+    @State private var fallbacks = 0
 
     var body: some View {
         List {
@@ -150,7 +153,9 @@ struct StreamListView: View {
                 Text(model.profile.addons.isEmpty ? "Kein Addon installiert (Einstellungen → Addons)." : "Keine abspielbaren Quellen.")
             }
             ForEach(streams, id: \.stream.id) { entry in
-                Button { playing = entry.stream } label: { StreamRow(addon: entry.addon, stream: entry.stream) }
+                Button { fallbacks = 0; playing = entry.stream } label: {
+                    StreamRow(addon: entry.addon, stream: entry.stream).opacity(failed.contains(entry.stream.id) ? 0.4 : 1)
+                }
             }
         }
         .navigationTitle(request.title)
@@ -159,12 +164,34 @@ struct StreamListView: View {
             loading = false
         }
         .fullScreenCover(item: $playing) { s in
-            if let u = s.url.flatMap(URL.init(string:)) { PlayerScreen(url: u, request: current ?? request, onEnded: { ended(s) }).environmentObject(model) }
+            if let u = s.url.flatMap(URL.init(string:)) { PlayerScreen(url: u, request: current ?? request,
+                                                                             headers: s.behaviorHints?.proxyHeaders?.request ?? [:],
+                                                                             onEnded: { ended(s) }, onFallback: { fallback(from: s, reason: $0) }).environmentObject(model) }
         }
     }
 }
 
 extension StreamListView {
+    /// Quelle versagt → nächste noch nicht gescheiterte Quelle darunter, höchstens 3 automatische Wechsel.
+    func fallback(from s: StreamItem, reason: String) {
+        failed.insert(s.id)
+        playing = nil
+        let list = streams.map(\.stream)
+        guard fallbacks < 3, let i = list.firstIndex(where: { $0.id == s.id }),
+              let next = list[(i + 1)...].first(where: { !failed.contains($0.id) && $0.url != nil }) else {
+            nextNote = "\(reason). Bitte eine andere Quelle wählen."
+            RemoteLog.info("player", "Kein automatischer Wechsel mehr (\(fallbacks) versucht)")
+            return
+        }
+        fallbacks += 1
+        nextNote = "\(reason) – versuche nächste Quelle (\(fallbacks)/3) …"
+        RemoteLog.info("player", "Wechsel \(fallbacks)/3 auf: \(next.name ?? "") \(next.title?.prefix(60) ?? "")")
+        Task {
+            try? await Task.sleep(for: .milliseconds(900))
+            playing = next
+        }
+    }
+
     /// Folge zu Ende → nächste Folge mit gleicher bingeGroup starten (Spec §6 Player: nächste Folge).
     func ended(_ stream: StreamItem) {
         playing = nil
