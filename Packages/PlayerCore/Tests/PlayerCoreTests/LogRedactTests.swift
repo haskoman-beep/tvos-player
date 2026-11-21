@@ -108,6 +108,69 @@ import Testing
     }
 }
 
+// MARK: Fix-Runde 1
+
+@Test func redactTextTorrentioFullConfig() {
+    let raw = "Laden https://torrentio.strem.fun/providers=yts,eztv|debridoptions=nodownloadlinks|realdebrid=ABCDEF1234567890XYZ/stream/movie/tt0111161.json fertig"
+    #expect(LogRedact.text(raw) == "Laden https://torrentio.strem.fun/…/tt0111161.json fertig")
+    let enc = "Laden https://torrentio.strem.fun/providers=yts,eztv%7Cdebridoptions=nodownloadlinks%7Crealdebrid=ABCDEF1234567890XYZ/stream/movie/tt0111161.json fertig"
+    #expect(LogRedact.text(enc) == "Laden https://torrentio.strem.fun/…/tt0111161.json fertig")
+    #expect(LogRedact.text("https://torrentio.strem.fun/providers=yts|realdebrid=ABCDEF1234567890XYZ") == "https://torrentio.strem.fun/…")
+}
+
+@Test func redactTextSchemelessAddonURL() {
+    let line = "Addon torrentio.strem.fun/providers=yts|realdebrid=ABCDEF1234567890XYZ/manifest.json hinzugefügt"
+    #expect(LogRedact.text(line) == "Addon torrentio.strem.fun/…/manifest.json hinzugefügt")
+    #expect(LogRedact.text("Port aio.example.org:8443/0a1b2c3d-4e5f-6789-abcd-ef0123456789/x") == "Port aio.example.org:8443/…/x")
+    // Kein Host → nichts anfassen
+    #expect(LogRedact.text("Laden 3/4 · Fehler 1/2") == "Laden 3/4 · Fehler 1/2")
+}
+
+@Test func redactIPv6Host() {
+    #expect(LogRedact.url("http://[FE80::1]:11470/realdebrid=ABCDEF1234567890XYZ/stream/movie/tt1.json")
+            == "http://[fe80::1]:11470/…/tt1.json")
+    #expect(LogRedact.text("open http://[fe80::1]:11470/realdebrid=ABCDEF1234567890XYZ/stream.json.")
+            == "open http://[fe80::1]:11470/…/stream.json.")
+}
+
+@Test func redactUserinfoWithQueryAndHashChars() {
+    #expect(LogRedact.url("https://user:p?a#ss@Host.example/a/b.mkv?x=1") == "https://host.example/…/b.mkv")
+    #expect(LogRedact.text("x https://user:p?a#ss@host.example/b.mkv y") == "x https://host.example/b.mkv y")
+}
+
+@Test func redactKeyValuePairsInText() {
+    let poll = DevicePoll.success(SyncToken(accessToken: "abcdef123", refreshToken: "ghijkl456", expiresAt: nil))
+    let r = LogRedact.text("trakt Login: \(poll)")
+    #expect(!r.contains("abcdef123"))
+    #expect(!r.contains("ghijkl456"))
+    #expect(r.contains("refreshToken: Optional(\"…\")"))
+    #expect(LogRedact.text("token=abc123&x=1") == "token=…&x=1")
+    #expect(LogRedact.text("TOKEN = ABC") == "TOKEN = …")
+    #expect(LogRedact.text(#"{"api_key":"xyz789","n":1}"#) == #"{"api_key":"…","n":1}"#)
+    #expect(LogRedact.text("apiKey: qwe, password=hunter2; secret:s3cr3t") == "apiKey: …, password=…; secret:…")
+    #expect(LogRedact.text("auth_token=a1 access-token: b2") == "auth_token=… access-token: …")
+    // Keine Paare → unverändert
+    #expect(LogRedact.text("Befehle: key torbox, nuvio-url") == "Befehle: key torbox, nuvio-url")
+    #expect(LogRedact.text("Token abgelaufen · NSErrorFailingURLStringKey") == "Token abgelaufen · NSErrorFailingURLStringKey")
+    #expect(LogRedact.text(LogRedact.text("trakt Login: \(poll)")) == r)
+}
+
+@Test func redactOpaqueRunsInText() {
+    let key32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+    #expect(LogRedact.text("RD-Schlüssel \(key32) gesetzt") == "RD-Schlüssel … gesetzt")
+    let k31 = String(key32.dropLast())
+    #expect(LogRedact.text("kurz \(k31) ok") == "kurz \(k31) ok")
+    #expect(LogRedact.text("Hash 0123456789abcdef0123456789abcdef01234567") == "Hash …")
+}
+
+@Test func redactLooksSecretExtendedChars() {
+    #expect(LogRedact.looksSecret("abc+def~ghi123jklmno"))
+    #expect(LogRedact.looksSecret("Ab1!Ab1!Ab1!Ab1!Ab1!Ab1!"))
+    #expect(!LogRedact.looksSecret("Ab1!Ab1!Ab1!Ab1!Ab1!"))
+    #expect(!LogRedact.looksSecret("Serie.S01E02.German.DL.1080p.mkv"))
+    #expect(!LogRedact.looksSecret("manifest.json"))
+}
+
 @Test func imageBudgetScalesWithAvailableMemory() {
     let mb = ImageCacheBudget.mb
     // Unbekannt → bisherige feste Grenze

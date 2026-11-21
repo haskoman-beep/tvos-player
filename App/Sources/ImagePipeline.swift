@@ -40,10 +40,10 @@ actor ImagePipeline {
         urlCache = cache
         memory.totalCostLimit = ImageCacheBudget.maximum
         memory.delegate = tracker
-        NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: nil) { _ in
-            Task { await ImagePipeline.shared.memoryWarning() }
+        NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: nil) { [weak self] _ in
+            Task { await self?.memoryWarning() }
         }
-        Task { await ImagePipeline.shared.updateBudget(force: true, reason: "Start") }
+        Task { [weak self] in await self?.updateBudget(force: true, reason: "Start") }
     }
 
     /// Bild in höchstens `maxPixels` Kantenlänge (längere Seite).
