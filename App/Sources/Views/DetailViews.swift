@@ -207,7 +207,7 @@ struct StreamListView: View {
         .fullScreenCover(item: $playing) { s in
             if let u = s.url.flatMap(URL.init(string:)) { PlayerScreen(url: u, request: current ?? request,
                                                                              headers: s.behaviorHints?.proxyHeaders?.request ?? [:],
-                                                                             onEnded: { ended(s) }, onFallback: { fallback(from: s, reason: $0) }).environmentObject(model) }
+                                                                             onEnded: { ended(s, autoplay: $0) }, onFallback: { fallback(from: s, reason: $0) }).environmentObject(model) }
         }
     }
 }
@@ -241,9 +241,9 @@ extension StreamListView {
     }
 
     /// Folge zu Ende → nächste Folge mit gleicher bingeGroup starten (Spec §6 Player: nächste Folge).
-    func ended(_ stream: StreamItem) {
+    func ended(_ stream: StreamItem, autoplay: Bool = true) {
         playing = nil
-        guard model.profile.autoplayNext, let next = (current ?? request).nextRequest else { return }
+        guard autoplay, model.profile.autoplayNext, let next = (current ?? request).nextRequest else { return }
         nextNote = "Nächste Folge wird gesucht: \(next.title) …"
         Task {
             let list = await model.streams(type: next.type, id: next.id).map(\.stream)

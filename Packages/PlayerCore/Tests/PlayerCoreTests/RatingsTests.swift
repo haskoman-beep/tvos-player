@@ -81,3 +81,11 @@ import Testing
     let c = TMDBClient(apiKey: "k", language: "de-DE")
     #expect(c.languageCode == "de"); #expect(c.regionCode == "DE")
 }
+
+@Test func episodeListSkipsUnaired() {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)   // 2027-01-15
+    let v = [MetaVideo(id: "a", season: 1, episode: 1, released: "2026-01-01T00:00:00.000Z"),
+             MetaVideo(id: "b", season: 1, episode: 2, released: "2027-06-01T00:00:00.000Z"),
+             MetaVideo(id: "c", season: 1, episode: 3, released: nil)]
+    #expect(EpisodeRef.list(from: v, now: now).map(\.episode) == [1, 3])
+}

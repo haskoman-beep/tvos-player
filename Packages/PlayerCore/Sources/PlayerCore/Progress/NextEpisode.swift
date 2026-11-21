@@ -10,13 +10,26 @@ public struct EpisodeRef: Codable, Sendable, Hashable {
         self.season = season; self.episode = episode; self.title = title
     }
 
-    public static func list(from videos: [MetaVideo]) -> [EpisodeRef] {
+    /// Folgenliste ohne Specials und ohne noch nicht ausgestrahlte Folgen (released in der Zukunft).
+    public static func list(from videos: [MetaVideo], now: Date = Date()) -> [EpisodeRef] {
         var seen = Set<[Int]>()
         return videos.compactMap { v -> EpisodeRef? in
-            guard let s = v.season, let e = v.episode, s > 0, seen.insert([s, e]).inserted else { return nil }
+            guard let s = v.season, let e = v.episode, s > 0 else { return nil }
+            if let r = v.released, let d = releaseDate(r), d > now { return nil }
+            guard seen.insert([s, e]).inserted else { return nil }
             return EpisodeRef(season: s, episode: e, title: v.name ?? v.title)
         }
         .sorted { ($0.season, $0.episode) < ($1.season, $1.episode) }
+    }
+
+    static func releaseDate(_ s: String) -> Date? {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = f.date(from: s) { return d }
+        f.formatOptions = [.withInternetDateTime]
+        if let d = f.date(from: s) { return d }
+        f.formatOptions = [.withFullDate]
+        return f.date(from: String(s.prefix(10)))
     }
 
     /// Folge nach (season, episode); nil = Serie zu Ende.

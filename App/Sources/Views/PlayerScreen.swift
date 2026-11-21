@@ -8,7 +8,8 @@ struct PlayerScreen: View {
     let url: URL
     let request: PlayRequest
     var headers: [String: String] = [:]
-    var onEnded: () -> Void = {}
+    /// true = nächste Folge darf automatisch starten.
+    var onEnded: (Bool) -> Void = { _ in }
     /// Quelle taugt nicht (Platzhalter, Fehler nach Neustart): nächste Quelle versuchen.
     var onFallback: (String) -> Void = { _ in }
     @State private var backend: AetherBackend?
@@ -25,7 +26,12 @@ struct PlayerScreen: View {
                                                                         headers: headers),
                                                        report: { pos, dur in model.recordProgress(request, position: pos, duration: dur) },
                                                        onEnded: onEnded, onFallback: onFallback,
-                                                       onPause: { model.scrobblePause(request) }) }
+                                                       onPause: { model.scrobblePause(request) },
+                                                       nextTitle: model.profile.autoplayNext ? request.nextRequest?.title : nil,
+                                                       onNextSoon: {
+                                                           guard let n = request.nextRequest else { return }
+                                                           Task { _ = await model.streams(type: n.type, id: n.id) }
+                                                       }) }
             else { Text(initError ?? "Player wird gestartet …") }
         }
         .onDisappear { model.endPlayback(request) }
@@ -45,9 +51,16 @@ struct PlayerControls<E: PlaybackEngine>: View {
     var runtimeMinutes: Double? = nil
     var prefs = LoadPrefs()
     let report: (Double, Double) -> Void
-    let onEnded: () -> Void
+    let onEnded: (Bool) -> Void
     var onFallback: (String) -> Void = { _ in }
     var onPause: () -> Void = {}
+    /// Titel der nächsten Folge (nil = kein Up-next).
+    var nextTitle: String? = nil
+    /// Kurz vor Ende: Quellen der nächsten Folge vorab holen.
+    var onNextSoon: () -> Void = {}
+    @State private var upNext: Int?
+    @State private var upNextCancelled = false
+    @State private var nextPrefetched = false
     @Environment(\.dismiss) private var dismiss
     @State private var showOverlay = true
     @State private var showTracks = false
@@ -72,11 +85,16 @@ struct PlayerControls<E: PlaybackEngine>: View {
                 Text("Fehler: \(e)").padding(30).background(.red.opacity(0.8), in: RoundedRectangle(cornerRadius: 16))
             }
             if showOverlay { overlay.transition(.opacity) }
+            if let n = upNext, let t = nextTitle { upNextCard(n, t).transition(.move(edge: .trailing).combined(with: .opacity)) }
         }
         .focusable()
         .onPlayPauseCommand { togglePlay() }
         .onTapGesture { togglePlay() }   // Klick auf das Touchpad (Mitte) pausiert ebenfalls
         .onMoveCommand { dir in
+            if upNext != nil {
+                withAnimation { upNext = nil }; upNextCancelled = true
+                RemoteLog.info("player", "Up-next abgebrochen"); return
+            }
             switch dir {
             case .left: queueSeek(-10)
             case .right: queueSeek(10)
@@ -90,6 +108,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             tick &+= 1
             if engine.isPlaying, engine.errorText == nil { lastGoodTime = engine.currentTime }
             if tick % 10 == 0 && engine.isPlaying { saveProgress() }
+            upNextTick()
         }
         .onDisappear { saveProgress(); RemoteLog.info("player", "Verlassen") }
         .onChange(of: engine.errorText) { _, e in
@@ -107,7 +126,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             guard ended else { return }
             if engine.duration > 0 { report(engine.duration, engine.duration) }
             engine.stop()
-            onEnded()
+            onEnded(!upNextCancelled)
         }
         .sheet(isPresented: $showTracks) { TrackSheet(engine: engine) }
         .task {
@@ -137,6 +156,40 @@ struct PlayerControls<E: PlaybackEngine>: View {
         }
     }
 
+    /// Up-next: 2 min vor Ende vorladen, 20 s vor Ende 10-s-Countdown, dann nächste Folge.
+    private func upNextTick() {
+        guard nextTitle != nil, engine.duration > 300, engine.errorText == nil else { return }
+        let rem = engine.duration - engine.currentTime
+        if rem < 120, !nextPrefetched { nextPrefetched = true; onNextSoon() }
+        if let n = upNext {
+            if rem > 40 { withAnimation { upNext = nil } }   // zurückgespult
+            else if engine.isPlaying { if n <= 1 { startNext() } else { upNext = n - 1 } }
+        } else if rem <= 20, rem > 0, engine.isPlaying, !upNextCancelled {
+            RemoteLog.info("player", "Up-next: \(nextTitle ?? "")")
+            withAnimation { upNext = 10 }
+        }
+    }
+
+    private func startNext() {
+        upNext = nil
+        if engine.duration > 0 { report(engine.duration, engine.duration) }
+        RemoteLog.info("player", "Nächste Folge startet")
+        engine.stop()
+        onEnded(true)
+    }
+
+    private func upNextCard(_ n: Int, _ title: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Nächste Folge in \(n) s").font(.headline)
+            Text(title).font(.callout).foregroundStyle(.secondary).lineLimit(1)
+            Text("Klick: jetzt · Wischen: abbrechen").font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(28).frame(width: 560, alignment: .leading)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .padding(60)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+    }
+
     private var overlay: some View {
         let _ = tick
         let d = max(engine.duration, 1)
@@ -160,6 +213,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
         let now = Date()
         if now.timeIntervalSince(lastToggle) < 0.35 { RemoteLog.info("player", "Play/Pause doppelt, ignoriert"); return }
         lastToggle = now
+        if upNext != nil { startNext(); return }
         let before = engine.stateText
         if engine.errorText != nil { recoveries = 0; recover("Neuer Versuch per Play/Pause"); return }
         engine.togglePlayPause()
