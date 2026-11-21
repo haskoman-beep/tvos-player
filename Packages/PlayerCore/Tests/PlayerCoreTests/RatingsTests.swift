@@ -89,3 +89,24 @@ import Testing
              MetaVideo(id: "c", season: 1, episode: 3, released: nil)]
     #expect(EpisodeRef.list(from: v, now: now).map(\.episode) == [1, 3])
 }
+
+@Test func tmdbExtrasParsing() {
+    let json = #"""
+    {"id":38365,"title":"Kindsköpfe","original_title":"Grown Ups","overview":"Fünf Freunde …","tagline":"Jungs bleiben Jungs",
+     "release_date":"2010-06-24","budget":80000000,"revenue":271430189,"status":"Released",
+     "production_companies":[{"name":"Happy Madison"},{"name":"Columbia Pictures"}],"production_countries":[{"name":"United States of America"}],
+     "credits":{"cast":[{"id":19292,"name":"Adam Sandler","character":"Lenny Feder","profile_path":"/a.jpg"}],
+                "crew":[{"job":"Director","name":"Dennis Dugan"},{"job":"Writer","name":"Fred Wolf"},{"job":"Screenplay","name":"Adam Sandler"}]},
+     "videos":{"results":[{"site":"YouTube","key":"teaserEN","type":"Teaser","iso_639_1":"en"},
+                          {"site":"YouTube","key":"trailerEN","type":"Trailer","iso_639_1":"en","official":true},
+                          {"site":"YouTube","key":"trailerDE","type":"Trailer","iso_639_1":"de"},
+                          {"site":"Vimeo","key":"x","type":"Trailer","iso_639_1":"de"}]},
+     "recommendations":{"results":[{"id":89492,"title":"Kindsköpfe 2","poster_path":"/p.jpg","release_date":"2013-07-11","media_type":"movie"}]}}
+    """#
+    let m = TMDBClient.parseLocalized(Data(json.utf8), lang: "de", region: "DE", series: false)
+    #expect(m?.cast.first == CastMember(id: 19292, name: "Adam Sandler", role: "Lenny Feder", photo: "https://image.tmdb.org/t/p/w185/a.jpg"))
+    #expect(m?.creators == ["Dennis Dugan"]); #expect(m?.writers == ["Adam Sandler", "Fred Wolf"])
+    #expect(m?.studios == ["Happy Madison", "Columbia Pictures"]); #expect(m?.originalTitle == "Grown Ups")
+    #expect(m?.trailerYouTube == "trailerDE")
+    #expect(m?.recommendations.map(\.id) == ["tmdb:89492"]); #expect(m?.budget == 80_000_000)
+}

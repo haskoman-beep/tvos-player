@@ -70,22 +70,26 @@ public struct TMDBClient: Sendable {
         let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let arr = obj?[key] as? [[String: Any]] ?? []
         return arr.compactMap { r in
-            guard let id = r["id"] as? Int else { return nil }
             if skipPeople, let t = r["media_type"] as? String, t != "movie" && t != "tv" { return nil }
-            let mt: MediaType = switch r["media_type"] as? String {
-            case "tv": .series
-            case "movie": .movie
-            default: defaultType == .series ? .series : .movie
-            }
-            guard let name = (r["title"] ?? r["name"]) as? String else { return nil }
-            let date = (r["release_date"] ?? r["first_air_date"]) as? String
-            return MetaPreview(id: "tmdb:\(id)", type: mt == .series ? "series" : "movie", name: name,
-                               poster: (r["poster_path"] as? String).map { Self.posterBase + $0 },
-                               background: (r["backdrop_path"] as? String).map { Self.backdropBase + $0 },
-                               description: r["overview"] as? String,
-                               releaseInfo: date.map { String($0.prefix(4)) },
-                               imdbRating: (r["vote_average"] as? Double).map { String(format: "%.1f", $0) })
+            return Self.preview(r, defaultType: defaultType)
         }
+    }
+
+    /// Ein TMDB-Ergebnis als Kachel.
+    static func preview(_ r: [String: Any], defaultType: MediaType) -> MetaPreview? {
+        guard let id = r["id"] as? Int, let name = (r["title"] ?? r["name"]) as? String else { return nil }
+        let mt: MediaType = switch r["media_type"] as? String {
+        case "tv": .series
+        case "movie": .movie
+        default: defaultType == .series ? .series : .movie
+        }
+        let date = (r["release_date"] ?? r["first_air_date"]) as? String
+        return MetaPreview(id: "tmdb:\(id)", type: mt == .series ? "series" : "movie", name: name,
+                           poster: (r["poster_path"] as? String).map { Self.posterBase + $0 },
+                           background: (r["backdrop_path"] as? String).map { Self.backdropBase + $0 },
+                           description: r["overview"] as? String,
+                           releaseInfo: date.map { String($0.prefix(4)) },
+                           imdbRating: (r["vote_average"] as? Double).map { String(format: "%.1f", $0) })
     }
 
     struct ExternalIDs: Decodable { var imdb_id: String? }

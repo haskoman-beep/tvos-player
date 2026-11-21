@@ -39,6 +39,7 @@ struct DetailView: View {
     @State private var ratings: ExternalRatings?
     @State private var tech: [String] = []
     @State private var certification: String?
+    @State private var extra: LocalizedMeta?
 
     private var isSeries: Bool { item.type == "series" }
 
@@ -55,18 +56,26 @@ struct DetailView: View {
                     Text([meta?.releaseInfo ?? item.releaseInfo, meta?.runtime, meta?.genres?.prefix(3).joined(separator: ", ")]
                         .compactMap { $0 }.joined(separator: " · ")).foregroundStyle(.secondary)
                     InfoBadges(ratings: ratings, tech: tech, certification: certification ?? ratings?.certification)
+                    if let t = extra?.tagline { Text(t).italic().foregroundStyle(.secondary) }
                     Text(meta?.description ?? item.description ?? "").frame(maxWidth: 1100, alignment: .leading)
 
                     if loading {
                         ProgressView()
                     } else if let imdb {
-                        if isSeries { episodes(imdb) } else {
+                        if isSeries {
+                            if let k = extra?.trailerYouTube { trailerButton(k) }
+                            episodes(imdb)
+                        } else {
                             let resume = model.progress.resumePosition(for: imdb)
-                            Button(resume.map { "▶ Fortsetzen ab \(timeText($0))" } ?? "▶ Abspielen") {
-                                navigate(.streams(PlayRequest(type: "movie", id: imdb, title: item.name, item: progressItem(imdb), runtimeMinutes: parseRuntimeMinutes(meta?.runtime),
-                                                              resumeLastSource: resume != nil)))
+                            HStack(spacing: 30) {
+                                Button(resume.map { "▶ Fortsetzen ab \(timeText($0))" } ?? "▶ Abspielen") {
+                                    navigate(.streams(PlayRequest(type: "movie", id: imdb, title: item.name, item: progressItem(imdb), runtimeMinutes: parseRuntimeMinutes(meta?.runtime),
+                                                                  resumeLastSource: resume != nil)))
+                                }
+                                if let k = extra?.trailerYouTube { trailerButton(k) }
                             }
                         }
+                        if let x = extra { DetailExtras(info: x, isSeries: isSeries) }
                     } else {
                         Text("Keine IMDb-ID gefunden – Streams nicht abrufbar.").foregroundStyle(.secondary)
                     }
@@ -79,7 +88,8 @@ struct DetailView: View {
             if let imdb {
                 async let r = model.ratings(imdb: imdb, series: isSeries)
                 meta = await model.meta(type: isSeries ? "series" : "movie", imdb: imdb)
-                certification = await model.localized(imdb: imdb, series: isSeries)?.certification
+                extra = await model.localized(imdb: imdb, series: isSeries)
+                certification = extra?.certification
                 ratings = await r
                 if !isSeries {
                     let id = imdb
@@ -91,6 +101,17 @@ struct DetailView: View {
             await translateSeason()
         }
         .onChange(of: season) { Task { await translateSeason() } }
+    }
+
+    private func trailerButton(_ key: String) -> some View {
+        Button("🎬 Trailer") {
+            // tvOS hat keinen Browser: Trailer in der YouTube-App öffnen.
+            guard let u = URL(string: "youtube://www.youtube.com/watch?v=\(key)") else { return }
+            UIApplication.shared.open(u) { ok in
+                RemoteLog.info("detail", "Trailer \(key) in YouTube-App: \(ok ? "geöffnet" : "nicht möglich")")
+                if !ok, let w = URL(string: "https://www.youtube.com/watch?v=\(key)") { UIApplication.shared.open(w) }
+            }
+        }
     }
 
     private func translateSeason() async {
@@ -379,5 +400,104 @@ struct InfoBadges: View {
 
     private func scoreColor(_ s: Double) -> Color {
         s >= 70 ? .green : s >= 50 ? .yellow : .red
+    }
+}
+
+/// Besetzung, ähnliche Titel und „Über“ (alles aus dem einen TMDB-Abruf).
+struct DetailExtras: View {
+    let info: LocalizedMeta
+    let isSeries: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 40) {
+            if !info.cast.isEmpty {
+                Text("Besetzung").font(.title3.bold())
+                ScrollView(.horizontal) {
+                    LazyHStack(spacing: 36) {
+                        ForEach(info.cast) { c in
+                            Button {} label: {
+                                VStack(spacing: 10) {
+                                    RemoteImage(url: c.photo, maxPixels: 370)
+                                        .frame(width: 180, height: 180).clipShape(Circle())
+                                        .overlay { if c.photo == nil { Text(String(c.name.prefix(1))).font(.title) } }
+                                    Text(c.name).font(.caption.weight(.semibold)).lineLimit(1)
+                                    if let r = c.role { Text(r).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
+                                }
+                                .frame(width: 220).padding(.vertical, 14)
+                            }
+                            .buttonStyle(.card)
+                        }
+                    }
+                    .padding(.vertical, 30)
+                }
+                .scrollClipDisabled()
+            }
+            if !info.recommendations.isEmpty {
+                Text("Ähnliche Titel").font(.title3.bold())
+                ScrollView(.horizontal) {
+                    LazyHStack(spacing: 40) {
+                        ForEach(info.recommendations) { m in
+                            NavigationLinkish(route: .detail(m), onActivate: { $0 }, label: PosterCard(item: m))
+                        }
+                    }
+                    .padding(.vertical, 30)
+                }
+                .scrollClipDisabled()
+            }
+            let rows = aboutRows
+            if !rows.isEmpty {
+                Text("Über").font(.title3.bold())
+                Button {} label: {
+                    Grid(alignment: .leading, horizontalSpacing: 40, verticalSpacing: 14) {
+                        ForEach(rows, id: \.0) { r in
+                            GridRow {
+                                Text(r.0).foregroundStyle(.secondary)
+                                Text(r.1)
+                            }
+                        }
+                    }
+                    .font(.callout).padding(36).frame(maxWidth: 1400, alignment: .leading)
+                }
+                .buttonStyle(.card)
+            }
+        }
+    }
+
+    private var aboutRows: [(String, String)] {
+        var r: [(String, String)] = []
+        func add(_ k: String, _ v: String?) { if let v, !v.isEmpty { r.append((k, v)) } }
+        add("Originaltitel", info.originalTitle)
+        add(isSeries ? "Erstausstrahlung" : "Erschienen", info.releaseDate.flatMap(Self.germanDate))
+        add(isSeries ? "Idee" : "Regie", info.creators.prefix(3).joined(separator: ", "))
+        add("Drehbuch", info.writers.prefix(3).joined(separator: ", "))
+        add(isSeries ? "Sender / Studio" : "Studio", info.studios.joined(separator: ", "))
+        add("Land", info.countries.joined(separator: ", "))
+        if let s = info.seasons { add("Umfang", "\(s) Staffel\(s == 1 ? "" : "n")" + (info.episodes.map { " · \($0) Folgen" } ?? "")) }
+        add("Budget", info.budget.map(Self.money))
+        add("Einspielergebnis", info.revenue.map(Self.money))
+        add("Status", info.status.map(Self.statusText))
+        return r
+    }
+
+    static func germanDate(_ s: String) -> String? {
+        let p = s.split(separator: "-")
+        return p.count == 3 ? "\(p[2]).\(p[1]).\(p[0])" : s
+    }
+
+    static func money(_ v: Int) -> String {
+        v >= 1_000_000 ? String(format: "%.0f Mio. $", Double(v) / 1_000_000) : "\(v) $"
+    }
+
+    static func statusText(_ s: String) -> String {
+        switch s {
+        case "Released": "Erschienen"
+        case "Returning Series": "Läuft noch"
+        case "Ended": "Beendet"
+        case "Canceled": "Abgesetzt"
+        case "In Production": "In Produktion"
+        case "Post Production": "In Postproduktion"
+        case "Planned": "Geplant"
+        default: s
+        }
     }
 }
