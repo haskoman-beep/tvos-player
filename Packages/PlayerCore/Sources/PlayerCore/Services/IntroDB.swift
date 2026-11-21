@@ -88,18 +88,34 @@ public struct IntroDBClient: Sendable {
 
     /// Bereiche für Film/Folge; leer bei Fehler, Zeitüberschreitung oder ohne Treffer.
     public func segments(_ q: IntroDBQuery, log: @Sendable (String) -> Void = { _ in }) async -> [SkipSegment] {
-        guard let u = Self.url(q) else { log("keine IMDb-ID"); return [] }
+        await lookup(q, log: log) ?? []
+    }
+
+    /// Wie `segments`, unterscheidet aber: nil = keine verwertbare Antwort (Netz, Zeitüberschreitung, Serverfehler,
+    /// kein JSON), leer = der Dienst kennt keine Marken (JSON ohne Bereiche oder HTTP 404).
+    public func lookup(_ q: IntroDBQuery, log: @Sendable (String) -> Void = { _ in }) async -> [SkipSegment]? {
+        guard let u = Self.url(q) else { log("keine IMDb-ID"); return nil }
         let http = self.http, timeout = self.timeout
-        let data: Data? = await withTaskGroup(of: Data?.self) { g in
-            g.addTask { try? await http.data(from: u) }
-            g.addTask { try? await Task.sleep(for: timeout); return nil }
-            let first = await g.next() ?? nil
+        enum Outcome: Sendable { case data(Data), notFound, failed }
+        let outcome: Outcome = await withTaskGroup(of: Outcome.self) { g in
+            g.addTask {
+                do { return .data(try await http.data(from: u)) } catch AddonError.http(404) { return .notFound } catch { return .failed }
+            }
+            g.addTask { try? await Task.sleep(for: timeout); return .failed }
+            let first = await g.next() ?? .failed
             g.cancelAll()
             return first
         }
-        guard let data else { log(Task.isCancelled ? "abgebrochen" : "keine Antwort (Fehler oder Zeitüberschreitung)"); return [] }
-        let list = Self.parse(data)
-        log(list.isEmpty ? "keine Marken" : list.map { "\($0.kind.rawValue) \(Int($0.start))–\(Int($0.end))s" }.joined(separator: ", "))
-        return list
+        switch outcome {
+        case .failed:
+            log(Task.isCancelled ? "abgebrochen" : "keine Antwort (Fehler oder Zeitüberschreitung)"); return nil
+        case .notFound:
+            log("keine Marken (404)"); return []
+        case .data(let data):
+            guard (try? JSONSerialization.jsonObject(with: data)) is [String: Any] else { log("keine verwertbare Antwort"); return nil }
+            let list = Self.parse(data)
+            log(list.isEmpty ? "keine Marken" : list.map { "\($0.kind.rawValue) \(Int($0.start))–\(Int($0.end))s" }.joined(separator: ", "))
+            return list
+        }
     }
 }

@@ -7,6 +7,7 @@ extension AppModel {
         var imdb = await imdbID(for: r.item)
         if imdb == nil, r.id.hasPrefix("tt") { imdb = r.id.split(separator: ":").first.map(String.init) }
         guard let imdb else { return nil }
+        SkipSegmentController.attachDisk(store.storage)   // IntroDB-Plattencache (Welle C-c)
         if r.type == "series" {
             guard let s = r.season, let e = r.episode else { return nil }
             return IntroDBQuery(imdb: imdb, season: s, episode: e)
@@ -32,28 +33,82 @@ final class SkipSegmentController: ObservableObject {
     private var chapters: [ChapterMark] = []
     private var duration: Double = 0
     private var lookupDone = false
-    /// Treffer je Abfrage für die Laufzeit der App (nur nicht-leere Antworten; Fehler werden nicht gemerkt).
-    private static var cache: [IntroDBQuery: [SkipSegment]] = [:]
+    /// Abfrage dieser Wiedergabe (für Laufzeit nachtragen und Staffel-Schätzung).
+    private var query: IntroDBQuery?
+    /// Andere Folgen der Staffel (für die Schätzung, wenn diese Folge keine Marken hat).
+    private var neighbors: [SkipSegmentStore.Entry] = []
+    private var durationNoted = false
+    /// Staffel-Schätzung fertig (eigenes Kennzeichen: bricht `.task` dabei ab, läuft sie beim nächsten Mal erneut).
+    private var estimateDone = false
+    /// Treffer je Abfrage (nur nicht-leere Antworten; Fehler werden nicht gemerkt), auf dem Gerät gespeichert.
+    private static var disk = SkipSegmentStore()
+    private static var storage: BlobStorage?
+
+    /// Ablage einmal anhängen und die gespeicherten Marken laden.
+    static func attachDisk(_ s: BlobStorage) {
+        guard storage == nil else { return }
+        storage = s
+        disk = SkipSegmentStore.load(from: s)
+        RemoteLog.info("skip", "IntroDB-Plattencache: \(disk.entries.count) Einträge")
+    }
+
+    private static func saveDisk() {
+        guard let storage else { return }
+        do { try disk.save(to: storage) } catch { RemoteLog.error("skip", "IntroDB-Plattencache nicht gespeichert: \(error)") }
+    }
 
     /// IntroDB einmal je Wiedergabe abfragen. Abgebrochen (Player verlassen/Panel) → beim nächsten Mal erneut.
     func lookup(_ query: (@MainActor () async -> IntroDBQuery?)?) async {
-        guard let query, !lookupDone else { return }
+        guard let query else { return }
+        if lookupDone {
+            if !estimateDone, let q = self.query { await estimateFromSeason(q) }
+            return
+        }
         // Kein `leaving`-Wächter nötig: hier wird nur Zustand dieses Controllers gesetzt (kein Start, kein Ausgang,
         // keine Engine-Aufrufe). Beim Verlassen bricht `.task` ab, und der Controller stirbt mit PlayerControls.
-        guard let q = await query() else { lookupDone = true; RemoteLog.info("skip", "IntroDB: keine Abfrage (Trailer oder ohne IMDb-ID)"); return }
+        guard let q = await query() else { lookupDone = true; estimateDone = true; RemoteLog.info("skip", "IntroDB: keine Abfrage (Trailer oder ohne IMDb-ID)"); return }
         guard !Task.isCancelled else { return }
-        if let hit = Self.cache[q] {
-            introDB = hit
-        } else {
-            let tag = "\(q.imdb)\(q.isMovie ? "" : " S\(q.season ?? 0)E\(q.episode ?? 0)")"
-            let list = await IntroDBClient().segments(q, log: { line in
-                Task { @MainActor in RemoteLog.info("skip", "IntroDB \(tag): \(line)") }
-            })
-            guard !Task.isCancelled else { return }
-            if !list.isEmpty { Self.cache[q] = list }
-            introDB = list
-        }
+        self.query = q
+        introDB = await Self.segments(q)
+        guard !Task.isCancelled else { return }
         lookupDone = true
+        rebuild()
+        await estimateFromSeason(q)
+    }
+
+    /// Marken aus dem Plattencache oder von IntroDB. Gespeichert werden Antworten mit Marken (60 Tage) und
+    /// „keine Marken“ (5 Tage, keine wiederholten Abfragen); Fehler nie.
+    private static func segments(_ q: IntroDBQuery) async -> [SkipSegment] {
+        if let hit = disk.entry(q) { return hit.segments }
+        let tag = "\(q.imdb)\(q.isMovie ? "" : " S\(q.season ?? 0)E\(q.episode ?? 0)")"
+        let answer = await IntroDBClient().lookup(q, log: { line in
+            Task { @MainActor in RemoteLog.info("skip", "IntroDB \(tag): \(line)") }
+        })
+        guard let list = answer, !Task.isCancelled else { return answer ?? [] }
+        disk.store(list, for: q)
+        saveDisk()
+        return list
+    }
+
+    /// Folge ohne Intro/Rückblick: aus anderen Folgen der Staffel schätzen (Nachbarn nachladen, bis zwei mit Marken
+    /// bekannt sind; höchstens vier Abfragen). Echte Marken und Kapitel gewinnen immer; kein Auto-Sprung.
+    private func estimateFromSeason(_ q: IntroDBQuery) async {
+        guard !q.isMovie, let s = q.season, let e = q.episode,
+              !introDB.contains(where: { $0.kind == .intro || $0.kind == .recap }) else { estimateDone = true; return }
+        var known = Self.disk.seasonNeighbors(of: q)
+        let withIntro = { (list: [SkipSegmentStore.Entry]) in list.filter { $0.segments.contains { $0.kind == .intro } }.count }
+        if withIntro(known) < SeasonSkipEstimate.minEpisodes {
+            let missing = SkipSegmentStore.neighborEpisodes(of: e).map { IntroDBQuery(imdb: q.imdb, season: s, episode: $0) }
+                .filter { Self.disk.entry($0) == nil }
+            await withTaskGroup(of: Void.self) { g in
+                for n in missing { g.addTask { @MainActor in _ = await Self.segments(n) } }
+            }
+            guard !Task.isCancelled else { return }
+            known = Self.disk.seasonNeighbors(of: q)
+        }
+        neighbors = known
+        estimateDone = true
+        RemoteLog.info("skip", "Staffel-Schätzung S\(s)E\(e): \(withIntro(known)) Folgen mit Intro bekannt")
         rebuild()
     }
 
@@ -61,6 +116,11 @@ final class SkipSegmentController: ObservableObject {
     func update<E: PlaybackEngine>(engine: E) {
         let marks = engine.chapterMarks, d = engine.duration
         if marks != chapters || abs(d - duration) > 1 { chapters = marks; duration = d; rebuild() }
+        // Laufzeit der Datei zu den IntroDB-Marken legen (für die Abspann-Schätzung anderer Folgen).
+        if !durationNoted, let q = query, d > 60, !engine.isLoading {
+            durationNoted = true
+            if Self.disk.noteDuration(d, for: q) { Self.saveDisk() }
+        }
         // Ohne Laufzeit (vor dem Laden) oder bei Fehler nie ein Knopf: wie „Engine beschäftigt“ behandeln.
         let pos = engine.currentTime, busy = engine.isLoading || engine.duration <= 0 || engine.errorText != nil
         planner.observe(position: pos, engineSeeking: busy, now: Self.now)
@@ -90,8 +150,12 @@ final class SkipSegmentController: ObservableObject {
     }
 
     private func rebuild() {
+        // Reihenfolge: Kapitel > IntroDB > Staffel-Schätzung (nur fehlende Arten).
+        let have = Set(introDB.map(\.kind))
+        let estimate = neighbors.isEmpty ? [] : SeasonSkipEstimate.estimate(from: neighbors, duration: duration)
+            .filter { !have.contains($0.kind) }
         let merged = SkipSegments.merge(chapters: SkipSegments.fromChapters(chapters, duration: duration),
-                                        introDB: introDB, duration: duration)
+                                        introDB: introDB + estimate, duration: duration)
         guard merged != segments else { return }
         segments = merged
         planner.setSegments(merged)

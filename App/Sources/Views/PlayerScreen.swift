@@ -42,7 +42,9 @@ struct PlayerScreen: View {
                                                                         // Untertitel bewusst ohne Engine-Vorwahl: SubtitlePicker wählt nach dem Laden.
                                                                         subtitleLanguages: [],
                                                                         headers: headers, nativeRemoteHLS: remoteHLS,
-                                                                        diskCache: isTrailer ? nil : model.profile.diskCache),
+                                                                        diskCache: isTrailer ? nil : model.profile.diskCache,
+                                                                        audio: isTrailer ? nil : model.profile.audioShaping,
+                                                                        display: isTrailer ? nil : model.profile.displayMode),
                                                        report: { pos, dur in if !isTrailer { model.recordProgress(request, position: pos, duration: dur) } },
                                                        // Ausgang bei offenem Panel: danach ist onDisappear echt.
                                                        onEnded: { tracksOpen = false; onEnded($0) },
@@ -134,7 +136,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
     /// Laufendes Neuladen nach einem Fehler; abgebrochen beim Verlassen.
     @State var recoverTask: Task<Void, Never>?
     /// Laden und Start; läuft einmal (ein onAppear nach dem Spur-Panel lädt nicht neu), abgebrochen beim Verlassen.
-    @State private var loadTask: Task<Void, Never>?
+    /// Intern auch für PlayerExit.swift (Abbruch beim geordneten Ausstieg).
+    @State var loadTask: Task<Void, Never>?
     /// Addon-URL je angelegter Addon-UT-Spur (ID → URL): Wiederwahl nach dem Neuladen, keine Dubletten.
     @State var addonTrackURLs: [Int: String] = [:]
     /// Player wird verlassen (Menü, Ende, nächste Quelle): onDisappear ist dann echt, auch bei offenem Panel.
@@ -150,12 +153,16 @@ struct PlayerControls<E: PlaybackEngine>: View {
     @State private var tick = 0
     @State private var fractionApplied = false
     /// Gesammeltes Sprungziel: mehrere ±10-s-Drücke werden zu einem Sprung (Muxer-Neustarts sparen).
-    @State private var pendingSeek: Double?
-    @State private var seekTask: Task<Void, Never>?
+    /// Intern auch für PlayerScrub.swift (`confirmScrub`); sonst nur hier setzen.
+    @State var pendingSeek: Double?
+    @State var seekTask: Task<Void, Never>?
     @State private var lastToggle = Date.distantPast
     @State private var lastGoodTime: Double = 0
     /// Gemessene Höhe der Steuerleiste (nil = noch nicht gemessen), für das Untertitel-Overlay.
     @State private var controlsHeight: CGFloat?
+    /// Spulen über die Touchfläche (PlayerScrub.swift) und schwarze Abdeckung (Ausstieg/Rückkehr, PlayerExit.swift).
+    @StateObject var scrub = ScrubController()
+    @State var blackCover = false
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -183,23 +190,31 @@ struct PlayerControls<E: PlaybackEngine>: View {
                                   guard !restorePending, !restoring else { RemoteLog.info("player", "Überspringen gesperrt bis Play/Neuaufbau (nach Hintergrund)"); return false }
                                   return true
                               })
+            ScrubPreviewCard(controller: scrub, duration: engine.duration, current: engine.currentTime)
+            if blackCover { Color.black.ignoresSafeArea() }
         }
         // Steht der Überspringen-Knopf, bekommt er den Fokus; Befehle unten erreichen die Fläche weiterhin.
         .focusable(skip.prompt == nil)
         .focused($surfaceFocused)
         .onChange(of: skip.prompt) { _, p in if p == nil { surfaceFocused = true } }
-        .onPlayPauseCommand { onUserInput(); togglePlay() }
+        .onPlayPauseCommand { guard !leaving else { return }; onUserInput(); if scrub.isActive { confirmScrub(); return }; togglePlay() }
         .onTapGesture {   // Klick auf das Touchpad (Mitte) pausiert ebenfalls
+            guard !leaving else { return }   // geordneter Ausstieg läuft (schwarz): keine Eingaben mehr
+            if scrub.isActive { onUserInput(); confirmScrub(); return }   // Select bestätigt das Spulen
             // Select auf dem Überspringen-Knopf überspringt nur, kein zusätzliches Pausieren.
             guard skip.prompt == nil else { return }
             onUserInput(); togglePlay()
         }
         .onMoveCommand { dir in
+            guard !leaving else { return }
             onUserInput()
             if upNext != nil {
                 withAnimation { upNext = nil }; upNextCancelled = true
                 RemoteLog.info("player", "Up-next abgebrochen"); return
             }
+            // Beim Spulen verschieben ◀/▶ das Ziel; kurz nach einer Wischbewegung zählen sie nicht als Sprung.
+            if scrub.isActive { if dir == .left { scrub.nudge(-10) } else if dir == .right { scrub.nudge(10) }; poke(); return }
+            if dir == .left || dir == .right, scrub.suppressesMove() { return }
             switch dir {
             case .left: queueSeek(-10)
             case .right: queueSeek(10)
@@ -209,8 +224,10 @@ struct PlayerControls<E: PlaybackEngine>: View {
             poke()
         }
         .onExitCommand {
+            guard !leaving else { return }
+            if scrub.cancel() { onUserInput(); return }   // Menü bricht zuerst das Spulen ab
             if skip.dismissPrompt() { onUserInput(); return }   // Menü schließt zuerst den Überspringen-Knopf
-            leave { saveProgress(); engine.stop(); dismiss() }
+            leaveWithModeSwitch()   // Abdeckung, Moduswechsel abwarten, dann schließen (PlayerExit.swift)
         }
         .onReceive(timer) { _ in
             tick &+= 1
@@ -223,11 +240,16 @@ struct PlayerControls<E: PlaybackEngine>: View {
         .onChange(of: stability.isOnline) { _, on in stabilityNetworkChanged(on) }
         .onAppear {
             surfaceFocused = true
+            scrub.attach(engine: engine,
+                         canScrub: { !leaving && !showTracks && upNext == nil && skip.prompt == nil && failureNotice == nil
+                                     && !restorePending && !restoring && engine.duration > 0 && engine.errorText == nil },
+                         edges: { SkipSegments.snapEdges(skip.segments) + engine.chapterMarks.map(\.start) })
             guard loadTask == nil else { return }
             loadTask = Task { await loadAndStart() }
         }
         .onDisappear {
             saveProgress()
+            scrub.detach()
             // Das Spur-Panel (fullScreenCover) kann onDisappear auslösen: dann laufen Laden, Abfrage und
             // Neuladen weiter. Bei einem Ausgang (leave) ist es echt, auch wenn das Panel noch offen ist.
             RemoteLog.info("player", "Verlassen (Panel \(showTracks ? "offen" : "zu")\(leaving ? ", Ausgang" : ""))")
@@ -248,15 +270,16 @@ struct PlayerControls<E: PlaybackEngine>: View {
         .onChange(of: engine.isEnded) { _, ended in
             guard ended else { return }
             if engine.duration > 0 { report(engine.duration, engine.duration) }
-            engine.stop()
-            leave { onEnded(!upNextCancelled) }
+            finishAtEnd(autoplay: !upNextCancelled)   // HDMI-Modus halten oder geordneter Ausstieg (PlayerExit.swift)
         }
         .onChange(of: showTracks) { _, open in onTracksShown(open) }
+        .onChange(of: scrub.isActive) { _, a in if a { onUserInput() }; poke() }
+        .onChange(of: scrub.target) { _, _ in poke() }
         .fullScreenCover(isPresented: $showTracks) { PlayerTrackPanel(engine: engine, profile: profile, sourceURL: url, audioLocked: restorePending) }
         // Play von außen (Siri, Kontrollzentrum) nach dem Hintergrund: erst neu aufbauen.
         .onChange(of: engine.isPlaying) { _, p in if p { stabilityPlaying() }; if p, restorePending { restoreAndPlay() } }
         .onPlayerLifecycle { handlePhase($0) }
-        .playbackErrorAlert($failureNotice, chooseOther: { leave { saveProgress(); engine.stop(); dismiss() } },
+        .playbackErrorAlert($failureNotice, chooseOther: { leaveWithModeSwitch() },
                             retry: { recoveryPlan.reset(); life.userResumed(); recover("Erneut versuchen", manual: true) })
     }
 
@@ -327,10 +350,11 @@ struct PlayerControls<E: PlaybackEngine>: View {
     }
 
     private func startNext() {
+        guard !leaving else { return }
         upNext = nil
         if engine.duration > 0 { report(engine.duration, engine.duration) }
         RemoteLog.info("player", "Nächste Folge startet")
-        engine.stop()
+        stopBeforeNext(true)
         leave { onEnded(true) }
     }
 
@@ -349,12 +373,13 @@ struct PlayerControls<E: PlaybackEngine>: View {
     private var overlay: some View {
         let _ = tick
         let d = max(engine.duration, 1)
-        let pos = pendingSeek ?? engine.currentTime
+        let pos = scrub.isActive ? scrub.target : (pendingSeek ?? engine.currentTime)
         return VStack(alignment: .leading, spacing: 14) {
             Text(heading?.title ?? title).font(.title3.bold())
             if let ep = heading?.episodeLine { Text(ep).font(.callout).foregroundStyle(.secondary) }
             PlayerInfoBadges(engine: engine)
-            ProgressView(value: min(pos, d), total: d)
+            PlayerTimeline(position: min(pos, d), duration: d, marks: SkipSegments.timelineMarks(skip.segments, duration: engine.duration),
+                           scrubTarget: scrub.isActive ? scrub.target : nil, current: engine.currentTime)
             HStack {
                 Text(fmt(pos)); Spacer()
                 if engine.duration > 0, let end = MediaLabels.endTime(remaining: d - pos) {
@@ -363,13 +388,14 @@ struct PlayerControls<E: PlaybackEngine>: View {
                 Text("-" + fmt(d - pos))
             }
             .font(.caption.monospacedDigit())
-            Text("◀▶ 10 s · ▼ Ton/Untertitel · ⏯ Pause · Zurück beenden").font(.caption2).foregroundStyle(.secondary)
+            Text("◀▶ 10 s · Wischen/Rand drehen: spulen · ▼ Ton/Untertitel · ⏯ Pause · Zurück beenden").font(.caption2).foregroundStyle(.secondary)
         }
         .padding(60)
         .background(LinearGradient(colors: [.black.opacity(0.8), .clear], startPoint: .bottom, endPoint: .top))
     }
 
     private func togglePlay() {
+        guard !leaving else { return }
         // Ein Druck kann doppelt ankommen (Play/Pause-Taste + Systembefehl): zweiten innerhalb 350 ms ignorieren.
         let now = Date()
         if now.timeIntervalSince(lastToggle) < 0.35 { RemoteLog.info("player", "Play/Pause doppelt, ignoriert"); return }
@@ -391,6 +417,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
 
     /// ±10 s sammeln und nach 450 ms einmal springen.
     private func queueSeek(_ delta: Double) {
+        guard !leaving else { return }
         // Bild nach dem Hintergrund freigegeben: erst Play baut neu auf (ein Neuaufbau würde von selbst starten).
         guard !restorePending, !restoring else { RemoteLog.info("player", "Sprung gesperrt bis Play/Neuaufbau (nach Hintergrund)"); return }
         let base = pendingSeek ?? engine.currentTime
@@ -553,12 +580,13 @@ struct PlayerControls<E: PlaybackEngine>: View {
         report(engine.currentTime, engine.duration)
     }
 
-    private func poke() {
+    /// Intern auch für PlayerScrub.swift (Steuerleiste beim Spulen zeigen).
+    func poke() {
         withAnimation { showOverlay = true }
         hideTask?.cancel()
         hideTask = Task {
             try? await Task.sleep(for: .seconds(4))
-            if !Task.isCancelled && engine.isPlaying { withAnimation { showOverlay = false } }
+            if !Task.isCancelled && engine.isPlaying && !scrub.isActive { withAnimation { showOverlay = false } }
         }
     }
 

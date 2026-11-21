@@ -1,9 +1,10 @@
 import Foundation
 
 /// Ein überspringbarer Bereich der laufenden Datei (Sekunden auf der Zeitachse von `currentTime`/`seek`).
-public struct SkipSegment: Sendable, Equatable, Hashable {
-    public enum Kind: String, Sendable, CaseIterable { case intro, recap, credits, postCredits }
-    public enum Source: String, Sendable { case chapter, introDB }
+public struct SkipSegment: Sendable, Equatable, Hashable, Codable {
+    public enum Kind: String, Sendable, CaseIterable, Codable { case intro, recap, credits, postCredits }
+    /// `seasonEstimate`: aus anderen Folgen derselben Staffel geschätzt (SeasonSkipEstimate).
+    public enum Source: String, Sendable, Codable { case chapter, introDB, seasonEstimate }
 
     public var kind: Kind
     public var start: Double
