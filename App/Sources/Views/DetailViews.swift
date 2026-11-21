@@ -64,10 +64,11 @@ struct DetailView: View {
                     Text([meta?.releaseInfo ?? item.releaseInfo, meta?.runtime, meta?.genres?.prefix(3).joined(separator: ", ")]
                         .compactMap { $0 }.joined(separator: " · ")).foregroundStyle(.secondary)
                     InfoBadges(ratings: ratings, tech: tech, certification: certification ?? ratings?.certification)
+                        .frame(minHeight: InfoBadges.height, alignment: .leading)   // Platz halten, damit nichts springt
                     if let t = extra?.tagline { Text(t).italic().foregroundStyle(.secondary) }
                     if !overview.isEmpty {
                         // Kurz halten; Klick zeigt den ganzen Text.
-                        Button { showFullText = true } label: { FocusHighlight { Text(overview).font(.callout).lineLimit(3).multilineTextAlignment(.leading) } }
+                        Button { showFullText = true } label: { FocusHighlight { Text(overview).font(.callout).foregroundStyle(.primary).lineLimit(3).multilineTextAlignment(.leading) } }
                             .buttonStyle(.plain)
                             .frame(maxWidth: 1100, alignment: .leading)
                     }
@@ -98,19 +99,27 @@ struct DetailView: View {
                 .padding(80)
             }
             .defaultFocus($focus, .play)
+            // Die App-Akzentfarbe (RootView .tint) färbte Knöpfe und Text-Knöpfe hier flächig: normale tvOS-Knöpfe.
+            .tint(Color?.none)
         }
         .task {
+            let opened = Date()
             imdb = await model.imdbID(for: item)
             if let imdb {
+                if !isSeries {
+                    // Quellen sofort und parallel holen (Technik-Plaketten; AppModel cached sie für die Quellenliste).
+                    let id = imdb
+                    Task {
+                        let list = await model.streams(type: "movie", id: id)
+                        tech = TechBadges.summary(list.map(\.stream))
+                        RemoteLog.info("detail", "Plaketten nach \(Int(Date().timeIntervalSince(opened) * 1000)) ms (\(list.count) Quellen)")
+                    }
+                }
                 async let r = model.ratings(imdb: imdb, series: isSeries)
                 meta = await model.meta(type: isSeries ? "series" : "movie", imdb: imdb)
                 extra = await model.localized(imdb: imdb, series: isSeries)
                 certification = extra?.certification
                 ratings = await r
-                if !isSeries {
-                    let id = imdb
-                    Task { tech = TechBadges.summary(await model.streams(type: "movie", id: id).map(\.stream)) }
-                }
             }
             season = imdb.flatMap { model.progress.latest(forItem: $0)?.season } ?? seasons.first ?? 1
             loading = false
@@ -281,19 +290,24 @@ struct StreamListView: View {
     @State private var fallbacks = 0
 
     var body: some View {
+        // Titel als Listenkopf (scrollt mit weg) statt navigationTitle: der große tvOS-Titel lag über den Zeilen.
         List {
-            if let nextNote { Text(nextNote).foregroundStyle(.secondary) }
-            if loading { ProgressView("Quellen werden geladen …") }
-            if !loading && streams.isEmpty {
-                Text(model.profile.addons.isEmpty ? "Kein Addon installiert (Einstellungen → Addons)." : "Keine abspielbaren Quellen.")
-            }
-            ForEach(streams, id: \.stream.id) { entry in
-                Button { fallbacks = 0; playing = entry.stream } label: {
-                    StreamRow(addon: entry.addon, stream: entry.stream).opacity(failed.contains(entry.stream.id) ? 0.4 : 1)
+            Section {
+                if let nextNote { Text(nextNote).foregroundStyle(.secondary) }
+                if loading { ProgressView("Quellen werden geladen …") }
+                if !loading && streams.isEmpty {
+                    Text(model.profile.addons.isEmpty ? "Kein Addon installiert (Einstellungen → Addons)." : "Keine abspielbaren Quellen.")
                 }
+                ForEach(streams, id: \.stream.id) { entry in
+                    Button { fallbacks = 0; playing = entry.stream } label: {
+                        StreamRow(addon: entry.addon, stream: entry.stream).opacity(failed.contains(entry.stream.id) ? 0.4 : 1)
+                    }
+                }
+            } header: {
+                Text(current?.title ?? request.title).font(.title2.bold()).foregroundStyle(.primary)
+                    .textCase(nil).lineLimit(2).padding(.bottom, 10)
             }
         }
-        .navigationTitle(request.title)
         .task {
             streams = await model.streams(type: request.type, id: request.id)
             loading = false

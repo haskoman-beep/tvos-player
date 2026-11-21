@@ -22,7 +22,7 @@ struct PersonView: View {
                         if let k = person?.knownFor { Text("Bekannt für: \(Self.department(k))").foregroundStyle(.secondary) }
                         if let b = person?.biography {
                             Button { showBio = true } label: {
-                                FocusHighlight { Text(b).font(.callout).lineLimit(4).multilineTextAlignment(.leading) }
+                                FocusHighlight { Text(b).font(.callout).foregroundStyle(.primary).lineLimit(4).multilineTextAlignment(.leading) }
                             }
                             .buttonStyle(.plain)
                         }
@@ -31,18 +31,14 @@ struct PersonView: View {
                     }
                     .frame(maxWidth: 1100, alignment: .leading)
                 }
-                if let credits = person?.credits, !credits.isEmpty {
-                    Text("Bekannt aus").font(.title3.bold())
-                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(240), spacing: 40), count: 6), alignment: .leading, spacing: 50) {
-                        // Film und Serie können dieselbe TMDB-Nummer haben: ganzes Element als Schlüssel.
-                        ForEach(credits, id: \.self) { m in
-                            NavigationLinkish(route: .detail(m), onActivate: { $0 }, label: PosterCard(item: m))
-                        }
-                    }
-                }
+                // Getrennt nach Art, jeweils nach Beliebtheit (Reihenfolge aus PersonCredits); leere Abschnitte entfallen.
+                let credits = person?.credits ?? []
+                section("Filme", credits.filter { $0.type == "movie" })
+                section("Serien", credits.filter { $0.type == "series" })
             }
             .padding(80)
         }
+        .tint(Color?.none)
         .sheet(isPresented: $showBio) { FullTextSheet(title: person?.name ?? name, text: person?.biography ?? "") }
         .task {
             guard person == nil else { return }
@@ -54,6 +50,17 @@ struct PersonView: View {
             } catch {
                 failed = true
                 RemoteLog.error("person", "\(personID) laden fehlgeschlagen: \(error)")
+            }
+        }
+    }
+
+    @ViewBuilder private func section(_ title: String, _ items: [MetaPreview]) -> some View {
+        if !items.isEmpty {
+            Text(title).font(.title3.bold())
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(240), spacing: 40), count: 6), alignment: .leading, spacing: 50) {
+                ForEach(items) { m in
+                    NavigationLinkish(route: .detail(m), onActivate: { $0 }, label: PosterCard(item: m))
+                }
             }
         }
     }

@@ -336,7 +336,7 @@ final class AppModel: ObservableObject {
 
     func streams(type: String, id: String) async -> [(addon: String, stream: StreamItem)] {
         // Kurzer Cache: Detailseite holt vorab (für die Technik-Plaketten), die Quellenliste nutzt das Ergebnis.
-        if let c = streamCache[id], Date().timeIntervalSince(c.at) < 300 { return c.list }
+        if let c = streamCache[id], Date().timeIntervalSince(c.at) < 600 { return c.list }   // 10 min
         if let t = streamTasks[id] { return await t.value }
         let task = Task { () -> [(addon: String, stream: StreamItem)] in
             let all = await addons.streams(from: profile.addons, type: type, id: id)
