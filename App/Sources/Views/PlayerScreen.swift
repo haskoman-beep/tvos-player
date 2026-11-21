@@ -56,11 +56,12 @@ struct PlayerControls<E: PlaybackEngine>: View {
             if showOverlay { overlay.transition(.opacity) }
         }
         .focusable()
-        .onPlayPauseCommand { engine.isPlaying ? engine.pause() : engine.play(); poke() }
+        .onPlayPauseCommand { togglePlay() }
+        .onTapGesture { togglePlay() }   // Klick auf das Touchpad (Mitte) pausiert ebenfalls
         .onMoveCommand { dir in
             switch dir {
-            case .left: Task { await engine.seek(engine.currentTime - 10) }
-            case .right: Task { await engine.seek(engine.currentTime + 10) }
+            case .left: RemoteLog.info("player", "−10 s bei \(Int(engine.currentTime))"); Task { await engine.seek(engine.currentTime - 10) }
+                case .right: RemoteLog.info("player", "+10 s bei \(Int(engine.currentTime))"); Task { await engine.seek(engine.currentTime + 10) }
             case .down: showTracks = true
             default: break
             }
@@ -71,8 +72,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
             tick &+= 1
             if tick % 10 == 0 && engine.isPlaying { saveProgress() }
         }
-        .onDisappear { saveProgress(); RemoteLog.info("player", "Verlassen bei \(Int(engine.currentTime))/\(Int(engine.duration))s") }
-        .onChange(of: engine.errorText) { _, e in if let e { RemoteLog.error("player", "Engine: \(e) · \(engine.infoText)") } }
+        .onDisappear { saveProgress(); RemoteLog.info("player", "Verlassen") }
+        .onChange(of: engine.errorText) { _, e in if let e { RemoteLog.error("player", "Engine: \(e) · \(engine.infoText) · \(engine.errorDetail)") } }
         .onChange(of: engine.duration) { _, d in
             // Stand aus Trakt/Simkl kennt nur den Anteil: springen, sobald die Laufzeit da ist.
             guard d > 0, !fractionApplied, start == nil, let f = startFraction else { return }
@@ -125,6 +126,12 @@ struct PlayerControls<E: PlaybackEngine>: View {
         }
         .padding(60)
         .background(LinearGradient(colors: [.black.opacity(0.8), .clear], startPoint: .bottom, endPoint: .top))
+    }
+
+    private func togglePlay() {
+        if engine.isPlaying { engine.pause() } else { engine.play() }
+        RemoteLog.info("player", engine.isPlaying ? "Weiter" : "Pause")
+        poke()
     }
 
     private func saveProgress() {

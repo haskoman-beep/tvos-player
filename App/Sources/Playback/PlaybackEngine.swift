@@ -18,6 +18,7 @@ protocol PlaybackEngine: ObservableObject {
     var activeSubtitleID: Int? { get }
     var errorText: String? { get }
     var infoText: String { get }
+    var errorDetail: String { get }
 
     func load(_ url: URL, start: Double?) async throws
     func play()
@@ -62,6 +63,8 @@ final class AetherBackend: PlaybackEngine {
         let dv = engine.sourceDVProfile.map { "DV P\($0)" } ?? "\(engine.sourceVideoFormat)"
         return "\(engine.sourceVideoCodecName ?? "?") · \(dv) → \(engine.videoFormat) · Ton \(engine.activeAudioDecoder ?? "-") (\(engine.audioDelivery))"
     }
+
+    var errorDetail: String { engine.errorInfo.map { String(describing: $0) } ?? "-" }
 
     func load(_ url: URL, start: Double?) async throws { _ = try await engine.load(url: url, startPosition: start) }
     func play() { engine.play() }
