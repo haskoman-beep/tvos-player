@@ -164,7 +164,7 @@ enum XRayVision {
             XRayProbe.Face(width: Int((o.boundingBox.width * w).rounded()),
                            height: Int((o.boundingBox.height * h).rounded()),
                            confidence: Double(o.confidence), yaw: degrees(o.yaw), roll: degrees(o.roll),
-                           quality: pick(qualityResults, i, o)?.faceCaptureQuality?.doubleValue,
+                           quality: pick(qualityResults, i, o)?.faceCaptureQuality.map(Double.init),
                            landmarks: pick(markResults, i, o)?.landmarks != nil)
         })
     }
