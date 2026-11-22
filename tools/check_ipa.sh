@@ -47,15 +47,22 @@ if [ "$n" -gt 0 ]; then echo "check_ipa: Denylist aktiv: ja ($n patterns)"; else
 
 # Hex keys: only in the app's own code and resources. The prebuilt FFmpeg frameworks carry public
 # upstream constants (for example the Audible AAX default key in libavformat) and are left out.
+# Fail-closed: the file list and each grep stage go through temp files (next to Payload, inside the
+# temp dir), and every exit code is checked; a find or read error aborts the check.
+list="$dir/.files" m1="$dir/.m1" m2="$dir/.m2"
+find Payload -type f ! -path '*/Frameworks/AetherLib*' > "$list" \
+  || { echo "check_ipa: find failed - check aborted" >&2; exit 2; }
+[ -s "$list" ] || { echo "check_ipa: no files to check - check aborted" >&2; exit 2; }
+# grep exit: 0 = match, 1 = none, anything else = error → abort.
+step() { local rc=0; "$@" || rc=$?; if [ "$rc" -gt 1 ]; then echo "check_ipa: grep failed (exit $rc) - check aborted" >&2; exit 2; fi; }
 while IFS= read -r p; do
   # 32 or 64 hex digits (either case) with at least one letter, not part of a longer word (Swift's
   # _anon.<hash> and mangled _<hash>S symbols are skipped by the surrounding-character rule).
-  rc=0
-  c=$(grep -aoE '(^|[^0-9A-Za-z_.$])([0-9a-fA-F]{32}|[0-9a-fA-F]{64})([^0-9A-Za-z_.]|$)' "$p" \
-        | grep -aoE '[0-9a-fA-F]{32,64}' | grep -ac '[a-fA-F]') || rc=$?
-  if [ "$rc" -gt 1 ]; then echo "check_ipa: grep failed on $p (exit $rc) - check aborted" >&2; exit 2; fi
+  step grep -aoE '(^|[^0-9A-Za-z_.$])([0-9a-fA-F]{32}|[0-9a-fA-F]{64})([^0-9A-Za-z_.]|$)' "$p" > "$m1"
+  step grep -aoE '[0-9a-fA-F]{32,64}' "$m1" > "$m2"
+  c=$(step grep -ac '[a-fA-F]' "$m2")
   [ "${c:-0}" -eq 0 ] || hit "hex key-like value ($c) in: $p"
-done < <(find Payload -type f ! -path '*/Frameworks/AetherLib*')
+done < "$list"
 
 if [ "$found" -ne 0 ]; then echo "check_ipa: FAILED - do not publish"; exit 1; fi
 echo "check_ipa: OK ($(find Payload -type f | wc -l) files checked)"
