@@ -21,6 +21,7 @@ struct XRayProbeHook<E: PlaybackEngine>: ViewModifier {
     let blocked: Bool
 
     @AppStorage(XRayProbe.settingKey) private var enabled = false
+    @Environment(\.scenePhase) private var scenePhase
     @State private var task: Task<Void, Never>?
     @State private var flag: XRayCancelFlag?
 
@@ -29,11 +30,14 @@ struct XRayProbeHook<E: PlaybackEngine>: ViewModifier {
             .onChange(of: playing) { was, now in
                 if now { stop("weiter") ; return }
                 guard XRayProbe.shouldStart(enabled: enabled, wasPlaying: was, playing: now, loading: engine.isLoading,
+                                            ended: engine.isEnded, sceneActive: scenePhase == .active,
                                             duration: engine.duration, failed: engine.errorText != nil,
                                             blocked: blocked) else { return }
                 start()
             }
             .onChange(of: blocked) { _, b in if b { stop("gesperrt") } }
+            .onChange(of: enabled) { _, on in if !on { stop("aus") } }
+            .onChange(of: scenePhase) { _, p in if p != .active { stop("Hintergrund") } }
             .onDisappear { stop("verlassen") }
     }
 
@@ -96,7 +100,7 @@ enum XRayProbeRun {
         guard let frame = grabbed else {
             RemoteLog.info("xray", XRayProbe.noFrameLine(ms: grabMs, content: content,
                                                           reason: "nil (nicht im Zwischenspeicher oder abgelehnt)"))
-            await e.releaseScrubPreviewDecoders()
+            if !flag.isSet { await e.releaseScrubPreviewDecoders() }   // a scrub may own them by now
             return
         }
         let verdict = XRayProbe.verdict(requested: t, actual: frame.actualSeconds, refined: frame.refined)
@@ -104,6 +108,9 @@ enum XRayProbeRun {
         RemoteLog.info("xray", XRayProbe.frameLine(ms: grabMs, width: width, height: height, verdict: verdict,
                                                    content: content))
         // Decoders are not needed for Vision: close them now (100–160 MB for 4K HEVC), not after 3 s idle.
+        // Re-checked first: a scrub that started meanwhile has its own decoders open (a cancelled probe leaves
+        // them to the engine's 3 s idle close).
+        guard !Task.isCancelled, !flag.isSet else { return }
         await e.releaseScrubPreviewDecoders()
         guard !Task.isCancelled, !flag.isSet else { return }
 
@@ -153,10 +160,10 @@ enum XRayVision {
         quality.inputFaceObservations = found
         // Landmarks or quality failing still leaves the rectangles worth logging.
         try? handler.perform([marks, quality])
-        // Results follow the input faces; match by position when the counts agree, else by uuid.
+        // Match by uuid (Vision keeps the input observation's uuid); position only as fallback when counts agree.
         let markResults = marks.results ?? [], qualityResults = quality.results ?? []
         func pick(_ list: [VNFaceObservation], _ i: Int, _ o: VNFaceObservation) -> VNFaceObservation? {
-            list.count == found.count ? list[i] : list.first { $0.uuid == o.uuid }
+            list.first { $0.uuid == o.uuid } ?? (list.count == found.count ? list[i] : nil)
         }
         let w = Double(cg.width), h = Double(cg.height)
         let degrees = { (v: NSNumber?) in v.map { $0.doubleValue * 180 / .pi } }

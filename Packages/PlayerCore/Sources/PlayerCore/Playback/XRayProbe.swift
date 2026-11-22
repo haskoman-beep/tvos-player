@@ -18,9 +18,29 @@ public enum XRayProbe {
 
     /// Whether a pause starts a probe. `playing` is the new state after the change; `wasPlaying` the old one, so
     /// only a real transition from playing to paused counts (not the paused state at load or after a seek).
-    public static func shouldStart(enabled: Bool, wasPlaying: Bool, playing: Bool, loading: Bool,
-                                   duration: Double, failed: Bool, blocked: Bool) -> Bool {
-        enabled && wasPlaying && !playing && !loading && duration > 0 && !failed && !blocked
+    /// `ended` (end of file, autoplay follows) and an inactive scene (TV button, app in the background) are no pause.
+    public static func shouldStart(enabled: Bool, wasPlaying: Bool, playing: Bool, loading: Bool, ended: Bool,
+                                   sceneActive: Bool, duration: Double, failed: Bool, blocked: Bool) -> Bool {
+        enabled && wasPlaying && !playing && !loading && !ended && sceneActive && duration > 0 && !failed && !blocked
+    }
+
+    /// Engine log line of a held picture that was decoded and reshaped on the CPU (Dolby Vision Profile 5 with the
+    /// still reshaping trait, during an audio switch or reload) → `P5 gehaltenes Bild per CPU (… ms)`; nil otherwise.
+    /// Engine form (7.71.2): `[AetherEngine] held picture: up after 412ms (Dolby Vision reshaped, 1920x1080, hdr=false)`.
+    public static func heldPictureLine(engineLine line: String) -> String? {
+        guard line.contains("held picture: up after"), line.contains("Dolby Vision reshaped"),
+              let r = line.range(of: "up after ") else { return nil }
+        let digits = line[r.upperBound...].prefix { $0.isNumber }
+        guard !digits.isEmpty else { return nil }
+        return "P5 gehaltenes Bild per CPU (\(digits) ms)"
+    }
+
+    /// Key for the memory of sources known to be Profile 5: scheme, host, port and path. The query is dropped
+    /// (tokens and expiry stamps change between resolves of the same file).
+    public static func sourceKey(_ url: URL) -> String {
+        guard var c = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url.absoluteString }
+        c.query = nil; c.fragment = nil; c.user = nil; c.password = nil
+        return c.string ?? url.absoluteString
     }
 
     /// Content type for the log: "SDR", "HDR10", "HDR10+", "HLG", "DV P5", "DV P7→8.1", "DV P8" or "DV ?".
@@ -125,4 +145,27 @@ public enum XRayProbe {
     }
 
     static func signed(_ v: Double) -> String { (v >= 0 ? "+" : "") + fixed(v, 2) }
+}
+
+/// Small most-recent-first key set with a cap (sources known to be Dolby Vision Profile 5), Codable for UserDefaults.
+public struct RecentKeySet: Codable, Equatable, Sendable {
+    public static let defaultCapacity = 200
+    public private(set) var keys: [String]
+    public let capacity: Int
+
+    public init(keys: [String] = [], capacity: Int = RecentKeySet.defaultCapacity) {
+        self.capacity = max(1, capacity)
+        self.keys = Array(keys.prefix(self.capacity))
+    }
+
+    public func contains(_ key: String) -> Bool { keys.contains(key) }
+
+    /// Moves the key to the front; the oldest key falls out beyond the capacity. Returns true when it was new.
+    @discardableResult public mutating func insert(_ key: String) -> Bool {
+        let new = !keys.contains(key)
+        keys.removeAll { $0 == key }
+        keys.insert(key, at: 0)
+        if keys.count > capacity { keys.removeLast(keys.count - capacity) }
+        return new
+    }
 }

@@ -209,6 +209,7 @@ final class AetherBackend: PlaybackEngine {
         o.maxAnalyzeDuration = 5_000_000
         o.skipsContainerAttachments = true
         applyAudioOptions(prefs, to: &o)   // Ton/„Inhalt anpassen“ (PlayerAudioOptions.swift)
+        o.generatesBackgroundScrubPreviews = Self.backgroundScrubPreviews(for: url)   // X0/I1: no ladder for known DV P5 (XRayProfile5.swift)
         stopped = false
         // Plattencache: nur die Adresse tauschen; jeder Fehler dort → direkte Adresse.
         let routed = await DiskCacheProxy.shared.route(url, headers: prefs.headers, settings: prefs.diskCache,
@@ -225,6 +226,7 @@ final class AetherBackend: PlaybackEngine {
             cacheSession = nil
             _ = try await engine.load(url: url, startPosition: start, options: o)
         }
+        await settleProfile5(url: url, options: o)   // X0/I1: DV P5 keeps old playback (XRayProfile5.swift)
     }
     func recover() async throws {
         // Plattencache: Listener nach Ruhezustand neu auf dem alten Port; sonst wirft recover → load() → route.

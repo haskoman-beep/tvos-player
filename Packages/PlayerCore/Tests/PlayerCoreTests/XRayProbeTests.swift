@@ -6,8 +6,8 @@ import Testing
 
 @Test func xrayProbeStartsOnlyOnARealPause() {
     let ok = { (enabled: Bool, was: Bool, now: Bool, loading: Bool, dur: Double, failed: Bool, blocked: Bool) in
-        XRayProbe.shouldStart(enabled: enabled, wasPlaying: was, playing: now, loading: loading,
-                              duration: dur, failed: failed, blocked: blocked)
+        XRayProbe.shouldStart(enabled: enabled, wasPlaying: was, playing: now, loading: loading, ended: false,
+                              sceneActive: true, duration: dur, failed: failed, blocked: blocked)
     }
     #expect(ok(true, true, false, false, 3600, false, false))
     // Switch off: never.
@@ -20,6 +20,11 @@ import Testing
     #expect(!ok(true, true, false, false, 0, false, false))
     #expect(!ok(true, true, false, false, 3600, true, false))
     #expect(!ok(true, true, false, false, 3600, false, true))
+    // End of file (autoplay follows) and an inactive scene (TV button) are no pause.
+    #expect(!XRayProbe.shouldStart(enabled: true, wasPlaying: true, playing: false, loading: false, ended: true,
+                                   sceneActive: true, duration: 3600, failed: false, blocked: false))
+    #expect(!XRayProbe.shouldStart(enabled: true, wasPlaying: true, playing: false, loading: false, ended: false,
+                                   sceneActive: false, duration: 3600, failed: false, blocked: false))
 }
 
 @Test func xrayProbeContentLabels() {
@@ -72,4 +77,35 @@ import Testing
     #expect(logged.count == XRayProbe.maxLoggedFaces)
     #expect(logged.first?.width == 120)
     #expect(logged.last?.width == 50)
+}
+
+@Test func xrayHeldPictureLineOnlyForReshapedHolds() {
+    #expect(XRayProbe.heldPictureLine(engineLine:
+        "[AetherEngine] held picture: up after 412ms (Dolby Vision reshaped, 1920x1080, hdr=false)")
+            == "P5 gehaltenes Bild per CPU (412 ms)")
+    #expect(XRayProbe.heldPictureLine(engineLine:
+        "[AetherEngine] held picture: up after 20ms (native output, 3840x2160, hdr=true)") == nil)
+    #expect(XRayProbe.heldPictureLine(engineLine: "[AetherEngine] held picture: no frame from the outgoing picture") == nil)
+    #expect(XRayProbe.heldPictureLine(engineLine: "held picture: up after ms (Dolby Vision reshaped)") == nil)
+}
+
+@Test func xraySourceKeyDropsQueryAndCredentials() throws {
+    let a = try #require(URL(string: "https://user:pw@cdn.example.com:8443/d/ABC/film.mkv?token=1&exp=2#x"))
+    #expect(XRayProbe.sourceKey(a) == "https://cdn.example.com:8443/d/ABC/film.mkv")
+    let b = try #require(URL(string: "https://cdn.example.com:8443/d/ABC/film.mkv?token=9"))
+    #expect(XRayProbe.sourceKey(a) == XRayProbe.sourceKey(b))
+}
+
+@Test func recentKeySetKeepsNewestWithinCapacity() throws {
+    var set = RecentKeySet(capacity: 3)
+    let newA = set.insert("a"), newB = set.insert("b")
+    let againA = set.insert("a")   // known: moved to the front
+    #expect(newA && newB && !againA)
+    #expect(set.keys == ["a", "b"])
+    set.insert("c"); set.insert("d")
+    #expect(set.keys == ["d", "c", "a"])
+    #expect(!set.contains("b"))
+    let data = try JSONEncoder().encode(set)
+    #expect(try JSONDecoder().decode(RecentKeySet.self, from: data) == set)
+    #expect(RecentKeySet(keys: ["1", "2", "3", "4"], capacity: 2).keys == ["1", "2"])
 }
