@@ -188,7 +188,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
     @State private var showTracks = false
     /// Welle F-h2 R1: Ton-Neuladen aus dem Panel läuft (sperrt Untertitel/Versatz, `TrackLock.audioSwitching`).
     @State private var audioSwitch = AudioSwitchWatch()
-    @State private var audioSwitchSerial = 0
+    /// R2 N2: Takt der Zeitgrenzen; als gehaltener Task, nicht `.task`, denn dieses View verschwindet unterm Panel.
+    @State private var audioSwitchTick: Task<Void, Never>?
     @State private var hideTask: Task<Void, Never>?
     @State private var loadError: String?
     @State private var tick = 0
@@ -352,13 +353,6 @@ struct PlayerControls<E: PlaybackEngine>: View {
         }
         .onChange(of: engine.isLoading) { _, _ in checkAudioSwitch() }
         .onChange(of: engine.activeAudioID) { _, _ in checkAudioSwitch() }
-        .task(id: audioSwitchSerial) {
-            // Zeitgrenzen der Wechsel-Wache (verworfen nach 3 s, hart nach 30 s) auch ohne Engine-Änderung prüfen.
-            while !Task.isCancelled, audioSwitch.isActive {
-                try? await Task.sleep(for: .seconds(1))
-                checkAudioSwitch()
-            }
-        }
         // Play von außen (Siri, Kontrollzentrum) nach dem Hintergrund: erst neu aufbauen.
         .onChange(of: engine.isPlaying) { _, p in if p { stabilityPlaying() }; if p, restorePending { restoreAndPlay() } }
         .onPlayerLifecycle { handlePhase($0) }
@@ -410,6 +404,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
     /// Jeder Ausgang aus dem Player (Menü, Ende, nächste Folge, nächste Quelle) geht hier durch.
     func leave(_ exit: () -> Void) {
         leaving = true
+        audioSwitchTick?.cancel()
         releaseIdleTimer()   // Bildschirmschoner wieder frei (Welle D-a)
         NowPlayingBridge.detach(engine)   // Now Playing: Befehle sperren, Karte leeren (Welle G-b)
         exit()
@@ -524,7 +519,15 @@ struct PlayerControls<E: PlaybackEngine>: View {
     /// Welle F-h2 R1: Ton-Neuladen aus dem Panel begonnen.
     private func beginAudioSwitch(_ id: Int) {
         audioSwitch.begin(id, now: Date())
-        audioSwitchSerial += 1
+        // Zeitgrenzen (verworfen nach 3 s, hart nach 30 s) auch ohne Engine-Änderung und bei offenem Panel prüfen.
+        audioSwitchTick?.cancel()
+        audioSwitchTick = Task { @MainActor in
+            while !Task.isCancelled, let d = audioSwitch.nextDeadline {
+                try? await Task.sleep(for: .seconds(max(0, d.timeIntervalSinceNow) + 0.1))
+                guard !Task.isCancelled else { return }
+                checkAudioSwitch()
+            }
+        }
         RemoteLog.info("player", "Tonwechsel lädt (Ton-ID \(id)) · Untertitel/Versatz gesperrt")
     }
 

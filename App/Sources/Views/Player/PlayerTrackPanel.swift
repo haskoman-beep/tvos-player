@@ -112,7 +112,8 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
                 column(cols[2], width: TrackPanelMetrics.offsetColumnWidth, empty: nil)
             }
             .frame(maxHeight: .infinity, alignment: .top)
-            infoLine
+            // R2 N3: bei Sperrzeile oben fällt die Info-Fußzeile weg, die Liste behält ≈ 3,5 Zeilen.
+            if shownLock == nil || shownLock == .audioSwitching { infoLine }
         }
         .padding(.top, Theme.Space.s)
         .padding(.bottom, Theme.Space.s)
@@ -188,7 +189,8 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
     /// Engine: sitzungserhaltendes Neuladen an derselben Stelle; bis es fertig ist, sperrt der Player Untertitel/Versatz.
     private func chooseAudio(_ id: Int) {
         guard let t = engine.audioTracks.first(where: { $0.id == id }) else { return }
-        switch TrackChoice.audioAction(selected: t.id, active: engine.activeAudioID, locked: audioLocked) {
+        switch TrackChoice.audioAction(selected: t.id, active: engine.activeAudioID, locked: audioLocked,
+                                       switching: lock() == .audioSwitching) {
         case .apply: engine.selectAudio(t.id); onAudioSwitch(t.id); onRemember?(.audio(t)); logChoice(audio: t)
         case .keep: onRemember?(.audio(t)); logChoice(audio: t)
         case .locked: RemoteLog.info("player", "Tonspur gewählt: \(t.id) · gesperrt bis Play")

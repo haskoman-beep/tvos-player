@@ -59,16 +59,18 @@ public struct TrackPanelColumnModel: Equatable, Sendable {
 }
 
 /// Welle F-h2 R1: Maße des Panels und Zeichenbudget einer Zeile aus der echten Spaltenbreite.
-/// Breiten: Ton 760 + Untertitel 660 + Versatz 230 + 2 Abstände 32 = 1714 ≤ 1760 (1920 minus Sicherheitsrand 2 × 80).
+/// Breiten: Ton 780 + Untertitel 660 + Versatz 230 + 2 Abstände 32 = 1734 ≤ 1760 (1920 minus Sicherheitsrand 2 × 80).
 /// Info steht als eine Fußzeile unter den Spalten, damit Ton und Untertitel die Breite bekommen.
 public enum TrackPanelMetrics {
-    public static let audioColumnWidth: Double = 760
+    public static let audioColumnWidth: Double = 780
     public static let subtitleColumnWidth: Double = 660
     public static let offsetColumnWidth: Double = 230
     public static let columnSpacing: Double = 32
     /// Zeilenschrift `.callout` auf tvOS (pt) und mittlere Zeichenbreite gemischter deutscher Texte (Anteil der Größe).
     public static let lineFontSize: Double = 31
-    public static let lineCharWidth: Double = 0.53
+    /// Mittlere Zeichenbreite in em (SF Pro, gemischtes Deutsch 0,53) mal 1,05 für die halbfette aktive Zeile (R2 N4).
+    /// Gilt für alle Zeilen, damit der Text beim Wandern des Häkchens nicht neu gekürzt wird.
+    public static let lineCharWidth: Double = 0.53 * 1.05
     /// Innenrand der Zeile (ThemeRowButtonStyle: 2 × Space.m) und der Liste (2 × Space.xs, Platz fürs Anheben).
     public static let rowPadding: Double = 40
     public static let listInset: Double = 16

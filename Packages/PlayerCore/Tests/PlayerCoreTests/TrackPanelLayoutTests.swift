@@ -247,3 +247,31 @@ private var sample: [TrackPanelColumnModel] {
     #expect(TrackPanelLayout.panelHeight(screenHeight: 2160) == 720)
     #expect(TrackPanelLayout.panelHeight(screenHeight: .nan) == 0)
 }
+
+/// R2 N2: Die Zeitgrenzen allein (ohne jede Engine-Änderung) beenden jeden Wechsel; der Takt folgt `nextDeadline`.
+@Test func audioSwitchWatchNeverSticks() {
+    let t0 = Date(timeIntervalSince1970: 1000)
+    var w = AudioSwitchWatch()
+    #expect(w.nextDeadline == nil)
+    // Engine verwirft still (Remote-HLS): Frist 3 s, dort Ende
+    w.begin(2, now: t0)
+    #expect(w.nextDeadline == t0 + AudioSwitchWatch.ignoreAfter)
+    let r1 = w.update(activeID: 1, isLoading: false, failed: false, now: w.nextDeadline!)
+    #expect(r1 == .ignored && w.nextDeadline == nil)
+    // lädt, wird nie fertig: nach der 3-s-Frist gilt die harte Grenze
+    w.begin(2, now: t0)
+    let r2 = w.update(activeID: 1, isLoading: true, failed: false, now: t0 + 3)
+    #expect(r2 == nil && w.nextDeadline == t0 + AudioSwitchWatch.giveUpAfter)
+    let r3 = w.update(activeID: 1, isLoading: true, failed: false, now: w.nextDeadline!)
+    #expect(r3 == .timedOut && !w.isActive)
+    // zweite Wahl während des Neuladens: kein „verworfen“, Frist bleibt die harte Grenze ab der neuen Wahl
+    w.begin(2, now: t0)
+    let r4 = w.update(activeID: 1, isLoading: true, failed: false, now: t0 + 1)
+    #expect(r4 == nil)
+    w.begin(1, now: t0 + 2)
+    #expect(w.nextDeadline == t0 + 2 + AudioSwitchWatch.giveUpAfter)
+    let r5 = w.update(activeID: 1, isLoading: true, failed: false, now: t0 + 6)
+    #expect(r5 == nil)
+    let r6 = w.update(activeID: 1, isLoading: false, failed: false, now: t0 + 7)
+    #expect(r6 == .done)
+}

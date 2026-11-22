@@ -207,8 +207,11 @@ public enum TrackChoice {
         case locked
     }
 
-    public static func audioAction(selected: Int, active: Int?, locked: Bool) -> AudioAction {
+    /// `switching`: ein Ton-Neuladen läuft (F-h2 R2 N1). `active` meldet dann noch die alte Spur, also geht jede Wahl
+    /// an die Engine (sie ersetzt die wartende Wahl), auch die Rückkehr zur Ausgangsspur.
+    public static func audioAction(selected: Int, active: Int?, locked: Bool, switching: Bool = false) -> AudioAction {
         if locked { return .locked }
+        if switching { return .apply }
         return selected == active ? .keep : .apply
     }
 

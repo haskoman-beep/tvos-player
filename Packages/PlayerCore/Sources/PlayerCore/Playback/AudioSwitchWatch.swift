@@ -37,8 +37,17 @@ public struct AudioSwitchWatch: Equatable, Sendable {
     public var isActive: Bool { target != nil }
 
     /// Neuer Wechsel (auch eine zweite Wahl während des ersten: die Engine ersetzt die wartende Wahl).
+    /// Lief schon ein Neuladen, bleibt `sawLoading` gesetzt (sonst hieße die zweite Wahl fälschlich „verworfen“).
     public mutating func begin(_ id: Int, now: Date) {
-        target = id; started = now; sawLoading = false
+        sawLoading = isActive && sawLoading
+        target = id; started = now
+    }
+
+    /// F-h2 R2 N2: nächster Zeitpunkt, an dem ohne Engine-Änderung geprüft werden muss (verworfen bzw. harte Grenze);
+    /// nil = kein Wechsel. Nach spätestens `giveUpAfter` liefert `update` immer ein Ende, die Sperre hängt nie.
+    public var nextDeadline: Date? {
+        guard target != nil, let started else { return nil }
+        return started.addingTimeInterval(sawLoading ? Self.giveUpAfter : Self.ignoreAfter)
     }
 
     /// Stand prüfen. Rückgabe: das Ende (einmal), sonst nil (läuft weiter oder kein Wechsel).
