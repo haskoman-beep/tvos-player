@@ -1,7 +1,7 @@
 import SwiftUI
 import PlayerCore
 
-/// Startseite. Langer Druck auf eine Kachel → Kontextmenü der Reihe („Reihe bearbeiten“, „Nach oben“, „Ausblenden …“);
+/// Startseite. Langer Druck auf eine Kachel → Kontextmenü der Reihe („Reihe bearbeiten“, „Ganz nach oben“, „Ausblenden …“);
 /// geordnet wird im Verwalter „Reihen & Collections“ (Welle F-b2, Plan §2.5), nicht mehr im Vollbild-Editor.
 /// Mit Hero (Spec §7a.1): hinten Hintergrund + Info des angezeigten Titels, darüber der ScrollView mit
 /// Knopfzeile und Reihen. Angezeigt wird die Diashow-Folie oder, solange der Fokus in den Reihen liegt, die Kachel.
@@ -47,8 +47,9 @@ struct HomeView: View {
         .confirmationDialog(hideCandidate.map { "„\(model.homeRowTitle($0.content))“ ausblenden?" } ?? "",
                             isPresented: Binding(get: { hideCandidate != nil }, set: { if !$0 { hideCandidate = nil } }),
                             titleVisibility: .visible, presenting: hideCandidate) { row in
-            Button("Ausblenden", role: .destructive) { quick { $0.hide(row.id) } }
+            // „Behalten“ zuerst: Fokus startet dort (§2.4, Review M1).
             Button("Behalten", role: .cancel) {}
+            Button("Ausblenden", role: .destructive) { quick { $0.hide(row.id) } }
         } message: { _ in
             Text("Die Reihe verschwindet von der Startseite. In „Reihen & Collections“ lässt sie sich wieder einblenden.")
         }

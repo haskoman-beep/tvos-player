@@ -7,9 +7,6 @@ struct HomeRowView: View {
     @EnvironmentObject var model: AppModel
     let row: HomeRow
     let onActivate: (Route) -> Route?
-    /// Ohne Wirkung seit Welle F-b2 (langer Druck öffnet das Kontextmenü `menu`); bleibt für die Aufrufer.
-    var onLongPress: () -> Void = {}
-    var interactive = true
     /// Welle F-b2: Kontextmenü der Startseite (langer Druck auf eine Kachel), nil = keins.
     var menu: HomeRowMenu? = nil
     @State private var items: [MetaPreview] = []
@@ -28,7 +25,6 @@ struct HomeRowView: View {
                 Text(title).font(.title3.bold()).padding(.leading, 60)
             }
             content
-                .disabled(!interactive)
                 .focusSection()
                 .defaultFocus($focusedRoute, rememberedRoute, priority: .userInitiated)
         }

@@ -71,6 +71,21 @@ final class FusionKitStore: ObservableObject {
         change { $0.setSelected(rowID, on, source: source) }
     }
 
+    /// Kit-Reihe hinzufügen bzw. wieder einblenden (Browser, Verwalter, Handy). Ist das Kit aus, geht es an, die alte
+    /// Auswahl wird verworfen und nur diese Reihe kommt zurück (F-b2-Review I1). Rückgabe: verworfene Reihen-IDs.
+    @discardableResult
+    func choose(_ rowID: String, source: FusionKitSource) -> [String] {
+        ensureSettings()
+        let wasOff = !settings.enabled
+        var dropped: [String] = []
+        change { dropped = $0.choose(rowID, source: source) }
+        if wasOff {
+            RemoteLog.info("kit", "Kit eingeschaltet mit einer Reihe" + (dropped.isEmpty ? "" : ", \(dropped.count) alte Auswahl verworfen"))
+            Task { await refresh() }
+        }
+        return dropped
+    }
+
     func removeSource(_ id: String) {
         change { $0.removeSource(id) }
         contents[id] = nil; errors[id] = nil

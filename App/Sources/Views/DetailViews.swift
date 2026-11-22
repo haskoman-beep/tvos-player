@@ -9,7 +9,7 @@ struct FolderView: View {
             LazyVStack(alignment: .leading, spacing: 50) {
                 Text(folder.title).font(.largeTitle.bold()).padding(.leading, 60)
                 ForEach(folder.sources) { s in
-                    HomeRowView(row: HomeRow(content: .list(s), style: .poster), onActivate: { $0 }, onLongPress: {})
+                    HomeRowView(row: HomeRow(content: .list(s), style: .poster), onActivate: { $0 })
                 }
             }
             .padding(.vertical, 40)
@@ -22,7 +22,7 @@ struct CollectionView: View {
     let collectionID: String
     var body: some View {
         ScrollView(.vertical) {
-            HomeRowView(row: HomeRow(content: .collection(id: collectionID)), onActivate: { $0 }, onLongPress: {})
+            HomeRowView(row: HomeRow(content: .collection(id: collectionID)), onActivate: { $0 })
         }
     }
 }

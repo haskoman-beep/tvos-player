@@ -112,7 +112,7 @@ extension HomeLayout {
     @discardableResult
     public mutating func applyPhone(_ command: PhoneCommand, hidden: inout [HomeRow], options: [RowContent]) -> PhoneEdit? {
         var editor = HomeEditor(layout: self)
-        defer { self = editor.commit() }
+        defer { self = editor.layout }
         switch command {
         case .moveRow(let id, let to):
             guard let m = editor.move(id, to: to) else { return nil }
@@ -125,8 +125,7 @@ extension HomeLayout {
             return .restored(row, at: at)
         case .addRow(let key):
             guard editor.layout.row(withKey: key) == nil, let content = options.first(where: { $0.key == key }) else { return nil }
-            let id = editor.insert(content)
-            hidden.removeAll { $0.content.key == key }
+            let id = editor.insert(content, hidden: &hidden)
             guard let at = editor.layout.index(of: id) else { return nil }
             return .added(editor.layout.rows[at], at: at)
         default:

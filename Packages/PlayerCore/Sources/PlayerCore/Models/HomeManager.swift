@@ -211,13 +211,15 @@ public struct HomeManager: Sendable {
 
     /// OK auf einem Eintrag mit Inhalt: einmal OK hängt unten an, nochmal OK nimmt die eben hinzugefügte Reihe zurück.
     /// Reihen, die schon vorher auf der Startseite lagen, nimmt ein einzelner OK nicht weg (Rückfrage, dann `hide`).
+    /// Liegt der Inhalt unter „Ausgeblendet“, kommt die gemerkte Reihe mit Stil zurück und der Eintrag verschwindet
+    /// (wie auf der Handy-Seite, F-b2-Review M6).
     public mutating func toggle(_ content: RowContent, style: RowStyle? = nil) -> BrowserToggle {
         if let existing = layout.row(withKey: content.key), let at = layout.index(of: existing.id) {
             guard isNew(existing.id) else { return .confirmHide(existing) }
             editor.remove(existing.id)
             return .removed(existing, at: at)
         }
-        let id = editor.insert(content, style: style)
+        let id = editor.insert(content, style: style, hidden: &hidden)
         let at = layout.index(of: id) ?? (count - 1)
         return .added(rows[at], at: at)
     }

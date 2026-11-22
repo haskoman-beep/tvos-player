@@ -172,3 +172,25 @@ private func catalog(layout: HomeLayout = HomeLayout(), traktID: Bool = false, t
     #expect(t.entries[0].status == .unavailable("braucht Trakt-Anmeldung und Client ID"))
     #expect(t.entries[1].status == .onHome(position: 1))
 }
+
+// F-b2-Review I2: ein in dieser Sitzung angelegtes Paket bleibt in „Fertige Pakete“ (Fokus, nochmal OK).
+@Test func touchedPackageStaysInItsGroup() {
+    let pkg = ReadyPackages.streamingDE
+    var l = HomeLayout(); l.insert(.collection(id: pkg.id))
+    let kept = RowCatalog(layout: l, collections: [pkg], keepPackages: [pkg.id]).group("packages")!
+    #expect(kept.entries.first { $0.id == "collection:" + pkg.id }?.status == .onHome(position: 1))
+    let gone = RowCatalog(layout: l, collections: [pkg]).group("packages")!
+    #expect(!gone.entries.contains { $0.id == "collection:" + pkg.id })
+}
+
+// F-b2-Review M4: was einer Kit-Reihe fehlt, steht kurz im Untertitel; Ladefehler je Datei an der Gruppe.
+@Test func kitEntriesNameMissingKeysAndLoadErrors() {
+    let mixed = FusionKitRow(id: "fusion.kc.m", title: "Gemischt", style: .collectionTiles, body: .collection(MediaCollection(
+        id: "fusion.kc.m", title: "Gemischt", folders: [Folder(id: "a", title: "A", sources: [tmdb("a")]),
+                                                         Folder(id: "b", title: "B", sources: [traktList("b")])])))
+    let kit = RowCatalog(layout: HomeLayout(), kitSources: [kitC, kitD],
+                         kitContents: ["kc": FusionKitContent(rows: [mixed])], tmdb: false,
+                         kitErrors: ["kd": "HTTP 404"]).group("kit")!
+    #expect(kit.entries.map(\.subtitle) == ["1 von 2 Kacheln (ohne Trakt Client ID) · braucht TMDB-Schlüssel · x"])
+    #expect(kit.failures == ["Jahrzehnte · y: HTTP 404"] && kit.pendingSources == 0)
+}

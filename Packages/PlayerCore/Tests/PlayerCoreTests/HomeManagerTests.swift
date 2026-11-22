@@ -175,3 +175,25 @@ private func rows(_ n: Int) -> HomeLayout {
     #expect(state.command(op: "restore:\(gone.id.uuidString)") == nil)
     #expect(state.command(op: "restore:\(other.id.uuidString)") == .restoreRow(other.id))
 }
+
+// F-b2-Review M6: Browser-OK auf einem ausgeblendeten Inhalt holt die gemerkte Reihe samt Stil zurück.
+@Test func browserToggleRestoresRememberedStyle() {
+    let l = rows(2)
+    var gone = HomeRow(content: .collection(id: "x")); gone.style = .logoTiles
+    var m = HomeManager(layout: l, hidden: [gone])
+    #expect(m.toggle(.collection(id: "x")) == .added(gone, at: 2))
+    #expect(m.hidden.isEmpty && m.isNew(gone.id) && m.restorable.isEmpty)
+}
+
+// F-b2-Review I1: Kit aus → nur die gewählte Reihe kommt, die alte Auswahl ist verworfen; Kit an → dazu gewählt.
+@Test func kitChooseWhileOffDropsOldSelection() {
+    let src = FusionKitSource(id: "s", title: "Genres · a", url: "u", custom: false)
+    var st = FusionKitSettings(enabled: false, selected: ["fusion.s.a", "fusion.s.b"], sources: [src])
+    #expect(st.choose("fusion.s.c", source: src) == ["fusion.s.a", "fusion.s.b"])
+    #expect(st.enabled && st.selected == ["fusion.s.c"])
+    #expect(st.choose("fusion.s.a", source: src).isEmpty)
+    #expect(st.selected == ["fusion.s.c", "fusion.s.a"])
+    // Wieder einblenden derselben Reihe bei ausgeschaltetem Kit: sie bleibt, nichts verworfen außer den anderen.
+    var off = FusionKitSettings(enabled: false, selected: ["fusion.s.a"], sources: [src])
+    #expect(off.choose("fusion.s.a", source: src).isEmpty && off.selected == ["fusion.s.a"])
+}

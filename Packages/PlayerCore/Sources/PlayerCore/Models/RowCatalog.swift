@@ -11,7 +11,9 @@ public struct RowCatalog: Sendable {
     ///   - collections: eigene Collections des Profils.
     ///   - kitSources: Kit-Dateien (Katalog und eigene), `kitContents` die geladenen Inhalte je Quellen-ID.
     ///   - traktID: Trakt Client ID eingetragen. `traktLogin`: bei Trakt angemeldet.
-    ///   - packages: fertige Pakete (Standard `ReadyPackages.all`).
+    ///   - packages: fertige Pakete (Standard `ReadyPackages.all`). `keepPackages`: Paket-IDs, die in ihrer Gruppe
+    ///     bleiben, obwohl sie schon eigene Collections sind (in dieser Sitzung angelegt: Fokus und „nochmal OK“ bleiben).
+    ///   - tmdb: TMDB-Schlüssel vorhanden (sonst „braucht TMDB-Schlüssel“ an Kit-Reihen). `kitErrors`: Ladefehler je Quelle.
     public init(layout: HomeLayout,
                 addons: [InstalledAddon] = [],
                 collections: [MediaCollection] = [],
@@ -19,7 +21,10 @@ public struct RowCatalog: Sendable {
                 kitContents: [String: FusionKitContent] = [:],
                 traktID: Bool = false,
                 traktLogin: Bool = false,
-                packages: [MediaCollection] = ReadyPackages.all) {
+                packages: [MediaCollection] = ReadyPackages.all,
+                keepPackages: Set<String> = [],
+                tmdb: Bool = true,
+                kitErrors: [String: String] = [:]) {
         var positions: [String: Int] = [:]
         for (i, r) in layout.rows.enumerated() where positions[r.content.key] == nil { positions[r.content.key] = i + 1 }
         func status(_ key: String) -> RowCatalogEntry.Status { positions[key].map { .onHome(position: $0) } ?? .available }
@@ -59,7 +64,7 @@ public struct RowCatalog: Sendable {
 
         // 3. Fusion-Kit, nach Thema gruppiert; der Ersteller steht im Untertitel.
         groups.append(RowCatalog.kitGroup(sources: kitSources, contents: kitContents, traktID: traktID,
-                                          traktLogin: traktLogin, status: status))
+                                          traktLogin: traktLogin, tmdb: tmdb, errors: kitErrors, status: status))
 
         // 4. Trakt.
         let traktEntries = [CatalogSource.traktRecommendedMovies, .traktRecommendedShows].map { s in
@@ -79,9 +84,9 @@ public struct RowCatalog: Sendable {
         }
         groups.append(.fixed(.special, entries: specials))
 
-        // 6. Fertige Pakete, die noch keine eigene Collection sind.
+        // 6. Fertige Pakete, die noch keine eigene Collection sind (in dieser Sitzung angelegte bleiben stehen).
         let ownIDs = Set(collections.map(\.id))
-        let pkgs = packages.filter { !ownIDs.contains($0.id) }.map { p in
+        let pkgs = packages.filter { !ownIDs.contains($0.id) || keepPackages.contains($0.id) }.map { p in
             RowCatalogEntry(id: "collection:" + p.id, title: p.title, subtitle: "\(p.folders.count) Ordner",
                             source: RowCatalogGroup.Kind.packages.title, groupID: RowCatalogGroup.Kind.packages.rawValue,
                             action: .package(p), status: status("collection:" + p.id))
@@ -185,13 +190,18 @@ public struct RowCatalog: Sendable {
     static func kitTopicRank(_ topic: String) -> Int { kitTopicRanks[fold(topic)] ?? 5 }
 
     static func kitGroup(sources: [FusionKitSource], contents: [String: FusionKitContent], traktID: Bool, traktLogin: Bool,
+                         tmdb: Bool = true, errors: [String: String] = [:],
                          status: (String) -> RowCatalogEntry.Status) -> RowCatalogGroup {
         let kind = RowCatalogGroup.Kind.kit
         var sections: [(topic: String, entries: [RowCatalogEntry])] = []
         var hidden = 0, hiddenNeedsID = false, pending = 0
         var seen = Set<String>()
+        var failures: [String] = []
         for src in sources where seen.insert(src.id).inserted {
-            guard let content = contents[src.id] else { pending += 1; continue }
+            guard let content = contents[src.id] else {
+                if let e = errors[src.id] { failures.append("\(src.title): \(e)") } else { pending += 1 }
+                continue
+            }
             let (topic, creator) = kitTopic(src.title)
             for row in content.rows {
                 guard let shown = row.available(traktID: traktID, traktLogin: traktLogin) else {
@@ -199,13 +209,19 @@ public struct RowCatalog: Sendable {
                     if row.needs.contains(.traktID) && !traktID { hiddenNeedsID = true }
                     continue
                 }
-                let kindText: String = switch shown.body {
+                var kindText: String = switch shown.body {
                 case .collection(let c): "\(c.folders.count) Kacheln"
                 case .list: shown.style == .top10 ? "Liste mit Rang" : "Liste"
                 }
+                // Was fehlt, kurz im Untertitel (vorher in den Kit-Einstellungen, F-b2-Review M4).
+                if case .collection(let full) = row.body, case .collection(let v) = shown.body, v.folders.count < full.folders.count {
+                    kindText = "\(v.folders.count) von \(full.folders.count) Kacheln (ohne Trakt Client ID)"
+                }
+                let lacksTMDB = row.needs.contains(.tmdb) && !tmdb
                 let key = row.content.key
                 let e = RowCatalogEntry(id: key, title: row.title,
-                                        subtitle: [kindText, creator].compactMap { $0 }.joined(separator: " · "),
+                                        subtitle: [kindText, lacksTMDB ? "braucht TMDB-Schlüssel" : nil, creator]
+                                            .compactMap { $0 }.joined(separator: " · "),
                                         source: kind.title, groupID: kind.rawValue,
                                         action: .kit(rowID: row.id, source: src), status: status(key))
                 if let i = sections.firstIndex(where: { $0.topic == topic }) { sections[i].entries.append(e) }
@@ -222,7 +238,7 @@ public struct RowCatalog: Sendable {
                                    let a = kitTopicRank(l.topic), b = kitTopicRank(r.topic)
                                    return a != b ? a < b : fold(l.topic) < fold(r.topic)
                                }.map { RowCatalogSection(title: $0.topic, entries: $0.entries) },
-                               hiddenCount: hidden, hint: hint, pendingSources: pending)
+                               hiddenCount: hidden, hint: hint, pendingSources: pending, failures: failures)
     }
 }
 
@@ -251,13 +267,15 @@ public struct RowCatalogGroup: Identifiable, Sendable, Hashable {
     public var hiddenCount: Int
     /// Einmaliger Hinweis über der Liste, z. B. „Trakt Client ID fehlt – 12 Reihen ausgeblendet“.
     public var hint: String?
-    /// Kit: Dateien, deren Inhalt (noch) nicht geladen ist.
+    /// Kit: Dateien, deren Inhalt (noch) nicht geladen ist und die keinen Ladefehler haben.
     public var pendingSources: Int
+    /// Kit: Dateien, die nicht geladen werden konnten, je „Titel: Fehler“.
+    public var failures: [String]
 
     public init(id: String, kind: Kind, title: String, sections: [RowCatalogSection],
-                hiddenCount: Int = 0, hint: String? = nil, pendingSources: Int = 0) {
+                hiddenCount: Int = 0, hint: String? = nil, pendingSources: Int = 0, failures: [String] = []) {
         self.id = id; self.kind = kind; self.title = title; self.sections = sections
-        self.hiddenCount = hiddenCount; self.hint = hint; self.pendingSources = pendingSources
+        self.hiddenCount = hiddenCount; self.hint = hint; self.pendingSources = pendingSources; self.failures = failures
     }
 
     static func fixed(_ kind: Kind, entries: [RowCatalogEntry]) -> RowCatalogGroup {

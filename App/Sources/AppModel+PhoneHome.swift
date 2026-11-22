@@ -55,12 +55,29 @@ extension AppModel {
     }
 
     /// Eingeblendete Kit-Reihe im Kit wählen; sonst nimmt der Kit-Abgleich sie gleich wieder von der Startseite.
+    /// Ist das Kit aus, kommt nur diese Reihe zurück, nicht die alte Auswahl (F-b2-Review I1, Fernseher und Handy gleich).
     func reselectKitRow(_ row: HomeRow) {
         let kit = FusionKitStore.shared
         guard let id = FusionImport.kitID(of: row),
               let src = kit.sources.first(where: { $0.id == FusionImport.sourceKey(ofID: id) }) else { return }
-        if !kit.settings.enabled { kit.setEnabled(true) }
-        kit.select(id, true, source: src)
+        kit.choose(id, source: src)
+    }
+
+    /// Reihe vom Handy (TMDB-/Trakt-Link) über `HomeEditor`: unten anhängen, keine Doppelten, gemerkte ausgeblendete
+    /// Reihe mit Stil zurück, Log „home“ (F-b2-Review M3).
+    func addHomeRow(_ content: RowContent, style: RowStyle? = nil, via: String) {
+        let title = homeRowTitle(content)
+        if let at = profile.home.rows.firstIndex(where: { $0.content.key == content.key }) {
+            RemoteLog.info("home", "Startseite unverändert (\(via)), schon an \(at + 1): \(title)")
+            return
+        }
+        var editor = HomeEditor(layout: profile.home)
+        var hidden = profile.hiddenRows
+        let id = editor.insert(content, style: style, hidden: &hidden)
+        let layout = editor.layout
+        update { $0.home = layout; $0.hiddenRows = hidden }
+        let at = (layout.index(of: id) ?? layout.rows.count - 1) + 1
+        RemoteLog.info("home", "Reihe hinzugefügt an \(at) (\(via)): \(title)")
     }
 
     /// Anzeigename einer Reihe (Log, Verwalter, Handy-Seite).

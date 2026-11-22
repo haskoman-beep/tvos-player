@@ -18,15 +18,16 @@ struct FusionKitSettingsView: View {
                               kit.setEnabled(on)
                               RemoteLog.info("kit", on ? "Fusion-Kit an" : "Fusion-Kit aus")
                           }))
-            .task { await kit.refresh(all: true) }
+            .task { await kit.refresh() }   // Auswahl steht im Browser; der lädt den ganzen Katalog (Review M12)
             .confirmationDialog(removeCandidate.map { "„\($0.title)“ entfernen?" } ?? "",
                                 isPresented: Binding(get: { removeCandidate != nil }, set: { if !$0 { removeCandidate = nil } }),
                                 titleVisibility: .visible, presenting: removeCandidate) { src in
+                // „Behalten“ zuerst: Fokus startet dort (§2.4, Review M1).
+                Button("Behalten", role: .cancel) {}
                 Button("Entfernen", role: .destructive) {
                     kit.removeSource(src.id)
                     RemoteLog.info("kit", "Eigene Kit-Datei entfernt: \(src.title)")
                 }
-                Button("Behalten", role: .cancel) {}
             } message: { _ in
                 Text("Die Kit-Datei wird nicht mehr geladen. Über „Collections importieren“ lässt sie sich wieder einfügen.")
             }

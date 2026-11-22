@@ -170,6 +170,12 @@ struct AddRowBrowser: View {
         if let e = kit.listingError {
             Text("Kit-Katalog nicht erreichbar: \(e)").textRole(.rowDetail)
         }
+        // Ladefehler je Kit-Datei, knapp (Review M4).
+        ForEach(g.failures, id: \.self) { f in
+            Label("Nicht geladen – \(f)", systemImage: Theme.Tone.warn.symbol)
+                .textRole(.rowDetail)
+                .lineLimit(2)
+        }
     }
 
     private func isNew(_ e: RowCatalogEntry) -> Bool {
@@ -271,8 +277,9 @@ extension View {
         confirmationDialog(row.wrappedValue.map { "„\(session.title($0))“ ausblenden?" } ?? "",
                            isPresented: Binding(get: { row.wrappedValue != nil }, set: { if !$0 { row.wrappedValue = nil } }),
                            titleVisibility: .visible, presenting: row.wrappedValue) { r in
-            Button("Ausblenden", role: .destructive) { _ = session.hide(r.id) }
+            // „Behalten“ zuerst: Fokus startet dort (§2.4, Review M1).
             Button("Behalten", role: .cancel) {}
+            Button("Ausblenden", role: .destructive) { _ = session.hide(r.id) }
         } message: { _ in
             Text("Die Reihe verschwindet von der Startseite. Unter „Ausgeblendet“ lässt sie sich wieder einblenden.")
         }

@@ -1,16 +1,15 @@
 import Foundation
 
-/// Bearbeiten-Modus der Startseite (Spec §2): eine Reihe ist "angefasst",
-/// ▲▼ verschiebt, ◀▶ wechselt den Stil, Play/Pause nimmt sie weg, OK = commit, Zurück = cancel.
-/// Dazu die Aktionen des Verwalters „Reihen & Collections“: ganz oben/unten, an Position, Einfügen, Umschalten.
+/// Bearbeitung der Startseite für den Verwalter „Reihen & Collections“ (Plan §2.5) und die Handy-Seite:
+/// Sprungaktionen, an Position, Verschiebemodus (`grab` + ▲▼), Stil, Einfügen am Ende, Ausblenden und Wiedereinblenden.
+/// Merkt sich, welche Reihen in dieser Sitzung hinzugekommen sind („neu“).
 public struct HomeEditor: Sendable {
     public private(set) var layout: HomeLayout
     public private(set) var grabbed: UUID?
-    private let original: HomeLayout
 
     /// `added`: Reihen, die schon als „neu“ gelten (Verwalter übernimmt eine fremde Änderung, ohne die Marken zu verlieren).
     public init(layout: HomeLayout, grabbing: UUID? = nil, added: [UUID] = []) {
-        self.layout = layout; self.original = layout
+        self.layout = layout
         self.grabbed = grabbing.flatMap { id in layout.rows.contains { $0.id == id } ? id : nil }
         self.added = added.filter { id in layout.rows.contains { $0.id == id } }
     }
@@ -31,34 +30,7 @@ public struct HomeEditor: Sendable {
         layout.rows.swapAt(i, i + 1)
     }
 
-    public mutating func nextStyle() { shiftStyle(+1) }
-    public mutating func previousStyle() { shiftStyle(-1) }
-
-    private mutating func shiftStyle(_ d: Int) {
-        guard let i = index else { return }
-        let styles = layout.rows[i].content.allowedStyles
-        let cur = styles.firstIndex(of: layout.rows[i].style) ?? 0
-        layout.rows[i].style = styles[(cur + d + styles.count) % styles.count]
-    }
-
-    public mutating func removeGrabbed() {
-        guard let g = grabbed, let i = index else { return }
-        layout.rows.remove(at: i)
-        added.removeAll { $0 == g }
-        grabbed = nil
-    }
-
-    /// Neue Reihe am Ende (über der Plus-Kachel), sofort angefasst.
-    @discardableResult
-    public mutating func add(_ content: RowContent) -> UUID {
-        let row = HomeRow(content: content)
-        layout.rows.append(row)
-        added.append(row.id)
-        grabbed = row.id
-        return row.id
-    }
-
-    // MARK: Verwalter (Plan §2.5): Sprungaktionen, Einfügen, Umschalten
+    // MARK: Verwalter (Plan §2.5): Sprungaktionen, Einfügen
 
     /// In dieser Sitzung hinzugefügte Reihen, in Reihenfolge des Hinzufügens (Markierung „neu“ im Verwalter).
     public private(set) var added: [UUID] = []
@@ -85,17 +57,24 @@ public struct HomeEditor: Sendable {
         return id
     }
 
-    /// Hinzufügen-Browser: einmal OK fügt hinzu (am Ende), nochmal OK nimmt die Reihe wieder weg.
+    /// Einfügen am Ende, mit Blick auf „Ausgeblendet“ (Fernseher und Handy gleich, F-b2-Review M6): liegt der Inhalt
+    /// dort, kommt die gemerkte Reihe mit ID und Stil zurück und der Eintrag verschwindet. Liegt der Inhalt schon auf
+    /// der Startseite, bleibt sie unverändert (nur „Ausgeblendet“ wird aufgeräumt) und die vorhandene Reihe kommt zurück.
     @discardableResult
-    public mutating func toggle(_ content: RowContent, style: RowStyle? = nil) -> RowToggle {
-        if let existing = layout.row(withKey: content.key) {
-            remove(existing.id)
-            return .removed(existing.id)
+    public mutating func insert(_ content: RowContent, style: RowStyle? = nil, hidden: inout [HomeRow]) -> UUID {
+        let key = content.key
+        let remembered = hidden.last { $0.content.key == key }
+        hidden.removeAll { $0.content.key == key }
+        if let existing = layout.row(withKey: key) { return existing.id }
+        if let row = remembered, layout.index(of: row.id) == nil {
+            layout.rows.append(row)
+            added.append(row.id)
+            return row.id
         }
-        return .added(insert(content, style: style))
+        return insert(content, style: style)
     }
 
-    /// Reihe entfernen (Aktionsleiste „Entfernen …“, nach Rückfrage in der UI).
+    /// Reihe entfernen (Browser nimmt eine eben hinzugefügte zurück); Ausblenden läuft über `hide`.
     @discardableResult
     public mutating func remove(_ id: UUID) -> Bool {
         guard layout.remove(id) else { return false }
@@ -137,16 +116,6 @@ public struct HomeEditor: Sendable {
         layout.rows[i].style = styles[(cur + 1) % styles.count]
         return layout.rows[i].style
     }
-
-    public func commit() -> HomeLayout { layout }
-    public func cancel() -> HomeLayout { original }
-
-    /// Alles, was nicht auf der Startseite liegt: Collections zuerst, dann Listen.
-    public func availableToAdd(collections: [MediaCollection], extraLists: [CatalogSource]) -> [RowContent] {
-        let used = Set(layout.rows.map(\.content.key))
-        let all = collections.map { RowContent.collection(id: $0.id) } + extraLists.map { RowContent.list($0) }
-        return all.filter { !used.contains($0.key) }
-    }
 }
 
 /// Verschiebung einer Reihe, 0-basiert (für das Log „verschoben von→nach“).
@@ -154,11 +123,6 @@ public struct RowMove: Equatable, Sendable {
     public var from: Int
     public var to: Int
     public init(from: Int, to: Int) { self.from = from; self.to = to }
-}
-
-public enum RowToggle: Equatable, Sendable {
-    case added(UUID)
-    case removed(UUID)
 }
 
 /// Ergebnis von `HomeEditor.restore`.

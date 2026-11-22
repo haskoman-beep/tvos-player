@@ -16,9 +16,9 @@ struct LibraryView: View {
         let nothingToFocus = !watchlist && model.progress.continueWatching().isEmpty && model.progress.history().isEmpty
         ScrollView(.vertical) {
             LazyVStack(alignment: .leading, spacing: 56) {
-                HomeRowView(row: continueRow, onActivate: { $0 }, onLongPress: {})
+                HomeRowView(row: continueRow, onActivate: { $0 })
                 if watchlist {
-                    HomeRowView(row: watchlistRow, onActivate: { $0 }, onLongPress: {})
+                    HomeRowView(row: watchlistRow, onActivate: { $0 })
                 } else {
                     LibraryHint(title: "Merkliste", text: "Die Merkliste kommt aus Trakt oder Simkl (Einstellungen → Dienste & Schlüssel).")
                         .quietFocusTarget(nothingToFocus)

@@ -3,8 +3,8 @@ import PlayerCore
 
 /// Welle F-b2: Verwalter „Reihen & Collections“ (Plan §2.5, Ebene 1). Ersetzt den Vollbild-Editor.
 /// - Oben „Reihe hinzufügen“ (öffnet den Browser, Ebene 2), darunter eine kompakte Zeile je Reihe.
-/// - OK auf einer Reihe klappt die Aktionsleiste auf: Ganz nach oben · Ganz nach unten · Verschieben ·
-///   An Position … · Stil · Ausblenden …
+/// - OK auf einer Reihe klappt die Aktionsleiste auf (zwei Zeilen): Ganz nach oben · Ganz nach unten · Verschieben,
+///   darunter An Position … · Stil · Ausblenden …
 /// - „Verschieben“: ▲▼ verschiebt, OK legt ab, Menu stellt die alte Stelle wieder her.
 /// - Ausblenden fragt erst nach; ausgeblendete Reihen stehen unten unter „Ausgeblendet“ (`Profile.hiddenRows`,
 ///   dieselbe Liste wie auf der Handy-Seite).
@@ -109,11 +109,12 @@ private struct HomeManagerContent: View {
         .confirmationDialog(hideCandidate.map { "„\(session.title($0))“ ausblenden?" } ?? "",
                             isPresented: Binding(get: { hideCandidate != nil }, set: { if !$0 { hideCandidate = nil } }),
                             titleVisibility: .visible, presenting: hideCandidate) { row in
+            // „Behalten“ zuerst: Fokus startet dort (§2.4, Review M1).
+            Button("Behalten", role: .cancel) { set(.row(row.id)) }
             Button("Ausblenden", role: .destructive) {
                 expanded = nil
                 set(session.hide(row.id))
             }
-            Button("Behalten", role: .cancel) { set(.row(row.id)) }
         } message: { _ in
             Text("Die Reihe verschwindet von der Startseite. Unter „Ausgeblendet“ lässt sie sich wieder einblenden.")
         }
@@ -151,7 +152,11 @@ private struct HomeManagerContent: View {
                 set(session.endMove())
             } else {
                 withAnimation(.easeOut(duration: Theme.Focus.duration)) { expanded = expanded == row.id ? nil : row.id }
-                if expanded == row.id { focus = .action(row.id, .top) }
+                // Erst im nächsten Durchlauf: dann gibt es die Leiste schon (Abnahme „OK, OK“, Review I3).
+                if expanded == row.id {
+                    let id = row.id
+                    DispatchQueue.main.async { if expanded == id { focus = .action(id, .top) } }
+                }
             }
         } label: {
             ManagedRowLine(position: manager.position(of: row.id) ?? 0, title: session.title(row),
@@ -178,22 +183,28 @@ private struct HomeManagerContent: View {
         .accessibilityHint(isMoving ? "Nach oben oder unten wischen verschiebt, auswählen legt ab." : "Auswählen zeigt die Aktionen.")
     }
 
+    /// Zwei Zeilen zu je drei Knöpfen (Skizze §2.5), damit keine Beschriftung abgeschnitten wird (Review M10).
     private func actionBar(_ row: HomeRow) -> some View {
-        HStack(spacing: Theme.Space.xs) {
-            barButton(row, .top, "Ganz nach oben", "arrow.up.to.line") { set(session.moveToTop(row.id)); expanded = nil }
-            barButton(row, .bottom, "Ganz nach unten", "arrow.down.to.line") { set(session.moveToBottom(row.id)); expanded = nil }
-            barButton(row, .move, "Verschieben", "arrow.up.arrow.down") {
-                expanded = nil
-                if session.beginMove(row.id) { focus = .row(row.id) }
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            HStack(spacing: Theme.Space.xs) {
+                barButton(row, .top, "Ganz nach oben", "arrow.up.to.line") { set(session.moveToTop(row.id)); expanded = nil }
+                barButton(row, .bottom, "Ganz nach unten", "arrow.down.to.line") { set(session.moveToBottom(row.id)); expanded = nil }
+                barButton(row, .move, "Verschieben", "arrow.up.arrow.down") {
+                    expanded = nil
+                    if session.beginMove(row.id) { focus = .row(row.id) }
+                }
             }
-            barButton(row, .position, "An Position …", "number") { positionRow = row }
-            barButton(row, .style, "Stil: \(row.style.displayName)", "rectangle.grid.1x2") {
-                set(session.cycleStyle(row.id)); focus = .action(row.id, .style)
+            HStack(spacing: Theme.Space.xs) {
+                barButton(row, .position, "An Position …", "number") { positionRow = row }
+                barButton(row, .style, "Stil: \(row.style.displayName)", "rectangle.grid.1x2") {
+                    set(session.cycleStyle(row.id)); focus = .action(row.id, .style)
+                }
+                barButton(row, .hide, "Ausblenden …", "eye.slash") { hideCandidate = row }
             }
-            barButton(row, .hide, "Ausblenden …", "eye.slash") { hideCandidate = row }
         }
         .padding(.leading, Theme.Space.l)
         .focusSection()
+        .defaultFocus($focus, .action(row.id, .top))
     }
 
     private func barButton(_ row: HomeRow, _ a: BarAction, _ title: String, _ symbol: String,
@@ -203,6 +214,7 @@ private struct HomeManagerContent: View {
                 .labelStyle(.titleAndIcon)
                 .textRoleInRow(.rowDetail)
                 .lineLimit(1)
+                .minimumScaleFactor(0.8)
         }
         .buttonStyle(ThemeRowButtonStyle(minHeight: 64, maxWidth: .infinity))
         .focused($focus, equals: .action(row.id, a))
