@@ -32,12 +32,26 @@ struct HomeView: View {
                 heroHome(rows)
             } else {
                 ScrollViewReader { proxy in
+                    // Wave F-m: focus scrolling stops a card's frame at the list's edges, the lift reaches past them.
+                    // The list is inset by the lift at the top and at the bottom and draws into that room; the mask
+                    // keeps the old top clip line (review F-m I3: nothing in the overscan or the bar area) and lets
+                    // the bottom room show. Bottom at least the safe area (review M2: overscan on some TVs).
+                    let room = listBottomRoom(rows)
+                    let bottom = max(room, Self.bottomSafeArea)
                     ScrollView(.vertical) {
                         LazyVStack(alignment: .leading, spacing: Theme.Space.xl) { rowList(rows) }
-                            .padding(.vertical, 40)
+                            .padding(.top, max(0, 40 - room))
+                            .padding(.bottom, 40)
                             .id(HomeTopEdgeWatch.topID)
+                            // Wave F-m R2: the tab bar guard binds the bar to this list, not to a tall row.
+                            .background(alignment: .topLeading) { PageScrollViewProbe() }
                     }
                     .modifier(TopEdgeScroll(watch: topWatch, proxy: proxy))
+                    .scrollClipDisabled()
+                    .mask(alignment: .top) { Color.black.padding(.top, -room).padding(.bottom, -bottom) }
+                    .padding(.top, room)
+                    .padding(.bottom, bottom)
+                    .ignoresSafeArea(edges: .bottom)
                 }
             }
         }
@@ -102,6 +116,7 @@ struct HomeView: View {
                     .padding(.top, 24)
                     .padding(.bottom, 60)
                     .id(HomeTopEdgeWatch.topID)
+                    .background(alignment: .topLeading) { PageScrollViewProbe() }
                 }
                 .modifier(TopEdgeScroll(watch: topWatch, proxy: proxy))
                 .environment(\.heroBackdropShared, true)
@@ -117,8 +132,13 @@ struct HomeView: View {
                         Color.black
                     }
                     .padding(.top, -listEdgeBand(rows))
+                    // Wave F-m: the mask reaches into the room below the list too (lifted card stays opaque).
+                    .padding(.bottom, -listBottomRoom(rows))
                 }
                 .padding(.top, HeroMetrics.listTop)
+                // Wave F-m: build 198 photo: the list reached the screen edge, focus scrolling stopped the card's frame
+                // there and its lift was cut. The list now ends above the edge by that lift and draws into the room.
+                .padding(.bottom, listBottomRoom(rows))
                 .ignoresSafeArea(edges: .bottom)
             }
         }
@@ -131,6 +151,17 @@ struct HomeView: View {
         let strip = a.titles.posterBadges == .bottom ? PosterQualityBadges.bandHeight : 0
         let kinds = rows.map { PosterSize.kind(for: $0.style) }
         return Theme.Focus.listEdgeBand(height: FocusHeadroom.tallest(kinds, cardScale: a.cardSize.scale, posterExtra: strip))
+    }
+
+    /// tvOS bottom safe area (the list ended there before wave F-m).
+    private static let bottomSafeArea: CGFloat = 60
+
+    /// Wave F-m: room below the home list for the lift of its tallest tile (same tile heights as `listEdgeBand`).
+    private func listBottomRoom(_ rows: [HomeRow]) -> CGFloat {
+        let a = model.profile.appearance
+        let strip = a.titles.posterBadges == .bottom ? PosterQualityBadges.bandHeight : 0
+        let kinds = rows.map { PosterSize.kind(for: $0.style) }
+        return Theme.Focus.listBottomRoom(height: FocusHeadroom.tallest(kinds, cardScale: a.cardSize.scale, posterExtra: strip))
     }
 
     @ViewBuilder private func rowList(_ rows: [HomeRow]) -> some View {

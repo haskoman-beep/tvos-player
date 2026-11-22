@@ -25,6 +25,20 @@ public enum FocusHeadroom {
         perSide(height: height, scale: scale, shadow: shadow) + max(0, fade)
     }
 
+    /// Wave F-m: room between the bottom edge of a vertical tile list and the screen edge. Focus scrolling keeps only
+    /// the focused card's frame inside the list's bounds, so a card in the lowest visible row ends exactly at that
+    /// edge and its lift reaches below it (build 198 photo: list down to the screen edge, lift cut off). The list ends
+    /// this far above the screen edge and draws into the room (no clipping), so the lifted card fits on screen.
+    public static func listBottomRoom(height: CGFloat, scale: CGFloat, shadow: CGFloat) -> CGFloat {
+        perSide(height: height, scale: scale, shadow: shadow)
+    }
+
+    /// Wave F-m: vertical extent of a card lifted around its centre, plus shadow (for checks against list edges).
+    public static func liftedExtent(minY: CGFloat, maxY: CGFloat, scale: CGFloat, shadow: CGFloat) -> ClosedRange<CGFloat> {
+        let grow = max(0, maxY - minY) * max(0, scale - 1) / 2 + max(0, shadow)
+        return (minY - grow)...(maxY + grow)
+    }
+
     /// Height of the tallest tile among `kinds` at the card size factor `cardScale` (hero stays fixed).
     /// `posterExtra`: strip below a poster picture (quality badges “below”), part of the lifted card. 0 without kinds.
     public static func tallest(_ kinds: [TileKind], cardScale: CGFloat, posterExtra: CGFloat = 0) -> CGFloat {

@@ -655,6 +655,8 @@ struct StreamListView: View {
     /// Automatischer Wechsel geplant: dann kein Fokuswunsch nach dem Fehler (Review F-c M2; das nächste Vollbild
     /// öffnet gleich, beim Schließen gilt die Regel für die zuletzt gespielte Quelle).
     @State private var autoSwitchScheduled = false
+    /// Wave F-m: player that just closed; its focus move waits for the end of the cover dismissal (`playerDismissed`).
+    @State private var closedPlayer: StreamItem?
 
     var body: some View {
         // Welle E-b: Addon-Name nur, wenn die Liste mehrere Addons mischt (sonst steht er schon im Text des Addons).
@@ -793,13 +795,13 @@ struct StreamListView: View {
             }
         }
         .onChange(of: playing) { old, s in
-            if s == nil, let old { focusAfterPlayer(old) }
+            if s == nil, let old { closedPlayer = old }
             guard let s else { return }
             // Addon aus der Liste, sonst das bei der nächsten Folge gemerkte (sonst „Addon nicht installiert“ beim Neuauflösen).
             model.rememberSource(current ?? request, stream: s,
                                  addon: streams.first { $0.stream.id == s.id }?.addon ?? autoNext.addons[s.id] ?? "")
         }
-        .fullScreenCover(item: $playing) { s in
+        .fullScreenCover(item: $playing, onDismiss: playerDismissed) { s in
             if let u = s.url.flatMap(URL.init(string:)) { PlayerScreen(url: u, request: current ?? request,
                                                                              headers: s.behaviorHints?.proxyHeaders?.request ?? [:],
                                                                              onEnded: { ended(s, autoplay: $0) }, onFallback: { fallback(from: s, reason: $0) },
@@ -858,7 +860,17 @@ extension StreamListView {
         let ids = streams.map(\.stream.id)
         guard let id = SourceFocus.afterPlayer(ids: ids, played: played.id, failed: failure, isPlayable: focusPlayable)
         else { return }
-        requestFocus(id, in: ids, reason: failure ? "nach Fehler" : "nach dem Player", delayMs: 400)
+        requestFocus(id, in: ids, reason: failure ? "nach Fehler" : "nach dem Player", delayMs: 200)
+    }
+
+    /// Wave F-m: the cover is fully gone. Build 198 scrolled to the played row while it was still being dismissed
+    /// (about 90 ms before the player's onDisappear) and the tab bar followed that scroll off screen for good.
+    /// The focus move now starts here; the tab-wide guard checks the bar afterwards.
+    func playerDismissed() {
+        TabBarGuard.shared.check(.playerClosed)
+        guard let old = closedPlayer else { return }
+        closedPlayer = nil
+        focusAfterPlayer(old)
     }
 
     private func requestFocus(_ id: String, in ids: [String], reason: String, delayMs: Int) {

@@ -140,6 +140,11 @@ enum Theme {
         static func listEdgeBand(height: CGFloat) -> CGFloat {
             FocusHeadroom.edgeBand(height: height, scale: cardLiftScale, shadow: cardLiftShadow, fade: listFade)
         }
+        /// Wave F-m: room between the bottom of the home list and the screen edge for the lift of its tallest tile
+        /// (PlayerCore `FocusHeadroom.listBottomRoom`); the list draws into it.
+        static func listBottomRoom(height: CGFloat) -> CGFloat {
+            FocusHeadroom.listBottomRoom(height: height, scale: cardLiftScale, shadow: cardLiftShadow)
+        }
         static let pressedScale: CGFloat = 0.98
         /// Schatten der fokussierten Zeile.
         static let shadowOpacity: Double = 0.35

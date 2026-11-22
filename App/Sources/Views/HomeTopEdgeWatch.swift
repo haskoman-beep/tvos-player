@@ -74,6 +74,10 @@ import PlayerCore
         guard tracker.atTop else { return }
         let before = offset
         let bar = Self.tabBarState()
+        // Wave F-m: a bar stuck off screen goes to the tab-wide guard; the request and the snap cannot move it.
+        if HomeTopRules.barStranded(bar, offset: before, navigation: navigation) {
+            TabBarGuard.shared.check(.arrivedAtTop)
+        }
         // Review F-j M1: with the bar on screen a residual offset stays (no shift of its own while the user moves on).
         let scroll = HomeTopRules.shouldScrollToTop(atTop: true, offset: before, barOnScreen: bar.onScreen,
                                                     navigation: navigation)
@@ -160,7 +164,7 @@ import PlayerCore
 
     /// Only a `UITabBar` ancestor counts (review M4: should the tvOS bar ever not be one, a successful move up is
     /// logged as "Fokus blieb im Inhalt" with y near 0, and the request is still held by the unchanged offset).
-    private static func isInTabBar(_ item: UIFocusItem) -> Bool {
+    static func isInTabBar(_ item: UIFocusItem) -> Bool {
         var env: UIFocusEnvironment? = item
         var steps = 0
         while let e = env, steps < 64 {
@@ -171,9 +175,17 @@ import PlayerCore
         return false
     }
 
-    private static func tabBarState() -> TabBarState {
+    static func keyWindow() -> UIWindow? {
         let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
-        guard let window = windows.first(where: \.isKeyWindow) ?? windows.first else { return .notFound }
+        return windows.first(where: \.isKeyWindow) ?? windows.first
+    }
+
+    static func tabBarController() -> UITabBarController? {
+        tabBarController(from: keyWindow()?.rootViewController, depth: 0)
+    }
+
+    static func tabBarState() -> TabBarState {
+        guard let window = keyWindow() else { return .notFound }
         let controller = tabBarController(from: window.rootViewController, depth: 0)
         guard let bar = controller?.tabBar ?? findTabBar(in: window) else { return .notFound }
         let frame = bar.convert(bar.bounds, to: window)
