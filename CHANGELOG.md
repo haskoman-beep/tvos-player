@@ -17,6 +17,8 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 
 ## [Unreleased]
 
+## [Build 214] – 2026-11-22 (integ)
+
 ### Added
 - Detail page: the title's poster now sits to the left of the meta line, badges and description, exactly as
   tall as that block. It uses the same picture as the poster tiles (metadata addon poster when that setting
