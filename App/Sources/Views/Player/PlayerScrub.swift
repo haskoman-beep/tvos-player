@@ -408,8 +408,6 @@ final class ArrowHoldRecognizer: UIGestureRecognizer {
         allowedPressTypes = [NSNumber(value: UIPress.PressType.leftArrow.rawValue),
                              NSNumber(value: UIPress.PressType.rightArrow.rawValue)]
         allowedTouchTypes = []
-        delaysPressesBegan = false
-        delaysPressesEnded = false
     }
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent) {
