@@ -31,12 +31,16 @@ private func rows(_ n: Int) -> HomeLayout {
     let l = rows(4)
     var m = HomeManager(layout: l)
     let id = l.rows[2].id
-    #expect(m.beginMove(id) && m.moving == HomeManager.Moving(id: id, from: 2))
-    #expect(m.step(up: true) && m.step(up: true))
-    #expect(!m.step(up: true))                         // schon oben
+    let began = m.beginMove(id)
+    #expect(began && m.moving == HomeManager.Moving(id: id, from: 2))
+    let up1 = m.step(up: true), up2 = m.step(up: true)
+    #expect(up1 && up2)
+    let up3 = m.step(up: true)
+    #expect(!up3)                                      // schon oben
     #expect(m.position(of: id) == 1)
     // Menu: alte Stelle wieder her, kein Ereignis.
-    #expect(m.cancelMove() == HomeManager.Outcome(event: nil, focus: .row(id)))
+    let cancelled = m.cancelMove()
+    #expect(cancelled == HomeManager.Outcome(event: nil, focus: .row(id)))
     #expect(m.rows.map(\.id) == l.rows.map(\.id) && m.moving == nil)
     // OK legt ab: ein Ereignis von→nach.
     m.beginMove(id)
@@ -45,9 +49,12 @@ private func rows(_ n: Int) -> HomeLayout {
     #expect(o.event == .moved(m.rows[3], RowMove(from: 2, to: 3)) && o.focus == .row(id) && m.moving == nil)
     // Ablegen an derselben Stelle: kein Ereignis.
     m.beginMove(id)
-    #expect(m.endMove().event == nil)
-    #expect(!m.step(up: true))                          // ohne Verschiebemodus
-    #expect(!m.beginMove(UUID()))
+    let same = m.endMove()
+    #expect(same.event == nil)
+    let idleStep = m.step(up: true)
+    #expect(!idleStep)                                  // ohne Verschiebemodus
+    let unknown = m.beginMove(UUID())
+    #expect(!unknown)
 }
 
 // F-b2-Review m3: Ablegen übernimmt eine fremde Änderung während des Verschiebens und setzt nur die verschobene Reihe.
@@ -67,7 +74,8 @@ private func rows(_ n: Int) -> HomeLayout {
     // Verschobene Reihe am Handy entfernt: aktueller Stand bleibt, kein Ereignis.
     m.beginMove(extra.id)
     let gone = HomeLayout(rows: [l.rows[1], l.rows[3]])
-    #expect(m.endMove(onto: gone, hidden: []).event == nil)
+    let dropped = m.endMove(onto: gone, hidden: [])
+    #expect(dropped.event == nil)
     #expect(m.rows.map(\.id) == gone.rows.map(\.id))
 }
 
@@ -130,9 +138,11 @@ private func rows(_ n: Int) -> HomeLayout {
     m.beginMove(l.rows[0].id)
     // Handy schiebt die neue Reihe nach oben.
     let phone = HomeLayout(rows: [added] + l.rows)
-    #expect(m.adopt(layout: phone, hidden: []))
+    let adopted = m.adopt(layout: phone, hidden: [])
+    #expect(adopted)
     #expect(m.moving == nil && m.isNew(added.id) && m.rows.map(\.id) == phone.rows.map(\.id))
-    #expect(!m.adopt(layout: phone, hidden: []))
+    let adoptedAgain = m.adopt(layout: phone, hidden: [])
+    #expect(!adoptedAgain)
     // Kit-Abgleich legt eine Reihe an: nachträglich als neu markieren.
     let kit = HomeRow(content: .collection(id: "fusion.genres.a"))
     m.adopt(layout: HomeLayout(rows: phone.rows + [kit]), hidden: [])
