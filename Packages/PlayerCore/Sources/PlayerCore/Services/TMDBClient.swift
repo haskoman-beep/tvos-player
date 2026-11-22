@@ -51,6 +51,30 @@ public struct TMDBClient: Sendable {
         }
     }
 
+    /// Wave G2: one page of a single-type TMDB list (discover, list, company) plus `total_pages` (nil if missing),
+    /// for the endless genre grid.
+    public func page(for source: CatalogSource, page: Int) async throws -> (items: [MetaPreview], totalPages: Int?) {
+        let t: MediaType = source.mediaType == .series ? .series : .movie
+        let u: URL, key: String
+        switch source.kind {
+        case .tmdbDiscover(let filters):
+            var q = filters; q["page"] = String(page)
+            u = try url("/discover/\(t == .movie ? "movie" : "tv")", q); key = "results"
+        case .tmdbList(let id):
+            u = try url("/list/\(id)", ["page": String(page)]); key = "items"
+        case .tmdbCompany(let id):
+            var q = ["with_companies": id, "page": String(page)]
+            if let s = source.sortBy { q["sort_by"] = s }
+            u = try url("/discover/\(t == .movie ? "movie" : "tv")", q); key = "results"
+        default:
+            throw TMDBError.unsupported
+        }
+        let obj = try JSONSerialization.jsonObject(with: try await http.data(from: u)) as? [String: Any]
+        let arr = obj?[key] as? [[String: Any]] ?? []
+        let total = (obj?["total_pages"] as? Int) ?? (obj?["total_pages"] as? Double).map { Int($0) }
+        return (arr.compactMap { Self.preview($0, defaultType: t) }, total)
+    }
+
     /// Suche über Filme und Serien (Personen werden ausgelassen).
     public func search(_ query: String, page: Int = 1) async throws -> [MetaPreview] {
         let q = query.trimmingCharacters(in: .whitespaces)

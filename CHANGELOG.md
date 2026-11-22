@@ -17,6 +17,16 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 
 ## [Unreleased]
 
+### Added
+- Genre page: opening a genre tile on the home screen now shows a filter „Filme“ / „Serien“ (films / series)
+  and one endless poster grid instead of two rows. The page always opens on „Filme“. The grid loads one
+  block at a time (one TMDB page or one addon `skip` page) and asks for the next block about two rows
+  before the end, so you can scroll down until the source runs out. Titles already shown are dropped,
+  the focus stays where it is while new blocks arrive, and a failed block ends the grid with a small
+  „Erneut versuchen“ (try again) row instead of failing the page. Tiles use the poster size, rating and
+  quality badges of the home rows. Folders with other shapes (for example the streaming folders with four
+  lists) keep the page with one row per list.
+
 ## [Build 214] – 2026-11-22 (integ)
 
 ### Added
