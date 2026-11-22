@@ -91,17 +91,30 @@ private struct SubtitleTimeout: Error {}
 
 extension AddonClient {
     /// Ob mindestens ein Addon die Ressource `subtitles` anbietet (egal für welchen Typ).
+    /// Wave W-a: watch-tracking addons (`KnownAddon.isWatchTracker`) do not count, they are never asked.
     public static func hasSubtitleAddon(_ addons: [InstalledAddon]) -> Bool {
-        addons.contains { $0.manifest.resources.contains { $0.name == "subtitles" } }
+        addons.contains { asksForSubtitles($0) && $0.manifest.resources.contains { $0.name == "subtitles" } }
+    }
+
+    /// Wave W-a: whether the app requests `subtitles` from this addon at all. Not from an addon whose subtitle route
+    /// marks the title as watched (the app does its own tracking).
+    public static func asksForSubtitles(_ addon: InstalledAddon) -> Bool {
+        !KnownAddon.isWatchTracker(addon.manifest)
     }
 
     /// `GET {base}/subtitles/{type}/{id}[/{extra}].json` eines Addons.
+    /// Wave W-a: error entries (`AddonNotices.isErrorSubtitle`) never become tracks; they are only logged.
     public func subtitles(_ addon: InstalledAddon, type: String, id: String,
                           extra: [String: String] = [:]) async throws -> [AddonSubtitle] {
         let url = try resourceURL(addon, "subtitles", type: type, id: id, extra: extra)
         let resp = try JSONDecoder().decode(SubtitlesResponse.self, from: try await http.data(from: url))
+        let errors = resp.subtitles.filter { AddonNotices.isErrorSubtitle(id: $0.id, lang: $0.lang, url: $0.url) }
+        if !errors.isEmpty {
+            let texts = errors.prefix(3).map { AddonStreamNotices.shorten(AddonStreamNotices.oneLine($0.lang) ?? $0.id ?? "?", AddonStreamNotices.maxText) }
+            log("player", "Addon-UT \(addon.manifest.name) \(id): \(errors.count) Fehlereintr\(errors.count == 1 ? "ag" : "äge") verworfen (\(texts.joined(separator: " · ")))")
+        }
         return resp.subtitles.compactMap { s in
-            guard URL(string: s.url) != nil else { return nil }
+            guard URL(string: s.url) != nil, !AddonNotices.isErrorSubtitle(id: s.id, lang: s.lang, url: s.url) else { return nil }
             return AddonSubtitle(id: s.id ?? s.url, url: s.url, lang: s.lang, addonName: addon.manifest.name, fileName: s.fileName,
                                  forced: s.forced, hearingImpaired: s.hearingImpaired, label: s.label)
         }
@@ -109,10 +122,12 @@ extension AddonClient {
 
     /// Untertitel aller passenden Addons parallel, je Addon höchstens `timeout` Sekunden; Fehler werden übersprungen.
     /// Reihenfolge wie die Addons, gleiche URL nur einmal. `extra` z. B. `OpenSubtitlesHash.extras(...)`.
+    /// Wave W-a: watch-tracking addons are skipped (`asksForSubtitles`).
     public func subtitles(from addons: [InstalledAddon], type: String, id: String,
                           extra: [String: String] = [:], timeout: Double = 8) async -> [AddonSubtitle] {
         let lists = await withTaskGroup(of: (Int, [AddonSubtitle])?.self) { group in
-            for (i, a) in addons.enumerated() where a.manifest.supports("subtitles", type: type, id: id) {
+            for (i, a) in addons.enumerated()
+            where Self.asksForSubtitles(a) && a.manifest.supports("subtitles", type: type, id: id) {
                 group.addTask {
                     guard let s = try? await Self.withTimeout(timeout, { try await self.subtitles(a, type: type, id: id, extra: extra) })
                     else { return nil }

@@ -149,11 +149,9 @@ public struct StreamTraits: Equatable, Sendable {
 }
 
 /// Nur abspielbare Streams, Reihenfolge von AIOStreams bleibt.
+/// Wave W-a: addon notices (error, statistics, action links) are dropped too (`StreamItem.isPlayableVideo`).
 public func playableStreams(_ s: [StreamItem]) -> [StreamItem] {
-    s.filter { st in
-        guard let u = st.url, let url = URL(string: u), let scheme = url.scheme?.lowercased() else { return false }
-        return scheme == "http" || scheme == "https"
-    }
+    s.filter(\.isPlayableVideo)
 }
 
 /// Eine Ton- oder Untertitelspur, wie die Player-Engine sie meldet (beide Listen nutzen dieses Modell).

@@ -30,9 +30,10 @@ public struct AddonManifest: Codable, Sendable, Equatable {
         name = try c.decode(String.self, forKey: .name)
         version = (try? c.decode(String.self, forKey: .version)) ?? "0"
         description = try? c.decodeIfPresent(String.self, forKey: .description)
-        resources = (try? c.decode([AddonResource].self, forKey: .resources)) ?? []
+        // Wave W-a: one unreadable resource or catalog no longer empties the whole list.
+        resources = c.lenientList(AddonResource.self, .resources)?.items ?? []
         types = (try? c.decode([String].self, forKey: .types)) ?? []
-        catalogs = (try? c.decode([CatalogDescriptor].self, forKey: .catalogs)) ?? []
+        catalogs = c.lenientList(CatalogDescriptor.self, .catalogs)?.items ?? []
         idPrefixes = try? c.decodeIfPresent([String].self, forKey: .idPrefixes)
         logo = try? c.decodeIfPresent(String.self, forKey: .logo)
     }
@@ -93,10 +94,50 @@ public struct CatalogDescriptor: Codable, Sendable, Equatable {
     }
 }
 
+extension CatalogDescriptor {
+    /// Wave W-a: lenient; only `type` and `id` are needed, an unreadable extra entry is skipped.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let type = c.lenientNonEmpty(.type), let id = c.lenientNonEmpty(.id) else {
+            throw DecodingError.keyNotFound(CodingKeys.id, .init(codingPath: c.codingPath, debugDescription: "catalog without type or id"))
+        }
+        self.type = type; self.id = id
+        name = c.lenientString(.name)
+        extra = c.lenientList(CatalogExtra.self, .extra)?.items
+    }
+}
+
 public struct CatalogExtra: Codable, Sendable, Equatable {
     public var name: String
     public var isRequired: Bool?
     public var options: [String]?
+    /// Wave W-a: preselected value (`default`), e.g. the genre a discover-only catalog starts with.
+    public var defaultValue: String?
+    /// Wave W-a: how many options may be chosen at once (`optionsLimit`).
+    public var optionsLimit: Int?
+
+    public init(name: String, isRequired: Bool? = nil, options: [String]? = nil, defaultValue: String? = nil,
+                optionsLimit: Int? = nil) {
+        self.name = name; self.isRequired = isRequired; self.options = options
+        self.defaultValue = defaultValue; self.optionsLimit = optionsLimit
+    }
+
+    enum CodingKeys: String, CodingKey { case name, isRequired, options, defaultValue = "default", optionsLimit }
+}
+
+extension CatalogExtra {
+    /// Wave W-a: lenient; numbers as options become text, `isRequired: "true"` counts.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let name = c.lenientNonEmpty(.name) else {
+            throw DecodingError.keyNotFound(CodingKeys.name, .init(codingPath: c.codingPath, debugDescription: "extra without name"))
+        }
+        self.name = name
+        isRequired = c.lenientBool(.isRequired)
+        options = c.lenientStrings(.options)
+        defaultValue = c.lenientString(.defaultValue)
+        optionsLimit = c.lenientInt(.optionsLimit)
+    }
 }
 
 /// Kurzform eines Titels in Katalogen (`metas`).
@@ -143,26 +184,107 @@ public struct MetaDetail: Codable, Sendable, Equatable {
     public var videos: [MetaVideo]?
     /// Welle E-a: IMDb-Wertung, die das Metadaten-Addon mitliefert ("7.1"; als Zahl gesendet wird sie zum Text).
     public var imdbRating: String?
+    /// Wave W-a: IMDb ID the addon names for a title with another ID (`imdb_id`, e.g. for `mal:` or `kitsu:` items).
+    public var imdbID: String?
+    /// Wave W-a: `behaviorHints` of the meta (`defaultVideoId`, `hasScheduledVideos`).
+    public var behaviorHints: MetaBehaviorHints?
+
+    /// Wave W-a: video the addon plays for this title (`behaviorHints.defaultVideoId`), e.g. `kitsu:123` or `tt…`.
+    public var defaultVideoId: String? { behaviorHints?.defaultVideoId }
+}
+
+/// Wave W-a: `behaviorHints` of a meta object.
+public struct MetaBehaviorHints: Codable, Sendable, Equatable {
+    public var defaultVideoId: String?
+    public var hasScheduledVideos: Bool?
+
+    public init(defaultVideoId: String? = nil, hasScheduledVideos: Bool? = nil) {
+        self.defaultVideoId = defaultVideoId; self.hasScheduledVideos = hasScheduledVideos
+    }
+
+    enum CodingKeys: String, CodingKey { case defaultVideoId, hasScheduledVideos }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        defaultVideoId = c.lenientNonEmpty(.defaultVideoId)
+        hasScheduledVideos = c.lenientBool(.hasScheduledVideos)
+    }
+}
+
+/// Wave W-a: keys addons send besides the ones the app stores.
+private enum AddonAltKeys: String, CodingKey {
+    /// Year as its own field; used when `releaseInfo` is missing.
+    case year
+    /// IMDb ID of a title with another ID (`imdb_id`).
+    case imdbID = "imdb_id"
+    /// Episode text some addons send as `description` instead of `overview`.
+    case description
+}
+
+private func missingKey(_ key: some CodingKey, _ c: some KeyedDecodingContainerProtocol, _ what: String) -> DecodingError {
+    .keyNotFound(key, .init(codingPath: c.codingPath, debugDescription: what))
+}
+
+extension MetaPreview {
+    /// Wave W-a: lenient. Only `id` is needed: numbers in `releaseInfo`/`imdbRating` become text (AIOMetadata sends
+    /// `releaseInfo: 2019` in anime catalogs), a field with another type or `null` becomes nil. A missing `type` stays
+    /// empty here and is filled in with the catalog's type by `AddonClient.catalogPage`.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let alt = try decoder.container(keyedBy: AddonAltKeys.self)
+        guard let id = c.lenientNonEmpty(.id) else { throw missingKey(CodingKeys.id, c, "catalog item without id") }
+        self.id = id
+        type = c.lenientNonEmpty(.type) ?? ""
+        name = c.lenientString(.name) ?? ""
+        poster = c.lenientNonEmpty(.poster)
+        background = c.lenientNonEmpty(.background)
+        logo = c.lenientNonEmpty(.logo)
+        description = c.lenientString(.description)
+        releaseInfo = c.lenientString(.releaseInfo) ?? alt.lenientString(.year)
+        imdbRating = c.lenientString(.imdbRating)
+    }
+}
+
+extension MetaVideo {
+    /// Wave W-a: lenient. Only `id` is needed; `season`/`episode` may be text ("1"), `released` a number.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let alt = try decoder.container(keyedBy: AddonAltKeys.self)
+        guard let id = c.lenientNonEmpty(.id) else { throw missingKey(CodingKeys.id, c, "video without id") }
+        self.id = id
+        title = c.lenientString(.title)
+        name = c.lenientString(.name)
+        season = c.lenientInt(.season)
+        episode = c.lenientInt(.episode)
+        released = c.lenientString(.released)
+        thumbnail = c.lenientNonEmpty(.thumbnail)
+        overview = c.lenientString(.overview) ?? alt.lenientString(.description)
+    }
 }
 
 extension MetaDetail {
-    /// Wie die automatische Dekodierung; nur `imdbRating` darf Text oder Zahl sein und bricht bei anderem Inhalt nichts.
+    /// Wave W-a: lenient. Every field may be missing, `null` or of another type without dropping the meta; numbers
+    /// become text (`releaseInfo: 2019`, `runtime: 24`, `imdbRating: 6.3`). Unreadable videos are skipped, the rest
+    /// stays. Only a meta with neither `id` nor `name` fails. A missing `id`/`type` is filled in by `AddonClient.meta`.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = try c.decode(String.self, forKey: .id)
-        type = try c.decode(String.self, forKey: .type)
-        name = try c.decode(String.self, forKey: .name)
-        poster = try c.decodeIfPresent(String.self, forKey: .poster)
-        background = try c.decodeIfPresent(String.self, forKey: .background)
-        logo = try c.decodeIfPresent(String.self, forKey: .logo)
-        description = try c.decodeIfPresent(String.self, forKey: .description)
-        releaseInfo = try c.decodeIfPresent(String.self, forKey: .releaseInfo)
-        runtime = try c.decodeIfPresent(String.self, forKey: .runtime)
-        genres = try c.decodeIfPresent([String].self, forKey: .genres)
-        videos = try c.decodeIfPresent([MetaVideo].self, forKey: .videos)
-        if let s = try? c.decodeIfPresent(String.self, forKey: .imdbRating) { imdbRating = s }
-        else if let d = try? c.decodeIfPresent(Double.self, forKey: .imdbRating) { imdbRating = String(d) }
-        else { imdbRating = nil }
+        let alt = try decoder.container(keyedBy: AddonAltKeys.self)
+        id = c.lenientNonEmpty(.id) ?? ""
+        name = c.lenientString(.name) ?? ""
+        guard !id.isEmpty || !name.isEmpty else { throw missingKey(CodingKeys.id, c, "meta without id and name") }
+        type = c.lenientNonEmpty(.type) ?? ""
+        poster = c.lenientNonEmpty(.poster)
+        background = c.lenientNonEmpty(.background)
+        logo = c.lenientNonEmpty(.logo)
+        description = c.lenientString(.description)
+        releaseInfo = c.lenientString(.releaseInfo) ?? alt.lenientString(.year)
+        runtime = c.lenientString(.runtime)
+        genres = c.lenientStrings(.genres)
+        videos = c.lenientList(MetaVideo.self, .videos)?.items
+        imdbRating = c.lenientString(.imdbRating)
+        // Stored as `imdbID` (own encoding), sent by addons as `imdb_id`.
+        imdbID = c.lenientNonEmpty(.imdbID) ?? alt.lenientNonEmpty(.imdbID)
+        behaviorHints = (try? c.decodeIfPresent(MetaBehaviorHints.self, forKey: .behaviorHints)) ?? nil
     }
 }
 
@@ -202,30 +324,41 @@ public struct StreamItem: Codable, Sendable, Equatable, Identifiable, Hashable {
     public var behaviorHints: StreamBehaviorHints?
     /// Welle E-b: Datei im Torrent (mit `infoHash` Teil des Dubletten-Schlüssels); nicht Teil von `id`.
     public var fileIdx: Int?
+    /// Wave W-a: structured entry type some aggregators send (`streamData.type`, e.g. "error"); see `AddonStreamKind`.
+    public var streamData: AddonStreamData?
 
     public init(name: String? = nil, title: String? = nil, description: String? = nil, url: String? = nil,
                 infoHash: String? = nil, externalUrl: String? = nil, behaviorHints: StreamBehaviorHints? = nil,
-                fileIdx: Int? = nil) {
+                fileIdx: Int? = nil, streamData: AddonStreamData? = nil) {
         self.name = name; self.title = title; self.description = description; self.url = url
         self.infoHash = infoHash; self.externalUrl = externalUrl; self.behaviorHints = behaviorHints
-        self.fileIdx = fileIdx
+        self.fileIdx = fileIdx; self.streamData = streamData
     }
 
-    enum CodingKeys: String, CodingKey { case name, title, description, url, infoHash, externalUrl, behaviorHints, fileIdx }
+    enum CodingKeys: String, CodingKey { case name, title, description, url, infoHash, externalUrl, behaviorHints, fileIdx, streamData }
 
-    /// Wie die synthetisierte Form; nur `fileIdx` nachsichtig (Zahl oder Text, sonst nil statt Fehler der ganzen Liste).
+    /// Wave W-a: lenient per field. A text field with another type (`"name": 1080`) becomes text or nil, unreadable
+    /// `behaviorHints` become nil; the stream stays. Only an entry without any address (`url`, `infoHash`, `ytId`,
+    /// `externalUrl`) that is no addon notice (`streamData`) is unreadable and skipped by the list.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        name = try c.decodeIfPresent(String.self, forKey: .name)
-        title = try c.decodeIfPresent(String.self, forKey: .title)
-        description = try c.decodeIfPresent(String.self, forKey: .description)
-        url = try c.decodeIfPresent(String.self, forKey: .url)
-        infoHash = try c.decodeIfPresent(String.self, forKey: .infoHash)
-        externalUrl = try c.decodeIfPresent(String.self, forKey: .externalUrl)
-        behaviorHints = try c.decodeIfPresent(StreamBehaviorHints.self, forKey: .behaviorHints)
-        fileIdx = ((try? c.decodeIfPresent(Int.self, forKey: .fileIdx)) ?? nil)
-            ?? ((try? c.decodeIfPresent(String.self, forKey: .fileIdx)) ?? nil).flatMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+        name = c.lenientString(.name)
+        title = c.lenientString(.title)
+        description = c.lenientString(.description)
+        url = c.lenientNonEmpty(.url)
+        infoHash = c.lenientNonEmpty(.infoHash)
+        externalUrl = c.lenientNonEmpty(.externalUrl)
+        behaviorHints = (try? c.decodeIfPresent(StreamBehaviorHints.self, forKey: .behaviorHints)) ?? nil
+        fileIdx = c.lenientInt(.fileIdx)
+        streamData = (try? c.decodeIfPresent(AddonStreamData.self, forKey: .streamData)) ?? nil
+        let hasYouTube = (try? decoder.container(keyedBy: StreamAltKeys.self).lenientNonEmpty(.ytId)) != nil
+        guard url != nil || infoHash != nil || externalUrl != nil || hasYouTube || streamData != nil else {
+            throw DecodingError.keyNotFound(CodingKeys.url, .init(codingPath: c.codingPath, debugDescription: "stream without address"))
+        }
     }
+
+    /// Wave W-a: keys read only to judge an entry (YouTube streams are not played).
+    private enum StreamAltKeys: String, CodingKey { case ytId }
 
     public var id: String { (url ?? infoHash ?? "") + "|" + (name ?? "") + "|" + label }
     /// Neuere Addons nutzen `description`, ältere `title`.
@@ -235,7 +368,33 @@ public struct StreamItem: Codable, Sendable, Equatable, Identifiable, Hashable {
     public func hash(into h: inout Hasher) { h.combine(id) }
 }
 
-struct StreamsResponse: Codable { var streams: [StreamItem] }
+/// Wave W-a: the part of `streamData` the app reads: only the entry type ("error", "info", …).
+public struct AddonStreamData: Codable, Sendable, Equatable {
+    public var type: String?
+    public init(type: String? = nil) { self.type = type }
+
+    enum CodingKeys: String, CodingKey { case type }
+
+    public init(from decoder: Decoder) throws {
+        type = try decoder.container(keyedBy: CodingKeys.self).lenientNonEmpty(.type)
+    }
+}
+
+/// `{"streams":[…]}`; Wave W-a: an unreadable entry is skipped instead of failing the whole list.
+struct StreamsResponse: Decodable {
+    var streams: [StreamItem]
+    var skipped = 0
+
+    enum CodingKeys: String, CodingKey { case streams }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let list = c.lenientList(StreamItem.self, .streams) else {
+            throw DecodingError.keyNotFound(CodingKeys.streams, .init(codingPath: c.codingPath, debugDescription: "no stream list"))
+        }
+        streams = list.items; skipped = list.skipped
+    }
+}
 
 extension StreamBehaviorHints {
     enum CodingKeys: String, CodingKey {
@@ -271,5 +430,21 @@ extension StreamBehaviorHints {
         folderSize = num(.folderSize).flatMap { $0.isFinite && $0 >= 0 && $0 < 9e18 ? Int64($0) : nil }
     }
 }
-struct MetasResponse: Codable { var metas: [MetaPreview] }
-struct MetaResponse: Codable { var meta: MetaDetail }
+/// `{"metas":[…]}`; Wave W-a: an unreadable item is skipped and counted instead of failing the whole catalog.
+/// Without a `metas` list the answer still counts as unreadable (failed row, retry).
+struct MetasResponse: Decodable {
+    var metas: [MetaPreview]
+    var skipped = 0
+
+    enum CodingKeys: String, CodingKey { case metas }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let list = c.lenientList(MetaPreview.self, .metas) else {
+            throw DecodingError.keyNotFound(CodingKeys.metas, .init(codingPath: c.codingPath, debugDescription: "no metas list"))
+        }
+        metas = list.items; skipped = list.skipped
+    }
+}
+
+struct MetaResponse: Decodable { var meta: MetaDetail }

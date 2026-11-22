@@ -51,6 +51,25 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   now works.
 - Player: leaving the player after using the panel no longer keeps the player in memory.
 
+### Added
+- Addons: anime catalogs (type „anime“) load as home screen rows and count as series catalogs.
+- Addon install: links with a variant query (`…/manifest.json?v=…`), links to an addon's configure page
+  (`…/configure`) and web install links with an `addon=` parameter are accepted. The query is kept and
+  sent with every request to that addon.
+
+### Changed
+- Subtitles are never requested from AIOMetadata, because a subtitle request there marks the title as
+  watched on your tracking services. The app does its own tracking.
+- The metadata addon for posters and ratings is now one that names the IDs it serves (or AIOMetadata),
+  not an aggregator that accepts every ID only because it is higher in the addon list.
+
+### Fixed
+- Addon catalogs no longer fail as a whole with „Antwort unlesbar“ (unreadable answer) when an item sends
+  its year or rating as a number or has one broken field. Unreadable items are skipped and logged.
+- Error, statistics and library-sync entries from aggregator addons are no longer listed or played as
+  sources, and „Sofort abspielen“ (play now) never picks them. They only appear in the log.
+- Error entries no longer appear as home screen tiles or as subtitle tracks.
+
 ## [Build 174] – 2026-11-22 (integ)
 
 ### Added

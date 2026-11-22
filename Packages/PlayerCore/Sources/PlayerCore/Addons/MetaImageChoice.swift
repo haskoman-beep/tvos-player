@@ -5,8 +5,23 @@ import Foundation
 /// (z. B. dort eingerichtete Bewertungs-Poster) vor den TMDB-Bildern, Texte kommen weiter aus TMDB in Profilsprache.
 public enum MetaImageChoice {
     /// Erstes installiertes Addon mit Metadaten für Typ und ID (Reihenfolge der Addon-Liste); Cinemeta selbst zählt nicht.
+    /// Wave W-a: an addon that names its ID prefixes for `meta` (or AIOMetadata) wins over one that takes every ID
+    /// (an aggregator's `meta` without prefixes only serves its own items). Within each group the list order counts.
     public static func metadataAddon(in addons: [InstalledAddon], type: String, id: String) -> InstalledAddon? {
-        addons.first { $0.manifest.id != "com.linvo.cinemeta" && $0.manifest.supports("meta", type: type, id: id) }
+        let candidates = addons.filter {
+            $0.manifest.id != "com.linvo.cinemeta" && $0.manifest.supports("meta", type: type, id: id)
+        }
+        return candidates.first { namesMetaPrefixes($0.manifest, type: type) || KnownAddon.isAIOMetadata($0.manifest) }
+            ?? candidates.first
+    }
+
+    /// Wave W-a: whether a `meta` resource for `type` lists ID prefixes (its own or the manifest's), i.e. the addon
+    /// says which IDs it serves instead of taking every ID.
+    static func namesMetaPrefixes(_ m: AddonManifest, type: String) -> Bool {
+        m.resources.contains { r in
+            guard r.name == "meta", (r.types ?? m.types).contains(type) else { return false }
+            return !((r.idPrefixes ?? m.idPrefixes) ?? []).isEmpty
+        }
     }
 
     /// Ob ein Addon im Profil Metadaten für IMDb-IDs liefert (für die Einstellungszeile), wie `metadataAddon`:
