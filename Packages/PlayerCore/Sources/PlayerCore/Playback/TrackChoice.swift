@@ -60,6 +60,11 @@ public enum TrackPanelEntry {
         if translationY >= swipeMinDistance { return true }
         return translationY >= swipeFastDistance && velocityY >= swipeFastVelocity
     }
+
+    /// Welle F-h2: Wisch nach oben (schließt das Panel aus der obersten Zeile). Spiegel von `isSwipeDown`.
+    public static func isSwipeUp(translationX: Double, translationY: Double, velocityY: Double) -> Bool {
+        isSwipeDown(translationX: translationX, translationY: -translationY, velocityY: -velocityY)
+    }
 }
 
 /// Welle F-h R1: Spurwahl gesperrt, solange die Sitzung neu aufgebaut wird oder der Start läuft. Sonst würde die

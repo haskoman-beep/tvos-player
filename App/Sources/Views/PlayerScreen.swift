@@ -305,7 +305,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
                          holdAllowed: { !leaving },
                          holdOrigin: { fastSeekOrigin(forward: $0) },
                          holdLimit: { FastSeek.upperLimit(duration: engine.duration, creditsStart: skip.upNextAt, origin: $0) },
-                         swipeDown: { openTracks("Wisch nach unten") })
+                         // F-h2: im offenen Panel ist Wischen nach unten ein Listenschritt, kein Öffnen (kein Log-Rauschen).
+                         swipeDown: { if !showTracks { openTracks("Wisch nach unten") } })
             idleTick(failed: failureNotice != nil || loadError != nil)
             NowPlayingBridge.route(engine, handlers: .init(context: { RemoteTransportContext(isPlaying: engine.isPlaying, isBusy: engine.isLoading, position: pendingSeek ?? engine.currentTime, inputBlocked: leaving || scrub.isActive || showTracks || failureNotice != nil, upNextShowing: upNext != nil, sinceLastPress: Date().timeIntervalSince(lastToggle)) }, toggle: { onUserInput(); togglePlay() }, seekBy: { onUserInput(); queueSeek($0); poke() }))
             guard loadTask == nil else { return }
