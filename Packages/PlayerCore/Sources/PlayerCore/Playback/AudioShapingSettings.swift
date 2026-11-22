@@ -1,6 +1,6 @@
 import Foundation
 
-/// Ton-Einstellungen des Profils für die Engine (ohne Engine-Typ, damit testbar). Standard: alles aus,
+/// Ton-Einstellungen (since wave S round 2 per device, `DeviceSettings`) für die Engine (ohne Engine-Typ, damit testbar). Standard: alles aus,
 /// dann lädt die Engine genau wie ohne diese Einstellungen (Durchreichen von 5.1/Atmos unverändert).
 ///
 /// Formung (Nachtmodus, Dialog, Lautheit) braucht dekodierten Ton: solange sie an ist, wird eine

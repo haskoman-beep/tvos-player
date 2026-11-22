@@ -12,7 +12,7 @@ public enum PhoneSection: String, CaseIterable, Sendable {
     public var title: String {
         switch self {
         case .quickImport: "Schnell-Import"
-        case .addon: "Addons & Quellen"
+        case .addon: "Addons"
         case .keys: "Konten & Schlüssel"
         case .home: "Startseite"
         case .system: "System"

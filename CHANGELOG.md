@@ -36,6 +36,13 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   section „iPhone & Kontrollzentrum“ is now „Steuerung“ (controls). Each category says under its title
   whether it applies to this profile or to this device. Only the place of the rows changed: values, keys and
   defaults stay as they were.
+- Settings › Bild & Ton (picture and sound): every setting there (Dolby Vision fixed, FEL, keep HDMI mode,
+  sound system, always stereo, night mode, dialogue, loudness, audio offset) is now stored per device instead
+  of per profile. On the first start after the update the app takes the values of the active profile once.
+  Profile export, import and sync no longer carry them; old backups that still contain them load as before.
+  The page says „Gilt für dieses Gerät“ (applies to this device).
+- Phone page: the TorBox key moved to „Konten & Schlüssel“ (accounts and keys), next to the other keys; the
+  section „Addons & Quellen“ is now „Addons“. The TV row Profil & Konten › Schlüssel › TorBox opens it there.
 - Detail page: „Abspielen“ (play) is the main button again and takes the focus on entry and on return from
   the player. The „Sofort abspielen“ (instant play) card is only shown, and its best source only chosen,
   when the new setting is on; with it on, everything behaves as in build 198.

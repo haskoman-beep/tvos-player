@@ -170,10 +170,10 @@ public struct PhoneInputPage: Sendable {
         \(msg)<nav>\(nav)</nav>
         <form method=post action="/submit?t=\(token)">
         <section id=\(PhoneSection.quickImport.rawValue)>\(head(.quickImport))\(field("import", "Link oder JSON einfügen – wird erkannt (Addon, TMDB-/Trakt-Liste, Fusion-Kit, Nuvio)", "https://…", area: true))</section>
-        <section id=\(PhoneSection.addon.rawValue)>\(head(.addon))\(field("addon", "Addon hinzufügen: Manifest-URL", "https://…/manifest.json"))
-        \(field("key_torbox", "TorBox-API-Key (Bibliothek „Meine TorBox-Dateien“)", ""))</section>
+        <section id=\(PhoneSection.addon.rawValue)>\(head(.addon))\(field("addon", "Addon hinzufügen: Manifest-URL", "https://…/manifest.json"))</section>
         <section id=\(PhoneSection.keys.rawValue)>\(head(.keys))\(field("key_tmdb", "TMDB-API-Key", ""))\(field("key_mdblist", "MDBList-Key", ""))\(field("key_tvdb", "TVDB-Key", ""))
-        \(field("key_trakt_id", "Trakt Client ID", ""))\(field("key_trakt_secret", "Trakt Client Secret", ""))\(field("key_simkl_id", "Simkl Client ID", ""))</section>
+        \(field("key_trakt_id", "Trakt Client ID", ""))\(field("key_trakt_secret", "Trakt Client Secret", ""))\(field("key_simkl_id", "Simkl Client ID", ""))
+        \(field("key_torbox", "TorBox-API-Key (Bibliothek „Meine TorBox-Dateien“)", ""))</section>
         <section id=\(PhoneSection.home.rawValue)>\(head(.home))<h3>Collections importieren</h3>
         \(field("nuvio_url", "Nuvio-Export (URL)", "https://…json"))\(field("nuvio_json", "… oder Nuvio-JSON einfügen", "{…}", area: true))
         \(field("tmdb_link", "TMDB- oder Trakt-Liste, Filmreihe, Studio als Reihe", "https://www.themoviedb.org/list/… oder https://trakt.tv/users/…/lists/…"))

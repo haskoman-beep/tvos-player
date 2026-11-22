@@ -34,7 +34,7 @@ private func state() -> PhoneHomeState {
 }
 
 @Test func phoneSectionsInTargetOrderWithAnchors() {
-    #expect(PhoneSection.allCases.map(\.title) == ["Schnell-Import", "Addons & Quellen", "Konten & Schlüssel", "Startseite", "System"])
+    #expect(PhoneSection.allCases.map(\.title) == ["Schnell-Import", "Addons", "Konten & Schlüssel", "Startseite", "System"])
     #expect(PhoneSection.allCases.map(\.rawValue) == ["import", "addon", "keys", "home", "system"])
     #expect(PhoneSection.url("http://h/?t=x", section: .home) == "http://h/?t=x#home")
     #expect(PhoneSection.url("http://h/?t=x", section: nil) == "http://h/?t=x")
@@ -44,11 +44,15 @@ private func state() -> PhoneHomeState {
     let pos = ["id=import>", "id=addon>", "id=keys>", "id=home>", "id=order>", "id=system>"].map { html.range(of: $0)?.lowerBound }
     #expect(pos.allSatisfy { $0 != nil })
     #expect(pos.compactMap { $0 } == pos.compactMap { $0 }.sorted())
-    // Bestehende Felder bleiben (Namen unverändert), Schlüssel im Abschnitt „Konten & Schlüssel“, TorBox bei Addons.
+    // Bestehende Felder bleiben (Namen unverändert), alle Schlüssel samt TorBox im Abschnitt „Konten & Schlüssel“ (wave S).
     for name in ["import", "addon", "key_tmdb", "key_mdblist", "key_tvdb", "key_trakt_id", "key_trakt_secret", "key_simkl_id",
                  "key_torbox", "key_atvloadly", "nuvio_url", "nuvio_json", "tmdb_link", "kit_url", "backup_json"] {
         #expect(html.contains("name=\(name)"), "Feld \(name)")
     }
+    // Wave S: the TorBox key sits with the other keys, the addon section only takes manifest URLs.
+    let keys = html.range(of: "id=keys>")!.lowerBound, home = html.range(of: "id=home>")!.lowerBound
+    let torbox = html.range(of: "name=key_torbox")!.lowerBound
+    #expect(torbox > keys && torbox < home)
     // Schlüsselfelder sind leer: die Seite gibt nie gespeicherte Werte zurück.
     #expect(!html.contains("value=\"K"))
     #expect(html.contains("<meta name=\"referrer\" content=\"no-referrer\">"))

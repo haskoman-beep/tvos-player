@@ -97,6 +97,11 @@ extension AppModel {
     func binding<T>(_ kp: WritableKeyPath<Profile, T>) -> Binding<T> {
         Binding(get: { self.profile[keyPath: kp] }, set: { v in self.update { $0[keyPath: kp] = v } })
     }
+
+    /// Wave S round 2: binding into the device settings (Bild & Ton), not the profile.
+    func deviceBinding<T>(_ kp: WritableKeyPath<DeviceSettings, T>) -> Binding<T> {
+        Binding(get: { self.device[keyPath: kp] }, set: { v in self.updateDevice { $0[keyPath: kp] = v } })
+    }
 }
 
 extension AccentChoice {

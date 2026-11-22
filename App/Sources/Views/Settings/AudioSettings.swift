@@ -48,30 +48,30 @@ struct AudioShapingSettingsRows: View {
     private let tint = SettingsCategory.picture.tint
 
     var body: some View {
-        let s = model.profile.audioShaping
+        let s = model.device.audioShaping
         SettingsSection("Anlage") {
             SettingsChoiceRow(symbol: "hifispeaker", tint: tint, title: "Ton-Anlage",
                               detail: s.hasEARCReceiver
                                   ? "TrueHD/DTS-HD verlustfrei als Mehrkanal-PCM. Nur mit eARC oder HDMI-Receiver; über optisch oder einfaches ARC wird daraus Stereo."
                                   : "TrueHD/DTS-HD als Dolby Digital Plus 5.1: Surround auch über optisch und einfaches ARC.",
                               detailAlwaysVisible: true,
-                              options: [false, true], selection: model.binding(\.audioShaping.hasEARCReceiver),
+                              options: [false, true], selection: model.deviceBinding(\.audioShaping.hasEARCReceiver),
                               label: SettingsSummary.soundSystemName)
             SettingsToggleRow(symbol: "speaker.wave.2", tint: tint, title: "Immer Stereo",
                               detail: "Jede Tonspur als Stereo, auch Dolby Digital und Atmos. Für Lautsprecher, die Surround nicht richtig wiedergeben.",
-                              reserveDetailSpace: false, isOn: model.binding(\.audioShaping.safeStereo))
+                              reserveDetailSpace: false, isOn: model.deviceBinding(\.audioShaping.safeStereo))
         }
         SettingsSection("Klang") {
             SettingsToggleRow(symbol: "moon", tint: tint, title: "Nachtmodus",
                               detail: "Leise Stellen lauter, laute leiser.",
-                              reserveDetailSpace: false, isOn: model.binding(\.audioShaping.nightMode))
+                              reserveDetailSpace: false, isOn: model.deviceBinding(\.audioShaping.nightMode))
             SettingsChoiceRow(symbol: "person.wave.2", tint: tint, title: "Dialog anheben",
                               detail: "Stimmen lauter gegenüber Musik und Effekten.",
-                              options: AudioShapingSettings.dialogueChoices, selection: model.binding(\.audioShaping.dialogueBoostDB),
+                              options: AudioShapingSettings.dialogueChoices, selection: model.deviceBinding(\.audioShaping.dialogueBoostDB),
                               label: SettingsSummary.dialogueName)
             SettingsChoiceRow(symbol: "dial.medium", tint: tint, title: "Lautstärke angleichen",
                               detail: SettingsSummary.loudnessDetail(s.loudnessTargetLUFS),
-                              options: AudioShapingSettings.loudnessChoices, selection: model.binding(\.audioShaping.loudnessTargetLUFS),
+                              options: AudioShapingSettings.loudnessChoices, selection: model.deviceBinding(\.audioShaping.loudnessTargetLUFS),
                               label: SettingsSummary.loudnessName)
             if s.shapesAudio {
                 SettingsFootnote("Ton-Formung an: Dolby Digital, Atmos und DTS werden dekodiert und neu kodiert statt durchgereicht.")
@@ -80,7 +80,7 @@ struct AudioShapingSettingsRows: View {
         SettingsSection("Versatz") {
             SettingsChoiceRow(symbol: "timer", tint: tint, title: "Ton-Versatz",
                               detail: "Gleicht Ton und Bild an, wenn der Ton vor- oder nachläuft.",
-                              options: AudioShapingSettings.delayChoices, selection: model.binding(\.audioShaping.audioDelayMs),
+                              options: AudioShapingSettings.delayChoices, selection: model.deviceBinding(\.audioShaping.audioDelayMs),
                               label: SettingsSummary.delayName)
         }
     }
@@ -100,14 +100,14 @@ struct DisplayModeSettingsRows: View {
         case .basic:
             SettingsToggleRow(symbol: "tv", tint: tint, title: "HDMI-Modus zwischen Folgen halten",
                               detail: "Bei der nächsten Folge im gleichen Format schaltet der Fernseher nicht erst um (kein langes Schwarzbild).",
-                              reserveDetailSpace: false, isOn: model.binding(\.displayMode.keepModeBetweenEpisodes))
+                              reserveDetailSpace: false, isOn: model.deviceBinding(\.displayMode.keepModeBetweenEpisodes))
         case .advanced:
             SettingsToggleRow(symbol: "sparkles.tv", tint: tint, title: "Fernseher kann Dolby Vision (fest)",
                               detail: "Nur einschalten, wenn Dolby Vision trotz passendem Fernseher nicht erkannt wird. Normalerweise meldet tvOS das selbst.",
-                              reserveDetailSpace: false, isOn: model.binding(\.displayMode.panelPresentsDolbyVision))
+                              reserveDetailSpace: false, isOn: model.deviceBinding(\.displayMode.panelPresentsDolbyVision))
             SettingsToggleRow(symbol: "square.3.layers.3d", tint: tint, title: "Dolby Vision FEL einrechnen",
                               detail: "Wirkt erst, wenn die Engine mit der FEL-Erweiterung gebaut ist; sonst ohne Wirkung.",
-                              reserveDetailSpace: false, isOn: model.binding(\.displayMode.foldsDolbyVisionFEL))
+                              reserveDetailSpace: false, isOn: model.deviceBinding(\.displayMode.foldsDolbyVisionFEL))
         }
     }
 }

@@ -35,10 +35,8 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     public var diskCache: DiskCacheSettings
     /// Welle C-a: Zeitgrenze je Addon bei der Quellensuche in Sekunden (Standard `AddonSearch.defaultTimeout`).
     public var addonTimeout: Double = AddonSearch.defaultTimeout
-    /// Ton: Nachtmodus, Dialog, Lautheit, Versatz, Brücke (Standard alles aus).
-    public var audioShaping: AudioShapingSettings
-    /// Bildmodus: Dolby-Vision-Angabe, FEL, HDMI-Modus zwischen Folgen halten (Welle C-c).
-    public var displayMode: DisplayModeSettings
+    // Wave S round 2: sound shaping (`audioShaping`) and picture mode (`displayMode`) moved to `DeviceSettings`.
+    // Old profiles that still hold the keys decode fine; the keys are ignored and no longer written.
     /// Quellen-Sortierung und Extras (Welle C-d).
     public var sources: SourceSettings = SourceSettings()
     /// Welle D-a: Spur-Wahl je Serie merken, Bildschirmschoner in der Pause.
@@ -51,9 +49,7 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
                 subtitleMode: SubtitleMode = .forcedOnly, subtitleLanguage: String = "de", progressSource: ProgressSource = .local,
                 addons: [InstalledAddon] = [], collections: [MediaCollection] = [], home: HomeLayout = HomeLayout(),
                 apiKeys: [String: String] = [:], autoplayNext: Bool = true, stillWatchingAfter: Int = StillWatchingCounter.defaultLimit, syncTokens: [String: SyncToken] = [:],
-                appearance: Appearance = Appearance(), diskCache: DiskCacheSettings = DiskCacheSettings(),
-                audioShaping: AudioShapingSettings = AudioShapingSettings(),
-                displayMode: DisplayModeSettings = DisplayModeSettings()) {
+                appearance: Appearance = Appearance(), diskCache: DiskCacheSettings = DiskCacheSettings()) {
         self.id = id; self.name = name; self.language = language; self.audioPriority = audioPriority
         self.subtitleMode = subtitleMode; self.subtitleLanguage = subtitleLanguage
         self.progressSource = progressSource; self.addons = addons; self.collections = collections
@@ -61,14 +57,12 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         self.stillWatchingAfter = stillWatchingAfter
         self.syncTokens = syncTokens; self.appearance = appearance
         self.diskCache = diskCache
-        self.audioShaping = audioShaping
-        self.displayMode = displayMode
     }
 
     enum CodingKeys: String, CodingKey {
         case id, name, language, audioPriority, subtitleMode, subtitleLanguage, progressSource
         case addons, collections, home, apiKeys, autoplayNext, stillWatchingAfter, syncTokens, appearance
-        case diskCache, audioShaping, displayMode
+        case diskCache
         case addonTimeout
         case sources
         case player
@@ -104,8 +98,6 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         appearance = try c.decodeIfPresent(Appearance.self, forKey: .appearance) ?? d.appearance
         diskCache = try c.decodeIfPresent(DiskCacheSettings.self, forKey: .diskCache) ?? d.diskCache
         addonTimeout = try c.decodeIfPresent(Double.self, forKey: .addonTimeout) ?? d.addonTimeout
-        audioShaping = try c.decodeIfPresent(AudioShapingSettings.self, forKey: .audioShaping) ?? d.audioShaping
-        displayMode = try c.decodeIfPresent(DisplayModeSettings.self, forKey: .displayMode) ?? d.displayMode
         sources = (try? c.decodeIfPresent(SourceSettings.self, forKey: .sources)) ?? nil ?? d.sources
         player = (try? c.decodeIfPresent(PlayerComfortSettings.self, forKey: .player)) ?? nil ?? d.player
         hiddenRows = (try? c.decodeIfPresent([HomeRow].self, forKey: .hiddenRows)) ?? nil ?? []

@@ -49,8 +49,8 @@ struct PlayerScreen: View {
                                                                         subtitleLanguages: [],
                                                                         headers: headers, nativeRemoteHLS: remoteHLS,
                                                                         diskCache: isTrailer && ownProgress == nil ? nil : model.profile.diskCache,
-                                                                        audio: isTrailer && ownProgress == nil ? nil : model.profile.audioShaping,
-                                                                        display: isTrailer && ownProgress == nil ? nil : model.profile.displayMode),
+                                                                        audio: isTrailer && ownProgress == nil ? nil : model.device.audioShaping,
+                                                                        display: isTrailer && ownProgress == nil ? nil : model.device.displayMode),
                                                        report: { pos, dur in
                                                            if let ownProgress { ownProgress.record(pos, dur) }
                                                            else if !isTrailer { model.recordProgress(request, position: pos, duration: dur) }

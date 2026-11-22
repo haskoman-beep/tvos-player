@@ -69,11 +69,6 @@ public enum SettingsSummary {
         [DesignText.metaLine([addons(n), rows(r)]), "Fortschritt: " + progressName(progress)]
     }
 
-    /// „1 Addon · Smart sortiert“, „3 Addons · Wie Addon sortiert“.
-    public static func addons(count n: Int, order: StreamOrderMode) -> String {
-        DesignText.metaLine([addons(n), n == 0 ? nil : orderName(order) + " sortiert"])
-    }
-
     /// „24 Reihen · Fusion-Kit an“.
     public static func home(rows r: Int, fusionKit: Bool) -> String {
         DesignText.metaLine([rows(r), "Fusion-Kit " + (fusionKit ? "an" : "aus")])

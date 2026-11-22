@@ -11,6 +11,9 @@ final class AppModel: ObservableObject {
     @Published var lastError: String? { didSet { if let e = lastError { RemoteLog.error("fehler", e) } } }
     @Published var notice: String?
     let store: ProfileStore
+    /// Wave S round 2: „Bild & Ton“ per device (TV, HDMI, sound system); profile export and sync leave it out.
+    @Published private(set) var device: DeviceSettings
+    let deviceStore: DeviceSettingsStore
     let progressStore: ProgressStore
     /// Fortschritt des aktiven Profils.
     @Published private(set) var progress = ProgressBook()
@@ -36,6 +39,13 @@ final class AppModel: ObservableObject {
 
     init() {
         let storage = DefaultsStorage()
+        // Before anything saves the profiles: the one-time move reads the old fields from profiles.json.
+        deviceStore = DeviceSettingsStore(storage: storage)
+        let dev = deviceStore.loadOrMigrate()
+        device = dev.settings
+        if dev.migrated {
+            RemoteLog.info("speicher", "Bild & Ton jetzt je Gerät: aus aktivem Profil übernommen (Ton \(dev.settings.audioShaping.logText), Bild \(dev.settings.displayMode.logText))")
+        }
         store = ProfileStore(storage: storage)
         stored = store.load()
         progressStore = ProgressStore(storage: storage)
@@ -213,6 +223,12 @@ final class AppModel: ObservableObject {
 
     func save() {
         do { try store.save(stored) } catch { lastError = "Speichern fehlgeschlagen: \(error)" }
+    }
+
+    /// Wave S round 2: changes a device setting (Bild & Ton) and stores it at once.
+    func updateDevice(_ change: (inout DeviceSettings) -> Void) {
+        change(&device)
+        do { try deviceStore.save(device) } catch { lastError = "Speichern fehlgeschlagen: \(error)" }
     }
 
     // MARK: Profile

@@ -22,11 +22,12 @@ import Testing
 }
 
 @Test func settingsTreeScopeLabelsMatchStorage() {
-    // Every row outside System is bound to the active profile (AppModel.binding); only System is per device.
-    for c in SettingsCategory.allCases where c != .system {
+    // Rows bound through AppModel.binding live in the active profile; Bild & Ton (DeviceSettings) and System are
+    // per device.
+    for c in SettingsCategory.allCases where c != .system && c != .picture {
         #expect(c.scope == .profile)
     }
-    #expect(SettingsCategory.system.scope == .device)
+    #expect(SettingsCategory.system.scope == .device && SettingsCategory.picture.scope == .device)
     #expect(SettingsScope.profile.label == "Gilt für dieses Profil")
     #expect(SettingsScope.device.label == "Gilt für dieses Gerät")
 }

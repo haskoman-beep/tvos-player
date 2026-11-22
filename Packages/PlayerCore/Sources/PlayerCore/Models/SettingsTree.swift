@@ -34,12 +34,12 @@ public enum SettingsCategory: String, CaseIterable, Identifiable, Hashable, Send
         }
     }
 
-    /// Where the settings of this category are stored today. Only a label: the storage itself is unchanged.
-    /// Everything bound through `AppModel.binding` lives in the active profile; System holds the update check,
-    /// the diagnostics switch (UserDefaults) and the log receiver, which belong to the device.
+    /// Where the settings of this category are stored. Everything bound through `AppModel.binding` lives in the
+    /// active profile. Bild & Ton is stored in `DeviceSettings` (round 2); System holds the update check, the
+    /// diagnostics switch (UserDefaults) and the log receiver. Both belong to the device.
     public var scope: SettingsScope {
         switch self {
-        case .system: .device
+        case .system, .picture: .device
         default: .profile
         }
     }
@@ -54,7 +54,7 @@ public enum SettingsCategory: String, CaseIterable, Identifiable, Hashable, Send
 public enum SettingsGroup: String, CaseIterable, Sendable {
     case content, interface, playback, system
 
-    /// Header in small caps; System has none and is only set apart by a gap.
+    /// Header in capitals; System has none and is only set apart by a gap.
     public var title: String? {
         switch self {
         case .content: "Inhalte"

@@ -41,6 +41,8 @@ struct ProfileSettings: View {
                                 reserveDetailSpace: false) { confirmDelete = true }
                 }
             }
+            // Review S M3: the page label says "this profile", the profile list itself is device-wide.
+            SettingsFootnote("Die Profilliste gilt für das ganze Gerät.")
             AccountSettingsRows()
             SettingsSection("Fortschritt") {
                 SettingsChoiceRow(symbol: "checkmark.circle", tint: tint, title: "Fortschritt & Gesehen",

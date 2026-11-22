@@ -3,7 +3,7 @@ import AVKit
 import AetherFEL
 import PlayerCore
 
-/// Ton- und Bild-Ladeoptionen der Engine aus dem Profil (Welle C-c, #7/#13).
+/// Ton- und Bild-Ladeoptionen der Engine aus den Geräte-Einstellungen (wave S round 2) (Welle C-c, #7/#13).
 /// - Formung (Nachtmodus, Dialog, Lautheit) nur, wenn eingeschaltet: sonst bleibt `audioShaping` der
 ///   Engine-Standard und Dolby Digital/Atmos werden wie bisher durchgereicht.
 /// - Ton-Versatz schon beim Laden (kein Neu-Ankern nach dem Start), Brücke für TrueHD/DTS-HD.

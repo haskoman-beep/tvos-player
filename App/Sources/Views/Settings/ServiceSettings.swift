@@ -37,8 +37,8 @@ struct AccountSettingsRows: View {
                          detail: "Kataloge, Bilder und Suche. Eingabe am Handy.", value: SettingsSummary.keyValue(model.profile.apiKeys["tmdb"]))
             PhoneLinkRow(section: .keys, symbol: "star", tint: tint, title: "MDBList-Schlüssel",
                          detail: "Bewertungen außer IMDb. Eingabe am Handy.", value: SettingsSummary.keyValue(model.profile.apiKeys["mdblist"]))
-            // Same row as before (phone anchor #addon, where the TorBox field lives), only moved.
-            PhoneLinkRow(section: .addon, symbol: "externaldrive", tint: tint, title: "TorBox",
+            // Phone anchor #keys: the TorBox field sits with the other keys on the phone page too (wave S).
+            PhoneLinkRow(section: .keys, symbol: "externaldrive", tint: tint, title: "TorBox",
                          detail: "Schlüssel für „Meine TorBox-Dateien“. Eingabe am Handy.",
                          value: SettingsSummary.keyValue(model.profile.apiKeys["torbox"]))
         }
