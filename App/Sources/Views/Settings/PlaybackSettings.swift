@@ -22,6 +22,7 @@ struct PlaybackSettings: View {
                                   label: SettingsSummary.stillWatchingName)
                 PlayerComfortSettingsRows(part: .tracks)
             }
+            SkipSettingsRows()   // wave P-a: skip per segment type + card after a movie (wave S moves it)
             // Wave F-n: „Sofort abspielen“ card (wave G-a) only on request; default off, „Abspielen“ is the main button.
             SettingsSection("Detailseite") {
                 SettingsToggleRow(symbol: "bolt", tint: tint, title: "Sofort abspielen anzeigen",

@@ -48,6 +48,8 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     public var hiddenRows: [HomeRow] = []
     /// Wave U: look of text subtitles, with its own brightness for HDR/DV (default = the look before wave U).
     public var subtitleStyle: SubtitleStyle = SubtitleStyle()
+    /// Wave P-a: skip action per segment type and the card after a movie.
+    public var skip: SkipSettings = SkipSettings()
 
     public init(id: UUID = UUID(), name: String, language: AppLanguage = .de, audioPriority: [String] = ["de", "en", "orig"],
                 subtitleMode: SubtitleMode = .forcedOnly, subtitleLanguage: String = "de", progressSource: ProgressSource = .local,
@@ -76,6 +78,7 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         case player
         case hiddenRows
         case subtitleStyle
+        case skip
     }
     /// Nur zum Lesen alter Profile.
     private enum LegacyKeys: String, CodingKey { case subtitlesEnabled }
@@ -113,6 +116,7 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         player = (try? c.decodeIfPresent(PlayerComfortSettings.self, forKey: .player)) ?? nil ?? d.player
         hiddenRows = (try? c.decodeIfPresent([HomeRow].self, forKey: .hiddenRows)) ?? nil ?? []
         subtitleStyle = (try? c.decodeIfPresent(SubtitleStyle.self, forKey: .subtitleStyle)) ?? nil ?? d.subtitleStyle
+        skip = (try? c.decodeIfPresent(SkipSettings.self, forKey: .skip)) ?? nil ?? d.skip
     }
 
     public static func makeDefault(name: String = "Ich") -> Profile {

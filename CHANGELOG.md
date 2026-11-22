@@ -63,6 +63,22 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   Diagnose, off by default. When it is on, each pause takes the paused frame from the engine, looks for faces
   on the device and writes timings and face sizes to the event log (`xray:` lines). Nothing is shown or stored.
   This is the first step towards showing who is in the picture.
+- Player: skip action per segment type. Settings › Playback › „Überspringen“ (skip) has one row each for intro,
+  recap, credits and preview: „Aus“ (off), „Knopf“ (button) or „Automatisch“ (automatic). Defaults keep the old
+  behaviour: intro and recap show the button, credits and preview are off. „Automatisch“ shows the button with a
+  5-second countdown ring; OK skips at once, any other key stops the countdown and leaves the button, and a segment
+  is skipped automatically only once per playback. Segments estimated from other episodes of the season never skip
+  automatically, they only show the button. Previews are now detected from chapter names („Preview“,
+  „Next Time“, „Vorschau“).
+- Player: a scene after the credits is never skipped or covered. When the credits end before the file end with
+  content after them, a hint „Szene nach dem Abspann“ (scene after the credits) shows and skipping the credits
+  lands at that scene instead of the end.
+- Player: card after a movie. Once a movie's credits start, a card shows two or three recommendations (TMDB, as in
+  „Ähnliche Titel“), „Abspann weiterschauen“ (keep watching the credits) and „Zurück“ (back). A recommendation
+  closes the player and opens its detail page; Menu closes the card. It needs credits marks from chapters or
+  IntroDB and can be switched off („Karte nach dem Film“). IntroDB credits of a movie only count when they reach
+  the file end, so marks from another cut or frame rate never show the card inside the film. Episodes keep the
+  next-episode card.
 
 ### Changed
 - Source list: while sources are still arriving, the focus keeps its row position instead of following its

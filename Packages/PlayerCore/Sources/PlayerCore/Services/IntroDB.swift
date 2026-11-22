@@ -18,7 +18,7 @@ public struct IntroDBQuery: Sendable, Equatable, Hashable {
 
 /// Sprungmarken von api.introdb.app (Gemeinschaftsdatenbank, ohne Schlüssel).
 /// `GET /segments?imdb_id=tt…&season=1&episode=2` bzw. `?imdb_id=tt…&is_movie=true`.
-/// Antwort: `intro`, `recap`, `outro`, `post_credits` je `{start_sec, end_sec}` oder null.
+/// Antwort: `intro`, `recap`, `outro`, `post_credits` (and `preview`, if the service ever sends it) je `{start_sec, end_sec}` oder null.
 /// Fremder Dienst ohne Zusage: hart begrenzte Wartezeit, jeder Fehler → leere Liste.
 public struct IntroDBClient: Sendable {
     public static let base = "https://api.introdb.app"
@@ -50,7 +50,7 @@ public struct IntroDBClient: Sendable {
     public static func parse(_ data: Data) -> [SkipSegment] {
         guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return [] }
         let map: [(String, SkipSegment.Kind)] = [("intro", .intro), ("recap", .recap), ("outro", .credits),
-                                                  ("post_credits", .postCredits)]
+                                                  ("post_credits", .postCredits), ("preview", .preview)]
         var out: [SkipSegment] = []
         for (key, kind) in map {
             guard let m = obj[key] as? [String: Any] else { continue }

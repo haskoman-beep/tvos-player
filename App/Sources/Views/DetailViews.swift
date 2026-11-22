@@ -925,6 +925,7 @@ extension StreamListView {
     /// The focus move now starts here; the tab-wide guard checks the bar afterwards.
     func playerDismissed() {
         TabBarGuard.shared.check(.playerClosed)
+        if PostPlayRoute.flushNow() { closedPlayer = nil; return }   // wave P-a: card pick → its detail page, no focus move
         guard let old = closedPlayer else { return }
         closedPlayer = nil
         focusAfterPlayer(old)
