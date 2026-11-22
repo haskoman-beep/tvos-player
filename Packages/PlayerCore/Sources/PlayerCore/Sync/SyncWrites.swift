@@ -69,7 +69,12 @@ extension SimklClient {
     }
 
     private func listStatus(imdb: String, path: String, token: SyncToken) async throws -> String? {
-        let o = try await json(request("GET", path, token: token)) as? [String: Any] ?? [:]
+        // Not `json(_:)`: Simkl answers a type without items with a literal `null` (or an empty body). Any valid JSON
+        // that is no object means "on no list"; HTTP errors and broken JSON still throw (retry).
+        let res = try await http.sendRespectingRateLimit(request("GET", path, token: token), sleep: sleep)
+        guard (200..<300).contains(res.status) else { throw APIError.status(res.status) }
+        guard !res.data.isEmpty else { return nil }
+        let o = try JSONSerialization.jsonObject(with: res.data, options: [.fragmentsAllowed]) as? [String: Any] ?? [:]
         for key in ["movies", "shows", "anime"] {
             for e in o[key] as? [[String: Any]] ?? [] {
                 let t = (e["movie"] ?? e["show"]) as? [String: Any]

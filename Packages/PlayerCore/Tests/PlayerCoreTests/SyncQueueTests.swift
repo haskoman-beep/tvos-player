@@ -282,6 +282,28 @@ private func jsonBody(_ r: APIRequest) -> [String: Any] { (try? JSONSerializatio
     #expect(http.sent.map(\.url.path) == ["/sync/all-items/shows", "/sync/all-items/anime"])
 }
 
+@Test func simklNullListBodyCountsAsNoItems() async {
+    let frieren = MetaPreview(id: "tt22248376", type: "series", name: "Frieren")
+    var q = SyncQueue()
+    let add = q.record(.watchlistAdd, item: frieren, imdb: frieren.id, series: true, services: ["simkl"], now: t0)
+    let tok = SyncToken(accessToken: "A")
+    let paths = ["/sync/all-items/shows", "/sync/all-items/anime", "/sync/add-to-list"]
+    // No anime on the account: `/anime` answers a literal `null`.
+    let noAnime = FakeSender([(200, #"{"shows":[]}"#), (200, "null"), (201, "{}")])
+    #expect(await SimklClient(clientID: "C", http: noAnime).apply(add, token: tok) == .confirmed)
+    #expect(noAnime.sent.map(\.url.path) == paths)
+    // No shows either, and other non-object bodies.
+    let noShows = FakeSender([(200, "null"), (200, "[]"), (201, "{}")])
+    #expect(await SimklClient(clientID: "C", http: noShows).apply(add, token: tok) == .confirmed)
+    #expect(noShows.sent.map(\.url.path) == paths)
+    // A real HTTP error or broken JSON still waits for the next pass, nothing is added.
+    let down = FakeSender([(200, "null"), (500, "")])
+    #expect(await SimklClient(clientID: "C", http: down).apply(add, token: tok) == .retry)
+    let broken = FakeSender([(200, "<html>")])
+    #expect(await SimklClient(clientID: "C", http: broken).apply(add, token: tok) == .retry)
+    #expect(broken.sent.count == 1)
+}
+
 @Test func syncQueueStoreReportsUnreadableFile() throws {
     let storage = FileBlobStorage(directory: tempDir())
     let p = UUID()
