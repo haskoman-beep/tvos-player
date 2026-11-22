@@ -17,6 +17,8 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 
 ## [Unreleased]
 
+## [Build 249] – 2026-11-22 (integ)
+
 <!-- X1 (maintainers): CI now converts the SFace face model to Core ML and bundles SFace.mlmodelc; no visible change yet. -->
 
 ### Added
