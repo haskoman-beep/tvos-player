@@ -4,15 +4,17 @@ import Testing
 
 // Wave X3: TMDB credits and portraits for the gallery, and the background precompute with a fake embedder.
 
-/// Answers by URL path; a path in `fails` throws HTTP 404, one in `limitedOnce` throws 429 the first time.
+/// Answers by URL path; a path in `fails` throws HTTP 404, one in `broken` HTTP 500, one in `limitedOnce`
+/// throws 429 the first time.
 final class XRayHTTP: HTTPFetching, @unchecked Sendable {
     private let lock = NSLock()
     private var log: [URL] = []
     private var limited: Set<String>
     let bodies: [String: String]
     let fails: Set<String>
-    init(_ bodies: [String: String], fails: Set<String> = [], limitedOnce: Set<String> = []) {
-        self.bodies = bodies; self.fails = fails; self.limited = limitedOnce
+    let broken: Set<String>
+    init(_ bodies: [String: String], fails: Set<String> = [], broken: Set<String> = [], limitedOnce: Set<String> = []) {
+        self.bodies = bodies; self.fails = fails; self.broken = broken; self.limited = limitedOnce
     }
     var urls: [URL] { lock.lock(); defer { lock.unlock() }; return log }
     var paths: [String] { urls.map(\.path) }
@@ -22,20 +24,25 @@ final class XRayHTTP: HTTPFetching, @unchecked Sendable {
             return limited.remove(url.path) != nil
         }
         if first { throw AddonError.http(429) }
+        if broken.contains(url.path) { throw AddonError.http(500) }
         guard !fails.contains(url.path), let b = bodies[url.path] else { throw AddonError.http(404) }
         return Data(b.utf8)
     }
 }
 
-/// Picture bytes are a text naming the faces: "w=120:1,0,0|w=30:0,1,0" (width, then embedding); "bad" throws.
+/// Picture bytes are a text naming the faces: "w=120:1,0,0|w=30:0,1,0" (width, then embedding); "bad" throws,
+/// and `failAll` throws for every picture (model not loaded). `onCall` runs before each picture.
 struct FakeFaceEmbedder: FaceEmbedder {
     var modelID = "fake-1"
     var cancelOn: String? = nil
-    struct Undecodable: Error {}
+    var failAll = false
+    var onCall: (@Sendable () async -> Void)? = nil
+    struct Failed: Error {}
     func faces(inImage data: Data) async throws -> [EmbeddedFace] {
+        await onCall?()
         let s = String(decoding: data, as: UTF8.self)
         if s == cancelOn { withUnsafeCurrentTask { $0?.cancel() } }
-        if s == "bad" { throw Undecodable() }
+        if failAll || s == "bad" { throw Failed() }
         if s.isEmpty { return [] }
         return s.split(separator: "|").map { part in
             let bits = part.split(separator: ":")
@@ -134,7 +141,7 @@ private let movieCredits = #"""
          {"id":3,"name":"C","order":2}]}
 """#
 
-private func galleryHTTP(fails: Set<String> = [], limitedOnce: Set<String> = []) -> XRayHTTP {
+private func galleryHTTP(fails: Set<String> = [], broken: Set<String> = [], limitedOnce: Set<String> = []) -> XRayHTTP {
     XRayHTTP([
         "/3/movie/5/credits": movieCredits,
         "/3/person/1/images": #"{"profiles":[{"file_path":"/a1.jpg","vote_average":5},{"file_path":"/a2.jpg","vote_average":4},{"file_path":"/a3.jpg","vote_average":3},{"file_path":"/a4.jpg","vote_average":2}]}"#,
@@ -143,10 +150,10 @@ private func galleryHTTP(fails: Set<String> = [], limitedOnce: Set<String> = [])
         "/t/p/h632/a1.jpg": "w=180:1,0,0",
         "/t/p/h632/a2.jpg": "w=150:0.9,0.1,0|w=20:0,1,0",
         "/t/p/h632/a3.jpg": "w=150:1,0,0|w=140:0,0,1",   // two people: discarded
-        "/t/p/h632/a4.jpg": "bad",
+        "/t/p/h632/a4.jpg": "",
         "/t/p/h632/b0.jpg": "w=90:0,1,0",
         "/t/p/h632/c1.jpg": "",
-    ], fails: fails, limitedOnce: limitedOnce)
+    ], fails: fails, broken: broken, limitedOnce: limitedOnce)
 }
 
 private func builder(_ http: XRayHTTP, store: XRayStore, embedder: FakeFaceEmbedder = FakeFaceEmbedder(),
@@ -240,4 +247,80 @@ final class LineLog: @unchecked Sendable {
 @Test func castFailureIsReportedNotThrown() async {
     let r = await builder(XRayHTTP([:]), store: XRayStore(storage: XRayMemoryBlobs())).prepare(.movie(tmdbID: 5))
     #expect(r.failures == 1 && r.people == 0)
+}
+
+// MARK: Round 1 (review X2: I1, I2, m7, m9)
+
+private let episodeBodies = [
+    "/3/tv/7/season/1/episode/2/credits": #"{"cast":[{"id":1,"name":"A","order":0}],"guest_stars":[{"id":9,"name":"Gast","order":0}]}"#,
+    "/3/tv/7/aggregate_credits": #"{"cast":[{"id":1,"name":"A","order":0},{"id":3,"name":"C","order":1}]}"#,
+]
+
+@Test func transientEpisodeCreditErrorsAreNotSwallowed() async throws {
+    let key = XRayTitleKey.episode(tvID: 7, season: 1, episode: 2)
+    for path in episodeBodies.keys {
+        // 500 on either half: no degraded list, the error goes on.
+        await #expect(throws: AddonError.http(500)) {
+            try await TMDBClient(apiKey: "K", http: XRayHTTP(episodeBodies, broken: [path])).xrayCast(for: key)
+        }
+        // In the builder: reported as failure, nothing cached, the next run gets the full list.
+        let store = XRayStore(storage: XRayMemoryBlobs())
+        let r = await builder(XRayHTTP(episodeBodies, broken: [path]), store: store).prepare(key)
+        #expect(r.failures == 1 && r.people == 0)
+        #expect(await store.title(key) == nil)
+        _ = await builder(XRayHTTP(episodeBodies), store: store).prepare(key)
+        #expect(await store.title(key)?.cast.map(\.personID) == [1, 9, 3])
+    }
+}
+
+@Test func rateLimitOnEpisodeCreditsIsRetriedPerRequest() async throws {
+    let key = XRayTitleKey.episode(tvID: 7, season: 1, episode: 2)
+    let sleeps = XRaySleepLog()
+    let http = XRayHTTP(episodeBodies, limitedOnce: Set(episodeBodies.keys))
+    let store = XRayStore(storage: XRayMemoryBlobs())
+    let r = await builder(http, store: store, sleeps: sleeps).prepare(key)
+    #expect(!r.castFromCache && r.people == 3)
+    #expect(sleeps.values == [XRayGalleryBuilder.rateLimitPause, XRayGalleryBuilder.rateLimitPause])
+    #expect(await store.title(key)?.cast.map(\.personID) == [1, 9, 3])
+}
+
+@Test func embedderFailureIsNotCachedAsNoFace() async {
+    let store = XRayStore(storage: XRayMemoryBlobs())
+    let r = await builder(galleryHTTP(), store: store, embedder: FakeFaceEmbedder(failAll: true)).prepare(.movie(tmdbID: 5))
+    #expect(r.computed == 0 && r.usable == 0 && r.failures == 6 && r.discarded == 0)
+    for id in 1...3 { #expect(await store.person(id, model: "fake-1") == nil) }
+    let again = await builder(galleryHTTP(), store: store).prepare(.movie(tmdbID: 5))
+    #expect(again.computed == 3 && again.usable == 2)
+}
+
+@Test func partlyFailedPersonIsKeptOnlyOneDay() async throws {
+    let clock = XRayClock()
+    let store = XRayStore(storage: XRayMemoryBlobs(), now: { clock.now })
+    let r = await builder(galleryHTTP(broken: ["/t/p/h632/a2.jpg"]), store: store).prepare(.movie(tmdbID: 5))
+    #expect(r.partial == 1 && r.failures == 1 && r.usable == 2)
+    let a = try #require(await store.person(1, model: "fake-1"))
+    #expect(a.partial && a.faces.map(\.filePath) == ["/a1.jpg"])
+    clock.advance(25 * 3600)
+    #expect(await store.person(1, model: "fake-1") == nil)
+    #expect(await store.person(2, model: "fake-1") != nil)
+}
+
+private final class BuilderBox: @unchecked Sendable {
+    var builder: XRayGalleryBuilder?
+    var nested: [XRayPrepareReport] = []
+}
+
+@Test func secondPrepareOfSameTitleReturnsAtOnce() async {
+    let box = BuilderBox()
+    let store = XRayStore(storage: XRayMemoryBlobs())
+    let embedder = FakeFaceEmbedder(onCall: {
+        guard box.nested.isEmpty, let b = box.builder else { return }
+        box.nested.append(await b.prepare(.movie(tmdbID: 5)))
+    })
+    let b = builder(galleryHTTP(), store: store, embedder: embedder)
+    box.builder = b
+    let r = await b.prepare(.movie(tmdbID: 5))
+    #expect(box.nested.count == 1 && box.nested[0].alreadyRunning && box.nested[0].people == 0)
+    #expect(!r.alreadyRunning && r.computed == 3)
+    #expect(box.nested[0].logLine.hasSuffix("already-running"))
 }

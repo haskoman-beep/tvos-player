@@ -69,8 +69,9 @@ private func close(_ p: FacePoint, _ q: FacePoint, _ eps: Double = 1e-6) -> Bool
     // Box in the lower left quarter (Vision: origin bottom left).
     let box = FaceGeometry.NormalizedRect(x: 0, y: 0, width: 0.5, height: 0.5)
     let p = FaceGeometry.imagePoint(x: 0.5, y: 1, inBox: box, imageWidth: 1920, imageHeight: 1080)
-    #expect(p == FacePoint(480, 540))
-    #expect(FaceGeometry.imagePoint(x: 0, y: 0, inBox: box, imageWidth: 1920, imageHeight: 1080) == FacePoint(0, 1080))
+    // Half-pixel shift: Vision is continuous, the warp uses integer pixel centres.
+    #expect(p == FacePoint(479.5, 539.5))
+    #expect(FaceGeometry.imagePoint(x: 0, y: 0, inBox: box, imageWidth: 1920, imageHeight: 1080) == FacePoint(-0.5, 1079.5))
     #expect(FaceGeometry.pixelWidth(box, imageWidth: 1920) == 960)
 }
 
@@ -110,6 +111,12 @@ private func close(_ p: FacePoint, _ q: FacePoint, _ eps: Double = 1e-6) -> Bool
     let back = try #require(FaceEmbedding(data: a.data))
     #expect(back == a && a.data.count == 8)
     #expect(FaceEmbedding(data: Data([1, 2, 3])) == nil)
+    // Damaged bytes: a non-unit vector is normalised again, zeros are rejected.
+    var raw = Data()
+    for v: Float in [3, 4] { withUnsafeBytes(of: v.bitPattern.littleEndian) { raw.append(contentsOf: $0) } }
+    #expect(FaceEmbedding(data: raw)?.values == [0.6, 0.8])
+    #expect(FaceEmbedding(data: Data(count: 8)) == nil)
+    #expect(FaceEmbedding([.infinity, 1]) == nil)
 }
 
 // MARK: Scoring
@@ -258,8 +265,27 @@ private let day: TimeInterval = 24 * 3600
     #expect(text.contains(#""v":1"#))
     try blobs.write(name, Data(text.replacingOccurrences(of: #""v":1"#, with: #""v":99"#).utf8))
     #expect(await XRayStore(storage: blobs, now: { clock.now }).title(key) == nil)
+    #expect(blobs.raw(name) == nil)   // other version: the file is deleted, not orphaned
     try blobs.write(name, Data("not json".utf8))
     #expect(await XRayStore(storage: blobs, now: { clock.now }).title(key) == nil)
+    #expect(blobs.raw(name) == nil)
+}
+
+@Test func lifetimeSurvivesLostIndex() async throws {
+    let blobs = XRayMemoryBlobs(), clock = XRayClock()
+    let store = XRayStore(storage: blobs, now: { clock.now })
+    let face = XRayFaceRecord(filePath: "/a.jpg", embedding: FaceEmbedding([1, 0])!)
+    await store.store(XRayPersonRecord(personID: 1, modelID: "m", faces: []))
+    await store.store(XRayPersonRecord(personID: 2, modelID: "m", faces: [face], partial: true))
+    await store.store(XRayPersonRecord(personID: 3, modelID: "m", faces: [face]))
+    blobs.remove(XRayCacheFormat.indexName)
+    let fresh = XRayStore(storage: blobs, now: { clock.now })
+    clock.advance(1.5 * day)
+    #expect(await fresh.person(2, model: "m") == nil)   // partial: 1 day
+    #expect(await fresh.person(1, model: "m") != nil)
+    clock.advance(6 * day)
+    #expect(await fresh.person(1, model: "m") == nil)   // empty: 7 days
+    #expect(await fresh.person(3, model: "m") != nil)
 }
 
 @Test func cacheEvictsLeastRecentlyUsedOverBudget() async throws {

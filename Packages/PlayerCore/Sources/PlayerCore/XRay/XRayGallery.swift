@@ -15,7 +15,9 @@ public struct EmbeddedFace: Sendable, Equatable {
 public protocol FaceEmbedder: Sendable {
     /// Identifies model and preprocessing; part of the cache key, so a new model recomputes the gallery.
     var modelID: String { get }
-    /// All faces in an encoded picture (JPEG/PNG, as downloaded). Throws when the picture cannot be decoded.
+    /// All faces in an encoded picture (JPEG/PNG, as downloaded). Returns [] when the picture shows no face.
+    /// Throws only for failures worth retrying (model not loaded, prediction or Vision error, cancellation):
+    /// the gallery builder then caches nothing for that person and tries again on the next run.
     func faces(inImage data: Data) async throws -> [EmbeddedFace]
 }
 
@@ -53,8 +55,9 @@ public enum XRayGalleryPlan {
     }
 }
 
-/// At most `limit` requests per `window` seconds, handed out in order. Shared by all X-Ray downloads so the
-/// background work stays well under TMDB's limit (about 50 per second) and never competes with the UI.
+/// At most `limit` requests per `window` seconds, handed out in order. The app keeps ONE `XRayGalleryBuilder`
+/// (and so one pair of throttles) for all titles, so the background work stays well under TMDB's limit
+/// (about 50 per second) and never competes with the UI.
 public actor RequestThrottle {
     public let limit: Int
     public let window: TimeInterval
@@ -94,13 +97,18 @@ public struct XRayPrepareReport: Sendable, Equatable {
     public var failures = 0
     public var castFromCache = false
     public var cancelled = false
+    /// People cached with a short lifetime because some portraits failed.
+    public var partial = 0
+    /// Another `prepare` of the same title was already running; this one did nothing.
+    public var alreadyRunning = false
 
     public init(title: String) { self.title = title }
 
     public var logLine: String {
         "xray: gallery \(title) people=\(people) cached=\(cached) computed=\(computed) usable=\(usable) "
             + "downloads=\(downloads) faces=\(faces) discarded=\(discarded) failures=\(failures)"
-            + (castFromCache ? " cast=cache" : " cast=tmdb") + (cancelled ? " cancelled" : "")
+            + " partial=\(partial)" + (castFromCache ? " cast=cache" : " cast=tmdb") + (cancelled ? " cancelled" : "")
+            + (alreadyRunning ? " already-running" : "")
     }
 }
 
@@ -113,23 +121,29 @@ public actor XRayGalleryBuilder {
     let embedder: FaceEmbedder
     let store: XRayStore
     let throttle: RequestThrottle
+    let imageThrottle: RequestThrottle
     let settings: XRayGallerySettings
     let sleep: APISleep
     let log: (@Sendable (String) -> Void)?
     /// Wait before the one retry after HTTP 429.
     static let rateLimitPause: Double = 2
+    /// Titles with a `prepare` in progress (actor reentrancy: a second call for the same title returns at once).
+    private var running = Set<XRayTitleKey>()
 
     public init(tmdb: TMDBClient, images: HTTPFetching = URLSessionFetcher(), embedder: FaceEmbedder, store: XRayStore,
-                throttle: RequestThrottle = RequestThrottle(), settings: XRayGallerySettings = XRayGallerySettings(),
+                throttle: RequestThrottle = RequestThrottle(),
+                imageThrottle: RequestThrottle = RequestThrottle(limit: 20), settings: XRayGallerySettings = XRayGallerySettings(),
                 sleep: @escaping APISleep = defaultAPISleep, log: (@Sendable (String) -> Void)? = nil) {
         self.tmdb = tmdb; self.images = images; self.embedder = embedder; self.store = store
-        self.throttle = throttle; self.settings = settings; self.sleep = sleep; self.log = log
+        self.throttle = throttle; self.imageThrottle = imageThrottle; self.settings = settings; self.sleep = sleep; self.log = log
     }
 
     /// The candidates of a title: from the cache, else from TMDB (and cached for 30 days).
     public func cast(for key: XRayTitleKey) async throws -> (cast: [XRayCastEntry], fromCache: Bool) {
         if let r = await store.title(key) { return (r.cast, true) }
-        let cast = try await limited { try await self.tmdb.xrayCast(for: key) }
+        // Each credits request gets its own throttle slot and 429 retry; a transient failure throws, so no
+        // degraded list is ever cached (the next run asks again).
+        let cast = try await tmdb.xrayCast(for: key) { op in try await self.limited(nil, op) }
         await store.store(XRayTitleRecord(key: key, cast: cast))
         return (cast, false)
     }
@@ -139,6 +153,8 @@ public actor XRayGalleryBuilder {
     public func prepare(_ key: XRayTitleKey) async -> XRayPrepareReport {
         var rep = XRayPrepareReport(title: key.name)
         defer { log?(rep.logLine) }
+        guard running.insert(key).inserted else { rep.alreadyRunning = true; return rep }
+        defer { running.remove(key) }
         let cast: [XRayCastEntry]
         do {
             let c = try await self.cast(for: key)
@@ -157,24 +173,30 @@ public actor XRayGalleryBuilder {
                 if !r.faces.isEmpty { rep.usable += 1 }
                 continue
             }
-            guard let faces = await embedPerson(person, report: &rep) else { continue }
+            guard let done = await embedPerson(person, report: &rep) else { continue }
+            let (faces, partial) = (done.0, done.partial)
             if Task.isCancelled { rep.cancelled = true; break }
-            await store.store(XRayPersonRecord(personID: person.personID, modelID: model, faces: faces))
+            await store.store(XRayPersonRecord(personID: person.personID, modelID: model, faces: faces, partial: partial))
             rep.computed += 1
+            if partial { rep.partial += 1 }
             if !faces.isEmpty { rep.usable += 1 }
         }
         await store.flush()
         return rep
     }
 
-    /// The gallery for matching at pause time; only what is cached (no network).
+    /// The gallery for matching at pause time; only what is cached (no network). Saves the use times, so the
+    /// LRU keeps what was just used even if the app is killed afterwards.
     public func gallery(for key: XRayTitleKey) async -> [GalleryPerson] {
-        await store.gallery(key, model: embedder.modelID)
+        let g = await store.gallery(key, model: embedder.modelID)
+        await store.flush()
+        return g
     }
 
-    /// Nil when the person could not be finished (network error, cancelled): nothing is cached then, so the
-    /// next run tries again. An empty array is a finished result (no usable portrait).
-    private func embedPerson(_ person: XRayCastEntry, report rep: inout XRayPrepareReport) async -> [XRayFaceRecord]? {
+    /// Nil when the person could not be finished (network or embedder error, cancelled): nothing is cached
+    /// then, so the next run tries again. An empty array is a finished result (no portrait had a clear face).
+    /// `partial`: some portraits failed but others gave a face; cached with a short lifetime.
+    private func embedPerson(_ person: XRayCastEntry, report rep: inout XRayPrepareReport) async -> ([XRayFaceRecord], partial: Bool)? {
         var portraits: [TMDBProfileImage]
         do {
             portraits = XRayGalleryPlan.pickImages(try await limited { try await self.tmdb.personImages(id: person.personID) },
@@ -191,23 +213,28 @@ public actor XRayGalleryBuilder {
             if Task.isCancelled { return nil }
             guard let u = TMDBClient.galleryImageURL(img.filePath) else { rep.discarded += 1; continue }
             let data: Data
-            do { data = try await limited { try await self.images.data(from: u) } } catch {
+            do { data = try await limited(imageThrottle) { try await self.images.data(from: u) } } catch {
                 if Task.isCancelled { return nil }
                 rep.failures += 1; incomplete = true; continue
             }
             rep.downloads += 1
-            guard let faces = try? await embedder.faces(inImage: data) else { rep.discarded += 1; continue }
+            let faces: [EmbeddedFace]
+            do { faces = try await embedder.faces(inImage: data) } catch {
+                if Task.isCancelled || error is CancellationError { return nil }
+                rep.failures += 1; incomplete = true; continue
+            }
             rep.faces += faces.count
             guard let f = XRayGalleryPlan.portraitFace(faces, settings: settings) else { rep.discarded += 1; continue }
             out.append(XRayFaceRecord(filePath: img.filePath, embedding: f.embedding))
         }
-        // Every download failed: treat as not finished rather than caching "no face" for days.
+        // Nothing usable and something failed: not finished, rather than caching "no face" for days.
         if out.isEmpty && incomplete { return nil }
-        return out
+        return (out, incomplete)
     }
 
     /// Throttled call; one retry after HTTP 429.
-    private func limited<T: Sendable>(_ op: @Sendable () async throws -> T) async throws -> T {
+    private func limited<T: Sendable>(_ gate: RequestThrottle? = nil, _ op: @Sendable () async throws -> T) async throws -> T {
+        let throttle = gate ?? self.throttle
         await throttle.wait()
         do { return try await op() } catch AddonError.http(429) {
             await sleep(Self.rateLimitPause)

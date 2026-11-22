@@ -41,21 +41,28 @@ extension TMDBClient {
     }
 
     /// The candidates of a title. Film: its cast. Episode: the episode cast and guests first, then the rest of
-    /// the series cast (flashbacks, credits missing on the episode). If the episode credits fail (numbering
-    /// differs, 404), the series cast alone is used. People appear once; `order` is renumbered 0…n−1.
-    public func xrayCast(for key: XRayTitleKey) async throws -> [XRayCastEntry] {
+    /// the series cast (flashbacks, credits missing on the episode). People appear once; `order` is renumbered.
+    /// Only a 404 counts as "this half does not exist" (episode numbering differs, no aggregate credits) and
+    /// yields a complete list without it. Any other error (429, 5xx, timeout) is rethrown, so the caller never
+    /// takes a degraded list for the real one. `call` wraps each request (the gallery builder throttles and
+    /// retries there).
+    public func xrayCast(for key: XRayTitleKey,
+                         call: @Sendable (@Sendable () async throws -> [XRayCastEntry]) async throws -> [XRayCastEntry] = { try await $0() })
+        async throws -> [XRayCastEntry] {
         switch key {
         case .movie(let id):
-            return Self.renumbered(try await movieCast(tmdbID: id))
+            return Self.renumbered(try await call { try await self.movieCast(tmdbID: id) })
         case .episode(let tv, let s, let e):
-            let episode = (try? await episodeCast(tvID: tv, season: s, episode: e)) ?? []
-            let series: [XRayCastEntry]
-            do { series = try await seriesCast(tmdbID: tv) } catch {
-                if episode.isEmpty { throw error }
-                series = []
-            }
-            return Self.mergedCast(episode: episode, series: series)
+            let episode = try await Self.missingAsEmpty { try await call { try await self.episodeCast(tvID: tv, season: s, episode: e) } }
+            let series = try await Self.missingAsEmpty { try await call { try await self.seriesCast(tmdbID: tv) } }
+            guard episode != nil || series != nil else { throw AddonError.http(404) }
+            return Self.mergedCast(episode: episode ?? [], series: series ?? [])
         }
+    }
+
+    /// Nil for HTTP 404 (the resource does not exist); every other error goes on.
+    static func missingAsEmpty(_ op: () async throws -> [XRayCastEntry]) async throws -> [XRayCastEntry]? {
+        do { return try await op() } catch AddonError.http(404) { return nil }
     }
 
     /// `/person/{id}/images`: the portraits (`profiles`), best rated first.

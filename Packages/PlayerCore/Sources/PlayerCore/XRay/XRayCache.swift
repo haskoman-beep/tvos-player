@@ -79,9 +79,27 @@ public struct XRayPersonRecord: Sendable, Equatable, Codable {
     public var personID: Int
     public var modelID: String
     public var faces: [XRayFaceRecord]
+    /// Some portraits failed (download or embedder); kept only `partialLifetime`, then computed again.
+    public var partial: Bool
 
-    public init(personID: Int, modelID: String, faces: [XRayFaceRecord]) {
-        self.personID = personID; self.modelID = modelID; self.faces = faces
+    public init(personID: Int, modelID: String, faces: [XRayFaceRecord], partial: Bool = false) {
+        self.personID = personID; self.modelID = modelID; self.faces = faces; self.partial = partial
+    }
+
+    enum CodingKeys: String, CodingKey { case personID, modelID, faces, partial }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        personID = try c.decode(Int.self, forKey: .personID)
+        modelID = try c.decode(String.self, forKey: .modelID)
+        faces = try c.decode([XRayFaceRecord].self, forKey: .faces)
+        partial = try c.decodeIfPresent(Bool.self, forKey: .partial) ?? false
+    }
+
+    /// How long this record stays valid.
+    public var lifetime: TimeInterval {
+        if faces.isEmpty { return XRayCacheFormat.emptyLifetime }
+        return partial ? XRayCacheFormat.partialLifetime : XRayCacheFormat.lifetime
     }
 
     public var gallery: GalleryPerson { GalleryPerson(personID: personID, embeddings: faces.map(\.embedding)) }
@@ -94,6 +112,8 @@ struct XRayEnvelopeHead: Decodable { var v: Int }
 struct XRayEnvelope<Body: Codable>: Codable {
     var v: Int
     var savedAt: Date
+    /// Lifetime in seconds, so it survives a lost index.
+    var life: TimeInterval?
     var body: Body
 }
 
@@ -104,6 +124,8 @@ public enum XRayCacheFormat {
     public static let lifetime: TimeInterval = 30 * 24 * 3600
     /// A person without any usable portrait is asked again sooner (TMDB may get a new photo).
     public static let emptyLifetime: TimeInterval = 7 * 24 * 3600
+    /// A person with some failed portraits is computed again after a day.
+    public static let partialLifetime: TimeInterval = 24 * 3600
     /// Upper bound for all X-Ray files together; least recently used go first.
     public static let maxBytes = 20 * 1024 * 1024
 
@@ -120,20 +142,20 @@ public enum XRayCacheFormat {
         return t.isEmpty ? "_" : String(t.prefix(48))
     }
 
-    static func encode<B: Codable>(_ body: B, savedAt: Date) throws -> Data {
+    static func encode<B: Codable>(_ body: B, savedAt: Date, life: TimeInterval? = nil) throws -> Data {
         let e = JSONEncoder()
         e.dateEncodingStrategy = .secondsSince1970
         e.outputFormatting = .sortedKeys
-        return try e.encode(XRayEnvelope(v: version, savedAt: savedAt, body: body))
+        return try e.encode(XRayEnvelope(v: version, savedAt: savedAt, life: life, body: body))
     }
 
     /// Nil for unreadable files and for any other format version.
-    static func decode<B: Codable>(_ type: B.Type, _ data: Data) -> (body: B, savedAt: Date)? {
+    static func decode<B: Codable>(_ type: B.Type, _ data: Data) -> (body: B, savedAt: Date, life: TimeInterval?)? {
         let d = JSONDecoder()
         d.dateDecodingStrategy = .secondsSince1970
         guard let h = try? d.decode(XRayEnvelopeHead.self, from: data), h.v == version,
               let env = try? d.decode(XRayEnvelope<B>.self, from: data) else { return nil }
-        return (env.body, env.savedAt)
+        return (env.body, env.savedAt, env.life)
     }
 }
 
@@ -184,7 +206,7 @@ public actor XRayStore {
 
     public func store(_ r: XRayPersonRecord) {
         write(r, XRayCacheFormat.personName(r.personID, model: r.modelID),
-              lifetime: r.faces.isEmpty ? XRayCacheFormat.emptyLifetime : XRayCacheFormat.lifetime)
+              lifetime: r.lifetime)
     }
 
     /// The gallery of a title for matching: every cast member with at least one embedding, in cast order.
@@ -216,12 +238,18 @@ public actor XRayStore {
     private func read<B: Codable>(_ type: B.Type, _ name: String) -> B? {
         loadIndex()
         let t = now()
-        guard let data = storage.read(name), let decoded = XRayCacheFormat.decode(type, data) else {
+        guard let data = storage.read(name) else {
             if index.entries.removeValue(forKey: name) != nil { dirty = true }
             return nil
         }
-        let (body, savedAt) = decoded
-        let lifetime = index.entries[name]?.lifetime ?? XRayCacheFormat.lifetime
+        guard let decoded = XRayCacheFormat.decode(type, data) else {
+            // Junk or another format version: delete the file too, so it does not linger outside the index.
+            storage.remove(name)
+            if index.entries.removeValue(forKey: name) != nil { dirty = true }
+            return nil
+        }
+        let (body, savedAt) = (decoded.body, decoded.savedAt)
+        let lifetime = decoded.life ?? index.entries[name]?.lifetime ?? XRayCacheFormat.lifetime
         guard t.timeIntervalSince(savedAt) < lifetime, savedAt <= t.addingTimeInterval(60) else {
             storage.remove(name)
             index.entries.removeValue(forKey: name)
@@ -240,7 +268,7 @@ public actor XRayStore {
     private func write<B: Codable>(_ body: B, _ name: String, lifetime: TimeInterval) {
         loadIndex()
         let t = now()
-        guard let data = try? XRayCacheFormat.encode(body, savedAt: t), (try? storage.write(name, data)) != nil else { return }
+        guard let data = try? XRayCacheFormat.encode(body, savedAt: t, life: lifetime), (try? storage.write(name, data)) != nil else { return }
         index.entries[name] = .init(bytes: data.count, savedAt: t, usedAt: t, lifetime: lifetime)
         prune(keeping: name)
         saveIndex()

@@ -39,8 +39,11 @@ public struct FaceEmbedding: Sendable, Equatable {
             let bits = UInt32(bytes[i]) | UInt32(bytes[i + 1]) << 8 | UInt32(bytes[i + 2]) << 16 | UInt32(bytes[i + 3]) << 24
             out.append(Float(bitPattern: bits))
         }
-        guard out.allSatisfy(\.isFinite) else { return nil }
-        values = out
+        // A damaged file must not give a non-unit vector (cosine clamped to 1 = false match): normalise again
+        // when the length is off; a stored unit vector stays bit for bit.
+        let norm = out.reduce(Float(0)) { $0 + $1 * $1 }.squareRoot()
+        guard norm.isFinite, norm > 1e-12 else { return nil }
+        values = abs(norm - 1) > 1e-4 ? out.map { $0 / norm } : out
     }
 }
 

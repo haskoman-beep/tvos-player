@@ -148,11 +148,14 @@ public enum FaceGeometry {
         }
     }
 
-    /// A landmark point given relative to the face box (0…1, origin bottom left, Vision's `normalizedPoints`).
+    /// A landmark point given relative to the face box (0…1, origin bottom left, Vision's `normalizedPoints`),
+    /// for a picture with orientation `.up`.
     public static func imagePoint(x: Double, y: Double, inBox box: NormalizedRect,
                                   imageWidth: Double, imageHeight: Double) -> FacePoint {
+        // Vision is continuous (pixel centres at i + 0.5); the warp and the template use OpenCV's convention
+        // (centres at integers), hence the half-pixel shift.
         let nx = box.x + x * box.width, ny = box.y + y * box.height
-        return FacePoint(nx * imageWidth, (1 - ny) * imageHeight)
+        return FacePoint(nx * imageWidth - 0.5, (1 - ny) * imageHeight - 0.5)
     }
 
     /// Width of the face box in image pixels.
