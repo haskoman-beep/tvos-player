@@ -37,6 +37,11 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   now works.
 - Player: leaving the player after using the panel no longer keeps the player in memory.
 
+### Added
+- Player: a new setting, Settings › Playback › "Ton & Untertitel öffnen", chooses how the audio and subtitle
+  choice opens: the bar at the top (swipe down, as before), the same bar at the bottom (swipe up), or a small
+  menu in the bottom right corner (swipe up) that shows audio, subtitles and offset first and then the list.
+
 ## [Build 174] – 2026-11-22 (integ)
 
 ### Added

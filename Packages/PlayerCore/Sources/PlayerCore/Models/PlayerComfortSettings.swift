@@ -8,15 +8,18 @@ public struct PlayerComfortSettings: Codable, Sendable, Equatable {
     public var screensaverPauseMinutes: Int
     /// Welle G-b: Sprungweite der Systembefehle (iPhone-Fernbedienung, Kontrollzentrum), 10 oder 30 s (Standard 10).
     public var remoteSkipSeconds: Int
+    /// Welle F-h3: „Ton & Untertitel öffnen“ (Standard Leiste oben).
+    public var trackPanelStyle: TrackPanelStyle
 
     public init(rememberTracks: Bool = true, screensaverPauseMinutes: Int = IdleTimerPolicy.defaultPauseMinutes,
-                remoteSkipSeconds: Int = RemoteTransport.defaultSkipSeconds) {
+                remoteSkipSeconds: Int = RemoteTransport.defaultSkipSeconds, trackPanelStyle: TrackPanelStyle = .topBar) {
         self.rememberTracks = rememberTracks
         self.screensaverPauseMinutes = screensaverPauseMinutes
         self.remoteSkipSeconds = remoteSkipSeconds
+        self.trackPanelStyle = trackPanelStyle
     }
 
-    enum CodingKeys: String, CodingKey { case rememberTracks, screensaverPauseMinutes, remoteSkipSeconds }
+    enum CodingKeys: String, CodingKey { case rememberTracks, screensaverPauseMinutes, remoteSkipSeconds, trackPanelStyle }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -24,5 +27,7 @@ public struct PlayerComfortSettings: Codable, Sendable, Equatable {
         rememberTracks = (try? c.decodeIfPresent(Bool.self, forKey: .rememberTracks)) ?? nil ?? d.rememberTracks
         screensaverPauseMinutes = (try? c.decodeIfPresent(Int.self, forKey: .screensaverPauseMinutes)) ?? nil ?? d.screensaverPauseMinutes
         remoteSkipSeconds = (try? c.decodeIfPresent(Int.self, forKey: .remoteSkipSeconds)) ?? nil ?? d.remoteSkipSeconds
+        // Unbekannter Wert (neuere App) fällt auf den Standard zurück.
+        trackPanelStyle = (try? c.decodeIfPresent(TrackPanelStyle.self, forKey: .trackPanelStyle)) ?? nil ?? d.trackPanelStyle
     }
 }

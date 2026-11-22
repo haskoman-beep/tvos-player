@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import Combine
 import PlayerCore
 
@@ -186,6 +187,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
     @Environment(\.dismiss) var dismiss
     @State private var showOverlay = true
     @State private var showTracks = false
+    /// F-h3 R1: vom Panel (Leiste unten) bzw. Menü gemeldete bedeckte Höhe am unteren Rand; 0 = nichts gemeldet.
+    @State private var coverBottom: CGFloat = 0
     /// Welle F-h2 R1: Ton-Neuladen aus dem Panel läuft (sperrt Untertitel/Versatz, `TrackLock.audioSwitching`).
     @State private var audioSwitch = AudioSwitchWatch()
     /// R2 N2: Takt der Zeitgrenzen; als gehaltener Task, nicht `.task`, denn dieses View verschwindet unterm Panel.
@@ -213,14 +216,15 @@ struct PlayerControls<E: PlaybackEngine>: View {
         ZStack(alignment: .bottom) {
             Color.black.ignoresSafeArea()
             engine.surface().ignoresSafeArea()
-            engine.subtitleLayer(controlsInset: showOverlay ? (controlsHeight ?? SubtitleOverlayView.fallbackControlsInset) : 0)
+            engine.subtitleLayer(controlsInset: subtitleInset)
             PlayerLoadingSteps(engine: engine)
             PlayerNetworkBanner(text: stab.networkNotice)
             if let e = loadError ?? engine.errorText {
                 // Auch auf dem Bildschirm ohne Schlüssel/volle Adressen (Fotos, Bildschirmfotos).
                 Text("Fehler: \(LogRedact.text(e))").padding(30).background(.red.opacity(0.8), in: RoundedRectangle(cornerRadius: 16))
             }
-            if showOverlay {
+            // F-h3: Leiste unten bzw. Menü decken den unteren Rand; dann keine Steuerleiste darunter.
+            if showOverlay && !panelCoversBottom {
                 // Höhe der Steuerleiste (Titel, Folge, Plaketten, Zeitleiste, Hinweis) → controlsInset der Untertitel.
                 overlay.transition(.opacity)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { controlsHeight = $0 }
@@ -235,6 +239,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                                   guard !restorePending, !restoring else { RemoteLog.info("player", "Überspringen gesperrt bis Play/Neuaufbau (nach Hintergrund)"); return false }
                                   return true
                               })
+                .opacity(panelCoversBottom ? 0 : 1)   // F-h3: nicht unter Leiste unten / Menü durchscheinen
             ScrubPreviewCard(controller: scrub, duration: engine.duration, current: engine.currentTime)
             if blackCover { Color.black.ignoresSafeArea() }
         }
@@ -264,7 +269,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
             switch dir {
             case .left: queueSeek(-10)
             case .right: queueSeek(10)
-            case .down: openTracks("▼ Klick")
+            case .down: openTracks(.clickDown)
+            case .up: openTracks(.clickUp)
             default: break
             }
             poke()
@@ -310,7 +316,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                          holdOrigin: { fastSeekOrigin(forward: $0) },
                          holdLimit: { FastSeek.upperLimit(duration: engine.duration, creditsStart: skip.upNextAt, origin: $0) },
                          // F-h2: im offenen Panel ist senkrechtes Wischen ein Listenschritt (kein Öffnen, kein Log-Rauschen).
-                         swipeDown: { if !showTracks { openTracks("Wisch nach unten") } },
+                         swipe: { if !showTracks { openTracks($0) } },
                          verticalQuiet: { showTracks })
             idleTick(failed: failureNotice != nil || loadError != nil)
             NowPlayingBridge.route(engine, handlers: .init(context: { RemoteTransportContext(isPlaying: engine.isPlaying, isBusy: engine.isLoading, position: pendingSeek ?? engine.currentTime, inputBlocked: leaving || scrub.isActive || showTracks || failureNotice != nil, upNextShowing: upNext != nil, sinceLastPress: Date().timeIntervalSince(lastToggle)) }, toggle: { onUserInput(); togglePlay() }, seekBy: { onUserInput(); queueSeek($0); poke() }))
@@ -343,13 +349,20 @@ struct PlayerControls<E: PlaybackEngine>: View {
             if engine.duration > 0 { report(engine.duration, engine.duration) }
             finishAtEnd(autoplay: !upNextCancelled)   // HDMI-Modus halten oder geordneter Ausstieg (PlayerExit.swift)
         }
-        .onChange(of: showTracks) { _, open in onTracksShown(open) }
+        .onChange(of: showTracks) { _, open in if !open { coverBottom = 0 }; onTracksShown(open) }
         .onChange(of: scrub.isActive) { _, a in if a { onUserInput() }; poke() }
         .onChange(of: scrub.holdSpeed != nil) { _, h in if h { onUserInput() } }   // G-a R1: Halten zählt als Eingabe
         .onChange(of: scrub.target) { _, _ in poke() }
         .fullScreenCover(isPresented: $showTracks) {
-            PlayerTrackPanel(engine: engine, profile: profile, sourceURL: url, audioLocked: restorePending, shownLock: trackLock,
-                             lock: { trackLock }, onAudioSwitch: { beginAudioSwitch($0) }, onRemember: onRemember)
+            if trackStyle == .menu {
+                PlayerTrackMenu(engine: engine, profile: profile, audioLocked: restorePending, shownLock: trackLock,
+                                lock: { trackLock }, onAudioSwitch: { beginAudioSwitch($0) }, onRemember: onRemember,
+                                onCoverBottom: { coverBottom = $0 })
+            } else {
+                PlayerTrackPanel(engine: engine, profile: profile, style: trackStyle, sourceURL: url, audioLocked: restorePending,
+                                 shownLock: trackLock, lock: { trackLock }, onAudioSwitch: { beginAudioSwitch($0) },
+                                 onRemember: onRemember, onCoverBottom: { coverBottom = $0 })
+            }
         }
         .onChange(of: engine.isLoading) { _, _ in checkAudioSwitch() }
         .onChange(of: engine.activeAudioID) { _, _ in checkAudioSwitch() }
@@ -482,10 +495,26 @@ struct PlayerControls<E: PlaybackEngine>: View {
         .background(LinearGradient(colors: [.black.opacity(0.8), .clear], startPoint: .bottom, endPoint: .top))
     }
 
-    /// Welle F-h: Spur-Panel öffnen, per Wisch nach unten (Pan-Recognizer der Spul-Steuerung) oder Klick auf den
-    /// unteren Rand (`onMoveCommand(.down)`); tvOS meldet einen Wisch nicht als Move-Befehl.
-    private func openTracks(_ via: String) {
-        switch TrackPanelEntry.decide(leaving: leaving, scrubbing: scrub.isActive, upNextShowing: upNext != nil,
+    /// Welle F-h3: „Ton & Untertitel öffnen“ (Profil); beim Öffnen gelesen.
+    private var trackStyle: TrackPanelStyle { profile.player.trackPanelStyle }
+
+    /// Leiste unten bzw. Menü offen: Steuerleiste und Überspringen-Knopf ausblenden.
+    private var panelCoversBottom: Bool { showTracks && trackStyle.coversBottom }
+
+    /// Untertitel über der Steuerleiste; bei offener Leiste unten bzw. offenem Menü darüber (gemessene Höhe, R1 I1/M5).
+    /// Gewählt statt das Menü zu verschieben: der Platz unten rechts bleibt wie vereinbart, und die Untertitel bleiben
+    /// ganz sichtbar, auch beim Einstellen des Versatzes.
+    private var subtitleInset: CGFloat {
+        if panelCoversBottom, coverBottom > 0 { return coverBottom }
+        return showOverlay && !panelCoversBottom ? (controlsHeight ?? SubtitleOverlayView.fallbackControlsInset) : 0
+    }
+
+    /// Welle F-h: Spur-Panel öffnen, per Wisch (Pan-Recognizer der Spul-Steuerung) oder Klick auf den Rand
+    /// (`onMoveCommand`); tvOS meldet einen Wisch nicht als Move-Befehl. F-h3: welche Geste öffnet, hängt vom Stil ab.
+    private func openTracks(_ gesture: TrackPanelGesture) {
+        let via = "\(gesture.logText), \(trackStyle.title)"
+        switch TrackPanelEntry.decide(style: trackStyle, gesture: gesture,
+                                      leaving: leaving, scrubbing: scrub.isActive, upNextShowing: upNext != nil,
                                       failureShowing: failureNotice != nil, alreadyOpen: showTracks,
                                       skipPromptShowing: skip.prompt != nil, lock: trackLock) {
         case .open:
@@ -504,6 +533,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
             onUserInput()
             withAnimation { upNext = nil }; upNextCancelled = true
             RemoteLog.info("player", "Up-next abgebrochen")
+        case .ignore(.otherGesture) where !gesture.isSwipe:
+            break   // ▲/▼ der anderen Richtung tut nichts, wie bisher ▲ (kein Log-Rauschen)
         case .ignore(let why):
             RemoteLog.info("player", "Spur-Panel nicht geöffnet (\(via)): \(why.logText)")
         }

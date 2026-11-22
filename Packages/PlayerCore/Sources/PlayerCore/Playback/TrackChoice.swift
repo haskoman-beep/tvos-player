@@ -9,6 +9,8 @@ public enum TrackPanelEntry {
     /// Warum ein Öffnen-Wunsch nichts tut (für das Log).
     public enum IgnoreReason: Equatable, Sendable {
         case leaving, alreadyOpen, failure, scrubbing, skipPrompt
+        /// F-h3: Geste gehört nicht zum gewählten Stil.
+        case otherGesture
         case busy(TrackLock)
 
         public var logText: String {
@@ -18,6 +20,7 @@ public enum TrackPanelEntry {
             case .failure: "Fehlerkarte steht"
             case .scrubbing: "Spulen läuft"
             case .skipPrompt: "Überspringen-Knopf hat den Fokus"
+            case .otherGesture: "Geste gehört nicht zum Stil"
             case .busy(let l): l.logText
             }
         }

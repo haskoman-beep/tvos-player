@@ -54,8 +54,16 @@ public struct TrackPanelColumnModel: Equatable, Sendable {
         self.column = column; self.title = title; self.note = note; self.rows = rows; self.isLocked = isLocked
     }
 
-    /// Zeile beim Betreten der Spalte: die aktive, sonst die erste.
-    public var entryRow: TrackPanelRowID? { (rows.first(where: \.isActive) ?? rows.first)?.id }
+    /// Zeile beim Betreten der Spalte: die aktive, sonst die erste. Versatz (keine aktive Zeile): der kleinste Schritt
+    /// nach vorn (+0,1 s), damit ein Select gleich nach dem Betreten nicht um den größten Schritt zurück springt (F-h3 R1 M4).
+    public var entryRow: TrackPanelRowID? {
+        if column == .offset {
+            let gentle = SubtitleOffset.steps.indices.filter { SubtitleOffset.steps[$0] > 0 }
+                .min { SubtitleOffset.steps[$0] < SubtitleOffset.steps[$1] }
+            if let i = gentle, rows.contains(where: { $0.id == .step(i) }) { return .step(i) }
+        }
+        return (rows.first(where: \.isActive) ?? rows.first)?.id
+    }
 }
 
 /// Welle F-h2 R1: Maße des Panels und Zeichenbudget einer Zeile aus der echten Spaltenbreite.
