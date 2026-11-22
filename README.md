@@ -118,24 +118,46 @@ Every build that reaches `integ` or `main` is published on the
 from which commit and branch, and download each one.
 
 - **Build numbers:** the build number is the CI run number (`github.run_number`). CI writes it into the app as
-  `CFBundleVersion`, and the app shows it under Einstellungen › System ("Build 162 · integ · 6600880").
-  The numbers count every CI run, feature branches included, so released builds have gaps. The marketing
-  version (`CFBundleShortVersionString`, currently 0.4.0) is set by hand in `App/project.yml`.
+  `CFBundleVersion`, and the app shows it under Settings › System (Einstellungen › System), for example
+  "Build 162 · integ · 6600880". The numbers count every CI run, feature branches included, so released
+  builds have gaps. The marketing version (`CFBundleShortVersionString`, currently 0.4.0) is set by hand in
+  `App/project.yml`.
 - **Tags:** each release is tagged `build-<number>` on the commit it was built from.
 - **Prerelease:** a build from `integ`. CI built and checked it, but it has not been approved on the device yet.
 - **Release:** a build from `main`, i.e. tested on the device. The newest one is marked "Latest".
-- **Release notes:** build number, version, branch, commit, how it was pushed, CI run link, date, and the
-  commits since the previous release (commit subjects are in German).
+- **Release notes:** an English "What's new" section, then the build details (build number, version, branch,
+  commit, how the run was started, CI run link, date) and a collapsed commit log with the commits since the
+  previous release. Commit messages written up to 22 Nov 2026 are in German.
 - **Download:** open a release and download `Player.ipa` under "Assets". It is unsigned and has to be signed
   with a sideloading tool before installing (see Installation). A few early builds were added afterwards; if
   their CI artifact had already expired, they have no IPA attached.
 - Feature branches do not create releases. The rolling `app-main` release (always the newest `main` build) stays,
-  because the app's „App aktualisieren“ uses it.
+  because the app's „App aktualisieren“ (update app) uses it.
 
-The human-readable summary per stage is in [CHANGELOG.md](CHANGELOG.md). CI job `history` in
+The human-readable summary per build is in [CHANGELOG.md](CHANGELOG.md). CI job `history` in
 `.github/workflows/build.yml` creates the releases (`tools/release_notes.sh` writes the notes,
 `tools/check_ipa.sh` checks the IPA for keys and addresses first). `tools/backfill_releases.sh` adds builds
 afterwards.
+
+### Writing "What's new"
+
+The "What's new" section of a release is the `## [Unreleased]` section of `CHANGELOG.md` in the commit
+that was built. A section per build cannot be written in advance, because the build number is the CI run
+number and is only known once the run has started. So:
+
+1. With every user-facing change, add a short English entry under `## [Unreleased]` (`### Added`,
+   `### Changed`, `### Fixed`), in the same commit or before the merge to `integ`. Describe what changes for
+   the user, not the internal work. Quote German UI labels with an English gloss, for example
+   „Abspielen“ (play).
+2. CI builds the commit and publishes `build-<number>` with that text as "What's new".
+3. After the release, rename `## [Unreleased]` to `## [Build <number>] – <date> (integ)` and start a new,
+   empty `## [Unreleased]` above it.
+
+If `[Unreleased]` is empty, the notes say that no user-facing changes are listed. If it is unchanged since
+the previous release (step 3 was forgotten), the notes say so instead of repeating the old entries.
+One-line HTML comments (`<!-- ... -->`) in `[Unreleased]` are notes for maintainers and are left out.
+To replace the notes of an existing release, for example with a corrected text, run
+`WHATS_NEW_FILE=<file> tools/release_notes.sh ...` and `gh release edit build-<number> --notes-file <notes>`.
 
 ## License
 

@@ -1,7 +1,7 @@
 name: build-ipa
 on:
   push:
-    # Nur Branches: Tags (build-N, auch vom Backfill) starten keinen Lauf; für Tag-Pushes gilt paths nicht.
+    # Branches only: tags (build-N, also from the backfill) do not start a run; paths does not apply to tag pushes.
     branches: ['**']
     paths: ['App/**', 'Packages/**', '.github/workflows/**', 'tools/release_notes.sh', 'tools/check_ipa.sh']
   workflow_dispatch:
@@ -10,89 +10,93 @@ on:
         description: "Version history: only print the release notes, publish nothing"
         type: boolean
         default: false
-# Standard nur lesen; Schreibrecht bekommen allein die Jobs „release“ (app-main) und „publish“ (build-N),
-# beide nur auf main bzw. integ/main und erst nach der IPA-Prüfung im Job „history“.
+# Read-only by default; only the jobs "release" (app-main) and "publish" (build-N) get write access,
+# only on main or integ/main, and only after the IPA check in the job "history".
 permissions:
   contents: read
 jobs:
   build:
+    name: Build IPA
     runs-on: macos-26
     timeout-minutes: 40
     steps:
-      # Aktionen auf Commit festgelegt (Tag als Kommentar; dieselben Stände wie zuvor @v4).
+      # Actions pinned to a commit (tag as a comment; the same versions as the earlier @v4).
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - name: Xcode
+      - name: Select Xcode
         run: |
           ls /Applications | grep -i xcode
           ls -d /Applications/Xcode*.app
           sudo xcode-select -s "$(ls -d /Applications/Xcode_27*.app /Applications/Xcode_26.3*.app 2>/dev/null | sort -V | tail -1)"
           xcodebuild -version
           xcodebuild -showsdks | grep -i tvos
-      - name: XcodeGen
+      - name: Generate project (XcodeGen)
         run: brew install xcodegen && cd App && xcodegen generate
       - name: Build
         run: |
           set -o pipefail
-          # Build-Nummer = Laufnummer; Commit/Branch für „App aktualisieren“ in den Einstellungen.
+          # Build number = run number; commit and branch for "update app" (App aktualisieren) in the settings.
           cd App && xcodebuild -project Player.xcodeproj -scheme Player -configuration Release \
             -sdk appletvos -destination 'generic/platform=tvOS' -derivedDataPath build \
             CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" PLAYER_BUILD_COMMIT="$GITHUB_SHA" PLAYER_BUILD_BRANCH="$GITHUB_REF_NAME" \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build > build.log 2>&1 || { grep -E 'error:|BUILD FAILED' build.log | head -80; exit 1; }
           tail -5 build.log
           /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' -c 'Print :PlayerBuildCommit' -c 'Print :PlayerBuildBranch' build/Build/Products/Release-appletvos/Player.app/Info.plist
-      - name: Nachweis Dolby Vision FEL
-        # Packages/AetherFEL schaltet den Engine-Trait DolbyVisionFelCurves ein. Harte Prüfung ist dort der
-        # Bauwächter FelBuildGuard.swift (ohne Trait kein FelCurveFoldResult, der Bau bricht ab); hier zusätzlich
-        # der Nachweis im Bau-Log: Wächter übersetzt und die Trait-Bedingung im Compileraufruf der Engine.
+      - name: Verify Dolby Vision FEL
+        # Packages/AetherFEL enables the engine trait DolbyVisionFelCurves. The hard check is the build guard
+        # FelBuildGuard.swift there (without the trait there is no FelCurveFoldResult and the build fails); this step
+        # also proves it in the build log: the guard was compiled and the trait condition is in the engine's compiler calls.
         run: |
           cd App
           guard=$(grep -c 'FelBuildGuard.swift' build.log || true)
           flag=$(grep -o -E -- '-D ?DolbyVisionFelCurves' build.log | sort | uniq -c | sed 's/^ *//' | tr '\n' ' ' | sed 's/ *$//' || true)
           any=$(grep -c 'DolbyVisionFelCurves' build.log || true)
-          echo "FelBuildGuard.swift im Log: ${guard} · Trait-Bedingung: ${flag:-keine} · Trait-Name gesamt: ${any}"
-          # Xcode 26.3 schreibt die Bedingung als -DDolbyVisionFelCurves in die Compileraufrufe der Engine (Lauf 44940934903: 3×).
-          if [ "$guard" -eq 0 ]; then echo "::error title=FEL::Bauwächter FelBuildGuard.swift nicht im Build-Log"; exit 1; fi
-          if [ -z "$flag" ]; then echo "::error title=FEL::Trait-Bedingung -DDolbyVisionFelCurves nicht im Build-Log"; exit 1; fi
-          echo "::notice title=FEL::DolbyVisionFelCurves im Build (Wächter ${guard}x, Bedingung: ${flag})"
-      - name: Kein direkter Engine-Import
-        # Die App importiert die Engine nur über Packages/AetherFEL (dort ist der FEL-Trait gesetzt).
+          echo "FelBuildGuard.swift in log: ${guard} · trait condition: ${flag:-none} · trait name total: ${any}"
+          # Xcode 26.3 writes the condition as -DDolbyVisionFelCurves into the engine's compiler calls (run 44940934903: 3×).
+          if [ "$guard" -eq 0 ]; then echo "::error title=FEL::Build guard FelBuildGuard.swift not in the build log"; exit 1; fi
+          if [ -z "$flag" ]; then echo "::error title=FEL::Trait condition -DDolbyVisionFelCurves not in the build log"; exit 1; fi
+          echo "::notice title=FEL::DolbyVisionFelCurves is in the build (guard ${guard}x, condition: ${flag})"
+      - name: No direct engine import
+        # The app imports the engine only through Packages/AetherFEL (which sets the FEL trait).
         run: |
-          if grep -rn '^import AetherEngine' App/Sources; then echo "::error::Direkter 'import AetherEngine' in App/Sources – bitte 'import AetherFEL'"; exit 1; fi
+          if grep -rn '^import AetherEngine' App/Sources; then echo "::error::Direct 'import AetherEngine' in App/Sources - use 'import AetherFEL'"; exit 1; fi
       - name: Package IPA
         run: |
           mkdir -p Payload
           cp -R App/build/Build/Products/Release-appletvos/Player.app Payload/
           zip -qry Player.ipa Payload
           ls -la Player.ipa
-      - name: App-Inhalt prüfen
-        # Engine-Frameworks (FFmpeg, zvbi, dav1d, zimg aus FFmpegBuild) und das Ressourcen-Bündel der Engine.
+      - name: Check app contents
+        # Engine frameworks (FFmpeg, zvbi, dav1d, zimg from FFmpegBuild) and the engine's resource bundle.
         run: |
           app=Payload/Player.app
           ls "$app/Frameworks" || true
           ls -d "$app"/*.bundle || true
           missing=0
           for f in avcodec avformat avutil swresample swscale avfilter zvbi dav1d zimg; do
-            [ -d "$app/Frameworks/AetherLib$f.framework" ] || { echo "::error::Framework AetherLib$f.framework fehlt in $app/Frameworks"; missing=1; }
+            [ -d "$app/Frameworks/AetherLib$f.framework" ] || { echo "::error::Framework AetherLib$f.framework missing in $app/Frameworks"; missing=1; }
           done
-          [ -d "$app/AetherEngine_AetherEngine.bundle" ] || { echo "::error::Ressourcen-Bündel AetherEngine_AetherEngine.bundle fehlt in $app"; missing=1; }
+          [ -d "$app/AetherEngine_AetherEngine.bundle" ] || { echo "::error::Resource bundle AetherEngine_AetherEngine.bundle missing in $app"; missing=1; }
           exit $missing
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - name: Upload build log
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure()
         with:
           name: build-log
           path: App/build.log
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - name: Upload IPA
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: Player-ipa
           path: Player.ipa
           retention-days: 14
   release:
-    # Öffentliches Release „app-main“ mit Player.ipa (nur main): atvloadly lädt es ohne Anmeldung,
-    # (nicht „Latest“: das ist das nummerierte Release build-<N> aus dem Job „publish“);
-    # das Artefakt „Player-ipa“ dagegen braucht eine Anmeldung und ist gezippt.
-    # Erst nach der IPA-Prüfung im Job „history“ (fällt sie durch, wird nichts veröffentlicht).
+    name: Release app-main
+    # Public release "app-main" with Player.ipa (main only): atvloadly downloads it without logging in
+    # (not "Latest": that is the numbered release build-<N> from the job "publish");
+    # the artifact "Player-ipa", in contrast, needs a login and is zipped.
+    # Only after the IPA check in the job "history" (if it fails, nothing is published).
     needs: [build, history]
     if: github.ref == 'refs/heads/main' && needs.history.outputs.mode == 'publish'
     runs-on: ubuntu-latest
@@ -103,7 +107,8 @@ jobs:
       group: release-app-main
       cancel-in-progress: false
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - name: Download IPA
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: Player-ipa
       - name: Release app-main
@@ -113,36 +118,37 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           ls -la Player.ipa
-          # Erste Zeile bleibt das Format, das die App liest (Build/Commit); die Lizenzzeile steht dahinter.
+          # The first line keeps the format the app reads (build/commit); the license line comes after it.
           notes="Build $GITHUB_RUN_NUMBER · Commit $GITHUB_SHA · Branch main"
-          notes="$notes"$'\n\n'"Lizenzen und Quellen der mitgelieferten Komponenten (AetherEngine, FFmpeg, libdovi, Anime4K u. a.): https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/THIRD_PARTY_NOTICES.md"
+          notes="$notes"$'\n\n'"Licenses and sources of the bundled components (AetherEngine, FFmpeg, libdovi, Anime4K and others): https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/THIRD_PARTY_NOTICES.md"
           title="Player Build $GITHUB_RUN_NUMBER"
           if old=$(gh release view app-main --json body --jq .body 2>/dev/null); then
             prev=$(printf '%s\n' "$old" | sed -n 's/.*Build \([0-9][0-9]*\).*/\1/p' | head -1)
             if [ -n "$prev" ] && [ "$prev" -ge "$GITHUB_RUN_NUMBER" ]; then
-              echo "Release hat schon Build $prev – nichts zu tun"
+              echo "Release already has build $prev - nothing to do"
               exit 0
             fi
-            # Erst der Text, dann das Paket: die Build-Nummer im Text hinkt dem Paket nie hinterher.
+            # Text first, then the package: the build number in the text never lags behind the package.
             gh release edit app-main --title "$title" --notes "$notes"
             gh release upload app-main Player.ipa --clobber
             echo "move_tag=true" >> "$GITHUB_OUTPUT"
           else
             gh release create app-main Player.ipa --target "$GITHUB_SHA" --title "$title" --notes "$notes" --latest=false
           fi
-      - name: Tag app-main nachziehen
+      - name: Move tag app-main
         if: steps.release.outputs.move_tag == 'true'
-        # Darf scheitern: GITHUB_TOKEN darf Refs nicht immer ändern (z. B. wenn der Lauf den Workflow selbst
-        # geändert hat). Die App liest Build und Commit aus dem Release-Text, nicht aus dem Tag.
+        # May fail: GITHUB_TOKEN may not always change refs (for example when the run changed the workflow
+        # itself). The app reads build and commit from the release text, not from the tag.
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: gh api -X PATCH "repos/$GH_REPO/git/refs/tags/app-main" -f sha="$GITHUB_SHA" -F force=true > /dev/null
   history:
-    # Versionsverlauf, Teil 1 (nur Leserechte): IPA prüfen und Release-Notizen schreiben. Auf integ/main folgen
-    # „publish“ (build-N) und „release“ (app-main). Andere Branches und workflow_dispatch mit release_dry_run sind
-    # ein Probelauf; die Notizen stehen dann nur in der Job-Zusammenfassung.
+    name: Version history (check and notes)
+    # Version history, part 1 (read access only): check the IPA and write the release notes. On integ/main,
+    # "publish" (build-N) and "release" (app-main) follow. Other branches and workflow_dispatch with
+    # release_dry_run are a dry run; the notes then only appear in the job summary.
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -153,10 +159,11 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - name: Download IPA
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: Player-ipa
-      - name: Modus
+      - name: Mode
         id: mode
         env:
           DRY: ${{ inputs.release_dry_run }}
@@ -165,12 +172,12 @@ jobs:
           case "$GITHUB_REF" in refs/heads/integ|refs/heads/main) mode=publish ;; esac
           [ "$DRY" = true ] && mode=dry-run
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
-          echo "Modus: $mode (Ref $GITHUB_REF, Ereignis $GITHUB_EVENT_NAME)"
-      - name: IPA prüfen (keine Schlüssel, Adressen, Namen)
+          echo "Mode: $mode (ref $GITHUB_REF, event $GITHUB_EVENT_NAME)"
+      - name: Check IPA (no keys, addresses, names)
         env:
           EXTRA_DENY: ${{ secrets.IPA_DENYLIST }}
         run: bash tools/check_ipa.sh Player.ipa
-      - name: Release-Notizen
+      - name: Release notes
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -181,15 +188,17 @@ jobs:
             "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > notes.md
           { echo "## Version history: build-$GITHUB_RUN_NUMBER ($MODE)"; echo; cat notes.md; } >> "$GITHUB_STEP_SUMMARY"
           cat notes.md
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - name: Upload release notes
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: steps.mode.outputs.mode == 'publish'
         with:
           name: release-notes
           path: notes.md
           retention-days: 3
   publish:
-    # Versionsverlauf, Teil 2: Release build-<Laufnummer> (= CFBundleVersion) mit Player.ipa, erst nach der
-    # IPA-Prüfung. integ → Vorabversion (prerelease), main → Release („Latest“). Nur hier Schreibrecht.
+    name: Publish build-N
+    # Version history, part 2: release build-<run number> (= CFBundleVersion) with Player.ipa, only after the
+    # IPA check. integ → prerelease, main → release ("Latest"). Write access only here.
     needs: [build, history]
     if: needs.history.outputs.mode == 'publish' && (github.ref == 'refs/heads/integ' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
@@ -200,10 +209,12 @@ jobs:
       group: release-history-${{ github.ref_name }}
       cancel-in-progress: false
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - name: Download IPA
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: Player-ipa
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - name: Download release notes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-notes
       - name: Release build-N
@@ -212,11 +223,11 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           tag="build-$GITHUB_RUN_NUMBER"
-          # Wiederholter Lauf (gleiche Laufnummer): Release steht schon, nichts zu tun. Ein liegengebliebener
-          # Entwurf (abgebrochenes Hochladen) gilt als fehlend: löschen und neu anlegen.
+          # Repeated run (same run number): the release is already there, nothing to do. A leftover
+          # draft (aborted upload) counts as missing: delete it and create it again.
           if draft=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null); then
-            if [ "$draft" != true ]; then echo "$tag existiert schon"; exit 0; fi
-            echo "$tag ist ein Entwurf: wird gelöscht und neu angelegt"
+            if [ "$draft" != true ]; then echo "$tag already exists"; exit 0; fi
+            echo "$tag is a draft: deleting it and creating it again"
             gh release delete "$tag" --yes
           fi
           if [ "$GITHUB_REF_NAME" = main ]; then
@@ -225,8 +236,8 @@ jobs:
             flags=(--prerelease --latest=false); title="Player build $GITHUB_RUN_NUMBER (integ)"
           fi
           if ! gh release create "$tag" Player.ipa --target "$GITHUB_SHA" --title "$title" --notes-file notes.md "${flags[@]}"; then
-            # GITHUB_TOKEN darf manche Refs nicht anlegen (z. B. wenn der Lauf den Workflow selbst geändert hat).
-            # Der Build ist in Ordnung; das Release lässt sich lokal nachtragen.
-            echo "::warning title=Release::$tag nicht angelegt – lokal nachtragen: tools/backfill_releases.sh --publish $GITHUB_RUN_ID"
-            echo "**$tag not created** – add it locally: \`tools/backfill_releases.sh --publish $GITHUB_RUN_ID\`" >> "$GITHUB_STEP_SUMMARY"
+            # GITHUB_TOKEN may not create some refs (for example when the run changed the workflow itself).
+            # The build is fine; the release can be added locally afterwards.
+            echo "::warning title=Release::$tag not created - add it locally: tools/backfill_releases.sh --publish $GITHUB_RUN_ID"
+            echo "**$tag not created** - add it locally: \`tools/backfill_releases.sh --publish $GITHUB_RUN_ID\`" >> "$GITHUB_STEP_SUMMARY"
           fi

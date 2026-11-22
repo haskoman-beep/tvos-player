@@ -4,8 +4,8 @@ options:
   deploymentTarget:
     tvOS: "18.0"
 packages:
-  # AetherEngine 7.71.2 (genauer Stand) über die lokale Hülle mit Trait DolbyVisionFelCurves (Dolby Vision FEL):
-  # XcodeGen verwirft `traits:`, deshalb setzt Packages/AetherFEL/Package.swift den Trait und exportiert die Engine.
+  # AetherEngine 7.71.2 (exact version) through the local wrapper with the trait DolbyVisionFelCurves (Dolby Vision FEL):
+  # XcodeGen drops `traits:`, so Packages/AetherFEL/Package.swift sets the trait and re-exports the engine.
   AetherFEL:
     path: ../Packages/AetherFEL
   PlayerCore:
@@ -37,7 +37,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: de.haskoman.player
         SWIFT_VERSION: "5.0"
-        # Build-Nummer/Commit/Branch: lokal 1 bzw. leer; die CI setzt Laufnummer, Commit und Branch (build.yml).
+        # Build number/commit/branch: 1 or empty for local builds; CI sets the run number, commit and branch (build.yml).
         CURRENT_PROJECT_VERSION: "1"
         PLAYER_BUILD_COMMIT: ""
         PLAYER_BUILD_BRANCH: ""

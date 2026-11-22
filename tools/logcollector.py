@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Empfängt Logzeilen der Player-App im Heimnetz und schreibt sie nach logs/player-JJJJ-MM-TT.log.
-Kündigt sich per Bonjour (_playerlog._tcp) an, damit die App ihn ohne IP-Eingabe findet."""
+"""Receives log lines from the Player app on the local network and writes them to logs/player-YYYY-MM-DD.log.
+Announces itself via Bonjour (_playerlog._tcp), so the app finds it without entering an IP address."""
 import json, os, subprocess, sys, datetime, signal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 

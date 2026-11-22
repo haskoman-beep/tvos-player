@@ -43,7 +43,7 @@ while IFS= read -r pat; do
   n=$((n + 1))
   f=$(files -i -E -e "$pat"); [ -z "$f" ] || hit "denylist pattern #$n in: $f"
 done <<< "${EXTRA_DENY:-}"
-if [ "$n" -gt 0 ]; then echo "check_ipa: Denylist aktiv: ja ($n patterns)"; else echo "check_ipa: Denylist aktiv: nein"; fi
+if [ "$n" -gt 0 ]; then echo "check_ipa: denylist active: yes ($n patterns)"; else echo "check_ipa: denylist active: no"; fi
 
 # Hex keys: only in the app's own code and resources. The prebuilt FFmpeg frameworks carry public
 # upstream constants (for example the Audible AAX default key in libavformat) and are left out.
