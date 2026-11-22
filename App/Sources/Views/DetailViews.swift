@@ -678,6 +678,8 @@ struct StreamListView: View {
         return active.isEmpty ? streams : streams.filter { SourceFilter.passes(traits($0.stream), active) }
     }
     private var visibleIDs: [String] { visibleStreams(filterOptions).map(\.stream.id) }
+    /// Wave P-b: source chosen in the player's side panel and the held position it starts at (cleared on close).
+    @State private var sideStart: (id: String, at: Double)?
 
     var body: some View {
         // Welle E-b: Addon-Name nur, wenn die Liste mehrere Addons mischt (sonst steht er schon im Text des Addons).
@@ -847,7 +849,7 @@ struct StreamListView: View {
         }
         .onChange(of: shownIDs) { old, new in keepFocusPosition(old: old, new: new) }
         .onChange(of: playing) { old, s in
-            if s == nil, let old { closedPlayer = old }
+            if s == nil, let old { closedPlayer = old; sideStart = nil }
             guard let s else { return }
             // Addon aus der Liste, sonst das bei der nächsten Folge gemerkte (sonst „Addon nicht installiert“ beim Neuauflösen).
             model.rememberSource(current ?? request, stream: s,
@@ -860,7 +862,9 @@ struct StreamListView: View {
                                                                              onUserInput: { AutoNextState.userInput($autoNext) },
                                                                              holdsUpNext: autoNext.promptDue(model.profile),
                                                                              onSourceVerdict: { [id = (current ?? request).id] in PlaybackStability.shared.apply($0, stream: s, title: id) },
-                                                                             releaseName: s.behaviorHints?.filename).environmentObject(model) }
+                                                                             releaseName: s.behaviorHints?.filename,
+                                                                             sideLinks: sidePanelLinks(for: s),
+                                                                             startOverride: sideStart?.id == s.id ? sideStart?.at : nil).environmentObject(model) }   // Wave P-b
         }
         .modifier(StillWatchingAlert(state: $autoNext, note: $nextNote) { startNext($0.next, after: $0.stream, auto: false) })
     }
@@ -984,6 +988,28 @@ extension StreamListView {
         let open = order.filter { !failed.contains($0.id) && $0.url != nil
             && !PlaybackStability.shared.isRecentlyFailed($0, title: (current ?? request).id) }   // Welle C-a: 8-h-Gedächtnis
         return open.first { StreamTraits.parse($0).cached == true } ?? open.first { StreamTraits.parse($0).cached == nil }
+    }
+
+    /// Wave P-b: what the player's side panel may do with this list (other source, other episode).
+    func sidePanelLinks(for s: StreamItem) -> PlayerSideLinks {
+        PlayerSideLinks(stream: s, addon: streams.first { $0.stream.id == s.id }?.addon ?? autoNext.addons[s.id],
+                        sources: { streams }, failed: { failed },
+                        switchSource: { next, held in
+                            fallbacks = 0; AutoNextState.userInput($autoNext); autoNext.ask = nil
+                            playing = nil
+                            Task {
+                                try? await Task.sleep(for: .milliseconds(900))
+                                guard playing == nil else { return }
+                                PlaybackStability.shared.timing.markTap()
+                                sideStart = (next.id, held)
+                                playing = next
+                            }
+                        },
+                        playEpisode: { next in
+                            AutoNextState.userInput($autoNext); autoNext.ask = nil
+                            playing = nil
+                            startNext(next, after: s, auto: false)
+                        })
     }
 
     /// Quelle versagt → nächste noch nicht gescheiterte Quelle darunter, höchstens 3 automatische Wechsel.

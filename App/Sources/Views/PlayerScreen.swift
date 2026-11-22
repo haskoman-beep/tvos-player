@@ -28,6 +28,12 @@ struct PlayerScreen: View {
     /// Welle D-a: eigener Fortschritt (TorBox-Dateien): Startstelle und Ablage statt ProgressBook; Profil-Einstellungen
     /// für Plattencache, Ton und Bild gelten dann wie bei Filmen, sonst bleibt es beim Trailer-Verhalten.
     var ownProgress: OwnProgress? = nil
+    /// Wave P-b: what the side panel may do (other source, other episode); nil = only Kapitel and Infos.
+    var sideLinks: PlayerSideLinks? = nil
+    /// Wave P-b: held position of a source switch; wins over the saved progress and its thresholds.
+    var startOverride: Double? = nil
+    @StateObject private var extras = PlayerExtras()   // Wave P-b: side panel and pause card data
+    @State private var sideExit: SidePanelExit?
     @State private var backend: AetherBackend?
     @State private var initError: String?
     /// Kennzeichen beim Vorladen: solange ein Player offen ist, keine Vorlade-Abfragen.
@@ -38,8 +44,8 @@ struct PlayerScreen: View {
     var body: some View {
         Group {
             if let backend { PlayerControls(engine: backend, url: url, title: request.title, profile: model.profile,
-                                                       start: ownProgress != nil ? ownProgress?.start : (isTrailer ? nil : model.progress.resumePosition(for: request.id)),
-                                                       startFraction: isTrailer || ownProgress != nil ? nil : model.progress.resumeFraction(for: request.id),
+                                                       start: ownProgress != nil ? ownProgress?.start : (isTrailer ? nil : PlayerStartChoice.choose(held: startOverride, resume: model.progress.resumePosition(for: request.id), fraction: nil).start),
+                                                       startFraction: isTrailer || ownProgress != nil || startOverride != nil ? nil : model.progress.resumeFraction(for: request.id),
                                                        runtimeMinutes: request.runtimeMinutes,
                                                        heading: PlayerHeading(request),
                                                        checksPlaceholder: !isTrailer,
@@ -75,7 +81,8 @@ struct PlayerScreen: View {
                                                        trackMemory: memoryKey.flatMap { PlayerMemory.shared.trackMemory(profile: model.profile.id, key: $0) },
                                                        onRemember: memoryKey.map { key -> (TrackMemoryChange) -> Void in
                                                            { change in PlayerMemory.shared.remember(change, key: key, profile: model.profile.id) }
-                                                       }) }
+                                                       },
+                                                       sideExtras: isTrailer ? nil : extras) }
             else {
                 VStack(spacing: Theme.Space.l) {
                     Text(initError ?? "Player wird gestartet …")
@@ -90,11 +97,14 @@ struct PlayerScreen: View {
             // kein Wiedergabe-Ende melden.
             guard !tracksOpen else { return }
             StreamPrefetcher.shared.playerDisappeared(prefetchToken)
-            if !isTrailer { model.endPlayback(request) }
+            extras.cancel()   // Wave P-b
+            // Wave P-b: a source switch pauses the scrobble (the new player continues it), it never stops it.
+            if !isTrailer { if sideExit?.stopsScrobble == false { model.scrobblePause(request) } else { model.endPlayback(request) } }
         }
         .onAppear {
             // Beim Vorlader immer anmelden (onDisappear meldet ab), das Backend aber nur einmal anlegen.
             StreamPrefetcher.shared.playerAppeared(prefetchToken)
+            if !isTrailer { extras.attach(model: model, request: request, links: sideLinks?.closing { tracksOpen = false; sideExit = $0 }) }   // Wave P-b
             guard backend == nil else { return }
             do { let b = try AetherBackend(); NowPlayingBridge.stage(b, request: request, skipSeconds: model.profile.player.remoteSkipSeconds); backend = b } catch { initError = "Player-Start fehlgeschlagen: \(error)"; RemoteLog.error("player", initError ?? "") }
         }
@@ -166,6 +176,15 @@ struct PlayerControls<E: PlaybackEngine>: View {
     /// Welle D-a: gemerkte Spur-Wahl dieses Titels (nil = keine) und Rückruf für neue Wahlen im Panel.
     var trackMemory: TrackMemory? = nil
     var onRemember: ((TrackMemoryChange) -> Void)? = nil
+    /// Wave P-b: side panel and pause card (PlayerSidePanel.swift, PlayerPauseCard.swift); nil = trailer.
+    var sideExtras: PlayerExtras? = nil
+    @State var sideOpen = false
+    @State var sideAfterClose: (@MainActor () -> Void)?
+    /// Source switch from the side panel: record no progress on the way out (`SidePanelExit.sourceSwitch`).
+    @State var sideHoldsProgress = false
+    /// When a panel last closed (uptime), for the side panel's quiet time.
+    @State var lastPanelClose: Double?
+    @StateObject var pauseCard = PauseCardState()
     @State var subtitleMemoryPending = false
     /// Bildschirmschoner-Regel (PlayerPictureSound.swift).
     @State var idle = IdleTimerPolicy()
@@ -228,7 +247,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                 Text("Fehler: \(LogRedact.text(e))").padding(30).background(.red.opacity(0.8), in: RoundedRectangle(cornerRadius: 16))
             }
             // F-h3: Leiste unten bzw. Menü decken den unteren Rand; dann keine Steuerleiste darunter.
-            if showOverlay && !panelCoversBottom {
+            if showOverlay && !panelCoversBottom && !pauseCard.isVisible {
                 // Höhe der Steuerleiste (Titel, Folge, Plaketten, Zeitleiste, Hinweis) → controlsInset der Untertitel.
                 overlay.transition(.opacity)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { controlsHeight = $0 }
@@ -245,10 +264,16 @@ struct PlayerControls<E: PlaybackEngine>: View {
                               },
                               // Wave P-a: action per type, cards that cover the credits, jumps without side effects.
                               settings: profile.skip, upNextCard: nextTitle != nil, postPlayItem: postPlayItem,
-                              canSkip: { !leaving && !restorePending && !restoring && !showTracks },
+                              canSkip: { !leaving && !restorePending && !restoring && !showTracks && !sideOpen },   // P-b side panel blocks jumps too
                               onLeave: { leaveWithModeSwitch() })
                 .opacity(panelCoversBottom ? 0 : 1)   // F-h3: nicht unter Leiste unten / Menü durchscheinen
             ScrubPreviewCard(controller: scrub, duration: engine.duration, current: engine.currentTime)
+            PlayerPauseCardLayer(state: pauseCard, engine: engine, content: sideExtras?.pauseContent,
+                                 accessoryContext: pauseAccessoryContext,
+                                 blockReason: PauseCardRule.blockReason(panelOpen: showTracks, scrubbing: scrub.isActive,
+                                     failure: failureNotice != nil || loadError != nil || engine.errorText != nil, upNext: upNext != nil,
+                                     skipPrompt: skip.holdsFocus, loading: engine.isLoading, leaving: leaving || blackCover,
+                                     noPicture: !engine.loadActivity.hasFirstFrame || restorePending))   // Wave P-b
             if blackCover { Color.black.ignoresSafeArea() }
         }
         // Steht der Überspringen-Knopf, bekommt er den Fokus; Befehle unten erreichen die Fläche weiterhin.
@@ -288,6 +313,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             guard !leaving else { return }
             if scrub.cancel() { onUserInput(); return }   // Menü bricht zuerst das Spulen ab
             if skip.dismissPrompt() { onUserInput(); return }   // Menü schließt zuerst den Überspringen-Knopf
+            if pauseCard.dismiss() { onUserInput(); poke(); return }   // Wave P-b: Menu closes only the pause card
             // N5 (Welle F-c): offene Überlagerung schließt nur sich selbst, erst bei freiem Bild verlassen.
             switch PlayerMenuStep.decide(upNext: upNext != nil, controlsVisible: showOverlay,
                                          hasPicture: engine.loadActivity.hasFirstFrame,
@@ -358,13 +384,14 @@ struct PlayerControls<E: PlaybackEngine>: View {
             if engine.duration > 0 { report(engine.duration, engine.duration) }
             finishAtEnd(autoplay: !upNextCancelled)   // HDMI-Modus halten oder geordneter Ausstieg (PlayerExit.swift)
         }
-        .onChange(of: showTracks) { _, open in if !open { coverBottom = 0 }; onTracksShown(open) }
+        .onChange(of: showTracks) { _, open in if !open { coverBottom = 0; lastPanelClose = ProcessInfo.processInfo.systemUptime }; onTracksShown(open) }
         .onChange(of: scrub.isActive) { _, a in if a { onUserInput() }; poke() }
         .onChange(of: scrub.holdSpeed != nil) { _, h in if h { onUserInput() } }   // G-a R1: Halten zählt als Eingabe
         .onChange(of: scrub.target) { _, _ in poke() }
         .modifier(XRayProbeHook(engine: engine, playing: engine.isPlaying, blocked: leaving || showTracks || scrub.isActive || failureNotice != nil))   // X0: debug face probe on pause (XRayProbeHook.swift)
-        .fullScreenCover(isPresented: $showTracks) {
-            if trackStyle == .menu {
+        .fullScreenCover(isPresented: $showTracks, onDismiss: runSideAfterClose) {
+            if sideOpen, let sideExtras { sidePanel(sideExtras) }   // Wave P-b
+            else if trackStyle == .menu {
                 PlayerTrackMenu(engine: engine, profile: profile, audioLocked: restorePending, shownLock: trackLock,
                                 lock: { trackLock }, onAudioSwitch: { beginAudioSwitch($0) }, onRemember: onRemember,
                                 onCoverBottom: { coverBottom = $0 })
@@ -377,7 +404,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
         .onChange(of: engine.isLoading) { _, _ in checkAudioSwitch() }
         .onChange(of: engine.activeAudioID) { _, _ in checkAudioSwitch() }
         // Play von außen (Siri, Kontrollzentrum) nach dem Hintergrund: erst neu aufbauen.
-        .onChange(of: engine.isPlaying) { _, p in if p { stabilityPlaying() }; if p, restorePending { restoreAndPlay() } }
+        .onChange(of: engine.isPlaying) { _, p in if p { stabilityPlaying(); pauseCard.noteInput() }; if p, restorePending { restoreAndPlay() } }
         .onPlayerLifecycle { handlePhase($0) }
         .playbackErrorAlert($failureNotice, chooseOther: { leaveWithModeSwitch() },
                             retry: { recoveryPlan.reset(); life.userResumed(); recover("Erneut versuchen", manual: true) })
@@ -499,7 +526,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
                                              subtitle: TrackChoice.active(engine.subtitleTracks, id: engine.activeSubtitleID)))
                     .font(.caption).lineLimit(1)
             }
-            Text("◀▶ 10 s · ◀▶ halten: Schnellsuchlauf · waagerecht wischen/Rand drehen: spulen · nach unten wischen: Ton & Untertitel · ⏯ Pause · Zurück beenden").font(.caption2).foregroundStyle(.secondary)
+            if let x = sideExtras { SidePanelHint(trackStyle: trackStyle, pages: x.pages(chapters: engine.chapterMarks.count)) }   // Wave P-b
+            Text("◀▶ 10 s · ◀▶ halten: Schnellsuchlauf · waagerecht wischen/Rand drehen: spulen · \(SidePanelGesture.trackHint(trackStyle: trackStyle)) · ⏯ Pause · Zurück beenden").font(.caption2).foregroundStyle(.secondary)
         }
         .padding(60)
         .background(LinearGradient(colors: [.black.opacity(0.8), .clear], startPoint: .bottom, endPoint: .top))
@@ -509,7 +537,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
     private var trackStyle: TrackPanelStyle { profile.player.trackPanelStyle }
 
     /// Leiste unten bzw. Menü offen: Steuerleiste und Überspringen-Knopf ausblenden.
-    private var panelCoversBottom: Bool { showTracks && trackStyle.coversBottom }
+    private var panelCoversBottom: Bool { showTracks && (sideOpen || trackStyle.coversBottom) }   // P-b: side panel too
 
     /// Untertitel über der Steuerleiste; bei offener Leiste unten bzw. offenem Menü darüber (gemessene Höhe, R1 I1/M5).
     /// Gewählt statt das Menü zu verschieben: der Platz unten rechts bleibt wie vereinbart, und die Untertitel bleiben
@@ -522,8 +550,16 @@ struct PlayerControls<E: PlaybackEngine>: View {
     /// Welle F-h: Spur-Panel öffnen, per Wisch (Pan-Recognizer der Spul-Steuerung) oder Klick auf den Rand
     /// (`onMoveCommand`); tvOS meldet einen Wisch nicht als Move-Befehl. F-h3: welche Geste öffnet, hängt vom Stil ab.
     private func openTracks(_ gesture: TrackPanelGesture) {
-        let via = "\(gesture.logText), \(trackStyle.title)"
-        switch TrackPanelEntry.decide(style: trackStyle, gesture: gesture,
+        // Wave P-b: the vertical direction the track style leaves free opens the side panel.
+        let side = sideExtras != nil && SidePanelGesture.opens(trackStyle: trackStyle, gesture: gesture)
+        if side, !showTracks, let why = SidePanelGesture.holdBack(controlsVisible: showOverlay && !pauseCard.isVisible,
+                                                                 sincePanelClosed: lastPanelClose.map { ProcessInfo.processInfo.systemUptime - $0 }) {
+            RemoteLog.info("player", "Seitenpanel nicht geöffnet (\(gesture.logText)): \(why)")
+            poke()   // the press shows the control bar (a swipe does not reach onMoveCommand's poke)
+            return
+        }
+        let via = "\(gesture.logText), \(side ? "Seitenpanel" : trackStyle.title)"
+        switch TrackPanelEntry.decide(style: side ? SidePanelGesture.guardStyle(for: gesture) : trackStyle, gesture: gesture,
                                       leaving: leaving, scrubbing: scrub.isActive, upNextShowing: upNext != nil,
                                       failureShowing: failureNotice != nil, alreadyOpen: showTracks,
                                       skipPromptShowing: skip.holdsFocus, lock: trackLock) {
@@ -538,6 +574,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                 audio: TrackChoice.active(engine.audioTracks, id: engine.activeAudioID),
                 subtitle: TrackChoice.active(engine.subtitleTracks, id: engine.activeSubtitleID))
                 + " · \(engine.audioTracks.count) Ton, \(engine.subtitleTracks.count) UT")
+            sideOpen = side
             showTracks = true
         case .cancelUpNext:
             onUserInput()
@@ -782,12 +819,13 @@ struct PlayerControls<E: PlaybackEngine>: View {
     }
 
     func saveProgress() {
-        guard engine.duration > 0, engine.currentTime > 0 else { return }
+        guard engine.duration > 0, engine.currentTime > 0, !sideHoldsProgress else { return }
         report(engine.currentTime, engine.duration)
     }
 
     /// Intern auch für PlayerScrub.swift (Steuerleiste beim Spulen zeigen).
     func poke() {
+        pauseCard.noteInput()   // Wave P-b
         withAnimation { showOverlay = true }
         hideTask?.cancel()
         hideTask = Task {
