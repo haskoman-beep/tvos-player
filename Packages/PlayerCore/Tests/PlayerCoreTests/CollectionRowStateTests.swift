@@ -64,37 +64,38 @@ private func discover(_ id: String, _ filters: [String: String]) -> CatalogSourc
     CatalogSource(id: id, title: id, kind: .tmdbDiscover(filters: filters), mediaType: .movie)
 }
 
-@Test func packageTilesTakeArtFromUserImportOnly() {
+@Test func packageTilesTakeArtFromUserImportByTMDB() {
     let imported = MediaCollection(id: "nuvio.c", title: "Streaming", folders: [
         Folder(id: "i1", title: "N", coverImage: "https://example.com/n.webp", logo: "https://example.com/n-logo.webp",
                sources: [discover("s1", ["with_watch_providers": "8", "watch_region": "DE"])],
                focusGif: "https://example.com/n.gif"),
-        // Mehrere Anbieter in einem Filter: keine eindeutige Kachel, kein Treffer.
+        // Mehrere Anbieter in einem Filter und kein bekannter Name: kein Treffer.
         Folder(id: "i2", title: "Mix", coverImage: "https://example.com/mix.webp",
                sources: [discover("s2", ["with_watch_providers": "9|337"])]),
-        Folder(id: "i3", title: "Komödie", coverImage: "https://example.com/comedy.webp",
+        Folder(id: "i3", title: "Lustig", coverImage: "https://example.com/comedy.webp",
                sources: [discover("s3", ["with_genres": "35"])]),
     ])
-    let streaming = ReadyPackages.withImportedArt(ReadyPackages.streamingDE, imported: [imported])
+    let src = PackageArtSource.userImports([imported])
+    let streaming = ReadyPackages.withArt(ReadyPackages.streamingDE, sources: src)
     let netflix = streaming.folders.first { $0.id == "pkg.streaming-de.8" }
     #expect(netflix?.coverImage == "https://example.com/n.webp")
     #expect(netflix?.logo == "https://example.com/n-logo.webp")
     #expect(netflix?.focusGif == "https://example.com/n.gif")
     #expect(streaming.folders.first { $0.id == "pkg.streaming-de.9" }?.coverImage == nil)
-    let genres = ReadyPackages.withImportedArt(ReadyPackages.genreCollection, imported: [imported])
+    let genres = ReadyPackages.withArt(ReadyPackages.genreCollection, sources: src)
     #expect(genres.folders.first { $0.title == "Komödie" }?.coverImage == "https://example.com/comedy.webp")
     #expect(genres.folders.first { $0.title == "Drama" }?.coverImage == nil)
-    // Ohne Import: unverändert.
-    let none = ReadyPackages.withImportedArt(ReadyPackages.streamingDE, imported: [])
-    #expect(none == ReadyPackages.streamingDE)
+    // Ohne Quelle: unverändert.
+    #expect(ReadyPackages.withArt(ReadyPackages.streamingDE, sources: []) == ReadyPackages.streamingDE)
     // Eigenes Standbild bleibt, und dann kommen auch Logo und GIF nicht dazu.
     var own = ReadyPackages.streamingDE
     own.folders[0].coverImage = "https://example.com/own.png"
-    let kept = ReadyPackages.withImportedArt(own, imported: [imported])
+    let kept = ReadyPackages.withArt(own, sources: src)
     #expect(kept.folders[0].coverImage == "https://example.com/own.png")
     #expect(kept.folders[0].focusGif == nil && kept.folders[0].logo == nil)
-    // Fremde Collections bleiben unverändert.
-    #expect(ReadyPackages.withImportedArt(imported, imported: [imported]) == imported)
+    // Fremde Collections bleiben unverändert; die Pakete selbst sind keine Bildquelle.
+    #expect(ReadyPackages.withArt(imported, sources: src) == imported)
+    #expect(PackageArtSource.userImports([ReadyPackages.streamingDE]).isEmpty)
 }
 
 @Test func oldFolderJSONDecodesWithoutFocusGif() throws {
@@ -139,7 +140,7 @@ private func discover(_ id: String, _ filters: [String: String]) -> CatalogSourc
     var memo = PackageArtMemo()
     var calls = 0
     let s1 = PackageArtMemo.Stamp(profile: 1, kit: 1)
-    let a = memo.collection(ReadyPackages.streamingDE, stamp: s1) { calls += 1; return [imported] }
+    let a = memo.collection(ReadyPackages.streamingDE, stamp: s1) { calls += 1; return PackageArtSource.userImports([imported]) }
     let b = memo.collection(ReadyPackages.streamingDE, stamp: s1) { calls += 1; return [] }
     #expect(calls == 1)
     #expect(a == b)

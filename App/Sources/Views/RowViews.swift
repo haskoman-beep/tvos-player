@@ -104,12 +104,17 @@ struct HomeRowView: View {
             case .tiles:
                 let folders = c?.folders ?? []
                 let line = CollectionArtStats(folders: folders, logoStyle: row.style == .logoTiles).logLine(title: title)
+                // Welle F-l: Paket-Reihen melden zusätzlich, wie viele Paket-Kacheln ein Bild bzw. GIF haben.
+                let packLine = PackageArtStats(folders: folders)?.logLine(row: title)
                 Strip {
                     ForEach(folders) { f in
                         card(.folder(f)) { FolderTile(folder: f, logoStyle: row.style == .logoTiles) }
                     }
                 }
-                .task(id: line) { CollectionRowLog.note(row: row.id.uuidString, line: line) }
+                .task(id: line + (packLine ?? "")) {
+                    CollectionRowLog.note(row: row.id.uuidString, line: line)
+                    if let packLine { CollectionRowLog.note(row: row.id.uuidString + ".pakete", line: packLine) }
+                }
             case .failed(let key):
                 // Welle F-g: Kit-Datei schlug fehl: erreichbare Statuskachel statt ewiger Platzhalter; OK lädt neu.
                 Strip {
@@ -421,20 +426,11 @@ struct FolderTile: View {
     }
 
     @ViewBuilder private var content: some View {
-        if folder.coverImage == nil && folder.backdrop == nil && folder.logo == nil,
-           let style = ReadyPackages.tileStyle(forFolderID: folder.id) {
-            // Welle F-g: eigene Paket-Kachel ohne Bild aus dem Netz (Farbverlauf + SF Symbol + deutscher Titel).
-            let kind: TileKind = logoStyle ? .logo : .landscape
-            ZStack {
-                Theme.Tile.packageGradient(style.tone)
-                VStack(spacing: 14 * scale) {
-                    Image(systemName: style.symbol).font(.system(size: 64 * scale, weight: .semibold))
-                    Text(folder.title).font(.headline).lineLimit(1).minimumScaleFactor(0.7)
-                }
-                .foregroundStyle(Theme.Palette.primary)
-                .padding(.horizontal, 20 * scale)
-            }
-            .frame(width: Theme.Tile.width(kind, scale), height: Theme.Tile.height(kind, scale))
+        let style = ReadyPackages.tileStyle(forFolderID: folder.id)
+        if let style, logoStyle ? folder.logo == nil : (folder.coverImage == nil && folder.backdrop == nil) {
+            // Welle F-g/F-l: eigene Paket-Kachel, solange kein Bild aus Import oder Kit vorliegt
+            // (Farbverlauf + SF Symbol + deutscher Titel).
+            packageTile(style, kind: logoStyle ? .logo : .landscape)
         } else if logoStyle {
             ZStack {
                 Color.white.opacity(0.08)
@@ -442,16 +438,34 @@ struct FolderTile: View {
             }
             .frame(width: Theme.Tile.width(.logo, scale), height: Theme.Tile.height(.logo, scale))
         } else {
-            RemoteImage(url: folder.coverImage ?? folder.backdrop)
+            // Welle F-l: Titel über dem Bild wie bei der Quelle der Kachel. Paket-Kacheln mit Bild aus Kit oder Import
+            // zeigen keinen zweiten Titel (der Name steht im Bild); die Bedienungshilfe liest ihn weiter vor.
+            let titleOverImage = folder.coverImage == nil || folder.showsTitleOverImage
+            // Welle F-l: Paket-Kachel, deren Bild noch lädt (oder nicht lädt): eigener Farbverlauf statt grauer Fläche,
+            // mit Titel, solange keiner über dem Bild steht.
+            RemoteImage(url: folder.coverImage ?? folder.backdrop,
+                        placeholder: style.map { AnyView(packageTile($0, kind: .landscape, title: !titleOverImage)) })
                 .frame(width: Theme.Tile.width(.landscape, scale), height: Theme.Tile.height(.landscape, scale)).clipped()
                 // Welle F-g: bewegtes Fokusbild über dem Standbild (nur auf der fokussierten Kachel).
                 .overlay { if let g = folder.focusGif { FocusGIF(url: g, focused: focused) } }
                 .clipped()
                 .overlay(alignment: .bottomLeading) {
-                    // Paket-Kacheln zeigen immer den deutschen Titel, auch mit importiertem Bild.
-                    if folder.coverImage == nil || folder.showsTitleOverImage || ReadyPackages.isPackageFolder(folder.id) { Text(folder.title).font(.headline).shadow(radius: 4).padding(14) }
+                    if titleOverImage { Text(folder.title).font(.headline).shadow(radius: 4).padding(14) }
                 }
         }
+    }
+
+    private func packageTile(_ style: PackageTileStyle, kind: TileKind, title: Bool = true) -> some View {
+        ZStack {
+            Theme.Tile.packageGradient(style.tone)
+            VStack(spacing: 14 * scale) {
+                Image(systemName: style.symbol).font(.system(size: 64 * scale, weight: .semibold))
+                if title { Text(folder.title).font(.headline).lineLimit(1).minimumScaleFactor(0.7) }
+            }
+            .foregroundStyle(Theme.Palette.primary)
+            .padding(.horizontal, 20 * scale)
+        }
+        .frame(width: Theme.Tile.width(kind, scale), height: Theme.Tile.height(kind, scale))
     }
 }
 

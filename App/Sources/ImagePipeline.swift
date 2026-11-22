@@ -390,6 +390,8 @@ struct RemoteImage: View {
     /// Feste Zielgröße statt der gezeichneten (aufgeklappte Karte nutzt die Variante des Vollbild-Hintergrunds:
     /// ein Download, ein Bitmap im Speichercache für beide).
     var fixedTarget: ImageTarget? = nil
+    /// Welle F-l: eigene Fläche, solange kein Bild da ist (Paket-Kachel: Farbverlauf), statt der grauen.
+    var placeholder: AnyView? = nil
     @Environment(\.displayScale) private var displayScale
     @State private var image: UIImage?
     @State private var loadedURL: String?
@@ -423,6 +425,8 @@ struct RemoteImage: View {
             if let shown {
                 Image(uiImage: shown).resizable().aspectRatio(contentMode: fit ? .fit : .fill)
                     .transition(.opacity)
+            } else if let placeholder {
+                placeholder
             } else if !fit {
                 Color.white.opacity(0.08)
             }

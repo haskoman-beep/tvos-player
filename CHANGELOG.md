@@ -17,6 +17,20 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 
 ## [Unreleased]
 
+### Added
+- Player: a new setting, Settings › Playback › "Ton & Untertitel öffnen", chooses how the audio and subtitle
+  choice opens: the bar at the top (swipe down, as before), the same bar at the bottom (swipe up), or a small
+  menu in the bottom right corner (swipe up) that shows audio, subtitles and offset first and then the list.
+
+### Fixed
+- Home screen: the built-in packs (streaming services, genres) now show images. A tile takes its image
+  from a collection you imported, otherwise from the home screen kit, which is loaded at runtime for this
+  even when the kit is switched off. Tiles are matched by provider or genre ID or by name, for example
+  Netflix, Prime Video, Disney+, „Komödie“ (comedy) or „Krimi“ (crime). If the image has an animated GIF
+  (from an imported collection), it plays on the focused tile. A tile with such an image shows no extra
+  title on top, since the name is part of the image. The gradient tile stays while an image loads and for
+  services without an image; the „Krimi“ tile now shows a fingerprint instead of a magnifying glass.
+
 ## [Build 187] – 2026-11-22 (integ)
 
 ### Changed
@@ -36,11 +50,6 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   subtitle choice is no longer silently undone. Switching back to the original audio track during the reload
   now works.
 - Player: leaving the player after using the panel no longer keeps the player in memory.
-
-### Added
-- Player: a new setting, Settings › Playback › "Ton & Untertitel öffnen", chooses how the audio and subtitle
-  choice opens: the bar at the top (swipe down, as before), the same bar at the bottom (swipe up), or a small
-  menu in the bottom right corner (swipe up) that shows audio, subtitles and offset first and then the list.
 
 ## [Build 174] – 2026-11-22 (integ)
 

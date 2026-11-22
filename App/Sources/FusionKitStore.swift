@@ -27,6 +27,8 @@ final class FusionKitStore: ObservableObject {
     /// Sichtbare Kit-Collections (ohne Trakt-Kacheln, wenn die Client ID fehlt), beim Abgleich berechnet.
     private var visible: [String: MediaCollection] = [:]
     private var loggedHidden = false
+    /// Welle F-l: Bilddateien der Paket-Kacheln schon angefordert (einmal je Start).
+    private var artRequested = false
     /// Laufendes Laden je Quellen-Schlüssel.
     private var inflight: [String: Task<Void, Never>] = [:]
     private let disk = FileBlobStorage(directory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -52,10 +54,11 @@ final class FusionKitStore: ObservableObject {
     // MARK: Lesen (Startseite)
 
     func collection(_ id: String) -> MediaCollection? { visible[id] }
-    /// Alle sichtbaren Kit-Collections (Bildquelle für Paket-Kacheln, Welle F-g).
-    /// Nach ID sortiert, damit der Treffer bei mehreren passenden Importen immer derselbe ist.
-    var visibleCollections: [MediaCollection] { visible.values.sorted { $0.id < $1.id } }
-    /// Steigt mit jeder Änderung von `visible` (Merker der Paket-Kachelbilder).
+    /// Welle F-l: Bildquellen der Paket-Kacheln aus allen geladenen Kit-Dateien, ungefiltert (auch Kacheln, deren
+    /// Listen ohne Trakt ausgeblendet sind). Vom Nutzer gewählte Dateien zuerst, übrige nach Titel – so ist der
+    /// Treffer bei Gleichstand immer derselbe. Beim Abgleich berechnet.
+    private(set) var artSources: [PackageArtSource] = []
+    /// Steigt mit jeder Änderung von `visible` oder `artSources` (Merker der Paket-Kachelbilder).
     private(set) var revision = 0
 
     /// Katalog-Dateien plus gewählte/eingetragene Quellen außerhalb des Katalogs.
@@ -239,6 +242,36 @@ final class FusionKitStore: ObservableObject {
         else { RemoteLog.info("kit", "Katalog: \(out.count) Dateien") }
     }
 
+    /// Welle F-l: Kit-Dateien mit Bildern für die Paket-Kacheln (Streaming-Dienste, Genres) holen – auch bei
+    /// ausgeschaltetem Kit, sobald eine Paket-Reihe auf der Startseite steht. Dateiliste und Dateien kommen aus dem
+    /// 24-h-Zwischenspeicher, sonst von GitHub; ohne Netz der alte Stand von der Platte.
+    private func loadPackageArt() async {
+        // Erst der Stand von der Platte (sofort Bilder, auch ohne Netz), dann Dateiliste und Dateien auffrischen.
+        // Das Zerlegen der Dateien läuft abseits des Main Actors (die Startseite zeichnet gerade).
+        let disk = self.disk
+        let pending = FusionKitCatalog.packageArtSources(listing).filter { contents[$0.id] == nil }
+            .map { (src: $0, file: contentFile($0.id)) }
+        let parsed = await Task.detached { () -> [(String, FusionKitContent)] in
+            var out: [(String, FusionKitContent)] = []
+            for p in pending {
+                guard let d = disk.read(p.file),
+                      let c = try? FusionImport.parse(d, sourceKey: p.src.id, title: p.src.title) else { continue }
+                out.append((p.src.id, c))
+            }
+            return out
+        }.value
+        for (id, c) in parsed where contents[id] == nil { contents[id] = c }
+        sync()
+        await loadListing(force: false)
+        let list = FusionKitCatalog.packageArtSources(listing)
+        await withTaskGroup(of: Void.self) { g in
+            for s in list { g.addTask { await self.load(s, force: false) } }
+        }
+        let ok = list.filter { contents[$0.id] != nil }.count
+        RemoteLog.info("kit", "Paket-Bilder: \(ok)/\(list.count) Kit-Dateien geladen")
+        sync()
+    }
+
     private func contentFile(_ key: String) -> String { key + ".json" }
     private func listingFile(_ folder: String) -> String { "listing-\(folder).json" }
 
@@ -278,10 +311,19 @@ final class FusionKitStore: ObservableObject {
                 }
             }
         }
-        if vis != visible {
+        let art = computeArtSources(settings: s)
+        if vis != visible || art != artSources {
             visible = vis
+            artSources = art
             revision &+= 1
             model.objectWillChange.send()   // Startseite liest die Kacheln über model.collection(_:)
+        }
+        if !artRequested, layout.rows.contains(where: { row in
+            if case .collection(let id) = row.content { return id.hasPrefix("pkg.") }
+            return false
+        }) {
+            artRequested = true
+            Task { await loadPackageArt() }
         }
 
         if s != settings { settings = s; persist() }
@@ -294,5 +336,15 @@ final class FusionKitStore: ObservableObject {
             let why = traktID ? "Trakt-Anmeldung fehlt" : "Trakt Client ID fehlt"
             RemoteLog.info("kit", "\(r.hidden.count) Kit-Reihe(n) und \(hiddenTiles) Kachel(n) ausgeblendet: \(why)")
         }
+    }
+
+    /// Bildquellen aus den geladenen Kit-Dateien (`PackageArtSource.kitSources`): gewählte Dateien (Reihen bei
+    /// aktivem Kit, per Handy eingetragene URLs) und die Paket-Bilddateien, keine anderen Kit-Dateien.
+    private func computeArtSources(settings s: FusionKitSettings) -> [PackageArtSource] {
+        var chosen = Set(s.sources.filter(\.custom).map(\.id))
+        if s.enabled { chosen.formUnion(s.selected.compactMap { FusionImport.sourceKey(ofID: $0) }) }
+        let titles = Dictionary(sources.map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first })
+        return PackageArtSource.kitSources(contents: contents, titles: titles, chosen: chosen,
+                                           packFiles: Set(FusionKitCatalog.packageArtSources(listing).map(\.id)))
     }
 }
