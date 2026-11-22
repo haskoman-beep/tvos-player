@@ -1,73 +1,80 @@
-# Design-Umbau im Stil gängiger tvOS-Streaming-Apps – Design
+# Design rework in the style of common tvOS streaming apps – Design
 
-Stand 21.11.2026. Kennzeichnung: **[N]** = Nutzerentscheidung, **[C]** = Entscheidung von Claude (korrigierbar).
+As of 21 Nov 2026. Markers: **[U]** = user decision, **[C]** = decision by Claude (can be corrected).
 
-## 1. Absicht und Warum
+## 1. Intent and why
 
-Der Player ersetzt Nuvio/Stremio auf dem Apple TV. Funktional ist vieles da (Quellen, DV, Ton, Bewertungen, TMDB-Anreicherung),
-aber Oberfläche und Bedienung wirken noch wie ein Prototyp: drei Text-Tabs oben, statische Hero-Kachel, Einstellungen als eine
-lange Liste. Ziel: Aussehen und Aufbau wie **NuvioTVOS** [N], damit sich der Umstieg nicht wie ein Rückschritt anfühlt.
+The player replaces the Stremio-style clients used on the Apple TV so far. Much of the functionality is there (sources,
+DV, audio, ratings, TMDB enrichment), but the interface and handling still feel like a prototype: three text tabs at the
+top, a static hero tile, settings as one long list. Goal: a look and structure on par with established tvOS streaming
+apps [U], so that switching does not feel like a step back.
 
-## 2. Ziele, Nicht-Ziele, Anti-Ziele
+## 2. Goals, non-goals, anti-goals
 
-**Ziele** (alle vier Teile [N]):
-1. **Navigation:** Seitenleiste links (tvOS 18 `.sidebarAdaptable`) *oder* obere Leiste mit Uhr – umschaltbar unter
-   Einstellungen → Aussehen [N]. Tabs: Start, Suche, Bibliothek, Kalender, Einstellungen [N], mit SF-Symbolen.
-2. **Startseite:** Vollbild-Hero-Diashow oben (wechselt alle 10 s, Überblendung, Logo statt Titeltext wenn vorhanden,
-   Metazeile Jahr · Laufzeit · FSK, Bewertungszeile MDBList, Beschreibung 2 Zeilen, Knöpfe „Abspielen“ / „Details“).
-   Hintergrund folgt dem Fokus: fokussierte Kachel in einer Reihe setzt nach 350 ms Ruhe den Vollbild-Hintergrund.
-   Fokussiertes Poster klappt nach 350 ms Ruhe zu Querformat mit Logo auf (wie NuvioTVOS `PosterCard`).
-3. **Einstellungen:** Kategorien links mit Symbolen, Inhalt rechts (wie NuvioTVOS `SettingsCategory`):
-   Profil, Addons, Dienste & Schlüssel, Startseite, Aussehen, Wiedergabe, Über. Bestehende Einträge werden nur einsortiert.
-4. **Aussehen-Optionen** (neue Kategorie): Navigation Seitenleiste/oben, Akzentfarbe (6 feste Farben),
-   Kartengröße (klein/mittel/groß), Hero an/aus, Hero-Quelle (welche Startseiten-Reihe), Poster aufklappen an/aus.
-5. **Bibliothek-Tab** [N]: Weiterschauen, Merkliste, Verlauf (zuletzt gesehen). Quelle wie heute (Trakt/Simkl/lokal).
-6. **Kalender-Tab** [N]: kommende Folgen der Serien aus Weiterschauen/Merkliste/Verlauf, gruppiert nach Tag
-   (Heute, Morgen, Datum), Daten aus TMDB (`/tv/{id}` → `next_episode_to_air`, Staffel-Folgen). Dazu optionale
-   „Heute neu“-Reihe für die Startseite.
+**Goals** (all four parts [U]):
+1. **Navigation:** sidebar on the left (tvOS 18 `.sidebarAdaptable`) *or* a top bar with a clock – switchable under
+   „Einstellungen → Aussehen“ (settings → appearance) [U]. Tabs: „Start“ (home), „Suche“ (search), „Bibliothek“
+   (library), „Kalender“ (calendar), „Einstellungen“ (settings) [U], with SF Symbols.
+2. **Home screen:** full-screen hero slideshow at the top (changes every 10 s, cross-fade, logo instead of the title text
+   when available, meta line year · runtime · FSK age rating, MDBList rating line, 2-line description, buttons
+   „Abspielen“ (play) / „Details“).
+   The background follows the focus: a focused tile in a row sets the full-screen background after 350 ms of rest.
+   A focused poster expands to landscape with a logo after 350 ms of rest.
+3. **Settings:** categories on the left with symbols, content on the right:
+   profile, addons, services & keys, home screen, appearance, playback, about. Existing entries are only sorted in.
+4. **Appearance options** (new category): navigation sidebar/top, accent colour (6 fixed colours),
+   card size (small/medium/large), hero on/off, hero source (which home screen row), expand posters on/off.
+5. **Library tab** [U]: continue watching, watchlist, history (recently watched). Source as today (Trakt/Simkl/local).
+6. **Calendar tab** [U]: upcoming episodes of the series from continue watching/watchlist/history, grouped by day
+   (today, tomorrow, date), data from TMDB (`/tv/{id}` → `next_episode_to_air`, season episodes). Plus an optional
+   „Heute neu“ (new today) row for the home screen.
 
-**Nicht-Ziele:** Watch Party, IPTV, KI-Reihen, Überraschung, Ambient-Modus, eigene Schriften, 12 Farbthemen,
-Stream-Listenstil-Editor, Trailer im Hero (bewusst gestrichen, Plan von heute).
+**Non-goals:** watch party, IPTV, AI rows, surprise me, ambient mode, custom fonts, 12 colour themes,
+stream list style editor, trailers in the hero (dropped on purpose, plan of today).
 
-**Anti-Ziele** (wäre trotz Funktion ein Fehlschlag):
-- Fokus springt, geht verloren oder hängt (Nuvios größte Fehlerquelle – tausende Zeilen Fokus-Reparatur).
-- Startseite ruckelt beim Scrollen, weil Hintergrund/Aufklappen bei jedem Fokuswechsel Bilder lädt.
-- Bestehende Profile/Startseiten gehen beim Update verloren.
+**Anti-goals** (would be a failure despite working):
+- Focus jumps, gets lost or hangs (a common source of bugs in tvOS apps, which can take thousands of lines of focus
+  repair).
+- The home screen stutters while scrolling because the background/expansion loads images on every focus change.
+- Existing profiles/home screens are lost in the update.
 
-## 3. Rahmenbedingungen
+## 3. Constraints
 
-- tvOS 18, SwiftUI, Build nur über GitHub Actions (kein Mac); jeder Test kostet einen Build + Installation (~15–20 min).
-- Öffentliches Repo: keine Schlüssel, Namen, IPs.
-- Neue Profilfelder mit Standardwerten in `init(from:)` (alte Sicherungen bleiben ladbar).
-- Bildlader `ImagePipeline`/`RemoteImage` wird genutzt (Vorladen, Downsampling).
-- Logik, die sich testen lässt (Kalender-Gruppierung, Hero-Auswahl, Einstellungs-Defaults), kommt in PlayerCore mit Tests.
+- tvOS 18, SwiftUI, builds only via GitHub Actions (no Mac); every test costs a build + installation (~15–20 min).
+- Public repo: no keys, names, IPs.
+- New profile fields with default values in `init(from:)` (old backups stay loadable).
+- The image loader `ImagePipeline`/`RemoteImage` is used (preloading, downsampling).
+- Logic that can be tested (calendar grouping, hero selection, settings defaults) goes into PlayerCore with tests.
 
-## 4. Ansätze
+## 4. Approaches
 
-| Ansatz | Kurz | Abwägung |
+| Approach | In short | Trade-off |
 |---|---|---|
-| **Hybrid** [N] | Navigation + Einstellungen mit Apple-Bausteinen, Hero-Diashow und aufklappende Poster selbst gebaut | stabiler System-Fokus, wenig Code; das Nuvio-Gefühl kommt aus Hero + Poster |
-| Alles nativ | nur Apple-Bausteine, kein Aufklappen | schnell, sieht weniger nach Nuvio aus |
-| Alles eigen | eigene Seitenleiste und Fokuslogik | am nächsten an Nuvio, aber genau die Fokusfehler, die wir vermeiden wollen |
+| **Hybrid** [U] | navigation + settings with Apple building blocks, hero slideshow and expanding posters built ourselves | stable system focus, little code; the polished feel comes from the hero + posters |
+| All native | only Apple building blocks, no expansion | fast, looks less polished |
+| All custom | own sidebar and focus logic | the most freedom, but exactly the focus bugs we want to avoid |
 
-## 5. Aufbau [C]
+## 5. Structure [C]
 
-- `RootView`: `TabView(selection:)` mit `Tab(…, systemImage:)`; `.tabViewStyle(.sidebarAdaptable)` wenn
-  `appearance.navigation == .sidebar`, sonst Standard-Leiste oben plus Uhr-Überlagerung rechts oben.
-  Jeder Tab behält seinen eigenen `NavigationStack`-Pfad (wie heute).
-- Neues Profilfeld `appearance: Appearance` (navigation, accent, cardSize, heroEnabled, heroRowID?, expandPosters).
-- `HomeView`: oben `HeroCarousel` (eigene Komponente), darunter Reihen wie heute. Hintergrund über eine
-  `@State focusedBackdrop`-URL mit Überblendung; Entprellung 350 ms über `Task.sleep`, abgebrochen bei Fokuswechsel.
-- `PosterCard` bekommt `expanded`-Zustand (Fokus + 350 ms) → Breite wächst animiert auf Querformat, Bild wird erst
-  nach der Ruhezeit geladen.
-- `SettingsView` → `NavigationSplitView`-artig: Kategorienliste links, Inhalt rechts; Unterseiten pro Kategorie
-  als eigene kleine Views (statt eine große Datei wie Nuvio).
-- `LibraryView`, `CalendarView` neu; Kalenderlogik `UpcomingEpisodes` in PlayerCore (Gruppierung, Filter, Tests).
+- `RootView`: `TabView(selection:)` with `Tab(…, systemImage:)`; `.tabViewStyle(.sidebarAdaptable)` when
+  `appearance.navigation == .sidebar`, otherwise the standard top bar plus a clock overlay at the top right.
+  Each tab keeps its own `NavigationStack` path (as today).
+- New profile field `appearance: Appearance` (navigation, accent, cardSize, heroEnabled, heroRowID?, expandPosters).
+- `HomeView`: `HeroCarousel` at the top (own component), the rows below as today. Background via a
+  `@State focusedBackdrop` URL with a cross-fade; 350 ms debounce via `Task.sleep`, cancelled on a focus change.
+- `PosterCard` gets an `expanded` state (focus + 350 ms) → the width grows animated to landscape; the image is only
+  loaded after the rest period.
+- `SettingsView` → like a `NavigationSplitView`: category list on the left, content on the right; subpages per category
+  as small views of their own (instead of one big file).
+- `LibraryView`, `CalendarView` new; calendar logic `UpcomingEpisodes` in PlayerCore (grouping, filters, tests).
 
-## 6. Bildschirme (Skizze)
+## 6. Screens (sketch)
+
+The sketch shows the German UI labels: „Abspielen“ = play, „Weiterschauen“ = continue watching, „Beliebt“ = popular,
+„aufgeklappt“ = expanded, „Hintergrund“ = background, „Einstellungen“ = settings.
 
 ```
-Seitenleiste:                      Startseite:
+Sidebar:                           Home screen:
 ┌──────┐ ┌─────────────────────────────────────────────┐
 │ ⌂    │ │ [LOGO]                       Hintergrund     │
 │ 🔍   │ │ 2010 · 1 h 42 · FSK 6 · IMDb 6.0 🍅 64 %     │
@@ -76,45 +83,47 @@ Seitenleiste:                      Startseite:
 │ ⚙    │ │ Weiterschauen ▸ [▭][▭][▭]                    │
 └──────┘ │ Beliebt ▸ [▯][▭▭ aufgeklappt][▯][▯]           │
          └─────────────────────────────────────────────┘
-Einstellungen:  [Profil | Addons | Dienste | Startseite | Aussehen | Wiedergabe | Über]  →  rechts Inhalt
+Einstellungen:  [Profil | Addons | Dienste | Startseite | Aussehen | Wiedergabe | Über]  →  content on the right
 ```
 
-## 7. Phasen [C] (je ein Build)
+## 7. Phases [C] (one build each)
 
-1. Navigation + Aussehen-Profilfeld + Einstellungs-Kategorien.
-2. Hero-Diashow + Hintergrund folgt Fokus.
-3. Poster aufklappen + Kartengröße/Akzentfarbe anwenden.
-4. Bibliothek + Kalender (+ „Heute neu“-Reihe).
+1. Navigation + appearance profile field + settings categories.
+2. Hero slideshow + background follows focus.
+3. Expand posters + apply card size/accent colour.
+4. Library + calendar (+ „Heute neu“ (new today) row).
 
-## 7a. Antworten auf den Builder-Check
+## 7a. Answers to the builder check
 
-1. **Hero und Reihen [N]:** Die Info-Ebene oben (Hintergrund, Logo, Metazeile, Bewertungen, Beschreibung) zeigt immer den
-   fokussierten Titel, wie bei Nuvio. Solange der Fokus in den Reihen liegt, pausiert die Diashow und läuft weiter, sobald
-   der Fokus wieder im Hero ist. Umsetzung: eine gemeinsame Hintergrund- und Info-Ebene hinter dem ScrollView. Der Hero ist
-   kein eigener Scroll-Abschnitt.
-2. **„Abspielen“ im Hero [N]:** verhält sich wie Weiterschauen.
-   - Film: die gemerkte Quelle startet direkt (`resumeLastSource`), sonst öffnet die Quellenliste.
-   - Serie: die nächste offene Folge laut Fortschritt, sonst S1F1.
-   - Folgen werden erst beim Druck geladen, nicht pro Folie.
-3. **Kalender [N]:** Serien aus Weiterschauen und Merkliste, höchstens 50. Zeitraum: „Gestern“ bis 14 Tage voraus.
-   Gecacht 6 h, wie die anderen TMDB-Daten.
-4. **Bestehender Stil `.hero` [C]:**
-   - Die erste vorhandene `.hero`-Reihe wird beim ersten Start automatisch `heroRowID`.
-   - Sie wird nicht doppelt als Reihe gezeigt. Der Stil bleibt lesbar, wird im Editor aber zu „Als Hero verwenden“.
-   - Ist `heroRowID` leer: die erste Katalog-Reihe; ohne Katalog-Reihe gibt es keinen Hero.
-5. **Verlauf [C]:** Quelle ist der lokale `ProgressBook` (Einträge mit `finished`, neueste zuerst). Trakt- und
-   Simkl-Verlauf kommen später.
-6. **„Heute neu“ [C]:** neue `SourceKind.upcoming` / `CatalogSource.upcoming`. Sie lässt sich im Startseiten-Editor wie
-   Weiterschauen hinzufügen und verschieben. Alte Profile kennen den Fall nicht; das ist kein Problem, weil nur neu
-   hinzugefügt wird.
+1. **Hero and rows [U]:** the info layer at the top (background, logo, meta line, ratings, description) always shows the
+   focused title. While the focus is in the rows, the slideshow pauses, and it continues as soon as the focus is back in
+   the hero. Implementation: one shared background and info layer behind the ScrollView. The hero is not a scroll
+   section of its own.
+2. **„Abspielen“ (play) in the hero [U]:** behaves like continue watching.
+   - Movie: the remembered source starts directly (`resumeLastSource`), otherwise the source list opens.
+   - Series: the next open episode according to progress, otherwise S1E1.
+   - Episodes are only loaded on the press, not per slide.
+3. **Calendar [U]:** series from continue watching and the watchlist, at most 50. Time range: „Gestern“ (yesterday) up
+   to 14 days ahead. Cached for 6 h, like the other TMDB data.
+4. **Existing style `.hero` [C]:**
+   - The first existing `.hero` row automatically becomes `heroRowID` at the first launch.
+   - It is not shown twice as a row. The style stays readable, but in the editor it becomes „Als Hero verwenden“
+     (use as hero).
+   - If `heroRowID` is empty: the first catalog row; without a catalog row there is no hero.
+5. **History [C]:** the source is the local `ProgressBook` (entries with `finished`, newest first). Trakt and Simkl
+   history come later.
+6. **„Heute neu“ (new today) [C]:** new `SourceKind.upcoming` / `CatalogSource.upcoming`. It can be added and moved in
+   the home screen editor like continue watching. Old profiles do not know the case; that is no problem, because it is
+   only ever added.
 
-## 8. Dem Builder überlassen
+## 8. Left to the builder
 
-Genaue Abstände, Schriftgrößen, Animationskurven, Symbolwahl, Platzierung der Uhr, Anzahl Hero-Folien (Vorschlag 8).
+Exact spacing, font sizes, animation curves, choice of symbols, placement of the clock, number of hero slides
+(proposal: 8).
 
-## 9. Risiken
+## 9. Risks
 
-- `.sidebarAdaptable` auf tvOS 18 frisst die Zurück-Taste bzw. öffnet die Leiste beim Linksdrücken am Rand –
-  gewollt, aber Reihen müssen ganz links fokussierbar bleiben.
-- Hero oben + Reihen: Fokus von Reihe nach oben muss im Hero landen, nicht in der Leiste.
-- Aufklappen verändert Reihenbreite → Scrollposition darf nicht springen (feste Ankerung am fokussierten Element).
+- `.sidebarAdaptable` on tvOS 18 swallows the back button or opens the sidebar when pressing left at the edge –
+  intended, but rows must stay focusable at the far left.
+- Hero at the top + rows: focus moving up from a row must land in the hero, not in the sidebar.
+- Expanding changes the row width → the scroll position must not jump (fixed anchoring on the focused element).

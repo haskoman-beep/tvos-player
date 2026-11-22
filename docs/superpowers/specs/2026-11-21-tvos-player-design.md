@@ -1,171 +1,172 @@
-# tvOS-Player – Design (Stand 21.11.2026)
+# tvOS Player – Design (as of 21 Nov 2026)
 
-Status: von Claude über Nacht geschrieben, nachdem der Nutzer die Fragen-Phase beendet hat
-("Alle Entscheidungen die du von mir brauchst verschiebe auf morgen"). **Noch nicht vom Nutzer
-freigegeben.** Markierung: **[N]** = vom Nutzer entschieden, **[C]** = Claudes Entscheidung
-(korrigierbar), **[OFFEN]** = braucht den Nutzer.
+Status: written by Claude overnight after the user ended the question phase
+("move all decisions you need from me to tomorrow"). **Not yet approved by the user.**
+Markers: **[U]** = decided by the user, **[C]** = Claude's decision (can be corrected),
+**[OPEN]** = needs the user.
 
-## 1. Absicht und Warum
+## 1. Intent and why
 
-Eine eigene Apple-TV-App, nur für den Nutzer, als Ersatz für Nuvio / Stremio / Odin / Fusion. [N]
-Hauptschmerz heute: **Ordnen** von Addons und Collections auf der Startseite ist klobig (nicht
-das Einrichten). [N] Die App soll sich anfühlen wie eine Apple-App (Richtung Odin/Fusion), die
-Startseite soll aus vorher gewählten Collections selbst gestaltet werden, und sie soll alle
-hochwertigen Formate sauber am LG OLED und an der Z906 ausgeben.
+A personal Apple TV app, only for the user, to replace the Stremio-style clients in use today. [U]
+The main pain today: **arranging** addons and collections on the home screen is clumsy (not the
+setup). [U] The app should feel like a native Apple app, the home screen should be built from
+collections chosen beforehand, and it should output all high-quality formats cleanly on the LG OLED
+and the Z906 speakers.
 
-Erfolg heißt: Der Nutzer stellt seine Startseite in wenigen Klicks am TV um, startet einen
-Remux mit Dolby Vision und hört 5.1 aus der Z906, und "Weiterschauen" stimmt mit Trakt überein.
+Success means: the user rearranges the home screen in a few clicks on the TV, starts a remux with
+Dolby Vision, hears 5.1 from the Z906, and "continue watching" matches Trakt.
 
-## 2. Ziele, Nicht-Ziele, Anti-Ziele
+## 2. Goals, non-goals, anti-goals
 
-**Ziele**
-- Stremio-Addon-Protokoll; AIOStreams als Hauptquelle (TorBox, Torrents + Usenet). [N]
-- Startseite aus Collections; Widget-Stil pro Reihe aus 6 Stilen (Hero, Poster, Querformat+Fortschritt,
-  Top 10, Logo-Kacheln, Collection-Kacheln). [N]
-- Bearbeiten am TV: lang drücken → angefasste Reihe direkt bewegen (▲▼ verschieben, ◀▶ Stil live,
-  Play/Pause = von der Startseite nehmen, OK fertig, Zurück abbrechen); Plus-Kachel unter allen
-  Reihen nur im Bearbeiten-Modus → Liste der Collections, die nicht auf der Startseite sind (inkl.
-  abgelegter) mit Vorschau, unten "Neue Collection importieren"; neue Reihe erscheint über dem
-  Plus, schon angefasst. Kein Menü pro Reihe. [N]
-- Collections-Herkunft: Import (Trakt / MDBList / TMDB) + 2 fertige Pakete; kein eigener Editor. [N]
-  Nuvio-Export `nuvio-collections-profile-1-tmdb.json` (16 Collections, 7 doppelt) importieren,
-  Dubletten zusammenführen; Datenmodell Collection → Ordner → Quellen übernehmen. [C]
-- Dienste: Trakt, Simkl, TMDB, TVDB, MDBList. [N] Rollen [C]: Trakt = Fortschritt/Weiterschauen,
-  Simkl gespiegelt; TMDB = Metadaten de-DE (Fallback en-US) inkl. Logos/Hintergründe; TVDB =
-  Episodenreihenfolge; MDBList = Bewertungen + Listen.
-- Einstellung "Fortschritt & Gesehen": Hauptquelle lokal / Trakt / Simkl, zusätzlich melden an
-  die anderen; lokal wird immer mitgeschrieben. [N Wunsch, C Ausgestaltung]
-- Profile, jedes komplett eigenständig (alle Einstellungen, Startseite, Addons, Konten,
-  Fortschritt-Quelle). [N]
-- Sprache: App Deutsch/Englisch umschaltbar pro Profil [N]; Tonspur-Vorrang Deutsch → Englisch →
-  Original [C, nicht widersprochen]; Untertitel standardmäßig aus, Option vorhanden. [N]
-- Bild/Ton: Dolby Vision (P5, P8, P7→8.1) am LG; TrueHD/DTS-HD im Gerät dekodieren, Ausgabe
-  Mehrkanal-PCM → TV → optisch Dolby Digital 5.1 an die Z906 (Surround funktioniert heute). [N Setup]
-- Autoplay nächste Folge mit gleicher Quelle (Stremio `bingeGroup`), Ton-/Untertitelwahl
-  weitertragen. [C, Muster NuvioTVOS]
+**Goals**
+- Stremio addon protocol; AIOStreams as the main source (TorBox, torrents + Usenet). [U]
+- Home screen built from collections; widget style per row from 6 styles (hero, poster,
+  landscape + progress, top 10, logo tiles, collection tiles). [U]
+- Editing on the TV: long press → move the selected row directly (▲▼ move, ◀▶ change style live,
+  Play/Pause = remove from the home screen, OK done, Back cancel); a plus tile below all rows, only
+  in edit mode → list of the collections that are not on the home screen (including removed ones)
+  with a preview, at the bottom "import new collection"; the new row appears above the plus tile,
+  already selected. No menu per row. [U]
+- Where collections come from: import (Trakt / MDBList / TMDB) + 2 ready-made packs; no editor of our
+  own. [U] Import the Nuvio export `nuvio-collections-profile-1-tmdb.json` (16 collections, 7
+  duplicates) and merge duplicates; adopt the data model collection → folder → sources. [C]
+- Services: Trakt, Simkl, TMDB, TVDB, MDBList. [U] Roles [C]: Trakt = progress/continue watching,
+  Simkl mirrored; TMDB = metadata de-DE (fallback en-US) including logos/backgrounds; TVDB =
+  episode order; MDBList = ratings + lists.
+- Setting "progress & watched": main source local / Trakt / Simkl, also reported to the others;
+  local is always written as well. [U wish, C details]
+- Profiles, each completely self-contained (all settings, home screen, addons, accounts, progress
+  source). [U]
+- Language: app German/English, switchable per profile [U]; audio track priority German → English →
+  original [C, not objected to]; subtitles off by default, option available. [U]
+- Picture/sound: Dolby Vision (P5, P8, P7→8.1) on the LG; decode TrueHD/DTS-HD on the device, output
+  multichannel PCM → TV → optical Dolby Digital 5.1 to the Z906 (surround works today). [U setup]
+- Autoplay of the next episode with the same source (Stremio `bingeGroup`), carrying over the audio
+  and subtitle choice. [C]
 
-**Nicht-Ziele (jetzt)**
-- iPad-App, zweites Apple TV außer Haus, iCloud/CloudKit-Sync, Entwicklerkonto. [N "Erst nur
-  zu Hause"] Das Datenmodell muss das später ohne Umbau erlauben. [N]
-- Eigener Collection-Editor ("friemelig"). [N]
-- Direkte TorBox-Anbindung in der App (Login, Cache-Check) – alles über AIOStreams. [C]
-- Atmos-Höhenkanäle / Bitstream-Passthrough – die Z906 kann es nicht. [C aus N-Setup]
-- Live-TV, DVR, Musik.
+**Non-goals (for now)**
+- iPad app, a second Apple TV outside the home, iCloud/CloudKit sync, developer account. [U "only at
+  home at first"] The data model must allow this later without a rebuild. [U]
+- A collection editor of our own ("fiddly"). [U]
+- Direct TorBox integration in the app (login, cache check) – everything goes through AIOStreams. [C]
+- Atmos height channels / bitstream passthrough – the Z906 cannot do it. [C from U setup]
+- Live TV, DVR, music.
 
-**Anti-Ziele (wäre ein Fehlschlag, selbst wenn es technisch läuft)**
-- Ordnen bleibt klobig (Menüs, viele Klicks pro Schritt).
-- Wiedergabe ruckelt / falsches Bild (kein DV-Logo) / nur Stereo an der Z906.
-- Einstellungen gehen bei einer Neuinstallation (7-Tage-Signierung) verloren.
-- Lange URLs / API-Keys mit der Fernbedienung tippen müssen.
+**Anti-goals (would be a failure even if it works technically)**
+- Arranging stays clumsy (menus, many clicks per step).
+- Playback stutters / wrong picture (no DV logo) / only stereo on the Z906.
+- Settings are lost on a reinstall (7-day signing).
+- Having to type long URLs / API keys with the remote.
 
-## 3. Rahmenbedingungen
+## 3. Constraints
 
-- Kein Mac, kein Entwicklerkonto. Apple TV 4K, tvOS 26.6 (Heimnetz). [N]
-- Signieren + Installieren: atvloadly auf dem Pi (Heimnetz), Apple-ID-Signierung,
-  7-Tage-Refresh automatisch. [N] Freie Apple-ID: begrenzte Zahl gleichzeitiger Apps (VortX belegt
-  schon einen Platz).
-- Build: GitHub Actions macOS (privates Repo `haskoman-beep/…`). macOS-Minuten zählen in privaten
-  Repos 10-fach (≈ 200 Mac-Minuten/Monat gratis) → Builds bündeln; plattformunabhängigen Kern
-  lokal unter Linux (Swift-Container) testen. [C]
-- AetherEngine verlangt laut eigener Doku Xcode 27 / Swift 6.4; Kompatibilität mit Xcode 26.3 ist
-  "best effort". GitHub-Standard-Runner haben (Stand Spike) nur Xcode 26.x. → Risiko, siehe §9.
-- Lizenz AetherEngine: LGPL-3 mit App-Store-Ausnahme – für privaten Gebrauch unproblematisch.
+- No Mac, no developer account. Apple TV 4K, tvOS 26.6 (home network). [U]
+- Signing + installing: atvloadly on the Pi (home network), Apple ID signing, automatic 7-day
+  refresh. [U] Free Apple ID: limited number of apps at the same time (another sideloaded app already
+  uses one slot).
+- Build: GitHub Actions macOS (private repo `haskoman-beep/…`). macOS minutes count 10× in private
+  repos (≈ 200 Mac minutes/month free) → bundle builds; test the platform-independent core locally on
+  Linux (Swift container). [C]
+- According to its own docs, AetherEngine requires Xcode 27 / Swift 6.4; compatibility with
+  Xcode 26.3 is "best effort". GitHub's standard runners only have Xcode 26.x (as of the spike).
+  → Risk, see §9.
+- AetherEngine license: LGPL-3 with an App Store exception – no problem for private use.
 
-## 4. Ansätze (Player-Engine)
+## 4. Approaches (player engine)
 
-| | Weg | Bewertung |
+| | Approach | Assessment |
 |---|---|---|
-| A | **AetherEngine allein** | DV P5/P8, P7→8.1, TrueHD/DTS-HD dekodiert, MKV; Angaben selbstberichtet |
-| B | AetherEngine + AVPlayer | wie A, doppelte Pflege |
-| C | KSPlayer | DV-Funktionen kostenpflichtig, Werbeaussagen in Recherche widerlegt |
-| – | AVPlayer allein | kein MKV/TrueHD/DTS-HD → raus |
+| A | **AetherEngine alone** | DV P5/P8, P7→8.1, TrueHD/DTS-HD decoded, MKV; claims are self-reported |
+| B | AetherEngine + AVPlayer | like A, double maintenance |
+| C | KSPlayer | DV features are paid, marketing claims refuted in research |
+| – | AVPlayer alone | no MKV/TrueHD/DTS-HD → out |
 
-**Gewählt: A mit vorgeschaltetem Probelauf** (Spike-App "Player-Probe"). [N] Engine liegt hinter
-einer eigenen Schnittstelle `PlayerEngine`, damit B ohne App-Umbau möglich bleibt. [C]
+**Chosen: A, with a trial run first** (spike app "Player-Probe"). [U] The engine sits behind an
+interface of our own, `PlayerEngine`, so B stays possible without rebuilding the app. [C]
 
-## 5. Aufbau [C]
+## 5. Structure [C]
 
 ```
 app/
-  Packages/PlayerCore/        plattformunabhängig, unter Linux testbar (Foundation only)
+  Packages/PlayerCore/        platform-independent, testable on Linux (Foundation only)
     Models/                   Profile, Collection/Folder/Source, HomeLayout, MediaItem, Progress
-    Addons/                   Stremio-Protokoll: Manifest, Catalog, Meta, Stream, Subtitles
-    Services/                 TMDB, TVDB, MDBList, Trakt, Simkl (HTTP-Clients, Token-Modelle)
-    Import/                   Nuvio-JSON, Trakt-Liste, MDBList-Liste, TMDB-Liste/Discover, Pakete
-    Ranking/                  Stream-Sortierung (Sprache, Auflösung, DV/HDR, Größe, Cache)
-    Sync/                     Fortschritt: lokal + Trakt/Simkl, Konflikte, Warteschlange offline
-    Store/                    JSON-Dateien pro Profil, versioniert, atomar
-  Packages/PlaybackKit/       tvOS: PlayerEngine-Protokoll + AetherEngine-Adapter
-  App/                        SwiftUI tvOS-App (XcodeGen project.yml)
+    Addons/                   Stremio protocol: Manifest, Catalog, Meta, Stream, Subtitles
+    Services/                 TMDB, TVDB, MDBList, Trakt, Simkl (HTTP clients, token models)
+    Import/                   Nuvio JSON, Trakt list, MDBList list, TMDB list/Discover, packs
+    Ranking/                  stream ordering (language, resolution, DV/HDR, size, cache)
+    Sync/                     progress: local + Trakt/Simkl, conflicts, offline queue
+    Store/                    JSON files per profile, versioned, atomic
+  Packages/PlaybackKit/       tvOS: PlayerEngine protocol + AetherEngine adapter
+  App/                        SwiftUI tvOS app (XcodeGen project.yml)
 ```
 
-- **Persistenz:** Codable-JSON pro Profil in Application Support, Schema-Version im Dokument,
-  atomares Schreiben. Begründung: unter Linux testbar, einfach auf den Pi zu sichern, später als
-  Dokumente in CloudKit spiegelbar. Geheimnisse (Tokens, API-Keys) in der Keychain, im Export
-  verschlüsselt/optional. [C] (SwiftData verworfen: nicht unter Linux testbar.)
-- **Eingabe langer Texte:** Die App startet bei Bedarf einen kleinen Web-Server im Heimnetz und zeigt
-  einen QR-Code; am Handy öffnet sich eine Seite zum Einfügen von Manifest-URLs, API-Keys und
-  Import-Dateien (z. B. Nuvio-JSON). Trakt/Simkl über deren Geräte-Code-Login. [C]
-- **Sicherung auf den Pi:** Phase nach dem Kern; kleiner Dienst neben AIOStreams (eigenes Teilprojekt
-  "AIOStreams auf dem Pi"). Bis dahin: Export/Import per Handy-Seite. [C]
-- **Design-Sprache:** native tvOS-Fokus-Engine, Parallaxe, Top-Shelf später; Stile aus den Mockups
-  `mockups/widget-stile.html` und `mockups/prototyp.html`.
+- **Persistence:** Codable JSON per profile in Application Support, schema version in the document,
+  atomic writes. Reason: testable on Linux, easy to back up to the Pi, can later be mirrored as
+  documents in CloudKit. Secrets (tokens, API keys) in the Keychain, encrypted/optional in the export.
+  [C] (SwiftData rejected: not testable on Linux.)
+- **Entering long text:** when needed, the app starts a small web server on the home network and shows
+  a QR code; on the phone a page opens for pasting manifest URLs, API keys and import files (for
+  example Nuvio JSON). Trakt/Simkl via their device-code login. [C]
+- **Backup to the Pi:** a phase after the core; a small service next to AIOStreams (its own
+  sub-project "AIOStreams on the Pi"). Until then: export/import via the phone page. [C]
+- **Design language:** native tvOS focus engine, parallax, Top Shelf later; styles from the mockups
+  `mockups/widget-stile.html` and `mockups/prototyp.html`.
 
-## 6. Bildschirme [C, Startseite/Bearbeiten N]
+## 6. Screens [C, home screen/editing U]
 
-1. Profilauswahl (beim Start, wenn > 1 Profil).
-2. Startseite: Reihen aus Collections im gewählten Stil; Weiterschauen-Reihe; Bearbeiten wie §2.
-3. Collection-Ansicht: Ordner als Kacheln → Ordner zeigt Quellen als Reihen.
-4. Detailseite: Hero mit Logo, Bewertungen (MDBList), Fortsetzen/Abspielen, Staffeln/Folgen
-   (TVDB-Reihenfolge), Quellenliste (AIOStreams, sortiert nach Profilvorlieben).
-5. Player: AetherEngine-Fläche, Transportleiste, Ton/Untertitel-Menü, nächste Folge.
-6. Suche (TMDB + Addon-Kataloge).
-7. Einstellungen pro Profil: Addons, Konten, Fortschritt-Quelle, Sprache, Ton/Untertitel,
-   Collections importieren, Profil verwalten.
+1. Profile selection (at launch, if there is more than 1 profile).
+2. Home screen: rows from collections in the chosen style; continue watching row; editing as in §2.
+3. Collection view: folders as tiles → a folder shows its sources as rows.
+4. Detail page: hero with logo, ratings (MDBList), resume/play, seasons/episodes (TVDB order),
+   source list (AIOStreams, ordered by the profile's preferences).
+5. Player: AetherEngine surface, transport bar, audio/subtitle menu, next episode.
+6. Search (TMDB + addon catalogs).
+7. Settings per profile: addons, accounts, progress source, language, audio/subtitles, import
+   collections, manage profile.
 
-## 7. Phasen [C]
+## 7. Phases [C]
 
-- **P0** Spike: AetherEngine am echten TV (DV + 5.1). Läuft.
-- **P1** Kern: PlayerCore (Modelle, Store, Stremio-Client, TMDB, Nuvio-Import, Ranking) mit Linux-Tests;
-  App-Gerüst: Startseite (alle 6 Stile), Detail, Quellenliste, Player über PlaybackKit.
-- **P2** Bearbeiten-Modus + Plus-Auswahl + fertige Pakete + Trakt/MDBList/TMDB-Import.
-- **P3** Profile + Einstellungen + Handy-Eingabeseite (QR).
-- **P4** Sync: Trakt/Simkl (Geräte-Login, Scrobble, Weiterschauen), Fortschritt-Quelle.
-- **P5** TVDB-Folgen, MDBList-Bewertungen, Autoplay/bingeGroup, Feinschliff, Pi-Sicherung.
+- **P0** Spike: AetherEngine on the real TV (DV + 5.1). Running.
+- **P1** Core: PlayerCore (models, store, Stremio client, TMDB, Nuvio import, ranking) with Linux tests;
+  app skeleton: home screen (all 6 styles), detail, source list, player via PlaybackKit.
+- **P2** Edit mode + plus selection + ready-made packs + Trakt/MDBList/TMDB import.
+- **P3** Profiles + settings + phone input page (QR).
+- **P4** Sync: Trakt/Simkl (device login, scrobble, continue watching), progress source.
+- **P5** TVDB episodes, MDBList ratings, autoplay/bingeGroup, polish, Pi backup.
 
-## 7a. Antworten auf den Builder-Check [C]
+## 7a. Answers to the builder check [C]
 
-- **Startseiten-Reihe:** Eine Reihe zeigt entweder eine *Liste* (eine Quelle: TMDB-Discover, Trakt-Liste,
-  Addon-Katalog, Weiterschauen, Watchlist) in einem Titel-Stil (Hero, Poster, Querformat, Top 10)
-  oder eine *Collection* als Ordner-Kacheln (Stil Collection- oder Logo-Kacheln). Hat ein Ordner
-  mehrere Quellen, öffnet er eine Seite mit einer Reihe pro Quelle. Die Plus-Auswahl bietet beides an.
-- **Neu-Signieren:** Die gleiche Bundle-ID und die gleiche Apple-ID ergeben den gleichen Container, also bleiben die Daten
-  erhalten. Trotzdem gibt es schon in P1 einen JSON-Export und -Import aller Profile (Sicherheitsnetz).
-  Tokens liegen in der Keychain und sind zusätzlich im Export enthalten (das Gerät ist privat).
-- **Nuvio-Addon-Quellen** (54 von 2224, `app.xperience.*`, keine URL): Der Import überspringt sie und
-  merkt sie sich. Sie werden aktiv, sobald ein Addon mit dieser Manifest-ID installiert ist.
-- **Dubletten:** gleicher Titel → Ordner vereinigen (gleicher Ordnertitel → Quellen vereinigen,
-  Quellen nach `id` entdoppelt).
-- **Stream-Reihenfolge:** Die Reihenfolge von AIOStreams bleibt (dort ist sie schon eingestellt). Die App filtert nur
-  nicht abspielbare Streams aus und zeigt geparste Merkmale (Auflösung, DV/HDR, Ton, Größe) als
-  Plaketten. `Ranking` bleibt also klein.
-- **Texteingabe in P1:** über die tvOS-Systemtastatur (das iPhone bietet die Eingabe als Mitteilung an). Die QR-Seite
-  kommt in P3.
-- **App-Plätze:** Eine freie Apple-ID erlaubt 3 Apps (VortX, Player-Probe, Haupt-App). Die Haupt-App bekommt
-  eine eigene Bundle-ID `de.haskoman.player`, die Probe kann nach dem Test weg.
+- **Home screen row:** a row shows either a *list* (one source: TMDB Discover, Trakt list, addon
+  catalog, continue watching, watchlist) in a title style (hero, poster, landscape, top 10) or a
+  *collection* as folder tiles (style collection or logo tiles). If a folder has several sources, it
+  opens a page with one row per source. The plus selection offers both.
+- **Re-signing:** the same bundle ID and the same Apple ID give the same container, so the data is
+  kept. Still, P1 already has a JSON export and import of all profiles (safety net). Tokens are in the
+  Keychain and are also included in the export (the device is private).
+- **Nuvio addon sources** (54 of 2224, `app.xperience.*`, no URL): the import skips them and remembers
+  them. They become active as soon as an addon with this manifest ID is installed.
+- **Duplicates:** same title → merge folders (same folder title → merge sources, sources deduplicated
+  by `id`).
+- **Stream order:** the AIOStreams order is kept (it is already configured there). The app only filters
+  out streams that cannot be played and shows parsed attributes (resolution, DV/HDR, audio, size) as
+  badges. So `Ranking` stays small.
+- **Text input in P1:** via the tvOS system keyboard (the iPhone offers the input as a notification).
+  The QR page comes in P3.
+- **App slots:** a free Apple ID allows 3 apps (one other sideloaded app, Player-Probe, the main app).
+  The main app gets its own bundle ID `de.haskoman.player`; the probe can be removed after the test.
 
-## 8. Dem Builder überlassen
+## 8. Left to the builder
 
-Konkrete Typnamen, Ordnerstruktur innerhalb der Pakete, HTTP-Caching, Bildlader, genaue
-Fokus-Animationen, Fehlermeldungstexte, Testaufteilung.
+Concrete type names, folder structure inside the packages, HTTP caching, image loader, exact focus
+animations, error message texts, test split.
 
-## 9. Risiken und offene Punkte
+## 9. Risks and open points
 
-- Xcode 27 für AetherEngine vs. Xcode 26.x auf GitHub-Runnern → ggf. ältere AetherEngine-Version
-  pinnen oder anderen Runner nutzen. (Spike klärt.)
-- DV/5.1 auf echter Hardware unbestätigt (Spike klärt, Nutzer testet).
-- **[OFFEN]** Repo öffentlich machen (unbegrenzte Mac-Minuten) oder privat bleiben (≈ 15–20 Builds/Monat)?
-- **[OFFEN]** App-Name / Icon.
-- **[OFFEN]** Welche 2 fertigen Pakete? Vorschlag [C]: "Streaming-Dienste DE" (Netflix, Prime, Disney+,
-  Apple TV+, WOW … aus TMDB Watch-Providers) und "Genres & Stimmungen".
-- **[OFFEN]** API-Keys: TMDB/MDBList/TVDB-Keys des Nutzers oder eigene? (TVDB verlangt eigenen Key.)
+- Xcode 27 for AetherEngine vs. Xcode 26.x on GitHub runners → if needed, pin an older AetherEngine
+  version or use another runner. (The spike clarifies this.)
+- DV/5.1 on real hardware not confirmed yet (the spike clarifies this, the user tests).
+- **[OPEN]** Make the repo public (unlimited Mac minutes) or keep it private (≈ 15–20 builds/month)?
+- **[OPEN]** App name / icon.
+- **[OPEN]** Which 2 ready-made packs? Proposal [C]: "Streaming services DE" (Netflix, Prime, Disney+,
+  Apple TV+, WOW … from TMDB watch providers) and "Genres & moods".
+- **[OPEN]** API keys: the user's TMDB/MDBList/TVDB keys or our own? (TVDB requires its own key.)

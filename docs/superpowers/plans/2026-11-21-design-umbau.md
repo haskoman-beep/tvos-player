@@ -1,15 +1,15 @@
-# Design-Umbau (im Stil gängiger tvOS-Streaming-Apps) Implementation Plan
+# Design Rework (in the style of common tvOS streaming apps) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Umbau von Navigation, Startseite, Einstellungen und Aussehen im Stil gängiger tvOS-Streaming-Apps. Dazu zwei neue Tabs: Bibliothek und Kalender.
+**Goal:** Rework navigation, home screen, settings and appearance in the style of common tvOS streaming apps. Plus two new tabs: library and calendar.
 
 **Architecture:**
-- Navigation und Einstellungen nutzen SwiftUI-Systembausteine:
-  - `TabView` mit `Tab(…, systemImage:)`, wahlweise `.sidebarAdaptable`;
-  - die Einstellungen als Kategorienliste links mit Detailbereich rechts.
-- Hero mit Info-Ebene, Hintergrund nach Fokus und aufklappende Poster sind eigene Komponenten.
-- Testbare Logik kommt nach PlayerCore: Appearance-Defaults, Hero-Quellwahl, Kalender-Gruppierung, Verlauf.
+- Navigation and settings use SwiftUI system building blocks:
+  - `TabView` with `Tab(…, systemImage:)`, optionally `.sidebarAdaptable`;
+  - the settings as a category list on the left with a detail area on the right.
+- The hero with its info layer, the background that follows the focus and the expanding posters are custom components.
+- Testable logic goes into PlayerCore: appearance defaults, hero source choice, calendar grouping, history.
 
 **Tech Stack:** Swift 6.2, SwiftUI tvOS 18, Swift Testing (Podman `swift:6.2`), GitHub Actions + `atv_install.mjs`.
 
@@ -17,192 +17,198 @@
 
 ## Global Constraints
 
-- Mindestversion: tvOS 18.0. Das Repo ist öffentlich: keine Schlüssel, keine Namen, keine IPs.
-- Neue Profilfelder bekommen Standardwerte in `Profile.init(from:)`; ältere Sicherungen müssen weiter laden.
-- Bilder ausschließlich über `RemoteImage` / `ImagePipeline`.
-- Kerntests: `cd Packages/PlayerCore && podman run --rm -v "$PWD":/pkg:Z -w /pkg docker.io/library/swift:6.2 swift test`.
-  Zum Start sind 86 Tests grün.
-- Ein Build pro Phase.
-  - Push nur mit `git -C ~/tvos_player/app push`.
-  - Commit-Identität `haskoman-beep`, mit den Trailer-Zeilen „Co-Authored-By“ und „Claude-Session“.
-- Die Oberfläche ist auf Deutsch.
+- Minimum version: tvOS 18.0. The repo is public: no keys, no names, no IPs.
+- New profile fields get default values in `Profile.init(from:)`; older backups must still load.
+- Images only via `RemoteImage` / `ImagePipeline`.
+- Core tests: `cd Packages/PlayerCore && podman run --rm -v "$PWD":/pkg:Z -w /pkg docker.io/library/swift:6.2 swift test`.
+  86 tests are green at the start.
+- One build per phase.
+  - Push only with `git -C ~/tvos_player/app push`.
+  - Commit identity `haskoman-beep`, with the trailer lines "Co-Authored-By" and "Claude-Session".
+- The interface is in German.
 
 ## Review Focus
 
-1. Alte Profile ohne `appearance`: die App startet, die Startseite ist unverändert, eine vorhandene `.hero`-Reihe wird zur Hero-Quelle. Test: Task 1.
-2. Leere Startseite oder keine Katalog-Reihe: es gibt keinen Hero und keinen Absturz. Test: Task 1 (`heroSource` → nil).
-3. Fokus wechselt schnell über viele Poster: weder Hintergrund noch Aufklappen laden pro Zwischenschritt. Umsetzung über
-   350 ms Entprellung (Task 3/4). Am Gerät mit der Log-Zeile „hero: Fokus-Hintergrund“ prüfen, höchstens eine pro Ruhepause.
-4. Serie ohne kommende Folgen oder TMDB ohne Treffer: der Kalender lässt sie aus und zeigt eine leere Meldung statt eines Fehlers. Test: Task 5.
-5. Fokus aus der ersten Reihe nach oben muss im Hero-Knopf landen, nicht in der Seitenleiste. Prüfung am Gerät (Task 3).
+1. Old profiles without `appearance`: the app starts, the home screen is unchanged, an existing `.hero` row becomes the hero source. Test: Task 1.
+2. Empty home screen or no catalog row: there is no hero and no crash. Test: Task 1 (`heroSource` → nil).
+3. Focus moves quickly across many posters: neither the background nor the expansion loads for every intermediate step.
+   Implemented with a 350 ms debounce (Task 3/4). Check on the device with the log line „hero: Fokus-Hintergrund“ (focus
+   background): at most one per rest period.
+4. A series without upcoming episodes or TMDB without a match: the calendar leaves it out and shows an empty message instead of an error. Test: Task 5.
+5. Focus moving up from the first row must land on the hero button, not in the sidebar. Check on the device (Task 3).
 
 ---
 
-### Task 1: Appearance-Modell + Hero-Quelle (PlayerCore)
+### Task 1: Appearance model + hero source (PlayerCore)
 
 **Files:**
 - Create: `Packages/PlayerCore/Sources/PlayerCore/Models/Appearance.swift`
-- Modify: `Packages/PlayerCore/Sources/PlayerCore/Models/Profile.swift` (Feld + CodingKey + decodeIfPresent)
+- Modify: `Packages/PlayerCore/Sources/PlayerCore/Models/Profile.swift` (field + CodingKey + decodeIfPresent)
 - Modify: `Packages/PlayerCore/Sources/PlayerCore/Models/Collection.swift` (`SourceKind.upcoming`, `CatalogSource.upcoming`)
 - Test: `Packages/PlayerCore/Tests/PlayerCoreTests/AppearanceTests.swift`
 
 **Interfaces (Produces):**
 - `enum NavigationStyle: String, Codable { case sidebar, top }`
 - `enum AccentChoice: String, Codable, CaseIterable { case blue, purple, pink, orange, green, white }`
-- `enum CardSize: String, Codable, CaseIterable { case small, medium, large }`, mit `var scale: CGFloat` = 0.85 / 1.0 / 1.2.
-- `struct Appearance: Codable, Sendable, Hashable` mit:
+- `enum CardSize: String, Codable, CaseIterable { case small, medium, large }`, with `var scale: CGFloat` = 0.85 / 1.0 / 1.2.
+- `struct Appearance: Codable, Sendable, Hashable` with:
   - `navigation = .sidebar`, `accent = .blue`, `cardSize = .medium`;
   - `heroEnabled = true`, `heroRowID: UUID? = nil`, `expandPosters = true`;
-  - einem eigenen `init(from:)`, das fehlende Felder mit Standardwerten füllt.
+  - its own `init(from:)` that fills missing fields with default values.
 - `Profile.appearance: Appearance`
-- `extension HomeLayout { func heroSource(_ a: Appearance) -> HomeRow? }`. Reihenfolge:
-  1. die Reihe mit `a.heroRowID`, falls vorhanden;
-  2. sonst die erste Reihe mit `style == .hero`;
-  3. sonst die erste `.list`-Reihe, die nicht `continueWatching` ist;
-  4. sonst nil. Ist `heroEnabled == false`, ebenfalls nil.
-- `extension HomeLayout { func rowsBelowHero(_ a: Appearance) -> [HomeRow] }` gibt alle Reihen zurück außer einer `.hero`-Reihe,
-  die die Hero-Quelle ist.
-- `SourceKind.upcoming`, `CatalogSource.upcoming = CatalogSource(id: "builtin.upcoming", title: "Heute neu", kind: .upcoming, mediaType: .series)`.
+- `extension HomeLayout { func heroSource(_ a: Appearance) -> HomeRow? }`. Order:
+  1. the row with `a.heroRowID`, if present;
+  2. otherwise the first row with `style == .hero`;
+  3. otherwise the first `.list` row that is not `continueWatching`;
+  4. otherwise nil. If `heroEnabled == false`, also nil.
+- `extension HomeLayout { func rowsBelowHero(_ a: Appearance) -> [HomeRow] }` returns all rows except a `.hero` row that is
+  the hero source.
+- `SourceKind.upcoming`, `CatalogSource.upcoming = CatalogSource(id: "builtin.upcoming", title: "Heute neu", kind: .upcoming, mediaType: .series)` („Heute neu“ = new today).
 
-- [ ] **Step 1: Tests schreiben**
-  - `appearanceDefaultsFromOldProfile`: Profil-JSON ohne `appearance` dekodieren, dann `navigation == .sidebar` und `heroEnabled`.
-  - `heroSourcePrefersExplicitThenHeroStyleThenFirstList`: drei Layouts, erwartete Reihen-IDs.
-  - `heroSourceNilWhenDisabledOrNoList`: liefert nil.
+- [ ] **Step 1: Write the tests**
+  - `appearanceDefaultsFromOldProfile`: decode profile JSON without `appearance`, then `navigation == .sidebar` and `heroEnabled`.
+  - `heroSourcePrefersExplicitThenHeroStyleThenFirstList`: three layouts, expected row IDs.
+  - `heroSourceNilWhenDisabledOrNoList`: returns nil.
   - `rowsBelowHeroHidesHeroStyleRow`.
-- [ ] **Step 2:** Tests laufen lassen. Erwartet: Kompilierfehler, weil `Appearance` fehlt.
-- [ ] **Step 3:** Implementieren wie unter Interfaces beschrieben. `AppModel` behandelt `.upcoming` vorerst mit `[]`;
-  Task 5 füllt das später.
-- [ ] **Step 4:** Tests laufen lassen. Erwartet: alle grün (86 + 4).
-- [ ] **Step 5: Commit** mit der Nachricht „Aussehen-Einstellungen im Profil, Hero-Quelle“.
+- [ ] **Step 2:** Run the tests. Expected: compile error, because `Appearance` is missing.
+- [ ] **Step 3:** Implement as described under Interfaces. `AppModel` handles `.upcoming` with `[]` for now;
+  Task 5 fills it in later.
+- [ ] **Step 4:** Run the tests. Expected: all green (86 + 4).
+- [ ] **Step 5: Commit** with the message „Aussehen-Einstellungen im Profil, Hero-Quelle“ (appearance settings in the profile, hero source).
 
-### Task 2: Navigation + Einstellungs-Kategorien (App) → Build 23
+### Task 2: Navigation + settings categories (app) → build 23
 
 **Files:**
 - Modify: `App/Sources/PlayerApp.swift` (`RootView`)
 - Create: `App/Sources/Views/ClockView.swift`
-- Replace: `App/Sources/Views/SettingsView.swift` durch eine Kategorien-Ansicht
-- Create: `App/Sources/Views/Settings/` mit den Dateien `ProfileSettings.swift`, `AddonSettings.swift`, `ServiceSettings.swift`,
+- Replace: `App/Sources/Views/SettingsView.swift` with a category view
+- Create: `App/Sources/Views/Settings/` with the files `ProfileSettings.swift`, `AddonSettings.swift`, `ServiceSettings.swift`,
   `HomeSettings.swift`, `AppearanceSettings.swift`, `PlaybackSettings.swift`, `AboutSettings.swift`
-- Create: `App/Sources/Views/LibraryView.swift` und `CalendarView.swift`, zunächst als Platzhalter mit „Kommt in Build 26“
+- Create: `App/Sources/Views/LibraryView.swift` and `CalendarView.swift`, at first as placeholders with „Kommt in Build 26“ (coming in build 26)
 
-**Interfaces (Consumes):** `Profile.appearance` aus Task 1.
+**Interfaces (Consumes):** `Profile.appearance` from Task 1.
 
 - [ ] **Step 1: `RootView`**
-  - `TabView(selection: $tab)` mit `enum AppTab { home, search, library, calendar, settings }`.
-  - Symbole: `house`, `magnifyingglass`, `books.vertical`, `calendar`, `gearshape`.
-  - Ist `appearance.navigation == .sidebar`, kommt `.tabViewStyle(.sidebarAdaptable)` dazu. Sonst bleibt die Standard-Leiste
-    und `ClockView` liegt als Overlay oben rechts (Format `HH:mm`, `TimelineView(.everyMinute)`).
-  - Jeder Tab behält einen eigenen `NavigationPath` mit `.environment(\.navigate)`, wie heute.
-  - Akzentfarbe: `.tint(appearance.accent.color)`.
-- [ ] **Step 2: Einstellungen**
-  - Linke Liste mit 7 Kategorien und Symbolen: `person.crop.circle`, `puzzlepiece`, `key`, `house`, `paintpalette`,
+  - `TabView(selection: $tab)` with `enum AppTab { home, search, library, calendar, settings }`.
+  - Symbols: `house`, `magnifyingglass`, `books.vertical`, `calendar`, `gearshape`.
+  - If `appearance.navigation == .sidebar`, `.tabViewStyle(.sidebarAdaptable)` is added. Otherwise the standard bar stays
+    and `ClockView` sits as an overlay at the top right (format `HH:mm`, `TimelineView(.everyMinute)`).
+  - Each tab keeps its own `NavigationPath` with `.environment(\.navigate)`, as today.
+  - Accent colour: `.tint(appearance.accent.color)`.
+- [ ] **Step 2: Settings**
+  - A list on the left with 7 categories and symbols: `person.crop.circle`, `puzzlepiece`, `key`, `house`, `paintpalette`,
     `play.circle`, `info.circle`.
-  - Das Fokussieren einer Kategorie zeigt rechts deren Inhalt.
-  - Die bisherigen Einträge ziehen 1:1 in die jeweilige Kategorie um. Der QR-Eintrag liegt unter „Dienste“ und zusätzlich ganz oben.
-  - „Aussehen“: Picker für Navigation, Akzentfarbe (6 Farbkreise) und Kartengröße; Toggles für Hero, Poster aufklappen.
-    Hero-Quelle als Picker über die `.list`-Reihen.
-  - „Über“: Version, Anzahl der Addons, Log-Hinweis.
-- [ ] **Step 3:** Commit mit der Nachricht „Seitenleiste/obere Leiste mit Uhr, Einstellungen in Kategorien“. Danach pushen
-  und mit dem Watcher Build 23 bauen und installieren.
-- [ ] **Step 4: Am Gerät prüfen**
-  - Beide Navigationsarten.
-  - Zurück-Taste aus einem Tab.
-  - Jede Einstellungs-Kategorie öffnet.
+  - Focusing a category shows its content on the right.
+  - The existing entries move 1:1 into their category. The QR entry sits under „Dienste“ (services) and also at the very top.
+  - „Aussehen“ (appearance): pickers for navigation, accent colour (6 colour circles) and card size; toggles for the hero
+    and for expanding posters. The hero source is a picker over the `.list` rows.
+  - „Über“ (about): version, number of addons, log hint.
+- [ ] **Step 3:** Commit with the message „Seitenleiste/obere Leiste mit Uhr, Einstellungen in Kategorien“ (sidebar/top bar
+  with clock, settings in categories). Then push, and build and install build 23 with the watcher.
+- [ ] **Step 4: Check on the device**
+  - Both navigation styles.
+  - The back button from a tab.
+  - Every settings category opens.
 
-### Task 3: Hero mit Info-Ebene + Diashow (App) → Build 24
+### Task 3: Hero with info layer + slideshow (app) → build 24
 
 **Files:**
 - Create: `App/Sources/Views/HomeHero.swift`
-- Modify: `App/Sources/Views/HomeView.swift`, `RowViews.swift` (Fokus-Rückmeldung von den Kacheln)
-- Modify: `App/Sources/AppModel.swift` (`heroItems(for row:) async -> [MetaPreview]`, nutzt den vorhandenen Reihen-Loader,
-  höchstens 8 Einträge)
+- Modify: `App/Sources/Views/HomeView.swift`, `RowViews.swift` (focus reporting from the tiles)
+- Modify: `App/Sources/AppModel.swift` (`heroItems(for row:) async -> [MetaPreview]`, uses the existing row loader,
+  at most 8 entries)
 
 **Interfaces:**
-- `@Observable final class HomeFocus { var item: MetaPreview?; var inRows: Bool }`, als Environment-Objekt in `HomeView`.
-- Kacheln melden ihren Fokus über `.onFocusChange { if $0 { focus.set(item) } }`. `set` entprellt 350 ms per `Task`, ein neuer
-  Fokus bricht die Wartezeit ab. Danach eine Log-Zeile `hero: Fokus-Hintergrund <id>`.
+- `@Observable final class HomeFocus { var item: MetaPreview?; var inRows: Bool }`, as an environment object in `HomeView`.
+- Tiles report their focus via `.onFocusChange { if $0 { focus.set(item) } }`. `set` debounces 350 ms with a `Task`; a new
+  focus cancels the wait. After that, a log line `hero: Fokus-Hintergrund <id>` (focus background).
 
-- [ ] **Step 1: Aufbau von `HomeView`**
-  - Ein `ZStack`.
-  - Hinten die Ebene `HeroBackdrop`: Vollbild-Hintergrund des angezeigten Titels, Überblendung 0,6 s, Verlauf unten und links.
-  - Darüber `HeroInfo`:
-    - Logo (`localized.logo`, sonst Name);
-    - Metazeile Jahr · Laufzeit · FSK;
-    - `InfoBadges` mit den Bewertungen;
-    - Beschreibung in 2 Zeilen.
-  - Darüber der `ScrollView` mit Abstand oben (ca. 560 pt), darin:
-    - zuerst die Knopfzeile `[▶ Abspielen] [Details]` mit Diashow-Punkten;
-    - danach die Reihen aus `rowsBelowHero`.
-  - Angezeigter Titel: `focus.inRows ? focus.item : slides[index]`.
-  - Diashow: Timer alle 10 s, nur wenn `!focus.inRows`.
-- [ ] **Step 2: „Abspielen“** wiederholt die Weiterschauen-Logik aus `DetailView`.
-  - Film: `PlayRequest(…, resumeLastSource: true)`.
-  - Serie: die nächste offene Folge per `NextEpisode`, sonst S1F1. Die Metadaten werden erst beim Druck geladen.
-  - Den vorhandenen Code in eine gemeinsame Funktion `AppModel.quickPlayRequest(for:) async -> PlayRequest?` ziehen.
-- [ ] **Step 3:** Die alte `HeroCard`-Reihe wird nur noch angezeigt, wenn sie nicht die Hero-Quelle ist.
-- [ ] **Step 4:** Commit mit der Nachricht „Startseite: Hero-Diashow, Info folgt dem Fokus“. Push, Build 24.
-- [ ] **Step 5: Am Gerät prüfen**
-  - Fokus wandert von der Reihe nach oben → landet auf dem Abspielen-Knopf.
-  - Die Diashow pausiert, solange der Fokus in den Reihen liegt.
-  - Pro Ruhepause erscheint höchstens eine Log-Zeile.
+- [ ] **Step 1: Structure of `HomeView`**
+  - A `ZStack`.
+  - At the back, the layer `HeroBackdrop`: full-screen background of the shown title, 0.6 s cross-fade, gradient at the
+    bottom and left.
+  - Above it, `HeroInfo`:
+    - logo (`localized.logo`, otherwise the name);
+    - meta line year · runtime · FSK age rating;
+    - `InfoBadges` with the ratings;
+    - the description in 2 lines.
+  - Above that, the `ScrollView` with a top inset (about 560 pt), containing:
+    - first the button row `[▶ Abspielen] [Details]` (play, details) with slideshow dots;
+    - then the rows from `rowsBelowHero`.
+  - Shown title: `focus.inRows ? focus.item : slides[index]`.
+  - Slideshow: a timer every 10 s, only when `!focus.inRows`.
+- [ ] **Step 2: „Abspielen“ (play)** repeats the continue watching logic from `DetailView`.
+  - Movie: `PlayRequest(…, resumeLastSource: true)`.
+  - Series: the next open episode via `NextEpisode`, otherwise S1E1. The metadata is only loaded on the press.
+  - Move the existing code into a shared function `AppModel.quickPlayRequest(for:) async -> PlayRequest?`.
+- [ ] **Step 3:** The old `HeroCard` row is only shown when it is not the hero source.
+- [ ] **Step 4:** Commit with the message „Startseite: Hero-Diashow, Info folgt dem Fokus“ (home screen: hero slideshow,
+  info follows the focus). Push, build 24.
+- [ ] **Step 5: Check on the device**
+  - Focus moving up from the row → lands on the play button.
+  - The slideshow pauses while the focus is in the rows.
+  - At most one log line appears per rest period.
 
-### Task 4: Poster aufklappen + Kartengröße (App) → Build 25
+### Task 4: Expand posters + card size (app) → build 25
 
-**Files:** Modify `App/Sources/Views/RowViews.swift` (`PosterCard`, `LandscapeCard`, Reihenabstände)
+**Files:** Modify `App/Sources/Views/RowViews.swift` (`PosterCard`, `LandscapeCard`, row spacing)
 
 - [ ] **Step 1: `PosterCard`**
-  - Bei Fokus, 350 ms Ruhe und `expandPosters`: die Breite wächst animiert (0,25 s) von Poster- auf Querformat (16:9, gleiche Höhe).
-  - Gezeigt werden Hintergrundbild und Logo. Das Bild wird erst nach der Ruhezeit angefordert.
-  - Die Reihe scrollt mit `scrollPosition`, verankert am fokussierten Element.
-- [ ] **Step 2:** `cardSize.scale` auf die Kartenmaße aller Reihenstile anwenden.
-- [ ] **Step 3:** Commit, Push, Build 25.
-- [ ] **Step 4: Am Gerät prüfen**
-  - Schnelles Durchscrollen klappt nichts auf.
-  - Die Reihe springt nicht.
+  - On focus, after 350 ms of rest and with `expandPosters`: the width grows animated (0.25 s) from poster to landscape
+    (16:9, same height).
+  - The background image and logo are shown. The image is only requested after the rest period.
+  - The row scrolls with `scrollPosition`, anchored on the focused element.
+- [ ] **Step 2:** Apply `cardSize.scale` to the card sizes of all row styles.
+- [ ] **Step 3:** Commit, push, build 25.
+- [ ] **Step 4: Check on the device**
+  - Scrolling through quickly expands nothing.
+  - The row does not jump.
 
-### Task 5: Bibliothek + Kalender + „Heute neu“ → Build 26
+### Task 5: Library + calendar + „Heute neu“ (new today) → build 26
 
 **Files:**
 - Create: `Packages/PlayerCore/Sources/PlayerCore/Progress/Upcoming.swift`
-- Modify: `TMDBLocalized.swift` (`nextEpisodes(tmdbID:) -> [UpcomingEpisode]` über `/tv/{id}`:
-  `next_episode_to_air` plus die Folgen der laufenden Staffel)
+- Modify: `TMDBLocalized.swift` (`nextEpisodes(tmdbID:) -> [UpcomingEpisode]` via `/tv/{id}`:
+  `next_episode_to_air` plus the episodes of the current season)
 - Modify: `WatchProgress.swift` (`history(limit:) -> [WatchProgress]`)
 - Modify: `App/Sources/Views/LibraryView.swift`, `CalendarView.swift`, `AppModel.swift`
 - Test: `Packages/PlayerCore/Tests/PlayerCoreTests/UpcomingTests.swift`
 
 **Interfaces (Produces):**
-- `struct UpcomingEpisode: Sendable, Hashable` mit den Feldern:
+- `struct UpcomingEpisode: Sendable, Hashable` with the fields:
   - `seriesID: String`, `seriesName: String`, `poster: String?`;
   - `season: Int`, `episode: Int`, `title: String?`, `airDate: String` (YYYY-MM-DD).
 - `enum Upcoming`:
   - `static func days(_ eps: [UpcomingEpisode], today: Date, calendar: Calendar) -> [(label: String, items: [UpcomingEpisode])]`
-    - Bereich: gestern bis heute + 14 Tage.
-    - Labels: „Gestern“, „Heute“, „Morgen“, sonst „Mi 26.11.“.
-    - Innerhalb eines Tages nach Serienname sortiert.
+    - Range: yesterday to today + 14 days.
+    - Labels: „Gestern“, „Heute“, „Morgen“ (yesterday, today, tomorrow), otherwise „Mi 26.11.“ (weekday and date).
+    - Sorted by series name within a day.
   - `static func seriesIDs(continueWatching: [WatchProgress], watchlist: [MetaPreview], limit: Int = 50) -> [String]`
-    - nur Serien; ohne Duplikate; Weiterschauen zuerst.
-- `ProgressBook.history(limit:)`: Einträge mit `finished == true`, absteigend nach `updated`.
+    - series only; no duplicates; continue watching first.
+- `ProgressBook.history(limit:)`: entries with `finished == true`, descending by `updated`.
 
 - [ ] **Step 1: Tests**
   - `upcomingGroupsYesterdayTodayTomorrowDate`
   - `upcomingDropsOutOfRange`
   - `seriesIDsDedupContinueFirstLimit`
   - `historyFinishedNewestFirst`
-  - `parseNextEpisodes` (JSON mit `next_episode_to_air` und leerem Fall)
-- [ ] **Step 2:** Tests laufen lassen. Erwartet: Kompilierfehler.
-- [ ] **Step 3: Implementieren**
-  - `AppModel.upcoming() async -> [UpcomingEpisode]` geht über `seriesIDs` und `tmdbID` und ruft dann `nextEpisodes` auf.
-  - Höchstens 4 Anfragen gleichzeitig. Cache 6 h im Speicher.
-  - `.upcoming` in der Reihe zeigt die Einträge von heute als Kacheln (Serie, Folge als Label).
-- [ ] **Step 4:** Tests laufen lassen. Erwartet: alle grün.
-- [ ] **Step 5: Ansichten**
-  - `LibraryView` hat drei Reihen: Weiterschauen, Merkliste, Verlauf, mit vorhandenen Kartenkomponenten.
-  - `CalendarView` zeigt Tagesabschnitte mit Querformat-Kacheln (Still bzw. Poster, „S2 F5 · Titel“). Ein Klick öffnet die Detailseite.
-  - Leerer Zustand: „Keine neuen Folgen in den nächsten 14 Tagen“.
-  - `AddRowSheet` bietet zusätzlich `.upcoming` an.
-- [ ] **Step 6:** Commit mit der Nachricht „Bibliothek, Kalender, Reihe ‚Heute neu‘“. Push, Build 26, am Gerät prüfen.
+  - `parseNextEpisodes` (JSON with `next_episode_to_air` and the empty case)
+- [ ] **Step 2:** Run the tests. Expected: compile error.
+- [ ] **Step 3: Implement**
+  - `AppModel.upcoming() async -> [UpcomingEpisode]` goes through `seriesIDs` and `tmdbID` and then calls `nextEpisodes`.
+  - At most 4 requests at the same time. 6 h cache in memory.
+  - `.upcoming` in the row shows today's entries as tiles (series, episode as the label).
+- [ ] **Step 4:** Run the tests. Expected: all green.
+- [ ] **Step 5: Views**
+  - `LibraryView` has three rows: continue watching, watchlist, history, with the existing card components.
+  - `CalendarView` shows day sections with landscape tiles (still or poster, „S2 F5 · Titel“, i.e. season 2 episode 5 ·
+    title). A click opens the detail page.
+  - Empty state: „Keine neuen Folgen in den nächsten 14 Tagen“ (no new episodes in the next 14 days).
+  - `AddRowSheet` also offers `.upcoming`.
+- [ ] **Step 6:** Commit with the message „Bibliothek, Kalender, Reihe ‚Heute neu‘“ (library, calendar, „Heute neu“ row).
+  Push, build 26, check on the device.
 
-### Task 6: Abschluss
+### Task 6: Wrap-up
 
-- [ ] `SITZUNG_UEBERGABE.md`: neuen Abschnitt „## STAND …“ vor „## Startprompt“ einfügen.
-- [ ] Eine Prüfung des gesamten Zweigs mit einem frischen Reviewer (Opus).
+- [ ] `SITZUNG_UEBERGABE.md` (session handover): insert a new section „## STAND …“ (status) before „## Startprompt“ (start prompt).
+- [ ] A review of the whole branch with a fresh reviewer (Opus).
