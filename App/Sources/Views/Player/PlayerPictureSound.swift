@@ -266,7 +266,7 @@ enum AddonSubtitleFiles {
 /// Einstellungs-Zeilen (Kategorie Wiedergabe & Bild): Spur-Gedächtnis (Abschnitt Folgen), Bildschirmschoner und
 /// Sprungweite der Systembefehle (Welle G-b).
 struct PlayerComfortSettingsRows: View {
-    enum Part { case tracks, screensaver, remote }
+    enum Part { case tracks, panelStyle, screensaver, remote }
 
     var part: Part
     @EnvironmentObject var model: AppModel
@@ -298,6 +298,12 @@ struct PlayerComfortSettingsRows: View {
                     cleared = true
                 }
             }
+        case .panelStyle:
+            // Welle F-h3: wie Ton & Untertitel im Player öffnen; gilt beim nächsten Öffnen.
+            SettingsChoiceRow(symbol: "captions.bubble", tint: tint, title: "Ton & Untertitel öffnen",
+                              detail: model.profile.player.trackPanelStyle.detail,
+                              options: TrackPanelStyle.allCases, selection: model.binding(\.player.trackPanelStyle),
+                              label: { $0.title })
         case .screensaver:
             SettingsChoiceRow(symbol: "moon.zzz", tint: tint, title: "Bildschirmschoner in der Pause",
                               detail: "So lange bleibt der Bildschirmschoner in der Pause gesperrt.",

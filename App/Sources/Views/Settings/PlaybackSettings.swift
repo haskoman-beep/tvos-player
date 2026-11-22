@@ -1,7 +1,7 @@
 import SwiftUI
 import PlayerCore
 
-/// Kategorie 5 „Wiedergabe & Bild“ (§2.2): Folgen, Film zwischenspeichern, Bildschirmschoner, Bild.
+/// Kategorie 5 „Wiedergabe & Bild“ (§2.2): Folgen, Ton & Untertitel im Player, Film zwischenspeichern, Bildschirmschoner, Bild.
 /// Sprache der App → Aussehen, Tonsprache/Untertitel → Ton & Untertitel, Fortschritt → Profil & Konten,
 /// Quellen vorladen/sortieren → Addons & Quellen.
 struct PlaybackSettings: View {
@@ -21,6 +21,9 @@ struct PlaybackSettings: View {
                                   options: StillWatchingCounter.choices, selection: model.binding(\.stillWatchingAfter),
                                   label: SettingsSummary.stillWatchingName)
                 PlayerComfortSettingsRows(part: .tracks)
+            }
+            SettingsSection("Ton & Untertitel im Player") {
+                PlayerComfortSettingsRows(part: .panelStyle)
             }
             SettingsSection("Zwischenspeichern") {
                 SettingsChoiceRow(symbol: "internaldrive", tint: tint, title: "Film zwischenspeichern",
