@@ -89,6 +89,11 @@ public enum PhoneCommand: Equatable, Sendable {
     case addRow(key: String)
     /// Welle F-a (E7): Adresse eines eigenen Bewertungs-Icon-Satzes (JSON); am Fernseher gibt es kein Feld mehr.
     case setRatingIconSet(String)
+    /// Wave F-o round 2: collection link (widget export, preview pack, collection export); the TV fetches it,
+    /// detects the format and keeps the link for "Aktualisieren".
+    case importCollectionLink(String)
+    /// Wave F-o round 2: pasted collection code (same formats as the link).
+    case importCollectionCode(Data)
 }
 
 /// Seitenlogik ohne Netzwerk: Token prüfen, Formular lesen, Befehle erzeugen.
@@ -130,8 +135,9 @@ public struct PhoneInputPage: Sendable {
             }
             if let a = val("addon") { cmds.append(.addAddon(a)) }
             for s in Self.services { if let v = val("key_\(s)") { cmds.append(.setKey(service: s, value: v)) } }
-            if let n = val("nuvio_url") { cmds.append(.importNuvioURL(n)) }
-            if let j = val("nuvio_json") { cmds.append(.importNuvioJSON(Data(j.utf8))) }
+            // Wave F-o round 2: the collection fields take every collection format (detected on the TV).
+            if let n = val("nuvio_url") { cmds.append(.importCollectionLink(n)) }
+            if let j = val("nuvio_json") { cmds.append(.importCollectionCode(Data(j.utf8))) }
             if let l = val("tmdb_link") { cmds.append(.addTMDBLink(l)) }
             if let b = val("backup_json") { cmds.append(.importBackup(Data(b.utf8))) }
             if let k = val("kit_url") { cmds.append(.importFusionURL(k)) }
@@ -169,13 +175,13 @@ public struct PhoneInputPage: Sendable {
         let body = """
         \(msg)<nav>\(nav)</nav>
         <form method=post action="/submit?t=\(token)">
-        <section id=\(PhoneSection.quickImport.rawValue)>\(head(.quickImport))\(field("import", "Link oder JSON einfügen – wird erkannt (Addon, TMDB-/Trakt-Liste, Fusion-Kit, Nuvio)", "https://…", area: true))</section>
+        <section id=\(PhoneSection.quickImport.rawValue)>\(head(.quickImport))\(field("import", "Link oder Code einfügen – wird erkannt (Addon, TMDB-/Trakt-Liste, Widget-Export, Preview Pack, Collection-Export)", "https://…", area: true))</section>
         <section id=\(PhoneSection.addon.rawValue)>\(head(.addon))\(field("addon", "Addon hinzufügen: Manifest-URL", "https://…/manifest.json"))
         \(field("key_torbox", "TorBox-API-Key (Bibliothek „Meine TorBox-Dateien“)", ""))</section>
         <section id=\(PhoneSection.keys.rawValue)>\(head(.keys))\(field("key_tmdb", "TMDB-API-Key", ""))\(field("key_mdblist", "MDBList-Key", ""))\(field("key_tvdb", "TVDB-Key", ""))
         \(field("key_trakt_id", "Trakt Client ID", ""))\(field("key_trakt_secret", "Trakt Client Secret", ""))\(field("key_simkl_id", "Simkl Client ID", ""))</section>
         <section id=\(PhoneSection.home.rawValue)>\(head(.home))<h3>Collections importieren</h3>
-        \(field("nuvio_url", "Nuvio-Export (URL)", "https://…json"))\(field("nuvio_json", "… oder Nuvio-JSON einfügen", "{…}", area: true))
+        \(field("nuvio_url", "Collection-Link: Widget-Export, Preview Pack oder Collection-Export (wird gemerkt, am Fernseher „Aktualisieren“)", "https://…json"))\(field("nuvio_json", "… oder den Code (JSON-Text) einfügen", "[…] oder {…}", area: true))
         \(field("tmdb_link", "TMDB- oder Trakt-Liste, Filmreihe, Studio als Reihe", "https://www.themoviedb.org/list/… oder https://trakt.tv/users/…/lists/…"))
         \(field("kit_url", "Fusion-Kit: „Copy JSON URL“ einfügen (braucht meist die Trakt Client ID)", "https://raw.githubusercontent.com/…json"))
         <p><a href="\(FusionKitCatalog.siteURL)">Kit-Katalog öffnen</a></p>

@@ -156,6 +156,7 @@ extension ReadyPackages {
     /// ein Poster wäre in der 16:9-Kachel beschnitten –, dann Herkunft (Nutzer-Import vor gewähltem Kit vor übrigem
     /// Kit), dann die meisten Treffer in dieser Reihe (eine Reihe sieht einheitlich aus), dann die meisten GIFs, dann
     /// die Reihenfolge in `sources`. Lücken füllt die nächste Quelle.
+    /// Wave F-o: focus and hero video come along; among equal hit counts most videos rank before most GIFs.
     /// Ohne Treffer: unverändert (Symbol-Kachel).
     public static func withArt(_ c: MediaCollection, sources: [PackageArtSource]) -> MediaCollection {
         let targets = c.folders.indices.filter { isPackageFolder(c.folders[$0].id) && c.folders[$0].coverImage == nil }
@@ -168,7 +169,7 @@ extension ReadyPackages {
 
         struct Hits {
             var order: Int; var origin: PackageArtSource.Origin; var wide: Bool
-            var gifs = 0; var byTarget: [Int: (folder: Folder, rank: Int)] = [:]
+            var videos = 0; var gifs = 0; var byTarget: [Int: (folder: Folder, rank: Int)] = [:]
         }
         var ranked: [Hits] = []
         for (order, s) in sources.enumerated() where !s.id.hasPrefix("pkg.") {
@@ -183,6 +184,7 @@ extension ReadyPackages {
                 if let best {
                     h.byTarget[w.index] = best
                     if gifURL(of: best.folder) != nil { h.gifs += 1 }
+                    if best.folder.focusVideo?.isEmpty == false { h.videos += 1 }
                 }
             }
             if !h.byTarget.isEmpty { ranked.append(h) }
@@ -192,6 +194,7 @@ extension ReadyPackages {
             if a.wide != b.wide { return a.wide }
             if a.origin != b.origin { return a.origin < b.origin }
             if a.byTarget.count != b.byTarget.count { return a.byTarget.count > b.byTarget.count }
+            if a.videos != b.videos { return a.videos > b.videos }
             if a.gifs != b.gifs { return a.gifs > b.gifs }
             return a.order < b.order
         }
@@ -202,6 +205,8 @@ extension ReadyPackages {
             out.folders[w.index].coverImage = src.coverImage
             out.folders[w.index].logo = src.logo
             out.folders[w.index].focusGif = gifURL(of: src)
+            out.folders[w.index].focusVideo = src.focusVideo.flatMap { $0.isEmpty ? nil : $0 }
+            out.folders[w.index].heroVideo = src.heroVideo
             // Steht der Name schon im Bild (Kit: `hideTitle`), zeigt die Kachel keinen zweiten Titel darüber.
             out.folders[w.index].hideTitle = src.hideTitle
         }
@@ -209,11 +214,12 @@ extension ReadyPackages {
     }
 }
 
-/// Welle F-l: Logzeile je Paket-Reihe („Paket-Bilder: <reihe> n/m mit Bild, k mit GIF“).
+/// Welle F-l / F-o: Logzeile je Paket-Reihe („Paket-Bilder: <reihe> n/m mit Bild, k mit GIF, v mit Video“).
 public struct PackageArtStats: Equatable, Sendable {
     public var tiles: Int
     public var images: Int
     public var gifs: Int
+    public var videos: Int
 
     /// nil, wenn die Reihe keine Paket-Kachel hat.
     public init?(folders: [Folder]) {
@@ -222,9 +228,12 @@ public struct PackageArtStats: Equatable, Sendable {
         tiles = p.count
         images = p.filter { !($0.coverImage ?? "").isEmpty }.count
         gifs = p.filter { !($0.focusGif ?? "").isEmpty }.count
+        videos = p.filter { !($0.focusVideo ?? "").isEmpty }.count
     }
 
-    public func logLine(row: String) -> String { "Paket-Bilder: \(row) \(images)/\(tiles) mit Bild, \(gifs) mit GIF" }
+    public func logLine(row: String) -> String {
+        "Paket-Bilder: \(row) \(images)/\(tiles) mit Bild, \(gifs) mit GIF, \(videos) mit Video"
+    }
 }
 
 extension FusionKitCatalog {

@@ -109,7 +109,8 @@ struct HomeRowView: View {
                 let packLine = PackageArtStats(folders: folders)?.logLine(row: title)
                 Strip(kind: tileKind) {
                     ForEach(folders) { f in
-                        card(.folder(f)) { FolderTile(folder: f, logoStyle: row.style == .logoTiles) }
+                        card(.folder(f)) { FolderTile(folder: f, logoStyle: row.style == .logoTiles,
+                                                              sound: model.profile.appearance.tileAnimationSound) }
                     }
                 }
                 .task(id: line + (packLine ?? "")) {
@@ -460,6 +461,8 @@ struct Top10Card: View {
 struct FolderTile: View {
     let folder: Folder
     let logoStyle: Bool
+    /// Wave F-o: setting "Ton bei Kachel-Animation" (sound of the focus video, once per focus).
+    var sound = false
     @Environment(\.cardScale) private var scale
     /// Fokus der umgebenden Karte (Fokus-GIF, Welle F-g).
     @Environment(\.isFocused) private var focused
@@ -475,12 +478,17 @@ struct FolderTile: View {
             // Welle F-g/F-l: eigene Paket-Kachel, solange kein Bild aus Import oder Kit vorliegt
             // (Farbverlauf + SF Symbol + deutscher Titel).
             packageTile(style, kind: logoStyle ? .logo : .landscape)
+                // Wave F-o: focus video (else GIF) on every tile style that shows package art.
+                .overlay { motion }
+                .clipped()
         } else if logoStyle {
             ZStack {
                 Color.white.opacity(0.08)
                 if let l = folder.logo { RemoteImage(url: l, maxPixels: 800, fit: true).padding(30 * scale) } else { Text(folder.title).font(.headline) }
             }
             .frame(width: Theme.Tile.width(.logo, scale), height: Theme.Tile.height(.logo, scale))
+            .overlay { motion }
+            .clipped()
         } else {
             // Welle F-l: Titel über dem Bild wie bei der Quelle der Kachel. Paket-Kacheln mit Bild aus Kit oder Import
             // zeigen keinen zweiten Titel (der Name steht im Bild); die Bedienungshilfe liest ihn weiter vor.
@@ -490,14 +498,18 @@ struct FolderTile: View {
             RemoteImage(url: folder.coverImage ?? folder.backdrop,
                         placeholder: style.map { AnyView(packageTile($0, kind: .landscape, title: !titleOverImage)) })
                 .frame(width: Theme.Tile.width(.landscape, scale), height: Theme.Tile.height(.landscape, scale)).clipped()
-                // Welle F-g: bewegtes Fokusbild über dem Standbild (nur auf der fokussierten Kachel).
-                .overlay { if let g = folder.focusGif { FocusGIF(url: g, focused: focused) } }
+                // Welle F-g/F-o: bewegtes Fokusbild über dem Standbild (nur auf der fokussierten Kachel):
+                // Video vor GIF.
+                .overlay { motion }
                 .clipped()
                 .overlay(alignment: .bottomLeading) {
                     if titleOverImage { Text(folder.title).font(.headline).shadow(radius: 4).padding(14) }
                 }
         }
     }
+
+    /// Wave F-o: what the focused tile plays over its still (video, else GIF, else nothing).
+    private var motion: some View { TileMotionOverlay(folder: folder, focused: focused, sound: sound) }
 
     private func packageTile(_ style: PackageTileStyle, kind: TileKind, title: Bool = true) -> some View {
         ZStack {

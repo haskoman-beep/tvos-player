@@ -18,10 +18,24 @@ struct HomeSettings: View {
         FusionKitSettingsView()
         NavigationLink { PhoneInputView(section: .quickImport) } label: {
             SettingsRowLabel(symbol: "square.and.arrow.down", tint: Theme.CategoryTint.home.color, title: "Collections importieren",
-                             detail: "Nuvio-Export, Fusion-Kit-URL, TMDB- oder Trakt-Liste am Handy einfügen",
+                             detail: "Collection-Link oder -Code, TMDB- oder Trakt-Liste am Handy einfügen",
                              accessory: .chevron, reserveDetailSpace: false)
         }
         .buttonStyle(ThemeRowButtonStyle())
         .settingsRowAccessibility(title: "Collections importieren", detail: "Am Handy", accessory: .chevron)
+        // Wave F-o round 2: collection link in the app (fetch, detect, import; "Aktualisieren" later).
+        let links = CollectionLinkStore.shared.links.count
+        NavigationLink { CollectionLinksPage() } label: {
+            SettingsRowLabel(symbol: "link", tint: Theme.CategoryTint.home.color, title: "Collection-Link hinzufügen",
+                             detail: "Widget-Export, Preview Pack oder Collection-Export als Link – mit Videos und Ton der Kacheln",
+                             accessory: links == 0 ? .chevron : .valueChevron(links == 1 ? "1 Link" : "\(links) Links"),
+                             reserveDetailSpace: false)
+        }
+        .buttonStyle(ThemeRowButtonStyle())
+        .settingsRowAccessibility(title: "Collection-Link hinzufügen", detail: nil, accessory: .chevron)
+        // Wave F-o: sound of the focus video on tiles (once per focus, at most about 12 s), default off.
+        SettingsToggleRow(symbol: "speaker.wave.2", tint: Theme.CategoryTint.home.color, title: "Ton bei Kachel-Animation",
+                          detail: "Spielt den Ton eines importierten Kachel-Videos einmal pro Fokus (höchstens etwa 12 s) – z. B. aus einem Preview Pack.",
+                          reserveDetailSpace: false, isOn: model.binding(\.appearance.tileAnimationSound))
     }
 }

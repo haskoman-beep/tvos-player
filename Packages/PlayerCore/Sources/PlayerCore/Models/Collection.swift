@@ -62,11 +62,17 @@ public struct Folder: Codable, Sendable, Hashable, Identifiable {
     /// Welle F-g: bewegtes Bild (GIF), das auf der fokussierten Kachel statt des Standbilds spielt. nil = keins.
     /// Optional, also beim Lesen alter Profile `decodeIfPresent` (synthetisiert).
     public var focusGif: String?
+    /// Wave F-o: short focus video (mp4/HLS, field `focusVideoUrl` of the collection export) that plays on the focused
+    /// tile in place of the still and the GIF. nil = none. Optional, so old profiles decode it with `decodeIfPresent`.
+    public var focusVideo: String?
+    /// Wave F-o: video for the large hero area (`heroVideoUrl`), kept from imports; not played yet.
+    public var heroVideo: String?
 
     public init(id: String, title: String, coverImage: String? = nil, logo: String? = nil, backdrop: String? = nil,
-                sources: [CatalogSource], hideTitle: Bool? = nil, focusGif: String? = nil) {
+                sources: [CatalogSource], hideTitle: Bool? = nil, focusGif: String? = nil,
+                focusVideo: String? = nil, heroVideo: String? = nil) {
         self.id = id; self.title = title; self.coverImage = coverImage; self.logo = logo; self.backdrop = backdrop; self.sources = sources
-        self.hideTitle = hideTitle; self.focusGif = focusGif
+        self.hideTitle = hideTitle; self.focusGif = focusGif; self.focusVideo = focusVideo; self.heroVideo = heroVideo
     }
 
     /// Titel über dem Kachelbild zeigen: ohne Bild immer, mit Bild nur bei `hideTitle == false`.

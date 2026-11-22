@@ -31,6 +31,9 @@ public struct TieredBlobStorage: BlobStorage {
     public static let budget = 640 * 1024
     /// Was alle anderen Blöcke zusammen belegen dürfen.
     public static var othersBudget: Int { budget - profileLimit }
+    /// Blobs with this name prefix are kept as files only, whatever their size (import data that may be large and
+    /// that the app can rebuild or do without). They never count against the UserDefaults budget.
+    public static let fileOnlyPrefix = "import-"
 
     public let defaults: KeyValueBlobs
     /// Gelesen wird immer aus allen Ordnern (auch einem, der gerade nicht beschreibbar ist).
@@ -54,7 +57,7 @@ public struct TieredBlobStorage: BlobStorage {
 
     /// Höchstgröße (komprimiert) eines Blocks in UserDefaults; 0 = nur Datei.
     public static func limit(_ name: String) -> Int {
-        if name.hasSuffix(".bak") { return 0 }
+        if name.hasSuffix(".bak") || name.hasPrefix(fileOnlyPrefix) { return 0 }
         if name == profileName { return profileLimit }
         return smallLimit
     }
@@ -183,4 +186,17 @@ public final class MemoryKeyValueBlobs: KeyValueBlobs, @unchecked Sendable {
     public func set(_ data: Data, forKey key: String) { lock.withLock { if !dropsWrites { values[key] = data } } }
     public func remove(forKey key: String) { _ = lock.withLock { values.removeValue(forKey: key) } }
     public func keys(withPrefix prefix: String) -> [String] { lock.withLock { values.keys.filter { $0.hasPrefix(prefix) } } }
+}
+
+public extension BlobStorage {
+    /// One-time moves: writes every blob that is not stored yet and returns the names that could not be written.
+    /// A blob that already exists is left alone (it may be newer than the copy being moved). The caller removes
+    /// the old copy only if the result is empty.
+    func adoptMissing(_ blobs: [(name: String, data: Data)]) -> [String] {
+        var failed: [String] = []
+        for b in blobs where read(b.name) == nil {
+            if (try? write(b.name, b.data)) == nil || read(b.name) != b.data { failed.append(b.name) }
+        }
+        return failed
+    }
 }

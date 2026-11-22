@@ -31,9 +31,14 @@ public enum NuvioImport {
                     sources.append(s)
                 }
                 let ftitle = rf.title ?? "?"
+                // Wave F-o: `focusGifEnabled == false` also switches the focus video off (exports set both together).
+                // The WebM variant is never taken (tvOS cannot play it); unplayable addresses fall back to the GIF.
+                let motionOn = rf.focusGifEnabled != false
                 folders.append(Folder(id: rf.id ?? "nuvio.folder." + stableHash(ctitle + "|" + ftitle), title: ftitle,
                                       coverImage: rf.coverImageUrl, logo: rf.titleLogoUrl, backdrop: rf.heroBackdropUrl,
-                                      sources: sources, focusGif: rf.focusGifEnabled == false ? nil : rf.focusGifUrl))
+                                      sources: sources, focusGif: motionOn ? rf.focusGifUrl : nil,
+                                      focusVideo: motionOn ? FocusVideoURL.playable(rf.focusVideoUrl) : nil,
+                                      heroVideo: FocusVideoURL.playable(rf.heroVideoUrl)))
             }
             let title = ctitle
             if var existing = byTitle[title] {
@@ -61,6 +66,8 @@ public enum NuvioImport {
                 out[i].logo = out[i].logo ?? f.logo
                 out[i].backdrop = out[i].backdrop ?? f.backdrop
                 out[i].focusGif = out[i].focusGif ?? f.focusGif
+                out[i].focusVideo = out[i].focusVideo ?? f.focusVideo
+                out[i].heroVideo = out[i].heroVideo ?? f.heroVideo
             } else {
                 var f = f
                 var seen = Set<String>()
@@ -68,6 +75,39 @@ public enum NuvioImport {
                 out.append(f)
             }
         }
+        return out
+    }
+
+    /// Wave F-o round 3: "Aktualisieren" of a stored link. Like `mergeFolders`, but the media addresses (still, logo,
+    /// backdrop, GIF, video, hero video) of a matching folder come from the fresh export. A field the user changed
+    /// since the last import (it differs from `previous`) is kept. `previous`: key `collection|folder` → media of the
+    /// last import (nil entry = no snapshot: the fresh export wins).
+    public static func refreshFolders(_ current: [Folder], fresh: [Folder], collection: String,
+                                      previous: [String: FolderMedia]) -> [Folder] {
+        var out = current
+        for f in fresh {
+            guard let i = out.firstIndex(where: { $0.title == f.title }) else {
+                out = mergeFolders(out, [f])
+                continue
+            }
+            var ids = Set(out[i].sources.map(\.id))
+            out[i].sources += f.sources.filter { ids.insert($0.id).inserted }
+            let old = previous[collection + "|" + f.title]
+            let now = FolderMedia(out[i]), new = FolderMedia(f)
+            func pick(_ k: KeyPath<FolderMedia, String?>) -> String? {
+                guard let old else { return new[keyPath: k] }
+                return now[keyPath: k] == old[keyPath: k] ? new[keyPath: k] : now[keyPath: k]
+            }
+            out[i].coverImage = pick(\.cover); out[i].logo = pick(\.logo); out[i].backdrop = pick(\.backdrop)
+            out[i].focusGif = pick(\.gif); out[i].focusVideo = pick(\.video); out[i].heroVideo = pick(\.hero)
+        }
+        return out
+    }
+
+    /// Snapshot of the media addresses of imported collections (for `refreshFolders`).
+    public static func media(of collections: [MediaCollection]) -> [String: FolderMedia] {
+        var out: [String: FolderMedia] = [:]
+        for c in collections { for f in c.folders where out[c.title + "|" + f.title] == nil { out[c.title + "|" + f.title] = FolderMedia(f) } }
         return out
     }
 
@@ -113,7 +153,7 @@ public enum NuvioImport {
     }
 
     /// Reproduzierbarer Kurzschlüssel (FNV-1a 64), damit ein zweiter Import keine Dubletten erzeugt.
-    static func stableHash(_ s: String) -> String {
+    public static func stableHash(_ s: String) -> String {
         var h: UInt64 = 0xcbf29ce484222325
         for b in s.utf8 { h ^= UInt64(b); h = h &* 0x100000001b3 }
         return String(h, radix: 16)
@@ -191,6 +231,8 @@ public enum NuvioImport {
         var heroBackdropUrl: String?; var sources: [RawSource]?; var catalogSources: [RawSource]?
         /// Bewegtes Fokusbild (Welle F-g); `focusGifEnabled == false` schaltet es ab.
         var focusGifUrl: String?; var focusGifEnabled: Bool?
+        /// Wave F-o: focus video (mp4) and hero video; `focusVideoWebmUrl` is read but never used (no WebM on tvOS).
+        var focusVideoUrl: String?; var focusVideoWebmUrl: String?; var heroVideoUrl: String?
     }
     struct RawSource: Decodable {
         var id: String?; var name: String?; var title: String?; var provider: String?
@@ -210,5 +252,19 @@ public enum NuvioImport {
             else if let s = try? c.decode(String.self) { string = s }
             else { string = "" }
         }
+    }
+}
+
+/// Media addresses of one tile (wave F-o round 3: refresh keeps the user's own changes).
+public struct FolderMedia: Codable, Hashable, Sendable {
+    public var cover: String?
+    public var logo: String?
+    public var backdrop: String?
+    public var gif: String?
+    public var video: String?
+    public var hero: String?
+
+    public init(_ f: Folder) {
+        cover = f.coverImage; logo = f.logo; backdrop = f.backdrop; gif = f.focusGif; video = f.focusVideo; hero = f.heroVideo
     }
 }

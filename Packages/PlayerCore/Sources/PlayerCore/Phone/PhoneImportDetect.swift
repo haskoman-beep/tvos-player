@@ -23,7 +23,7 @@ public enum PhoneImportDetect {
 
     /// Text der Rückmeldung zur Kennung (`unknown` bzw. ein `Refusal`).
     public static func noteText(_ code: String) -> String? {
-        if code == "unknown" { return "Schnell-Import nicht erkannt. Möglich: Addon-Manifest, TMDB-/Trakt-Liste, Fusion-Kit- oder Nuvio-URL, Nuvio-JSON." }
+        if code == "unknown" { return "Schnell-Import nicht erkannt. Möglich: Addon-Manifest, TMDB-/Trakt-Liste, Collection-Link oder -Code (Widget-Export, Preview Pack, Collection-Export)." }
         return Refusal(rawValue: code)?.text
     }
 
@@ -42,25 +42,18 @@ public enum PhoneImportDetect {
         let path = u.path.lowercased()
         if path.hasSuffix("/manifest.json") { return .command(.addAddon(t)) }
         if TMDBLink.source(from: t) != nil || TraktLink.source(from: t) != nil { return .command(.addTMDBLink(t)) }
-        if path.hasSuffix(".json") {
-            let low = t.lowercased()
-            if low.contains("fusion") || host.hasSuffix("betterer.cc") { return .command(.importFusionURL(t)) }
-            return .command(.importNuvioURL(t))
-        }
+        // Wave F-o round 2: every other JSON link is a collection link; the TV detects the format from the content.
+        _ = host
+        if path.hasSuffix(".json") { return .command(.importCollectionLink(t)) }
         return .unknown
     }
 
     static func detectJSON(_ s: String) -> Result {
-        guard let o = try? JSONSerialization.jsonObject(with: Data(s.utf8)) else { return .unknown }
-        if let d = o as? [String: Any] {
-            if d["profiles"] != nil { return .refused(.backup) }
-            if d["widgets"] != nil || d["exportType"] != nil { return .refused(.kitText) }
-            return .unknown
+        let data = Data(s.utf8)
+        switch CollectionImportFormat.detect(data) {
+        case .widgets, .collectionList, .previewPack, .collections: return .command(.importCollectionCode(data))
+        case .backup: return .refused(.backup)
+        case .iconPack, .invalidJSON, .unknown: return .unknown
         }
-        if let arr = o as? [[String: Any]], let first = arr.first {
-            if first["folders"] != nil { return .command(.importNuvioJSON(Data(s.utf8))) }
-            if first["dataSources"] != nil { return .refused(.kitText) }
-        }
-        return .unknown
     }
 }

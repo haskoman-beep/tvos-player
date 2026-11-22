@@ -33,12 +33,20 @@ final class FusionKitStore: ObservableObject {
     private var inflight: [String: Task<Void, Never>] = [:]
     private let disk = FileBlobStorage(directory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("fusionkit"))
+    /// Pasted widget exports of round 3 (read once and moved to `blobs`).
+    private let pasteDisk = FileBlobStorage(directory: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("fusionkit-paste"))
+
+    /// App storage (Application Support if writable, always Caches): pasted widget exports live here.
+    private var blobs: BlobStorage?
 
     private init() {}
 
     /// Beim App-Start: Zwischenspeicher lesen, abgleichen, veraltete gewählte Dateien im Hintergrund neu holen.
-    func attach(_ model: AppModel) {
+    func attach(_ model: AppModel, storage: BlobStorage) {
         self.model = model
+        blobs = storage
+        CollectionLinkStore.shared.ensure(model)   // wave F-o round 2: preview packs before the first sync
         // Profiländerung (Schlüssel, Layout, Profilwechsel) → abgleichen; erst danach, denn @Published meldet vor dem Setzen.
         watch = model.$stored.dropFirst().sink { [weak self] _ in
             guard let self else { return }
@@ -54,6 +62,8 @@ final class FusionKitStore: ObservableObject {
     // MARK: Lesen (Startseite)
 
     func collection(_ id: String) -> MediaCollection? { visible[id] }
+    /// Wave F-o round 2: all visible kit collections (preview pack matching count).
+    var importedCollections: [MediaCollection] { Array(visible.values) }
     /// Welle F-l: Bildquellen der Paket-Kacheln aus allen geladenen Kit-Dateien, ungefiltert (auch Kacheln, deren
     /// Listen ohne Trakt ausgeblendet sind). Vom Nutzer gewählte Dateien zuerst, übrige nach Titel – so ist der
     /// Treffer bei Gleichstand immer derselbe. Beim Abgleich berechnet.
@@ -116,6 +126,8 @@ final class FusionKitStore: ObservableObject {
         change { $0.removeSource(id) }
         contents[id] = nil; errors[id] = nil
         disk.remove(contentFile(id))
+        pasteDisk.remove(contentFile(id))
+        blobs?.remove(pasteFile(id))
     }
 
     /// Per Handy eingefügte Kit-URL: laden, Kit an, alle Reihen der Datei wählen. Rückgabe: Fehlertext oder nil.
@@ -127,6 +139,61 @@ final class FusionKitStore: ObservableObject {
         RemoteLog.info("kit", "Handy-Import \(src.title): \(c.rows.count) Reihen gewählt")
         return nil
     }
+
+    /// Wave F-o round 2: widget export already fetched (collection link) or pasted as code: keep it like a kit
+    /// file and place all its rows. A pasted text gets a `paste:` source that is never fetched again.
+    /// Already parsed off the main actor (`CollectionLinkStore`); `data` is kept for the next start. Pasted text
+    /// cannot be fetched again, so it goes to the app storage (round 4, N2): Application Support if it is writable
+    /// and always Caches as the second copy. A failed write is logged.
+    func importContent(_ c: FusionKitContent, source src: FusionKitSource, data: Data) {
+        contents[src.id] = c
+        errors[src.id] = nil
+        do {
+            if isPaste(src) {
+                guard let blobs else { throw CocoaError(.fileWriteUnknown) }
+                try blobs.write(pasteFile(src.id), data)
+            } else {
+                try disk.write(contentFile(src.id), data)
+            }
+        } catch {
+            RemoteLog.error("import", "Import: Speichern fehlgeschlagen (\(src.title), \(data.count / 1024) KB: \(error))")
+        }
+        change { $0.addAll(c, source: src) }
+        sync()
+        RemoteLog.info("kit", "Import \(src.title): \(c.rows.count) Reihen gewählt")
+    }
+
+    /// Source of a widget export: the kit source of a link, or a `paste:` source keyed by the pasted text.
+    nonisolated static func source(link: String?, data: Data) -> FusionKitSource {
+        link.map { FusionKitCatalog.source(forURL: $0) }
+            ?? FusionKitSource(id: NuvioImport.stableHash("paste:" + String(decoding: data, as: UTF8.self)),
+                               title: "Eingefügter Widget-Export", url: pastePrefix, custom: true)
+    }
+
+    private func isPaste(_ src: FusionKitSource) -> Bool { src.url.hasPrefix(Self.pastePrefix) }
+    /// File-only blob of a pasted widget export (`TieredBlobStorage.fileOnlyPrefix`).
+    private func pasteFile(_ key: String) -> String { TieredBlobStorage.fileOnlyPrefix + "paste-" + key + ".json" }
+
+    /// Stored bytes of a source. A paste of an earlier build (own folder, or Caches) moves to the app storage once.
+    private func stored(_ src: FusionKitSource) -> Data? {
+        guard isPaste(src) else { return disk.read(contentFile(src.id)) }
+        if let d = blobs?.read(pasteFile(src.id)) { return d }
+        let file = contentFile(src.id)
+        guard let old = pasteDisk.read(file) ?? disk.read(file) else { return nil }
+        do {
+            guard let blobs else { throw CocoaError(.fileWriteUnknown) }
+            try blobs.write(pasteFile(src.id), old)
+            pasteDisk.remove(file); disk.remove(file)
+        } catch {
+            RemoteLog.error("import", "Import: Speichern fehlgeschlagen (\(src.title), \(old.count / 1024) KB: \(error))")
+        }
+        return old
+    }
+
+    nonisolated static let pastePrefix = "paste:"
+
+    /// Wave F-o round 2: preview packs changed; tiles are enriched again on the next sync.
+    func packChanged() { sync() }
 
     private func change(_ f: (inout FusionKitSettings) -> Void) {
         ensureSettings()
@@ -147,7 +214,8 @@ final class FusionKitStore: ObservableObject {
 
     /// Einstellungen des aktiven Profils (nach Profilwechsel neu) samt Zwischenspeicher seiner Quellen.
     private func ensureSettings() {
-        guard let id = model?.stored.active?.id, id != settingsProfile else { return }
+        guard let model, let id = model.stored.active?.id, id != settingsProfile else { return }
+        CollectionLinkStore.shared.ensure(model)
         let first = settingsProfile == nil
         settingsProfile = id
         settings = UserDefaults.standard.data(forKey: settingsKey(id))
@@ -181,6 +249,11 @@ final class FusionKitStore: ObservableObject {
             if contents[src.id] != nil { return }
             if let c = cached(src) { contents[src.id] = c; return }
         }
+        // Pasted code has no address: only the stored copy.
+        if src.url.hasPrefix(Self.pastePrefix) {
+            if contents[src.id] == nil, let c = cached(src) { contents[src.id] = c }
+            return
+        }
         if let running = inflight[src.id] { await running.value; return }
         guard let url = URL(string: src.url) else { errors[src.id] = "URL ungültig"; return }
         let task = Task { await self.fetch(src, url: url) }
@@ -212,7 +285,7 @@ final class FusionKitStore: ObservableObject {
 
     /// Zwischengespeicherte Fassung, auch wenn sie älter als 24 h ist.
     private func cached(_ src: FusionKitSource) -> FusionKitContent? {
-        disk.read(contentFile(src.id)).flatMap { try? FusionImport.parse($0, sourceKey: src.id, title: src.title) }
+        stored(src).flatMap { try? FusionImport.parse($0, sourceKey: src.id, title: src.title) }
     }
 
     private func loadListing(force: Bool) async {
@@ -302,11 +375,13 @@ final class FusionKitStore: ObservableObject {
 
         var vis: [String: MediaCollection] = [:]
         var hiddenTiles = 0
+        // Wave F-o round 2: imported preview packs fill video and still of tiles with the same title.
+        let pack = CollectionLinkStore.shared.packIndex
         for (_, c) in contents {
             for row in c.rows {
                 guard case .collection(let full) = row.body else { continue }
                 if let a = row.available(traktID: traktID, traktLogin: traktLogin), case .collection(let v) = a.body {
-                    vis[row.id] = v
+                    vis[row.id] = PreviewPack.apply(pack, to: v)
                     if s.placed.contains(row.id) { hiddenTiles += full.folders.count - v.folders.count }
                 }
             }

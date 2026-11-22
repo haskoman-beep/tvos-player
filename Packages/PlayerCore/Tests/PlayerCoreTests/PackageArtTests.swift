@@ -48,7 +48,7 @@ private func art(_ c: MediaCollection, _ id: String) -> Folder? { c.folders.firs
     for id in ["pkg.streaming-de.30", "pkg.streaming-de.298", "pkg.streaming-de.304"] { #expect(art(out, id)?.coverImage == nil, "\(id)") }
     // Titel und Reihenfolge der Paket-Kacheln bleiben.
     #expect(out.folders.map(\.title) == ReadyPackages.streamingDE.folders.map(\.title))
-    #expect(PackageArtStats(folders: out.folders)?.logLine(row: "Streaming-Dienste") == "Paket-Bilder: Streaming-Dienste 5/8 mit Bild, 0 mit GIF")
+    #expect(PackageArtStats(folders: out.folders)?.logLine(row: "Streaming-Dienste") == "Paket-Bilder: Streaming-Dienste 5/8 mit Bild, 0 mit GIF, 0 mit Video")
 }
 
 @Test func genreTilesMatchEnglishAndGermanNames() {
@@ -136,7 +136,7 @@ private func art(_ c: MediaCollection, _ id: String) -> Folder? { c.folders.firs
     #expect(art(out, "pkg.genres.Action")?.hideTitle == true)
     #expect(art(out, "pkg.genres.Action")?.showsTitleOverImage == false)
     #expect(art(out, "pkg.genres.Krimi")?.coverImage == "https://example.com/crime-wide.png")
-    #expect(PackageArtStats(folders: out.folders)?.logLine(row: "Genres") == "Paket-Bilder: Genres 2/10 mit Bild, 0 mit GIF")
+    #expect(PackageArtStats(folders: out.folders)?.logLine(row: "Genres") == "Paket-Bilder: Genres 2/10 mit Bild, 0 mit GIF, 0 mit Video")
 }
 
 @Test func packageArtKitFiles() {
