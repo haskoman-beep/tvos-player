@@ -93,7 +93,7 @@ struct PlayerScreen: View {
             // Beim Vorlader immer anmelden (onDisappear meldet ab), das Backend aber nur einmal anlegen.
             StreamPrefetcher.shared.playerAppeared(prefetchToken)
             guard backend == nil else { return }
-            do { backend = try AetherBackend() } catch { initError = "Player-Start fehlgeschlagen: \(error)"; RemoteLog.error("player", initError ?? "") }
+            do { let b = try AetherBackend(); NowPlayingBridge.stage(b, request: request, skipSeconds: model.profile.player.remoteSkipSeconds); backend = b } catch { initError = "Player-Start fehlgeschlagen: \(error)"; RemoteLog.error("player", initError ?? "") }
         }
     }
 
@@ -296,6 +296,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                                      && !restorePending && !restoring && engine.duration > 0 && engine.errorText == nil },
                          edges: { SkipSegments.snapEdges(skip.segments) + engine.chapterMarks.map(\.start) })
             idleTick(failed: failureNotice != nil || loadError != nil)
+            NowPlayingBridge.route(engine, handlers: .init(context: { RemoteTransportContext(isPlaying: engine.isPlaying, position: pendingSeek ?? engine.currentTime, inputBlocked: leaving || scrub.isActive, upNextShowing: upNext != nil) }, toggle: { onUserInput(); togglePlay() }, seekBy: { onUserInput(); queueSeek($0); poke() }))
             guard loadTask == nil else { return }
             loadTask = Task { await loadAndStart() }
         }
@@ -381,6 +382,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
     func leave(_ exit: () -> Void) {
         leaving = true
         releaseIdleTimer()   // Bildschirmschoner wieder frei (Welle D-a)
+        NowPlayingBridge.detach(engine)   // Now Playing: Befehle sperren, Karte leeren (Welle G-b)
         exit()
     }
 

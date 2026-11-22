@@ -263,9 +263,10 @@ enum AddonSubtitleFiles {
 
 // MARK: Einstellungen
 
-/// Einstellungs-Zeilen (Kategorie Wiedergabe & Bild): Spur-Gedächtnis (Abschnitt Folgen) und Bildschirmschoner.
+/// Einstellungs-Zeilen (Kategorie Wiedergabe & Bild): Spur-Gedächtnis (Abschnitt Folgen), Bildschirmschoner und
+/// Sprungweite der Systembefehle (Welle G-b).
 struct PlayerComfortSettingsRows: View {
-    enum Part { case tracks, screensaver }
+    enum Part { case tracks, screensaver, remote }
 
     var part: Part
     @EnvironmentObject var model: AppModel
@@ -302,6 +303,12 @@ struct PlayerComfortSettingsRows: View {
                               detail: "So lange bleibt der Bildschirmschoner in der Pause gesperrt.",
                               options: IdleTimerPolicy.pauseChoices, selection: model.binding(\.player.screensaverPauseMinutes),
                               label: IdleTimerPolicy.choiceLabel)
+        case .remote:
+            // Welle G-b: Sprungweite der Systembefehle (NowPlayingBridge); gilt ab dem nächsten Start des Players.
+            SettingsChoiceRow(symbol: "goforward", tint: tint, title: "Sprungweite",
+                              detail: "So weit springen die Vor-/Zurück-Tasten der iPhone-Fernbedienung und im Kontrollzentrum.",
+                              options: RemoteTransport.skipChoices, selection: model.binding(\.player.remoteSkipSeconds),
+                              label: RemoteTransport.choiceLabel)
         }
     }
 }
