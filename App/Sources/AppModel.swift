@@ -372,11 +372,23 @@ final class AppModel: ObservableObject {
     func meta(type: String, imdb: String) async -> MetaDetail? { await mergedMeta(type: type, imdb: imdb) }
 
     private var localizedCache: [String: LocalizedMeta] = [:]
+    private var localizedFlights: [String: Task<LocalizedMeta?, Never>] = [:]
     private var seasonCache: [String: [Int: LocalizedEpisode]] = [:]
 
     /// TMDB in Profilsprache (Titel, Text, Poster, Logo, FSK); nil ohne TMDB-Key.
     func localized(imdb: String, series: Bool) async -> LocalizedMeta? {
         if let c = localizedCache[imdb] { return c }
+        // Wave F-p: the detail page asks in parallel to the meta, which asks too: one request, both wait for it.
+        let key = "\(series ? "s" : "m"):\(imdb)"
+        if let t = localizedFlights[key] { return await t.value }
+        let t = Task { await fetchLocalized(imdb: imdb, series: series) }
+        localizedFlights[key] = t
+        let l = await t.value
+        localizedFlights[key] = nil
+        return l
+    }
+
+    private func fetchLocalized(imdb: String, series: Bool) async -> LocalizedMeta? {
         guard let tmdb else { RemoteLog.info("tmdb", "kein TMDB-Key – keine Übersetzung"); return nil }
         do {
             guard let id = try await tmdb.tmdbID(imdb: imdb, series: series) else {

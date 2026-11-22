@@ -68,6 +68,8 @@ struct DetailView: View {
     /// Zeitpunkt des ersten Erscheinens und ob „erste Plaketten“ schon geloggt ist (Gerätemessung Addon-Antwortzeit).
     @State private var appeared: Date?
     @State private var badgesLogged = false
+    /// Wave F-p: arrival times of the page's parts (one log line „Ladezeiten …“).
+    @State private var timeline: DetailLoadTimeline?
     /// Welle G-a: „Sofort abspielen / Beste Wahl“ (Film): gewählte Quelle; `choiceChecked` = Quellen bekannt
     /// (dann ohne Wahl der Hinweis „Keine Quelle gefunden“). `entryFocusAt`: Zeit des Eintritts-Fokus.
     @State private var choice: BestChoice.Pick?
@@ -118,6 +120,7 @@ struct DetailView: View {
                                 DetailPoster(item: posterItem)
                                     .frame(width: CGFloat(size.width), height: CGFloat(size.height))
                                     .transition(.opacity)
+                                    .onAppear { markLoad(.poster) }
                             }
                             infoBlock
                                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
@@ -185,6 +188,7 @@ struct DetailView: View {
             if best == nil, !isSeries, let id, let b = detailQuality(id) {
                 best = b
                 logFirstBadges("Technik aus Cache")
+                markLoad(.tech, source: cacheSource(id))
                 updateChoice(id)
             }
         }
@@ -193,10 +197,14 @@ struct DetailView: View {
             let opened = appeared ?? Date()
             imdb = await model.imdbID(for: item)
             if let imdb {
+                markLoad(.id)
                 if !isSeries, best == nil, let b = detailQuality(imdb) {
                     best = b
                     logFirstBadges("Technik aus Cache")
+                    markLoad(.tech, source: cacheSource(imdb))
                     updateChoice(imdb)
+                } else if !isSeries, best != nil {
+                    markLoad(.tech, source: cacheSource(imdb))
                 } else if !isSeries, best == nil {
                     // Quellen sofort und parallel holen (Technik-Plaketten; AppModel cached sie für die Quellenliste).
                     let id = imdb
@@ -205,14 +213,30 @@ struct DetailView: View {
                         best = detailQuality(id)
                         updateChoice(id, list: list)
                         if !techBadges.isEmpty { logFirstBadges("Technik") }
+                        markLoad(.tech, source: "neu, \(list.count) Quellen")
                         RemoteLog.info("detail", "Plaketten nach \(Int(Date().timeIntervalSince(opened) * 1000)) ms (\(list.count) Quellen)")
                     }
                 }
                 async let r = model.ratings(imdb: imdb, series: isSeries)
-                meta = await model.meta(type: isSeries ? "series" : "movie", imdb: imdb)
-                extra = await model.localized(imdb: imdb, series: isSeries)
-                certification = extra?.certification
-                if certification != nil { logFirstBadges("Altersfreigabe") }
+                if ContentKind.typeDecides(item.type) {
+                    // Wave F-p: TMDB (age rating, cast, similar titles) no longer waits for the meta: the meta waits
+                    // for its addon (up to seconds), TMDB mostly answers in a few hundred ms (build 214 log: FSK
+                    // 1834 ms after entry, TMDB itself had answered after about 400 ms).
+                    let series = isSeries
+                    let local = Task { () -> LocalizedMeta? in
+                        let l = await model.localized(imdb: imdb, series: series)
+                        applyLocalized(l)
+                        return l
+                    }
+                    meta = await model.meta(type: isSeries ? "series" : "movie", imdb: imdb)
+                    markLoad(.meta)
+                    _ = await local.value
+                } else {
+                    // Unknown addon type: the meta's episode list decides movie or series first.
+                    meta = await model.meta(type: isSeries ? "series" : "movie", imdb: imdb)
+                    markLoad(.meta)
+                    applyLocalized(await model.localized(imdb: imdb, series: isSeries))
+                }
                 ratings = await r
                 if certification != nil || ratings?.certification != nil
                     || !model.ratingBadges(imdbRating: meta?.imdbRating, mdblist: ratings).isEmpty {
@@ -240,6 +264,13 @@ struct DetailView: View {
                 }
             }
             await translateSeason()
+        }
+        // Wave F-p: a part that never arrives (no TMDB key, no sources): the line comes after 10 s with „–“.
+        .task {
+            try? await Task.sleep(for: .milliseconds(DetailLoadTimeline.giveUpMilliseconds))
+            guard !Task.isCancelled, timeline?.logged != true else { return }
+            if timeline == nil { timeline = DetailLoadTimeline(title: item.name, expectsTech: !isSeries) }
+            if let line = timeline?.takeLine(force: true) { RemoteLog.info("detail", line) }
         }
         .task(id: returnFocusToken) {
             guard pendingReturnFocus else { return }
@@ -337,6 +368,27 @@ struct DetailView: View {
         return "Staffel \(s), \(t.video ?? "erste Folge")"
     }
 
+    /// Wave F-p: TMDB answer in the page (also when the meta is still loading).
+    private func applyLocalized(_ l: LocalizedMeta?) {
+        extra = l
+        certification = l?.certification
+        if certification != nil { logFirstBadges("Altersfreigabe") }
+        markLoad(.tmdb)
+    }
+
+    /// Wave F-p: one arrival time of the page; logs „Ladezeiten …“ once all parts arrived.
+    private func markLoad(_ part: DetailLoadTimeline.Part, source: String? = nil) {
+        guard let at = appeared else { return }
+        if timeline == nil { timeline = DetailLoadTimeline(title: item.name, expectsTech: !isSeries) }
+        timeline?.mark(part, ms: Int(Date().timeIntervalSince(at) * 1000), source: source)
+        if let line = timeline?.takeLine() { RemoteLog.info("detail", line) }
+    }
+
+    /// Wave F-p: tech badges from the source cache: filled by the focus prefetch or by an earlier visit.
+    private func cacheSource(_ id: String) -> String {
+        StreamPrefetcher.shared.wasPrefetched(id) ? "Cache, vorgeladen" : "Cache"
+    }
+
     /// Einmal je Seite: Zeit vom Erscheinen bis zur ersten sichtbaren Plakette und deren Quelle.
     private func logFirstBadges(_ source: String) {
         guard !badgesLogged else { return }
@@ -345,7 +397,9 @@ struct DetailView: View {
         RemoteLog.info("detail", "erste Plaketten nach \(ms) ms (\(source))")
     }
 
-    private var overview: String { meta?.description ?? item.description ?? "" }
+    /// Wave F-p: the TMDB text fills in while the meta loads (catalogue entries without a description), so the
+    /// block reaches its height and the poster shows early.
+    private var overview: String { meta?.description ?? item.description ?? extra?.overview ?? "" }
 
     /// Meta line, badges, tagline and description (wave F-n: measured for the poster to its left).
     @ViewBuilder private var infoBlock: some View {
@@ -1176,6 +1230,7 @@ struct DetailExtras: View {
                     LazyHStack(spacing: 40) {
                         ForEach(info.recommendations) { m in
                             NavigationLinkish(route: .detail(m), onActivate: { $0 }, label: PosterCard(item: m))
+                                .modifier(RestPrefetch(route: .detail(m)))
                         }
                     }
                     // Wave F-k: same room for the card lift as the home rows (poster at factor 1), at least 44.
@@ -1248,3 +1303,18 @@ struct DetailExtras: View {
     }
 }
 
+/// Wave F-p: a resting tile outside the home page („Ähnliche Titel“) fetches its sources like a home tile, so its
+/// detail page shows the tech badges from the source cache at once.
+private struct RestPrefetch: ViewModifier {
+    @EnvironmentObject var model: AppModel
+    let route: Route
+    @FocusState private var focused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .focused($focused)
+            .onChange(of: focused) { _, f in
+                if f { StreamPrefetcher.shared.requestAfterRest(route, model: model) } else { StreamPrefetcher.shared.cancelRest(route) }
+            }
+    }
+}

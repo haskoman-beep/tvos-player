@@ -63,11 +63,19 @@ struct HomeRowView: View {
         .onChange(of: focusedRoute != nil || focusedPlaceholder != nil) { _, f in onFocusInside?(f) }
         .onAppear { if focusedRoute != nil || focusedPlaceholder != nil { onFocusInside?(true) } }
         .onDisappear { onFocusInside?(false) }
-        .onChange(of: focusedRoute) { _, r in
+        .onChange(of: focusedRoute) { old, r in
+            // Wave F-p: focus left this row's tile: its rest prefetch (pages without hero) does not start.
+            if r == nil, let old { StreamPrefetcher.shared.cancelRest(old) }
             guard let r, focusMemory?.state.covered != true else { return }   // verdeckte Startseite: nichts merken
             focusMemory?.state.record(row: row.id.uuidString, item: r.heroPreview.id)
             MainThreadWatchdog.note("Fokus \(r.heroPreview.id)")
-            if let homeFocus { homeFocus.set(r.heroPreview) { StreamPrefetcher.shared.request(r, model: model) } }
+            if let homeFocus {
+                homeFocus.set(r.heroPreview) { StreamPrefetcher.shared.request(r, model: model) }
+            } else {
+                // Wave F-p: folder pages and Library rows have no hero, so nothing fetched the sources of a resting
+                // tile there; the detail page then waited 2–4 s for its tech badges (build 214 log).
+                StreamPrefetcher.shared.requestAfterRest(r, model: model)
+            }
         }
     }
 
@@ -307,8 +315,6 @@ struct Strip<C: View>: View {
     /// cards of one row, so the row does not jump when its entries arrive). No default (R1 M4): every row names it.
     let kind: TileKind
     @ViewBuilder let content: C
-    /// Aufklappende Poster ändern die Reihenbreite: die Reihe bleibt am fokussierten Element verankert.
-    @State private var anchorID: String?
     var body: some View {
         let a = model.profile.appearance
         let s = a.cardSize.scale
@@ -318,27 +324,29 @@ struct Strip<C: View>: View {
         let band = kind == .poster && a.titles.posterBadges == .bottom ? PosterQualityBadges.bandHeight : 0
         let pad = Theme.Focus.cardRowPadding(height: FocusHeadroom.tallest([kind], cardScale: s, posterExtra: band),
                                              minimum: Theme.Space.l * s)
-        ScrollView(.horizontal, showsIndicators: false) {
-            LazyHStack(spacing: Theme.Space.m * s) { content }
-                .scrollTargetLayout()
-                .padding(.vertical, pad)
+        // Wave F-p: an expanding poster moves to the leading edge with one programmatic scroll (`proxy.scrollTo`), only
+        // when it expands after its 350 ms rest. Before, `.scrollPosition(id:anchor:)` kept a two-way binding on the
+        // row that stayed on the last expanded card; the row re-renders on every focus move, and the bound scroll
+        // position competed with the focus engine's own scroll to the new card. Fast left/right made the row wobble
+        // (build 214). Without the binding only the focus engine scrolls while the user moves.
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: Theme.Space.m * s) { content }
+                    .padding(.vertical, pad)
+            }
+            // Wave F-k: the lifted card (tag at the poster's top edge) and its shadow may reach past the row; the row
+            // spans the full width, so nothing else becomes visible.
+            .scrollClipDisabled()
+            // Rand 80 (§4.3): Reihentitel, Hero-Info und erste Kachel starten auf einer Linie.
+            .contentMargins(.leading, Theme.Space.edge, for: .scrollContent)
+            // Platz rechts, damit auch die letzten Karten aufgeklappt (640·s) an den linken Rand rücken können.
+            .contentMargins(.trailing, expand ? max(Theme.Space.edge, 1920 - Theme.Space.edge - 640 * s) : Theme.Space.edge,
+                            for: .scrollContent)
+            .environment(\.cardScale, s)
+            .environment(\.expandPosters, expand)
+            // Ohne eigene Animation: läuft in der Transaktion des Aufklappens mit, damit nur eine Bewegung entsteht.
+            .environment(\.anchorFocusedCard, { id in proxy.scrollTo(id, anchor: .leading) })
         }
-        // Wave F-k: the lifted card (tag at the poster's top edge) and its shadow may reach past the row; the row
-        // spans the full width, so nothing else becomes visible.
-        .scrollClipDisabled()
-        // Rand 80 (§4.3): Reihentitel, Hero-Info und erste Kachel starten auf einer Linie.
-        .contentMargins(.leading, Theme.Space.edge, for: .scrollContent)
-        // Platz rechts, damit auch die letzten Karten aufgeklappt (640·s) an den linken Rand rücken können.
-        .contentMargins(.trailing, expand ? max(Theme.Space.edge, 1920 - Theme.Space.edge - 640 * s) : Theme.Space.edge,
-                        for: .scrollContent)
-        .scrollPosition(id: $anchorID, anchor: .leading)
-        .environment(\.cardScale, s)
-        .environment(\.expandPosters, expand)
-        // Ohne eigene Animation: läuft in der Transaktion des Aufklappens mit, damit nur eine Bewegung entsteht.
-        .environment(\.anchorFocusedCard, { id in
-            guard anchorID != id else { return }
-            anchorID = id
-        })
     }
 }
 
