@@ -15,7 +15,9 @@ let package = Package(
         .package(
             url: "https://github.com/superuser404notfound/AetherEngine",
             exact: "7.71.2",
-            traits: ["DolbyVisionFelCurves"]
+            // DolbyVisionStillReshaping (wave X0, user decision 22.11.): CPU reshaping of Dolby Vision Profile 5 /
+            // AV1 10.0 frames into stills (scrub previews, X-Ray face probe); playback itself is meant to stay unchanged.
+            traits: ["DolbyVisionFelCurves", "DolbyVisionStillReshaping"]
         ),
     ],
     targets: [

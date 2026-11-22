@@ -57,6 +57,10 @@ jobs:
           if [ "$guard" -eq 0 ]; then echo "::error title=FEL::Build guard FelBuildGuard.swift not in the build log"; exit 1; fi
           if [ -z "$flag" ]; then echo "::error title=FEL::Trait condition -DDolbyVisionFelCurves not in the build log"; exit 1; fi
           echo "::notice title=FEL::DolbyVisionFelCurves is in the build (guard ${guard}x, condition: ${flag})"
+          # Wave X0: DolbyVisionStillReshaping (Profile 5 stills) is set in the same wrapper; it has no public type to guard on.
+          still=$(grep -o -E -- '-D ?DolbyVisionStillReshaping' build.log | sort | uniq -c | sed 's/^ *//' | tr '\n' ' ' | sed 's/ *$//' || true)
+          if [ -z "$still" ]; then echo "::error title=DV P5::Trait condition -DDolbyVisionStillReshaping not in the build log"; exit 1; fi
+          echo "::notice title=DV P5::DolbyVisionStillReshaping is in the build (condition: ${still})"
       - name: No direct engine import
         # The app imports the engine only through Packages/AetherFEL (which sets the FEL trait).
         run: |

@@ -17,6 +17,16 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 
 ## [Unreleased]
 
+### Added
+- Developer test „Gesichter bei Pause prüfen (Test)“ (check faces on pause) in Settings › System › Erweitert ›
+  Diagnose, off by default. When it is on, each pause takes the paused frame from the engine, looks for faces
+  on the device and writes timings and face sizes to the event log (`xray:` lines). Nothing is shown or stored.
+  This is the first step towards showing who is in the picture.
+
+### Changed
+- Dolby Vision Profile 5: the engine is now built with its still reshaping part, so Profile 5 sources can give
+  still pictures (scrub previews, the face test above). Playback itself should not change.
+
 ## [Build 198] – 2026-11-22 (integ)
 
 ### Added
