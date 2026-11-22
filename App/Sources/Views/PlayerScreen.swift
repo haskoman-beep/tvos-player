@@ -68,6 +68,7 @@ struct PlayerScreen: View {
                                                        onTracksShown: { tracksOpen = $0 },
                                                        reresolve: { isTrailer ? nil : await model.freshStream(for: request) },
                                                        skipLookup: { isTrailer ? nil : await model.introDBQuery(for: request) },
+                                                       postPlayItem: isTrailer || ownProgress != nil || request.type != "movie" ? nil : request.item,   // wave P-a
                                                        onUserInput: onUserInput,
                                                        onSourceVerdict: isTrailer ? { _ in } : onSourceVerdict,
                                                        releaseName: releaseName,
@@ -84,6 +85,7 @@ struct PlayerScreen: View {
             }
         }
         .onDisappear {
+            PostPlayRoute.flush()   // wave P-a: recommendation from the card after a movie → its detail page
             // Öffnet das Spur-Panel (fullScreenCover) und löst onDisappear aus: Vorlader bleibt gesperrt,
             // kein Wiedergabe-Ende melden.
             guard !tracksOpen else { return }
@@ -147,6 +149,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
     @State var restoring = false
     /// IntroDB-Abfrage für „Intro überspringen“ (nil bzw. Ergebnis nil = keine, z. B. Trailer); Kapitel gelten immer.
     var skipLookup: (@MainActor () async -> IntroDBQuery?)? = nil
+    /// Wave P-a: the movie for the card after the movie (nil = episode, trailer, own file).
+    var postPlayItem: MetaPreview? = nil
     /// Sprungbereiche, Überspringen-Knopf, Abspann-Zeitpunkt (`skip.upNextAt`); SkipSegmentButton.swift.
     @StateObject private var skip = SkipSegmentController()
     /// Fokus der Spielerfläche; geht zurück, sobald der Überspringen-Knopf verschwindet.
@@ -238,26 +242,31 @@ struct PlayerControls<E: PlaybackEngine>: View {
                                   // Wie queueSeek: Bild nach dem Hintergrund freigegeben, erst Play baut neu auf.
                                   guard !restorePending, !restoring else { RemoteLog.info("player", "Überspringen gesperrt bis Play/Neuaufbau (nach Hintergrund)"); return false }
                                   return true
-                              })
+                              },
+                              // Wave P-a: action per type, cards that cover the credits, jumps without side effects.
+                              settings: profile.skip, upNextCard: nextTitle != nil, postPlayItem: postPlayItem,
+                              canSkip: { !leaving && !restorePending && !restoring && !showTracks },
+                              onLeave: { leaveWithModeSwitch() })
                 .opacity(panelCoversBottom ? 0 : 1)   // F-h3: nicht unter Leiste unten / Menü durchscheinen
             ScrubPreviewCard(controller: scrub, duration: engine.duration, current: engine.currentTime)
             if blackCover { Color.black.ignoresSafeArea() }
         }
         // Steht der Überspringen-Knopf, bekommt er den Fokus; Befehle unten erreichen die Fläche weiterhin.
-        .focusable(skip.prompt == nil)
+        .focusable(!skip.holdsFocus)
         .focused($surfaceFocused)
-        .onChange(of: skip.prompt) { _, p in if p == nil { surfaceFocused = true } }
-        .onPlayPauseCommand { guard !leaving else { return }; onUserInput(); if scrub.isActive { lastToggle = Date(); confirmScrub(); return }; togglePlay() }   // G-a R1: Doppel als MP-Toggle fällt in den 350-ms-Filter
+        .onChange(of: skip.holdsFocus) { _, held in if !held { surfaceFocused = true } }
+        .onPlayPauseCommand { guard !leaving else { return }; onUserInput(); skip.noteKey(); if scrub.isActive { lastToggle = Date(); confirmScrub(); return }; togglePlay() }   // G-a R1: Doppel als MP-Toggle fällt in den 350-ms-Filter
         .onTapGesture {   // Klick auf das Touchpad (Mitte) pausiert ebenfalls
             guard !leaving else { return }   // geordneter Ausstieg läuft (schwarz): keine Eingaben mehr
             if scrub.isActive { onUserInput(); confirmScrub(); return }   // Select bestätigt das Spulen
             // Select auf dem Überspringen-Knopf überspringt nur, kein zusätzliches Pausieren.
-            guard skip.prompt == nil else { return }
+            guard !skip.holdsFocus else { return }
             onUserInput(); togglePlay()
         }
         .onMoveCommand { dir in
             guard !leaving else { return }
             onUserInput()
+            if skip.noteKey() { return }   // wave P-a: stops a skip countdown; the card after a movie takes the arrows
             if upNext != nil {
                 withAnimation { upNext = nil }; upNextCancelled = true
                 RemoteLog.info("player", "Up-next abgebrochen"); return
@@ -309,7 +318,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
         .onAppear {
             surfaceFocused = true
             scrub.attach(engine: engine,
-                         canScrub: { !leaving && !showTracks && upNext == nil && skip.prompt == nil && failureNotice == nil
+                         canScrub: { !leaving && !showTracks && upNext == nil && !skip.holdsFocus && failureNotice == nil
                                      && !restorePending && !restoring && engine.duration > 0 && engine.errorText == nil },
                          edges: { SkipSegments.snapEdges(skip.segments) + engine.chapterMarks.map(\.start) },
                          holdAllowed: { !leaving },
@@ -516,7 +525,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
         switch TrackPanelEntry.decide(style: trackStyle, gesture: gesture,
                                       leaving: leaving, scrubbing: scrub.isActive, upNextShowing: upNext != nil,
                                       failureShowing: failureNotice != nil, alreadyOpen: showTracks,
-                                      skipPromptShowing: skip.prompt != nil, lock: trackLock) {
+                                      skipPromptShowing: skip.holdsFocus, lock: trackLock) {
         case .open:
             onUserInput()
             // Gesammelter ±10-s-Sprung nicht parallel zu einem Ton-Neuladen aus dem Panel (R1 M3).

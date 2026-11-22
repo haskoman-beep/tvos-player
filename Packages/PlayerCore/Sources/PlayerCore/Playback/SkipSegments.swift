@@ -2,7 +2,8 @@ import Foundation
 
 /// Ein überspringbarer Bereich der laufenden Datei (Sekunden auf der Zeitachse von `currentTime`/`seek`).
 public struct SkipSegment: Sendable, Equatable, Hashable, Codable {
-    public enum Kind: String, Sendable, CaseIterable, Codable { case intro, recap, credits, postCredits }
+    /// `preview`: preview of the next episode (wave P-a), mostly after the credits.
+    public enum Kind: String, Sendable, CaseIterable, Codable { case intro, recap, credits, postCredits, preview }
     /// `seasonEstimate`: aus anderen Folgen derselben Staffel geschätzt (SeasonSkipEstimate).
     public enum Source: String, Sendable, Codable { case chapter, introDB, seasonEstimate }
 
@@ -16,12 +17,15 @@ public struct SkipSegment: Sendable, Equatable, Hashable, Codable {
     }
 
     public var length: Double { end - start }
-    /// Knopftext; nil = kein Knopf (Abspann steuert nur die Nächste-Folge-Karte).
+    /// Knopftext; nil = kein Knopf. Wave P-a: whether a button shows at all is decided by `SkipSettings`
+    /// (credits default off); a scene after the credits never gets a button.
     public var buttonTitle: String? {
         switch kind {
         case .intro: return "Intro überspringen"
         case .recap: return "Rückblick überspringen"
-        case .credits, .postCredits: return nil
+        case .credits: return "Abspann überspringen"
+        case .preview: return "Vorschau überspringen"
+        case .postCredits: return nil
         }
     }
 }
@@ -55,6 +59,8 @@ public enum SkipSegments {
         "ending": .credits, "ed": .credits, "outro": .credits, "abspann": .credits,
         "post credits": .postCredits, "post credits scene": .postCredits, "after credits": .postCredits,
         "mid credits": .postCredits, "mid credits scene": .postCredits,
+        "preview": .preview, "next episode preview": .preview, "next time": .preview, "next time on": .preview,
+        "vorschau": .preview,
     ]
 
     /// Kleinschreibung, Satzzeichen weg, Ziffern am Wortende weg („OP2“ → „op“, „Opening 2“ → „opening“),
@@ -118,15 +124,13 @@ public enum SkipSegments {
     /// - Gibt es eine Szene nach dem Abspann (eigener Bereich), wartet die Karte bis zu deren Ende,
     ///   außer sie reicht bis ans Dateiende (dann Standard).
     /// - Bleiben nach dem Abspann mehr als 5 s ohne bekannten Inhalt, ist eine Nachspann-Szene möglich: Standard.
+    /// Wave P-a: a preview of the next episode that fills the rest after the credits is known content, not a scene.
     public static func upNextTime(_ segments: [SkipSegment], duration: Double) -> Double? {
-        guard duration > 0,
-              let credits = segments.first(where: { $0.kind == .credits && $0.start >= creditsMinFraction * duration
-                                                    && $0.start < duration })
-        else { return nil }
+        guard duration > 0, let credits = SkipPolicy.endCredits(segments, duration: duration) else { return nil }
         if let post = segments.first(where: { $0.kind == .postCredits && $0.start >= credits.start }) {
             return post.end < duration - 2 ? post.end : nil
         }
-        if duration - credits.end > 5 { return nil }
+        if SkipPolicy.unknownTail(after: credits, segments, duration: duration) { return nil }
         return credits.start
     }
 }
@@ -139,6 +143,13 @@ public struct SkipPlanner: Sendable {
     public private(set) var seeking: (target: Double, since: Double)?
     /// Mit Menü/Zurück weggeschickte Bereiche; erscheinen erst wieder, wenn die Position den Bereich verlassen hat.
     private var dismissed: Set<SkipSegment> = []
+    /// Wave P-a: segments set to "Automatisch" that were already skipped once or whose countdown was cancelled.
+    /// For the rest of this playback they only get the plain button (rewinding into them never jumps again).
+    public private(set) var autoDone: Set<SkipSegment> = []
+    /// Wave P-a: running countdown of an automatic skip (seconds left; only counts down while playing).
+    public private(set) var countdown: (segment: SkipSegment, left: Double, at: Double)?
+    /// Length of the countdown ring before an automatic skip.
+    public static let countdownSeconds: Double = 5
     /// Nach so vielen Sekunden gilt ein Sprung auch ohne Ankunft als beendet.
     public static let seekTimeout: Double = 8
     /// Abstand zum Ziel, ab dem die Position als angekommen gilt.
@@ -151,6 +162,8 @@ public struct SkipPlanner: Sendable {
     public mutating func setSegments(_ s: [SkipSegment]) {
         segments = s
         dismissed = dismissed.filter { s.contains($0) }
+        autoDone = autoDone.filter { s.contains($0) }
+        if let c = countdown, !s.contains(c.segment) { countdown = nil }
     }
 
     /// Neuer Positionsstand (jede Sekunde o. ä.). `engineSeeking`: Engine meldet Laden/Springen.
@@ -164,17 +177,62 @@ public struct SkipPlanner: Sendable {
         dismissed = dismissed.filter { $0.start <= position && position < $0.end }
     }
 
-    /// Bereich, für den jetzt ein Knopf erscheinen soll; nil = keiner.
+    /// Bereich, für den jetzt ein Knopf erscheinen soll; nil = keiner. Uses the default settings (intro and recap
+    /// with a button, credits and preview off) and no countdown.
     public func prompt(at position: Double, engineSeeking: Bool) -> SkipSegment? {
+        candidate(at: position, engineSeeking: engineSeeking, settings: SkipSettings(), context: SkipContext())?.segment
+    }
+
+    /// Wave P-a: segment under the position whose action is not "Aus", with that action.
+    func candidate(at position: Double, engineSeeking: Bool, settings: SkipSettings,
+                   context: SkipContext) -> (segment: SkipSegment, action: SkipAction)? {
         guard seeking == nil, !engineSeeking else { return nil }
-        return segments.first {
-            $0.buttonTitle != nil && $0.start <= position && position < $0.end - Self.endMargin && !dismissed.contains($0)
+        for s in segments where s.buttonTitle != nil && s.start <= position && position < s.end - Self.endMargin
+            && !dismissed.contains(s) {
+            let a = SkipPolicy.action(for: s, segments: segments, settings: settings, context: context)
+            if a != .off { return (s, a) }
         }
+        return nil
+    }
+
+    /// Wave P-a: what to show now, and whether an automatic skip is due. Call about twice a second.
+    /// - "Knopf": the plain button. "Automatisch": the button with a countdown ring; when it runs out,
+    ///   `autoSkip` carries the segment (the caller then calls `beginSkip`). The ring only counts while `playing`.
+    /// - A segment skipped automatically once (or whose countdown was cancelled) only gets the plain button.
+    public mutating func evaluate(at position: Double, engineSeeking: Bool, playing: Bool, now: Double,
+                                  settings: SkipSettings, context: SkipContext) -> SkipDecision {
+        guard let (seg, action) = candidate(at: position, engineSeeking: engineSeeking, settings: settings, context: context)
+        else { countdown = nil; return SkipDecision() }
+        guard action == .auto, !autoDone.contains(seg) else {
+            countdown = nil
+            return SkipDecision(prompt: SkipPrompt(segment: seg, countdown: nil))
+        }
+        var c: (segment: SkipSegment, left: Double, at: Double) = (seg, Self.countdownSeconds, now)
+        if let old = countdown, old.segment == seg { c = old }
+        if playing { c.left -= max(0, now - c.at) }
+        c.at = now
+        if c.left <= 0 {
+            countdown = nil
+            autoDone.insert(seg)
+            return SkipDecision(prompt: nil, autoSkip: seg)
+        }
+        countdown = c
+        return SkipDecision(prompt: SkipPrompt(segment: seg, countdown: c.left))
+    }
+
+    /// Wave P-a: any key during the countdown stops it; the button stays. true = a countdown was running.
+    @discardableResult
+    public mutating func cancelCountdown() -> Bool {
+        guard let c = countdown else { return false }
+        autoDone.insert(c.segment)
+        countdown = nil
+        return true
     }
 
     /// Sprung beginnen; liefert das Ziel (Bereichsende, vor dem Dateiende gehalten).
     public mutating func beginSkip(_ s: SkipSegment, duration: Double, now: Double) -> Double {
-        var target = s.end
+        // Wave P-a: credits followed by a scene end at that scene, never at the file end.
+        var target = SkipPolicy.target(for: s, in: segments, duration: duration)
         if duration > 10 { target = min(target, duration - 5) }
         target = max(0, target)
         seeking = (target, now)
@@ -184,6 +242,9 @@ public struct SkipPlanner: Sendable {
         return target
     }
 
-    /// Knopf für diesen Bereich ausblenden (Menü/Zurück).
-    public mutating func dismiss(_ s: SkipSegment) { dismissed.insert(s) }
+    /// Knopf für diesen Bereich ausblenden (Menü/Zurück); stops a running countdown for it too.
+    public mutating func dismiss(_ s: SkipSegment) {
+        dismissed.insert(s)
+        if countdown?.segment == s { countdown = nil; autoDone.insert(s) }
+    }
 }

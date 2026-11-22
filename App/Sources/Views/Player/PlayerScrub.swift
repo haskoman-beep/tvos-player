@@ -555,6 +555,7 @@ struct PlayerTimeline: View {
         switch k {
         case .intro, .recap: return .yellow.opacity(0.75)
         case .credits, .postCredits: return .cyan.opacity(0.6)
+        case .preview: return .purple.opacity(0.6)   // wave P-a
         }
     }
 }
