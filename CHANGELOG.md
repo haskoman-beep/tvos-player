@@ -21,6 +21,10 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 - Player: a new setting, Settings › Playback › "Ton & Untertitel öffnen", chooses how the audio and subtitle
   choice opens: the bar at the top (swipe down, as before), the same bar at the bottom (swipe up), or a small
   menu in the bottom right corner (swipe up) that shows audio, subtitles and offset first and then the list.
+- Addons: anime catalogs (type „anime“) load as home screen rows and count as series catalogs.
+- Addon install: links with a variant query (`…/manifest.json?v=…`), links to an addon's configure page
+  (`…/configure`) and web install links with an `addon=` parameter are accepted. The query is kept and
+  sent with every request to that addon.
 
 ### Fixed
 - Home screen: the built-in packs (streaming services, genres) now show images. A tile takes its image
@@ -30,6 +34,17 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   (from an imported collection), it plays on the focused tile. A tile with such an image shows no extra
   title on top, since the name is part of the image. The gradient tile stays while an image loads and for
   services without an image; the „Krimi“ tile now shows a fingerprint instead of a magnifying glass.
+- Addon catalogs no longer fail as a whole with „Antwort unlesbar“ (unreadable answer) when an item sends
+  its year or rating as a number or has one broken field. Unreadable items are skipped and logged.
+- Error, statistics and library-sync entries from aggregator addons are no longer listed or played as
+  sources, and „Sofort abspielen“ (play now) never picks them. They only appear in the log.
+- Error entries no longer appear as home screen tiles or as subtitle tracks.
+
+### Changed
+- Subtitles are never requested from AIOMetadata, because a subtitle request there marks the title as
+  watched on your tracking services. The app does its own tracking.
+- The metadata addon for posters and ratings is now one that names the IDs it serves (or AIOMetadata),
+  not an aggregator that accepts every ID only because it is higher in the addon list.
 
 ## [Build 187] – 2026-11-22 (integ)
 
@@ -50,25 +65,6 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   subtitle choice is no longer silently undone. Switching back to the original audio track during the reload
   now works.
 - Player: leaving the player after using the panel no longer keeps the player in memory.
-
-### Added
-- Addons: anime catalogs (type „anime“) load as home screen rows and count as series catalogs.
-- Addon install: links with a variant query (`…/manifest.json?v=…`), links to an addon's configure page
-  (`…/configure`) and web install links with an `addon=` parameter are accepted. The query is kept and
-  sent with every request to that addon.
-
-### Changed
-- Subtitles are never requested from AIOMetadata, because a subtitle request there marks the title as
-  watched on your tracking services. The app does its own tracking.
-- The metadata addon for posters and ratings is now one that names the IDs it serves (or AIOMetadata),
-  not an aggregator that accepts every ID only because it is higher in the addon list.
-
-### Fixed
-- Addon catalogs no longer fail as a whole with „Antwort unlesbar“ (unreadable answer) when an item sends
-  its year or rating as a number or has one broken field. Unreadable items are skipped and logged.
-- Error, statistics and library-sync entries from aggregator addons are no longer listed or played as
-  sources, and „Sofort abspielen“ (play now) never picks them. They only appear in the log.
-- Error entries no longer appear as home screen tiles or as subtitle tracks.
 
 ## [Build 174] – 2026-11-22 (integ)
 
