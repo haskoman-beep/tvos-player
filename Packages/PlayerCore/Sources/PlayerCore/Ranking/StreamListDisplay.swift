@@ -105,12 +105,36 @@ public struct StreamRowText: Equatable, Sendable {
     public static let maxLines = 12
     public var name: String
     public var body: String
+    /// Wave Q: the full file name (`behaviorHints.filename`) as its own wrapped line, only when the formatter text
+    /// does not already carry it (formatters often cut it or leave it out; its end holds group and audio).
+    public var fileName: String?
 
     public init(_ s: StreamItem) {
         name = Self.capped(s.name ?? "")
         var b = Self.capped(s.label)
         if b.isEmpty, let f = s.behaviorHints?.filename { b = Self.capped(f) }
         body = b
+        fileName = Self.extraFileName(s.behaviorHints?.filename, shown: name + "\n" + b)
+    }
+
+    /// File name not yet in `shown`. Compared on letters and digits only, ignoring case and a video extension:
+    /// the same name with spaces for dots or without ".mkv" counts as shown, a cut one ("Movie.2023.2160p…") does
+    /// not, so the full name follows.
+    public static func extraFileName(_ file: String?, shown: String) -> String? {
+        guard let f = file?.trimmingCharacters(in: .whitespacesAndNewlines), !f.isEmpty else { return nil }
+        var stem = f
+        if let dot = f.lastIndex(of: "."), videoExtensions.contains(f[f.index(after: dot)...].lowercased()) {
+            stem = String(f[..<dot])
+        }
+        let key = normalized(stem)
+        guard !key.isEmpty else { return nil }
+        return normalized(shown).contains(key) ? nil : f
+    }
+
+    private static let videoExtensions: Set<String> = ["mkv", "mp4", "m4v", "avi", "mov", "ts", "m2ts", "webm", "wmv"]
+
+    private static func normalized(_ s: String) -> String {
+        String(s.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(Character.init))
     }
 
     /// CR/LF vereinheitlichen, Leerraum außen weg; mehr als `lines` Zeilen → Zeilen mit Cache-Zustand vorn, dann die
