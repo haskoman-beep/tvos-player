@@ -12,8 +12,8 @@ Steps:
      constants) in front of the first convolution. Logged as "xray-model: ..." lines.
   3. ONNX -> PyTorch (onnx2torch) -> torch.jit.trace -> coremltools ML program, fp16, tvOS 18,
      input "data" 1x3x112x112 float32, output "embedding" 1x128 float32.
-  4. Sanity check: fixed synthetic 112x112 inputs through ONNX Runtime (fp32) and Core ML (fp16, CPU only
-     and all compute units). Every cosine must be >= 0.999, otherwise the script fails.
+  4. Sanity check: fixed synthetic 112x112 inputs (values 0..255) through ONNX Runtime (fp32) and Core ML
+     (fp16, CPU only and all compute units). Every cosine must be >= 0.999, otherwise the script fails.
 
 Usage: python3 tools/xray_model/convert_sface.py --out App/Resources/SFace.mlpackage --work <tmp dir>
        python3 tools/xray_model/convert_sface.py --print-sha   (prints the pinned SHA-256, for the cache key)
@@ -194,8 +194,11 @@ def synthetic_inputs():
         blob[((xx - cx) / 0.06) ** 2 + ((yy - 0.42) / 0.035) ** 2 <= 1.0] = 40.0
     blob[((xx - 0.5) / 0.13) ** 2 + ((yy - 0.76) / 0.03) ** 2 <= 1.0] = 60.0
     face = np.stack([blob, blob * 0.85, blob * 0.7])[None].astype(np.float32)
-    cases = [("noise_0_255", noise), ("smooth_0_255", smooth), ("faceblob_0_255", face),
-             ("faceblob_norm", (face - 127.5) / 128.0)]
+    # (name, input, gated). The graph normalises internally ((x - 127.5) * 0.0078125), so the real input range
+    # is 0..255. "faceblob_prenorm" feeds an already normalised picture (normalised twice, far outside the
+    # trained range); it is logged for information only and does not count for the cosine threshold.
+    cases = [("noise_0_255", noise, True), ("smooth_0_255", smooth, True), ("faceblob_0_255", face, True),
+             ("faceblob_prenorm", (face - 127.5) / 128.0, False)]
     return cases
 
 
@@ -228,12 +231,12 @@ def convert(onnx_model, out_path):
     )
     mlmodel.short_description = (
         "SFace face embedding (OpenCV Zoo face_recognition_sface_2021dec), 128-d, fp16. "
-        "Input: aligned 112x112 face, planar float32 NCHW; see THIRD_PARTY_NOTICES.md."
+        "Input: aligned 112x112 face, planar RGB float32 NCHW, 0..255; see THIRD_PARTY_NOTICES.md."
     )
     mlmodel.author = "SFace: Zhong et al.; ONNX model: OpenCV Zoo"
     mlmodel.license = "Apache-2.0"
     mlmodel.version = "2021dec"
-    mlmodel.input_description[INPUT_NAME] = "1x3x112x112 aligned face (channel order and scale: see report)"
+    mlmodel.input_description[INPUT_NAME] = "1x3x112x112 aligned face, planar RGB, values 0..255 (normalised inside the model)"
     mlmodel.output_description[OUTPUT_NAME] = "1x128 embedding, not normalised (L2-normalise before cosine)"
     if os.path.exists(out_path):
         fail(f"{out_path} already exists - remove it first")
@@ -258,7 +261,7 @@ def sanity(onnx_path, onnx_input, onnx_output, torch_model, out_path):
 
     worst = 1.0
     refs = {}
-    for name, x in synthetic_inputs():
+    for name, x, gated in synthetic_inputs():
         ref = sess.run([onnx_output], {onnx_input: x})[0]
         if ref.shape[-1] != DIM:
             fail(f"ONNX output has shape {ref.shape}, expected (1, {DIM})")
@@ -269,13 +272,17 @@ def sanity(onnx_path, onnx_input, onnx_output, torch_model, out_path):
             fail(f"Core ML output has {np.asarray(cpu).size} values, expected {DIM}")
         c_torch, c_cpu = cosine(ref, tout), cosine(ref, cpu)
         line = f"sanity {name}: cos(onnx fp32, torch) {c_torch:.6f} · cos(onnx fp32, coreml fp16 cpu) {c_cpu:.6f}"
-        worst = min(worst, c_torch, c_cpu)
+        if gated:
+            worst = min(worst, c_torch, c_cpu)
+        else:
+            line = "(info only) " + line
         if ml_all is not None:
             try:
                 allu = ml_all.predict({INPUT_NAME: x})[OUTPUT_NAME]
                 c_all = cosine(ref, allu)
                 line += f" · cos(onnx fp32, coreml fp16 all) {c_all:.6f}"
-                worst = min(worst, c_all)
+                if gated:
+                    worst = min(worst, c_all)
             except Exception as e:  # noqa: BLE001
                 line += f" · coreml all failed: {e}"
         line += f" · |onnx| {np.linalg.norm(ref):.3f} · onnx[0:4] {np.round(ref.ravel()[:4], 4).tolist()}"
@@ -287,7 +294,7 @@ def sanity(onnx_path, onnx_input, onnx_output, torch_model, out_path):
     log(f"sanity distinctness: cos({names[0]}, {names[2]}) {pair:.4f} (must be < 0.99)")
     if pair >= 0.99:
         fail("embeddings of different inputs are nearly identical - model output looks degenerate")
-    log(f"sanity worst cosine {worst:.6f} (required >= {MIN_COSINE})")
+    log(f"sanity worst cosine over the 0..255 inputs {worst:.6f} (required >= {MIN_COSINE})")
     if worst < MIN_COSINE:
         fail(f"Core ML fp16 does not match ONNX fp32: worst cosine {worst:.6f} < {MIN_COSINE}")
 
@@ -315,10 +322,16 @@ def main():
     #   blobFromImage(aligned_bgr, scalefactor=1, size=112x112, mean=0, swapRB=true, crop=false)
     log("reference preprocessing (OpenCV FaceRecognizerSF::feature): blobFromImage(scale 1, mean 0, swapRB true) "
         "on the BGR aligned crop -> the network is fed RGB, 0..255, no mean, no scale")
+    normalising = [h for h in head if h.split("(")[0] in ("Sub", "Mul", "Div", "Add")]
     if head:
         log(f"graph-internal preprocessing found: {' -> '.join(head)}")
-    else:
+    if head and len(normalising) == len(head):
+        log("RESULT input format: planar RGB, values 0..255 (FaceInputFormat .raw); the graph itself applies "
+            f"{' -> '.join(head)}, so do not normalise in Swift")
+    elif not head:
         log("RESULT input format: planar RGB, values 0..255 (FaceInputFormat .raw); no normalisation in the graph")
+    else:
+        log("RESULT input format: unclear, the graph starts with other ops - check the lines above")
     torch_model, _ = convert(onnx_model, args.out)
     sanity(onnx_path, inputs[0], outputs[0], torch_model, args.out)
     size = sum(os.path.getsize(os.path.join(d, f)) for d, _, fs in os.walk(args.out) for f in fs)
