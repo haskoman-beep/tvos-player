@@ -34,6 +34,9 @@ struct PlaybackSettings: View {
             SettingsSection("Bildschirmschoner") {
                 PlayerComfortSettingsRows(part: .screensaver)
             }
+            SettingsSection("iPhone & Kontrollzentrum") {
+                PlayerComfortSettingsRows(part: .remote)
+            }
             SettingsSection("Bild") {
                 DisplayModeSettingsRows(part: .basic, tint: tint)
                 SettingsFootnote("Dolby Vision fest angeben und FEL einrechnen: System › Erweitert.")
