@@ -20,8 +20,7 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 <!-- Nothing user-facing is merged yet. In progress: a more compact audio and subtitle panel in the player, and a fix for the top menu bar that could not be reached after scrolling on the home screen. -->
 
 ### Added
-- Addons: anime catalogs (type „anime“) are treated as series, so their titles get seasons and episodes
-  instead of opening as a film.
+- Addons: anime catalogs (type „anime“) load as home screen rows and count as series catalogs.
 - Addon install: links with a variant query (`…/manifest.json?v=…`), links to an addon's configure page
   (`…/configure`) and web install links with an `addon=` parameter are accepted. The query is kept and
   sent with every request to that addon.

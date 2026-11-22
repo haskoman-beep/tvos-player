@@ -5,7 +5,8 @@ import Foundation
 /// - error entries: name „[❌] Addon“, the error text in `description`, only an `externalUrl` to the project page;
 /// - statistics entries: like errors (same `externalUrl`, no `url`), name = title, `description` = the numbers;
 /// - info entries: they carry an http(s) `url`, but it is an action link, not a video, e.g. „🔄 …“ library entries or
-///   „Sync debrid account library now“. Opening one starts the action on the server instead of playing.
+///   „Sync debrid account library now“. Opening one starts the action on the server instead of playing. The „🔄“
+///   rule only applies without `behaviorHints.filename` and `videoSize` (real videos carry them).
 /// When the aggregator sends `streamData.type` ("error", "statistic", "info"), that decides first.
 /// Notices are never playable, never picked automatically and never listed as a source; the app only logs them
 /// (`AddonStreamNotices.logLine`).
@@ -32,7 +33,10 @@ public enum AddonStreamKind: String, Sendable, Equatable {
             if isProjectPage(s.externalUrl) { return .statistic }
             return .stream
         }
-        if name.hasPrefix(actionMark) || title.hasPrefix(actionMark) { return .action }
+        // A real video carries a file name or size; an action link has neither. So „🔄“ alone never hides a video
+        // whose formatter uses the symbol as a marker.
+        let describesFile = s.behaviorHints?.filename?.isEmpty == false || s.behaviorHints?.videoSize != nil
+        if !describesFile, name.hasPrefix(actionMark) || title.hasPrefix(actionMark) { return .action }
         let lines = [s.name, s.title, s.description].compactMap { $0 }.flatMap { $0.components(separatedBy: .newlines) }
         if lines.contains(where: isLibrarySyncLine) { return .action }
         return .stream
@@ -107,9 +111,9 @@ public enum AddonStreamNotices {
         }
     }
 
-    /// „AIOStreams Hinweise: 2 (Fehler „[❌] Comet“: Invalid API key · Aktion „🔄 Sync library“)“; nil without
-    /// notices. Errors carry their text, statistics and actions only their title. One line per stream load.
-    public static func logLine(_ streams: [StreamItem]) -> String? {
+    /// „AIOStreams Hinweise: 2 (Fehler „[❌] Comet“: Invalid API key · Aktion „🔄 Sync library“)“ for the addon
+    /// `addon`; nil without notices. Errors carry their text, statistics and actions only their title.
+    public static func logLine(_ streams: [StreamItem], addon: String) -> String? {
         let all = notices(streams)
         guard !all.isEmpty else { return nil }
         var parts = all.prefix(maxListed).map { n -> String in
@@ -118,7 +122,13 @@ public enum AddonStreamNotices {
             return head + ": " + t
         }
         if all.count > maxListed { parts.append("+\(all.count - maxListed) weitere") }
-        return "AIOStreams Hinweise: \(all.count) (\(parts.joined(separator: " · ")))"
+        return "\(addon) Hinweise: \(all.count) (\(parts.joined(separator: " · ")))"
+    }
+
+    /// One log line per stream load: the notices of every addon that sent some, joined with „ | “; nil without any.
+    public static func logLine(_ results: [(addon: InstalledAddon, streams: [StreamItem])]) -> String? {
+        let lines = results.compactMap { logLine($0.streams, addon: $0.addon.manifest.name) }
+        return lines.isEmpty ? nil : lines.joined(separator: " | ")
     }
 
     static func label(_ k: AddonStreamKind) -> String {

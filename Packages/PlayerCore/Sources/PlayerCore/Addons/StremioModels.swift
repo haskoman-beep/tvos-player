@@ -337,20 +337,28 @@ public struct StreamItem: Codable, Sendable, Equatable, Identifiable, Hashable {
 
     enum CodingKeys: String, CodingKey { case name, title, description, url, infoHash, externalUrl, behaviorHints, fileIdx, streamData }
 
-    /// Wie die synthetisierte Form; nur `fileIdx` nachsichtig (Zahl oder Text, sonst nil statt Fehler der ganzen Liste).
+    /// Wave W-a: lenient per field. A text field with another type (`"name": 1080`) becomes text or nil, unreadable
+    /// `behaviorHints` become nil; the stream stays. Only an entry without any address (`url`, `infoHash`, `ytId`,
+    /// `externalUrl`) that is no addon notice (`streamData`) is unreadable and skipped by the list.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        name = try c.decodeIfPresent(String.self, forKey: .name)
-        title = try c.decodeIfPresent(String.self, forKey: .title)
-        description = try c.decodeIfPresent(String.self, forKey: .description)
-        url = try c.decodeIfPresent(String.self, forKey: .url)
-        infoHash = try c.decodeIfPresent(String.self, forKey: .infoHash)
-        externalUrl = try c.decodeIfPresent(String.self, forKey: .externalUrl)
-        behaviorHints = try c.decodeIfPresent(StreamBehaviorHints.self, forKey: .behaviorHints)
-        fileIdx = ((try? c.decodeIfPresent(Int.self, forKey: .fileIdx)) ?? nil)
-            ?? ((try? c.decodeIfPresent(String.self, forKey: .fileIdx)) ?? nil).flatMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+        name = c.lenientString(.name)
+        title = c.lenientString(.title)
+        description = c.lenientString(.description)
+        url = c.lenientNonEmpty(.url)
+        infoHash = c.lenientNonEmpty(.infoHash)
+        externalUrl = c.lenientNonEmpty(.externalUrl)
+        behaviorHints = (try? c.decodeIfPresent(StreamBehaviorHints.self, forKey: .behaviorHints)) ?? nil
+        fileIdx = c.lenientInt(.fileIdx)
         streamData = (try? c.decodeIfPresent(AddonStreamData.self, forKey: .streamData)) ?? nil
+        let hasYouTube = (try? decoder.container(keyedBy: StreamAltKeys.self).lenientNonEmpty(.ytId)) != nil
+        guard url != nil || infoHash != nil || externalUrl != nil || hasYouTube || streamData != nil else {
+            throw DecodingError.keyNotFound(CodingKeys.url, .init(codingPath: c.codingPath, debugDescription: "stream without address"))
+        }
     }
+
+    /// Wave W-a: keys read only to judge an entry (YouTube streams are not played).
+    private enum StreamAltKeys: String, CodingKey { case ytId }
 
     public var id: String { (url ?? infoHash ?? "") + "|" + (name ?? "") + "|" + label }
     /// Neuere Addons nutzen `description`, ältere `title`.

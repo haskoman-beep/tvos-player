@@ -180,7 +180,7 @@ extension AddonClient {
             }
         }
         // Wave W-a: one log line per load with the addons' notices (user decision: log only, never listed).
-        if let line = AddonStreamNotices.logLine(progress.results.flatMap(\.streams)) { log("streams", "\(id): \(line)") }
+        if let line = AddonStreamNotices.logLine(progress.results) { log("streams", "\(id): \(line)") }
         return progress.results
     }
 }

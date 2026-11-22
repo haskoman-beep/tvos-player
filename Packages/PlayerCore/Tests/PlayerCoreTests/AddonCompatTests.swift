@@ -152,15 +152,22 @@ private let noticeStreams = """
 
 @Test func noticeLogLine() throws {
     let s = try streams(noticeStreams)
-    let line = try #require(AddonStreamNotices.logLine(s))
+    let line = try #require(AddonStreamNotices.logLine(s, addon: "AIOStreams"))
     #expect(line.hasPrefix("AIOStreams Hinweise: 6 ("))
     #expect(line.contains("Fehler „[❌] Comet“: Invalid API key"))
     #expect(line.contains("Statistik „Statistik“") && line.contains("Aktion „🔄 Bibliothek“"))
     #expect(line.contains("+1 weitere"))
-    #expect(AddonStreamNotices.logLine(playableStreams(s)) == nil)
+    #expect(AddonStreamNotices.logLine(playableStreams(s), addon: "AIOStreams") == nil)
     // Long texts are cut.
     let long = StreamItem(name: "[❌] X", description: String(repeating: "a", count: 400), externalUrl: errorProjectPage)
-    #expect(AddonStreamNotices.logLine([long])!.count < 260)
+    #expect(AddonStreamNotices.logLine([long], addon: "X")!.count < 260)
+    // Per load: each addon with notices under its own name.
+    let other = InstalledAddon(manifestURL: "https://other.example/manifest.json",
+                               manifest: AddonManifest(id: "o", name: "Anderes", version: "1", resources: [], types: ["movie"]))
+    let aio = InstalledAddon(manifestURL: "https://aio.example/manifest.json",
+                             manifest: AddonManifest(id: "a", name: "AIOStreams", version: "1", resources: [], types: ["movie"]))
+    let both = try #require(AddonStreamNotices.logLine([(aio, Array(s[6...7])), (other, [s[0]])]))
+    #expect(both.hasPrefix("Anderes Hinweise: 1 (") && !both.contains("AIOStreams"))
 }
 
 @Test func searchCountsOnlySourcesAndLogsNoticesOnce() async throws {
@@ -175,13 +182,32 @@ private let noticeStreams = """
     #expect(lines.count == 1 && lines[0].message.hasPrefix("tt1: AIOStreams Hinweise: 6"))
 }
 
-@Test func unreadableStreamEntryIsSkipped() async throws {
+@Test func streamFieldsAreLenientOnlyAddresslessEntriesAreSkipped() async throws {
     let box = LogBox()
     let a = try installed("https://aio.example/u", #"{"id":"com.aio","name":"AIOStreams","version":"1","resources":["stream"],"types":["movie"]}"#)
-    let c = client(["https://aio.example/u/stream/movie/tt1.json": #"{"streams":[{"name":5,"url":"https://a/x"},{"url":"https://a/y.mkv"}]}"#], box)
+    let body = """
+    {"streams":[{"name":1080,"description":["x"],"title":null,"behaviorHints":"x","fileIdx":"2","url":"https://a/x.mkv"},
+                {"name":"ohne Adresse","description":"nur Text"},
+                {"name":"YouTube","ytId":"abc"},
+                "kaputt",
+                {"url":"https://a/y.mkv"}]}
+    """
+    let c = client(["https://aio.example/u/stream/movie/tt1.json": body], box)
     let s = try await c.streams(a, type: "movie", id: "tt1")
-    #expect(s.map(\.url) == ["https://a/y.mkv"])
-    #expect(box.lines.contains { $0.message.contains("1 unlesbarer Eintrag übersprungen") })
+    #expect(s.map(\.name) == ["1080", "YouTube", nil])
+    #expect(s[0].url == "https://a/x.mkv" && s[0].description == nil && s[0].behaviorHints == nil && s[0].fileIdx == 2)
+    #expect(playableStreams(s).map(\.url) == ["https://a/x.mkv", "https://a/y.mkv"])
+    #expect(box.lines.contains { $0.message.contains("2 unlesbare Einträge übersprungen") })
+}
+
+@Test func syncSymbolNeverHidesARealVideo() throws {
+    let s = try streams("""
+    {"streams":[{"name":"\u{1F504} 2160p","description":"Film.2024.2160p.mkv","url":"https://cdn.example/f.mkv","behaviorHints":{"filename":"Film.2024.2160p.mkv"}},
+                {"name":"\u{1F504} 1080p","url":"https://cdn.example/g.mkv","behaviorHints":{"videoSize":123456}},
+                {"name":"\u{1F504} Bibliothek","url":"https://aio.example/sync","behaviorHints":{"filename":""}}]}
+    """)
+    #expect(s.map(\.addonKind) == [.stream, .stream, .action])
+    #expect(playableStreams(s).map(\.url) == ["https://cdn.example/f.mkv", "https://cdn.example/g.mkv"])
 }
 
 // MARK: Subtitles (L10, L15 decision)
