@@ -1,7 +1,7 @@
 import SwiftUI
 import PlayerCore
 
-/// Welle E-b: Einstellung „Quellen sortieren“ (Wie Addon / Smart (App)); Welle F-a: Zeile im Abschnitt „Quellenliste“.
+/// Welle E-b: Einstellung „Quellen sortieren“ (Wie Addon / Smart (App)); Welle F-a: Zeile im Abschnitt „Quellenliste“; wave S: Quellen › Auswahl.
 /// E-b M1 (Entscheidung F-a: Hinweis statt Verhaltensänderung): Weiterschauen, automatischer Wechsel und nächste
 /// Folge wählen auch bei „Wie Addon“ nach den App-Vorlieben. Bei „Wie Addon“ steht das darum immer sichtbar da.
 struct StreamOrderSettingsRow: View {
@@ -9,7 +9,7 @@ struct StreamOrderSettingsRow: View {
 
     var body: some View {
         let mode = model.profile.sources.order
-        SettingsChoiceRow(symbol: "arrow.up.arrow.down", tint: SettingsCategory.addons.tint, title: "Quellen sortieren",
+        SettingsChoiceRow(symbol: "arrow.up.arrow.down", tint: SettingsCategory.sources.tint, title: "Quellen sortieren",
                           detail: mode == .smart
                               ? "Gecachte Quellen und Quellen in der ersten Tonsprache zuerst; AV1 ab 1440p ohne Hardware-Dekoder "
                                 + "und AV1 bei Dolby Vision nach hinten; bei mehreren Diensten TorBox zuerst."
@@ -26,7 +26,7 @@ struct StreamListBadgeSettingsRow: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
-        SettingsChoiceRow(symbol: "tag", tint: SettingsCategory.addons.tint, title: "App-Plaketten in der Liste",
+        SettingsChoiceRow(symbol: "tag", tint: SettingsCategory.sources.tint, title: "App-Plaketten in der Liste",
                           detail: model.profile.sources.appBadges == .compact
                               ? "Nur „sofort“ und Größe, und nur, wenn der Text des Addons sie nicht schon zeigt."
                               : "Keine eigenen Plaketten, nur der Text der Addons.",

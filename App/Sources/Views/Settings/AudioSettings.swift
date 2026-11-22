@@ -1,7 +1,8 @@
 import SwiftUI
 import PlayerCore
 
-/// Kategorie 6 „Ton & Untertitel“ (§2.2): Sprache (Presets, E5), Anlage, Klang, Ton-Versatz.
+/// Kategorie „Sprache & Untertitel“ (wave S, was „Ton & Untertitel“): preferences only. Sprache (Presets, E5) and
+/// Merken (Spur-Wahl je Serie, was Wiedergabe & Bild › Folgen). Anlage, Klang and Versatz moved to „Bild & Ton“.
 struct AudioSettings: View {
     @EnvironmentObject var model: AppModel
 
@@ -33,17 +34,18 @@ struct AudioSettings: View {
                                                      set: { v in model.update { $0.subtitleLanguage = SubtitleLanguageChoice.apply(v, to: $0.subtitleLanguage) } }),
                                   label: SubtitleLanguageChoice.name)
             }
-            AudioShapingSettingsRows()
-            SettingsFootnote("Ton-Einstellungen gelten ab dem nächsten Start der Wiedergabe.")
+            SettingsSection("Merken") {
+                PlayerComfortSettingsRows(part: .tracks)
+            }
         }
     }
 }
 
-/// Anlage, Klang und Ton-Versatz (Welle C-c, F-a neu gegliedert). Gilt ab dem nächsten Start.
+/// Anlage, Klang und Ton-Versatz (Welle C-c, F-a neu gegliedert; wave S: Bild & Ton). Gilt ab dem nächsten Start.
 struct AudioShapingSettingsRows: View {
     @EnvironmentObject var model: AppModel
 
-    private let tint = SettingsCategory.audio.tint
+    private let tint = SettingsCategory.picture.tint
 
     var body: some View {
         let s = model.profile.audioShaping
@@ -84,7 +86,8 @@ struct AudioShapingSettingsRows: View {
     }
 }
 
-/// „Bild“ (Welle C-c): HDMI-Modus halten (Wiedergabe & Bild) und Dolby Vision fest / FEL (System › Erweitert).
+/// „Bild“ (Welle C-c): HDMI-Modus halten and Dolby Vision fest / FEL. Wave S: both parts together under
+/// Bild & Ton › Bild (were split over Wiedergabe & Bild and System › Erweitert).
 struct DisplayModeSettingsRows: View {
     enum Part { case basic, advanced }
 

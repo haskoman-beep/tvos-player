@@ -162,13 +162,13 @@ extension StreamListView {
     }
 }
 
-/// Einstellung „Zeitgrenze je Addon“ (Einstellungen › System › Erweitert).
+/// Einstellung „Zeitgrenze je Addon“ (Einstellungen › Addons › Suche, wave S).
 struct AddonTimeoutPicker: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
         // Alte/fremde Werte auf die nächstliegende Auswahl abbilden (Welle F-a: Auswahlzeile statt Picker).
-        SettingsChoiceRow(symbol: "timer", tint: SettingsCategory.system.tint, title: "Zeitgrenze je Addon",
+        SettingsChoiceRow(symbol: "timer", tint: SettingsCategory.addons.tint, title: "Zeitgrenze je Addon",
                           detail: "So lange wartet die Quellensuche auf jedes Addon. Schnelle Addons erscheinen sofort; "
                               + "ein zu langsames wird als „Zeitüberschreitung“ angezeigt.",
                           options: AddonSearch.timeoutChoices,

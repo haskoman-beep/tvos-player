@@ -263,8 +263,8 @@ enum AddonSubtitleFiles {
 
 // MARK: Einstellungen
 
-/// Einstellungs-Zeilen (Kategorie Wiedergabe & Bild): Spur-Gedächtnis (Abschnitt Folgen), Bildschirmschoner und
-/// Sprungweite der Systembefehle (Welle G-b).
+/// Einstellungs-Zeilen: Spur-Gedächtnis (wave S: Sprache & Untertitel › Merken), Fensterstil, Bildschirmschoner und
+/// Sprungweite der Systembefehle (Welle G-b; wave S: Wiedergabe › Steuerung).
 struct PlayerComfortSettingsRows: View {
     enum Part { case tracks, panelStyle, screensaver, remote }
 
@@ -273,7 +273,8 @@ struct PlayerComfortSettingsRows: View {
     @State private var cleared = false
     @State private var confirmClear = false
 
-    let tint = SettingsCategory.playback.tint
+    /// Colour of the category the row stands in (wave S: the track memory moved to Sprache & Untertitel).
+    var tint: Color { part == .tracks ? SettingsCategory.audio.tint : SettingsCategory.playback.tint }
 
     var body: some View {
         switch part {

@@ -1,8 +1,9 @@
 import SwiftUI
 import PlayerCore
 
-/// Kategorie 7 „System“ (§2.2): Status mit Version und Update, darunter App aktualisieren ›, Gerätecheck ›,
-/// Erweitert ›, Lizenzen ›.
+/// Kategorie „System“ (§2.2), set apart at the end of the left column: Status mit Version und Update, App
+/// (App aktualisieren ›, Lizenzen ›), Diagnose and Zwischenspeicher (wave S: inline, „Erweitert ›“ is dissolved).
+/// Gerätecheck moved to Bild & Ton.
 struct SystemSettings: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var updater = AppUpdater.shared
@@ -28,25 +29,18 @@ struct SystemSettings: View {
                        action: StatusCard.Action(title: updater.busy ? "Suche läuft …" : "Nach Update suchen", symbol: "arrow.down.circle") {
                            if !updater.busy { updater.check() }
                        })
-            SettingsSection {
+            SettingsSection("App") {
                 SettingsLinkRow(symbol: "arrow.down.app", tint: tint, title: "App aktualisieren",
                                 detail: "Neuesten Build suchen und über atvloadly installieren.",
                                 value: updateValue(status)) {
                     UpdatePage()
-                }
-                SettingsLinkRow(symbol: "checkmark.seal", tint: tint, title: "Gerätecheck",
-                                detail: "Ist das Apple TV richtig eingestellt? Und was spielt wie?") {
-                    DeviceCheckPage()
-                }
-                SettingsLinkRow(symbol: "wrench.and.screwdriver", tint: tint, title: "Erweitert",
-                                detail: "Diagnose, Zeitgrenze je Addon, Dolby Vision, Zwischenspeicher.") {
-                    AdvancedSettingsPage()
                 }
                 SettingsLinkRow(symbol: "doc.text", tint: tint, title: "Lizenzen",
                                 detail: "Mitgelieferte Komponenten und ihre Lizenzen.") {
                     LicensesPage()
                 }
             }
+            SystemMaintenanceRows()
         }
     }
 

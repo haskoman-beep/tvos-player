@@ -1,8 +1,8 @@
 import SwiftUI
 import PlayerCore
 
-/// Kategorie 2 „Addons & Quellen“ (§2.2): installierte Addons (Unterseite je Addon), Hinzufügen am Handy (#addon),
-/// Quellenliste, TorBox-Status. Die Zeitgrenze je Addon steht unter System › Erweitert.
+/// Kategorie „Addons“ (wave S, from „Addons & Quellen“): installierte Addons (Unterseite je Addon), Hinzufügen am
+/// Handy (#addon), Zeitgrenze je Addon (was System › Erweitert). Source rules: „Quellen“; TorBox key: Profil & Konten.
 struct AddonSettings: View {
     @EnvironmentObject var model: AppModel
 
@@ -10,13 +10,10 @@ struct AddonSettings: View {
 
     var body: some View {
         let p = model.profile
-        let torbox = SettingsSummary.keyValue(p.apiKeys["torbox"])
-        let torboxSet = !(p.apiKeys["torbox"] ?? "").isEmpty
-        CategoryPage(.addons, summary: SettingsSummary.addons(count: p.addons.count, order: p.sources.order)) {
+        CategoryPage(.addons, summary: SettingsSummary.addonsPage(count: p.addons.count, timeoutSeconds: p.addonTimeout)) {
             StatusCard(leading: .symbol("puzzlepiece.extension", tint), title: SettingsSummary.addons(p.addons.count),
-                       subtitle: "Quellen: " + SettingsSummary.orderName(p.sources.order) + " sortiert",
-                       metrics: [StatusCard.Metric(text: "TorBox: " + (torboxSet ? "Schlüssel gespeichert" : "kein Schlüssel")),
-                                 StatusCard.Metric(text: "Zeitgrenze \(Int(AddonSearch.nearestChoice(p.addonTimeout))) s")])
+                       subtitle: SettingsSummary.catalogs(p.addons.reduce(0) { $0 + $1.manifest.catalogs.count }),
+                       metrics: [StatusCard.Metric(text: "Zeitgrenze \(Int(AddonSearch.nearestChoice(p.addonTimeout))) s")])
             SettingsSection("Installierte Addons") {
                 if p.addons.isEmpty {
                     SettingsFootnote("Noch kein Addon. Am Handy die Manifest-Adresse einfügen (z. B. von AIOStreams).")
@@ -31,16 +28,8 @@ struct AddonSettings: View {
                 PhoneLinkRow(section: .addon, symbol: "plus", tint: tint, title: "Addon hinzufügen",
                              detail: "Manifest-Adresse am Handy einfügen.")
             }
-            SettingsSection("Quellenliste") {
-                StreamOrderSettingsRow()
-                StreamListBadgeSettingsRow()
-                SettingsToggleRow(symbol: "bolt", tint: tint, title: "Quellen vorladen",
-                                  detail: "Sucht Quellen schon im Hintergrund, damit die Liste beim Öffnen sofort da ist.",
-                                  reserveDetailSpace: false, isOn: model.binding(\.appearance.prefetchStreams))
-            }
-            SettingsSection("TorBox") {
-                PhoneLinkRow(section: .addon, symbol: "externaldrive", tint: tint, title: "TorBox",
-                             detail: "Schlüssel für „Meine TorBox-Dateien“. Eingabe am Handy.", value: torbox)
+            SettingsSection("Suche") {
+                AddonTimeoutPicker()
             }
         }
     }

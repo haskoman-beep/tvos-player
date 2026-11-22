@@ -21,10 +21,21 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 - Detail page: the title's poster now sits to the left of the meta line, badges and description, exactly as
   tall as that block. It uses the same picture as the poster tiles (metadata addon poster when that setting
   is on, otherwise the catalog or TMDB poster) and is left out when the block is too short for it.
-- Settings › Playback › Detail page: a new setting „Sofort abspielen anzeigen“ (show instant play), off by
-  default.
+- Settings › Quellen (sources) › Auswahl (selection): a new setting „Sofort abspielen anzeigen“ (show instant
+  play), off by default.
 
 ### Changed
+- Settings: the left column is regrouped into three groups with headers plus System at the end:
+  „Inhalte“ (content: Profil & Konten, Addons, Quellen), „Oberfläche“ (interface: Startseite, Aussehen),
+  „Wiedergabe“ (playback: Wiedergabe, Sprache & Untertitel, Bild & Ton) and „System“. „Addons & Quellen“ is
+  split into „Addons“ and „Quellen“ (sources); the new page „Bild & Ton“ (picture and sound) collects HDMI
+  mode, Dolby Vision, FEL, sound system, sound, audio offset and the device check. The „Erweitert“ (advanced)
+  subpage is gone: its rows moved to their categories, diagnostics and the catalog cache now sit directly
+  under System. All keys, TorBox included, are under Profil & Konten; „Postergröße“ (poster size) and the
+  rating icon set appear only once, under Aussehen; „Sprache der App“ (app language) comes first there; the
+  section „iPhone & Kontrollzentrum“ is now „Steuerung“ (controls). Each category says under its title
+  whether it applies to this profile or to this device. Only the place of the rows changed: values, keys and
+  defaults stay as they were.
 - Detail page: „Abspielen“ (play) is the main button again and takes the focus on entry and on return from
   the player. The „Sofort abspielen“ (instant play) card is only shown, and its best source only chosen,
   when the new setting is on; with it on, everything behaves as in build 198.

@@ -2,6 +2,7 @@ import SwiftUI
 import PlayerCore
 
 /// Kategorie 1, Abschnitte „Konten“ und „Schlüssel“: Trakt/Simkl verbinden, Schlüssel-Status.
+/// Wave S: all keys in one place, TorBox included (was under Addons & Quellen › TorBox).
 /// E7: Schlüssel und Client IDs nur noch am Handy; hier Status und Sprung auf die Handy-Seite (#keys).
 struct AccountSettingsRows: View {
     @EnvironmentObject var model: AppModel
@@ -36,6 +37,10 @@ struct AccountSettingsRows: View {
                          detail: "Kataloge, Bilder und Suche. Eingabe am Handy.", value: SettingsSummary.keyValue(model.profile.apiKeys["tmdb"]))
             PhoneLinkRow(section: .keys, symbol: "star", tint: tint, title: "MDBList-Schlüssel",
                          detail: "Bewertungen außer IMDb. Eingabe am Handy.", value: SettingsSummary.keyValue(model.profile.apiKeys["mdblist"]))
+            // Same row as before (phone anchor #addon, where the TorBox field lives), only moved.
+            PhoneLinkRow(section: .addon, symbol: "externaldrive", tint: tint, title: "TorBox",
+                         detail: "Schlüssel für „Meine TorBox-Dateien“. Eingabe am Handy.",
+                         value: SettingsSummary.keyValue(model.profile.apiKeys["torbox"]))
         }
         // item-Variante: die Aktion läuft nach dem Schließen, `logout` ist dann schon nil (Zusammenführung F).
         .settingsConfirmation(item: $logout, title: { "Von \(Self.name($0)) abmelden?" },

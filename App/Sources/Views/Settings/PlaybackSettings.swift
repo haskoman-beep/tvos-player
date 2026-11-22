@@ -1,9 +1,9 @@
 import SwiftUI
 import PlayerCore
 
-/// Kategorie 5 „Wiedergabe & Bild“ (§2.2): Folgen, Ton & Untertitel im Player, Film zwischenspeichern, Bildschirmschoner, Bild.
-/// Sprache der App → Aussehen, Tonsprache/Untertitel → Ton & Untertitel, Fortschritt → Profil & Konten,
-/// Quellen vorladen/sortieren → Addons & Quellen.
+/// Kategorie „Wiedergabe“ (wave S, was „Wiedergabe & Bild“): how a title starts and runs. Folgen, Steuerung
+/// (was „iPhone & Kontrollzentrum“, plus „Ton & Untertitel öffnen“ and the screensaver), Zwischenspeichern.
+/// Moved out: Spur-Wahl merken → Sprache & Untertitel, HDMI-Modus → Bild & Ton, Sofort abspielen → Quellen.
 struct PlaybackSettings: View {
     @EnvironmentObject var model: AppModel
 
@@ -20,16 +20,11 @@ struct PlaybackSettings: View {
                                   detail: "Fragt vor der nächsten Folge, wenn so viele Folgen ohne Tastendruck liefen.",
                                   options: StillWatchingCounter.choices, selection: model.binding(\.stillWatchingAfter),
                                   label: SettingsSummary.stillWatchingName)
-                PlayerComfortSettingsRows(part: .tracks)
             }
-            // Wave F-n: „Sofort abspielen“ card (wave G-a) only on request; default off, „Abspielen“ is the main button.
-            SettingsSection("Detailseite") {
-                SettingsToggleRow(symbol: "bolt", tint: tint, title: "Sofort abspielen anzeigen",
-                                  detail: "Zeigt bei Filmen neben „Abspielen“ die Karte „Sofort abspielen“: startet die beste Quelle ohne Auswahl.",
-                                  reserveDetailSpace: false, isOn: model.binding(\.player.instantPlay))
-            }
-            SettingsSection("Ton & Untertitel im Player") {
+            SettingsSection("Steuerung") {
+                PlayerComfortSettingsRows(part: .remote)
                 PlayerComfortSettingsRows(part: .panelStyle)
+                PlayerComfortSettingsRows(part: .screensaver)
             }
             SettingsSection("Zwischenspeichern") {
                 SettingsChoiceRow(symbol: "internaldrive", tint: tint, title: "Film zwischenspeichern",
@@ -39,16 +34,6 @@ struct PlaybackSettings: View {
                                   selection: Binding(get: { SettingsSummary.diskCacheChoice(model.profile.diskCache) },
                                                      set: { gb in model.update { $0.diskCache = SettingsSummary.applyDiskCacheChoice(gb, to: $0.diskCache) } }),
                                   label: SettingsSummary.diskCacheChoiceName)
-            }
-            SettingsSection("Bildschirmschoner") {
-                PlayerComfortSettingsRows(part: .screensaver)
-            }
-            SettingsSection("iPhone & Kontrollzentrum") {
-                PlayerComfortSettingsRows(part: .remote)
-            }
-            SettingsSection("Bild") {
-                DisplayModeSettingsRows(part: .basic, tint: tint)
-                SettingsFootnote("Dolby Vision fest angeben und FEL einrechnen: System › Erweitert.")
             }
         }
     }

@@ -262,16 +262,18 @@ enum Theme {
     /// Feste Kachelfarben der Kategoriesymbole (§4.6), unabhängig von der Akzentfarbe.
     /// Das Symbol darauf ist weiß und gefüllt (kein Neon-Glow wie bei umrissenen Akzentsymbolen).
     enum CategoryTint: CaseIterable {
-        case profile, addons, home, appearance, playback, audio, system
+        case profile, addons, sources, home, appearance, playback, audio, picture, system
 
         var color: Color {
             switch self {
             case .profile: .blue
             case .addons: .purple
+            case .sources: .cyan
             case .home: .orange
             case .appearance: .pink
             case .playback: .green
             case .audio: .teal
+            case .picture: .indigo
             case .system: .gray
             }
         }

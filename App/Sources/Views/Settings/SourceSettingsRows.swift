@@ -15,7 +15,7 @@ struct SpoilerSettingsRow: View {
 
 /// Welle C-d/F-a: eigener Bewertungs-Icon-Satz (JSON, wird nur zur Laufzeit geladen).
 /// E7: Die Adresse kommt nur noch von der Handy-Seite (Feld „icon_set“, Abschnitt System); hier Status und
-/// „Eingebaute Plaketten verwenden“. Erreichbar über Aussehen › Plaketten und System › Erweitert.
+/// „Eingebaute Plaketten verwenden“. Erreichbar über Aussehen › Plaketten (wave S: only there).
 struct RatingIconSettingsPage: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var store = RatingIconStore.shared
