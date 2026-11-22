@@ -33,6 +33,15 @@ extension AppModel {
         return out
     }
 
+    /// Welle G-a: „Sofort abspielen / Beste Wahl“ (Regeln in PlayerCore `BestChoice`): letzte Quelle, sonst die beste
+    /// der klugen Ordnung, nie eine im 8-h-Gedächtnis.
+    func bestChoice(_ list: [(addon: String, stream: StreamItem)], title: String) -> BestChoice.Pick? {
+        let stability = PlaybackStability.shared
+        let last = progress.lastSource(for: title).flatMap { $0.contentID == title ? $0 : nil }
+        return BestChoice.pick(list, context: sourceRankContext, last: last,
+                               isFailed: { stability.isRecentlyFailed($0, title: title) })
+    }
+
     /// Reihenfolge für Weiterschauen, Rückfall und nächste Folge: immer die kluge Ordnung, egal wie angezeigt wird.
     func autoOrderedStreams(_ list: [(addon: String, stream: StreamItem)]) -> [(addon: String, stream: StreamItem)] {
         StreamListOrder.automatic(list, context: sourceRankContext)

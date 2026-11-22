@@ -95,6 +95,10 @@ public enum SourceRanking {
         order(entries, context: context) { StreamTraits.parse($0.stream) }
     }
 
+    /// Grundstufe einer Quelle (Stufen 1–3 oben, kleiner = weiter vorn); gleiche Stufe = gleich gut für die
+    /// automatische Wahl. Welle G-a: „Beste Wahl“ wählt nur innerhalb der besten Stufe nach Technik.
+    public static func tier(_ t: StreamTraits, context: SourceRankContext) -> [Int] { key(t, context) }
+
     /// Kleiner = weiter vorn.
     private static func key(_ t: StreamTraits, _ c: SourceRankContext) -> [Int] {
         [t.cached == false ? 1 : 0,

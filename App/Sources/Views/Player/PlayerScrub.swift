@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UIKit.UIGestureRecognizerSubclass
 import GameController
 import AetherFEL
 import PlayerCore
@@ -46,6 +47,10 @@ final class ScrubController: ObservableObject {
     @Published private(set) var preview: CGImage?
     /// Zeit des gezeigten Bildes (kann vom Ziel abweichen, solange das neue lädt).
     @Published private(set) var previewTime: Double?
+    /// Welle G-a: Schnellsuchlauf (◀/▶ gehalten): Geschwindigkeit mit Vorzeichen, nil = nichts gehalten.
+    @Published private(set) var holdSpeed: Double?
+    /// Ziel steht an der Grenze (Anfang, Dateiende, vor dem Abspann).
+    @Published private(set) var holdAtLimit = false
 
     private var planner = ScrubPlanner()
     private var cache = ScrubPreviewCache<ScrubStill>(capacity: 48)
@@ -65,13 +70,23 @@ final class ScrubController: ObservableObject {
     private var supportsPreview: () -> Bool = { false }
     private var fetch: (Double, Bool) async -> ScrubStill? = { _, _ in nil }
     private var release: () async -> Void = {}
+    /// Schnellsuchlauf: Ausgangsstelle (verbraucht einen gesammelten ±10-s-Sprung) und Obergrenze ab einer Stelle.
+    private var holdAllowed: () -> Bool = { false }
+    private var holdOrigin: (Bool) -> Double = { _ in 0 }
+    private var holdLimit: (Double) -> Double = { _ in .greatestFiniteMagnitude }
+    private var holdTask: Task<Void, Never>?
 
     static let previewWidth = 480
     private static var now: Double { ProcessInfo.processInfo.systemUptime }
 
-    func attach<E: PlaybackEngine>(engine: E, canScrub: @escaping () -> Bool, edges: @escaping () -> [Double]) {
+    func attach<E: PlaybackEngine>(engine: E, canScrub: @escaping () -> Bool, edges: @escaping () -> [Double],
+                                   holdAllowed: @escaping () -> Bool,
+                                   holdOrigin: @escaping (Bool) -> Double, holdLimit: @escaping (Double) -> Double) {
         self.canScrub = canScrub
         self.edges = edges
+        self.holdAllowed = holdAllowed
+        self.holdOrigin = holdOrigin
+        self.holdLimit = holdLimit
         position = { [weak engine] in engine?.currentTime ?? 0 }
         duration = { [weak engine] in engine?.duration ?? 0 }
         supportsPreview = { [weak engine] in engine?.supportsScrubPreview ?? false }
@@ -81,6 +96,9 @@ final class ScrubController: ObservableObject {
         input.onPanEnded = { [weak self] in self?.planner.panEnded() }
         input.onTouch = { [weak self] x, y in self?.touch(x, y) }
         input.onTouchEnded = { [weak self] in self?.planner.touchEnded() }
+        input.onHoldBegan = { [weak self] forward in self?.holdBegan(forward) }
+        input.onHoldEnded = { [weak self] in self?.holdEnded() }
+        input.canHold = { [weak self] in self?.canHold() ?? false }
         input.start()
     }
 
@@ -134,6 +152,46 @@ final class ScrubController: ObservableObject {
         }
     }
 
+    /// ◀/▶ gehalten (`FastSeek.holdThreshold`): Ziel läuft mit steigender Geschwindigkeit, bis losgelassen wird.
+    /// Gleiche Bedingung für den Recognizer (`gestureRecognizerShouldBegin`) und den Beginn (R1 M4).
+    private func canHold() -> Bool { holdAllowed() && (planner.isActive || canScrub()) }
+
+    private func holdBegan(_ forward: Bool) {
+        guard canHold() else { return }
+        let was = planner.isActive
+        prepare(was)
+        let from = was ? planner.target : holdOrigin(forward)
+        let upper = holdLimit(from)
+        planner.holdBegin(forward: forward, position: from, duration: duration(), upper: upper, now: Self.now)
+        RemoteLog.info("spulen", "Schnellsuchlauf \(forward ? "vor" : "zurück") ab \(Int(planner.target))s"
+            + (upper < .greatestFiniteMagnitude ? " · Grenze \(Int(upper))s" : ""))
+        publish()
+        holdTask?.cancel()
+        holdTask = Task { [weak self] in
+            var lastSpeed: Double?
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(FastSeek.tick))
+                guard let self, !Task.isCancelled, self.planner.isHolding else { return }
+                let moved = self.planner.holdTick(now: Self.now)
+                let sp = self.planner.holdSpeed(now: Self.now)
+                if sp != lastSpeed, let sp {
+                    lastSpeed = sp
+                    RemoteLog.info("spulen", "Schnellsuchlauf \(FastSeek.label(speed: sp)) bei \(Int(self.planner.target))s")
+                }
+                if moved || sp != self.holdSpeed || self.planner.holdAtLimit != self.holdAtLimit { self.publish() }
+            }
+        }
+    }
+
+    /// Losgelassen: Ziel bleibt stehen; Select/Play springt, Menü verwirft.
+    private func holdEnded() {
+        guard planner.isHolding else { return }
+        holdTask?.cancel(); holdTask = nil
+        planner.holdEnd(now: Self.now)
+        RemoteLog.info("spulen", "Schnellsuchlauf losgelassen bei \(Int(planner.target))s\(planner.holdAtLimit ? " (Grenze)" : "")")
+        publish()
+    }
+
     private func prepare(_ active: Bool) {
         if !active { planner.snapEdges = edges() }
     }
@@ -142,6 +200,8 @@ final class ScrubController: ObservableObject {
         let started = !isActive && planner.isActive
         isActive = planner.isActive
         target = planner.target
+        holdSpeed = planner.holdSpeed(now: Self.now)
+        holdAtLimit = planner.holdAtLimit
         guard isActive else { return }
         if started {
             RemoteLog.info("spulen", "Beginn bei \(Int(planner.origin))s · Vorschau \(supportsPreview() ? "ja" : "nein (Quelle liefert keine Standbilder)")")
@@ -152,6 +212,8 @@ final class ScrubController: ObservableObject {
 
     private func end() {
         isActive = false
+        holdTask?.cancel(); holdTask = nil
+        holdSpeed = nil; holdAtLimit = false
         previewTask?.cancel(); previewTask = nil
         idleTask?.cancel(); idleTask = nil
         preview = nil; previewTime = nil
@@ -232,8 +294,14 @@ final class RemoteTouchInput: NSObject, UIGestureRecognizerDelegate {
     var onPanEnded: () -> Void = {}
     var onTouch: (Double, Double) -> Void = { _, _ in }
     var onTouchEnded: () -> Void = {}
+    /// Welle G-a: ◀/▶ gehalten (true = vor) bzw. losgelassen.
+    var onHoldBegan: (Bool) -> Void = { _ in }
+    var onHoldEnded: () -> Void = {}
+    /// Halten darf beginnen (sonst scheitert der Recognizer und der Druck läuft normal weiter, z. B. Up-next abbrechen).
+    var canHold: () -> Bool = { false }
 
     private var recognizer: UIPanGestureRecognizer?
+    private var holdRecognizer: ArrowHoldRecognizer?
     private var lastTranslation: CGFloat = 0
     /// Je Gamepad der vorige Zustand (absolute Werte, Handler), beim Abmelden zurückgesetzt.
     private var pads: [(pad: GCMicroGamepad, absolute: Bool, handler: GCControllerDirectionPadValueChangedHandler?)] = []
@@ -250,6 +318,10 @@ final class RemoteTouchInput: NSObject, UIGestureRecognizerDelegate {
             g.delegate = self
             window.addGestureRecognizer(g)
             recognizer = g
+            let h = ArrowHoldRecognizer(target: self, action: #selector(handleHold(_:)))
+            h.delegate = self
+            window.addGestureRecognizer(h)
+            holdRecognizer = h
         } else {
             RemoteLog.info("spulen", "kein Fenster für die Wischgeste")
         }
@@ -262,6 +334,8 @@ final class RemoteTouchInput: NSObject, UIGestureRecognizerDelegate {
     func stop() {
         if let g = recognizer { g.view?.removeGestureRecognizer(g) }
         recognizer = nil
+        if let h = holdRecognizer { h.view?.removeGestureRecognizer(h) }
+        holdRecognizer = nil
         for p in pads {
             p.pad.dpad.valueChangedHandler = p.handler
             p.pad.reportsAbsoluteDpadValues = p.absolute
@@ -304,8 +378,67 @@ final class RemoteTouchInput: NSObject, UIGestureRecognizerDelegate {
         }
     }
 
+    @objc private func handleHold(_ g: ArrowHoldRecognizer) {
+        switch g.state {
+        case .began: onHoldBegan(g.forward)
+        case .ended, .cancelled, .failed: onHoldEnded()
+        default: break
+        }
+    }
+
+    func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+        g === holdRecognizer ? canHold() : true
+    }
+
     func gestureRecognizer(_ g: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+}
+
+/// Welle G-a: ◀/▶ (Rand der Touchfläche bzw. Ring) länger als `FastSeek.holdThreshold` gedrückt. Erkannt
+/// bricht er den Druck für die Ansichten ab (`cancelsTouchesInView`), danach kommt kein ◀/▶-Befehl mehr an;
+/// ein kurzer Druck scheitert und läuft unverändert als ±10-s-Sprung (onMoveCommand) durch.
+/// Nur Tasten, keine Berührungen: Wischen und Drehrad bleiben beim Pan-Recognizer bzw. GameController.
+@MainActor
+final class ArrowHoldRecognizer: UIGestureRecognizer {
+    private(set) var forward = true
+    private var press: UIPress?
+
+    override init(target: Any?, action: Selector?) {
+        super.init(target: target, action: action)
+        allowedPressTypes = [NSNumber(value: UIPress.PressType.leftArrow.rawValue),
+                             NSNumber(value: UIPress.PressType.rightArrow.rawValue)]
+        allowedTouchTypes = []
+    }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent) {
+        guard press == nil, let p = presses.first(where: { $0.type == .leftArrow || $0.type == .rightArrow }) else { return }
+        press = p
+        forward = p.type == .rightArrow
+        perform(#selector(holdReached), with: nil, afterDelay: FastSeek.holdThreshold)
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent) {
+        guard let p = press, presses.contains(p) else { return }
+        NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(holdReached), object: nil)
+        state = (state == .began || state == .changed) ? .ended : .failed
+    }
+
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent) {
+        guard let p = press, presses.contains(p) else { return }
+        NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(holdReached), object: nil)
+        state = (state == .began || state == .changed) ? .cancelled : .failed
+    }
+
+    override func reset() {
+        NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(holdReached), object: nil)
+        press = nil
+        super.reset()
+    }
+
+    @objc private func holdReached() {
+        guard press != nil, state == .possible else { return }
+        state = .began
+    }
 }
 
 // MARK: Ansichten
@@ -334,10 +467,22 @@ struct ScrubPreviewCard: View {
                     }
                     .frame(width: cardW, height: cardW * 9 / 16)
                     HStack(spacing: 12) {
+                        // Welle G-a: Geschwindigkeit des Schnellsuchlaufs (auch bei ausgeblendeter Steuerleiste).
+                        if let sp = controller.holdSpeed {
+                            Text(FastSeek.label(speed: sp)).font(.title3.monospacedDigit().bold())
+                                .padding(.horizontal, 12).padding(.vertical, 4)
+                                .background(.white.opacity(0.18), in: Capsule())
+                        }
                         Text(PlayerClock.text(controller.target)).font(.title3.monospacedDigit().bold())
                         Text(PlayerClock.delta(controller.target - current)).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
                     }
-                    Text("Select: springen · Zurück: abbrechen").font(.caption2).foregroundStyle(.secondary)
+                    if controller.holdAtLimit {
+                        Text(controller.target < 1 ? "Anfang erreicht" : "Halt vor dem Ende")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Text(controller.holdSpeed != nil ? "Loslassen: anhalten · Select/Play: springen · Zurück: abbrechen"
+                                                     : "Select/Play: springen · ◀▶ halten: Schnellsuchlauf · Zurück: abbrechen")
+                        .font(.caption2).foregroundStyle(.secondary)
                 }
                 .padding(14)
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
