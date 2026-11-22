@@ -55,8 +55,21 @@ private let gb: Int64 = 1_000_000_000
 }
 
 @Test func filterSelectionDropsChipsTheNewListLacks() {
-    let opts = SourceFilter.options([traits("2160p"), traits("1080p")])
-    #expect(SourceFilter.effective([.resolution("2160p"), .dolbyVision], options: opts) == [.resolution("2160p")])
+    // Review Q I1: "Dolby Vision" chosen, the next episode has no DV source. The chip has no option (no "0" chip)
+    // and is reported as dropped, so the view falls back to "Alle".
+    let chosen: Set<SourceFilterChip> = [.resolution("2160p"), .dolbyVision]
+    let next = [traits("2160p"), traits("1080p")]
+    let opts = SourceFilter.options(next, selected: chosen)
+    #expect(!opts.contains { $0.chip == .dolbyVision })
+    #expect(opts.allSatisfy { $0.count > 0 })
+    #expect(SourceFilter.effective(chosen, options: opts) == [.resolution("2160p")])
+    #expect(SourceFilter.dropped(chosen, options: opts) == [.dolbyVision])
+    // Still present in every source: the chosen chip stays (with its full count), nothing dropped.
+    let allDV = [traits("2160p", hdr: ["DV"]), traits("1080p", hdr: ["DV"])]
+    let kept = SourceFilter.options(allDV, selected: [.dolbyVision])
+    #expect(kept.first { $0.chip == .dolbyVision }?.count == 2)
+    #expect(SourceFilter.dropped([.dolbyVision], options: kept).isEmpty)
+    #expect(SourceFilter.dropped([.dolbyVision], options: SourceFilter.options([], selected: [.dolbyVision])) == [.dolbyVision])
 }
 
 @Test func focusKeepsRowPositionWhileSourcesArrive() {
@@ -89,4 +102,8 @@ private let gb: Int64 = 1_000_000_000
     #expect(StreamRowText(StreamItem(url: "https://u", behaviorHints: h)).fileName == nil)
     #expect(StreamRowText(StreamItem(name: "n", description: "d", url: "https://u")).fileName == nil)
     #expect(StreamRowText.extraFileName("  ", shown: "x") == nil)
+    // Review Q M4: the full name without its video extension counts as shown; other suffixes still count.
+    #expect(StreamRowText.extraFileName("Pixels.2015.2160p-GRP.mkv", shown: "Pixels.2015.2160p-GRP") == nil)
+    #expect(StreamRowText.extraFileName("Pixels.2015.2160p-GRP.MP4", shown: "Pixels 2015 2160p GRP") == nil)
+    #expect(StreamRowText.extraFileName("Pixels.2015.2160p-GRP", shown: "Pixels.2015.2160p") == "Pixels.2015.2160p-GRP")
 }

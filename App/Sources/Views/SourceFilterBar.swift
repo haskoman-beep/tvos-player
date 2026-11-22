@@ -9,13 +9,16 @@ struct SourceFilterBar: View {
     let total: Int
     let onAll: () -> Void
     let onToggle: (SourceFilterChip) -> Void
+    /// True while a chip has the focus (the list's entry focus then leaves the user here).
+    let onFocusChange: (Bool) -> Void
+    @FocusState private var focusedChip: String?
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: Theme.Space.s) {
-                chip("Alle", count: total, on: selected.isEmpty, action: onAll)
+                chip("Alle", id: "all", count: total, on: selected.isEmpty, action: onAll)
                 ForEach(options) { o in
-                    chip(o.chip.label, count: o.count, on: selected.contains(o.chip)) { onToggle(o.chip) }
+                    chip(o.chip.label, id: o.id, count: o.count, on: selected.contains(o.chip)) { onToggle(o.chip) }
                 }
             }
             // Room for the focus lift (`Focus.tileScale`) so a focused chip is not cut.
@@ -24,9 +27,11 @@ struct SourceFilterBar: View {
         }
         .scrollClipDisabled()
         .focusSection()
+        .onChange(of: focusedChip != nil) { _, on in onFocusChange(on) }
+        .onDisappear { onFocusChange(false) }
     }
 
-    private func chip(_ label: String, count: Int, on: Bool, action: @escaping () -> Void) -> some View {
+    private func chip(_ label: String, id: String, count: Int, on: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: Theme.Space.xs) {
                 if on { Image(systemName: "checkmark") }
@@ -37,6 +42,7 @@ struct SourceFilterBar: View {
             .lineLimit(1)
         }
         .buttonStyle(ThemeActionButtonStyle(selected: on))
+        .focused($focusedChip, equals: id)
         .accessibilityAddTraits(on ? .isSelected : [])
     }
 }

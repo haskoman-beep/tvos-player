@@ -659,24 +659,31 @@ struct StreamListView: View {
     @State private var closedPlayer: StreamItem?
     /// Wave Q: chosen filter chips (view only, per list visit) and the parsed traits per source id.
     @State private var filter: Set<SourceFilterChip> = []
+    /// Parsed traits, keyed by `traitKey` (id plus the hints the id leaves out, review Q M3).
     @State private var traitsByID: [String: StreamTraits] = [:]
+    /// Review Q I3: the focus is on the chip bar, or the user chose a filter: the entry focus leaves it there.
+    @State private var chipBarFocused = false
+    @State private var filterTouched = false
 
-    private func traits(_ s: StreamItem) -> StreamTraits { traitsByID[s.id] ?? StreamTraits.parse(s) }
+    private static func traitKey(_ s: StreamItem) -> String {
+        "\(s.id)|\(s.behaviorHints?.cached.map(String.init) ?? "-")|\(s.behaviorHints?.videoSize ?? -1)|\(s.behaviorHints?.filename ?? "")"
+    }
+    private func traits(_ s: StreamItem) -> StreamTraits { traitsByID[Self.traitKey(s)] ?? StreamTraits.parse(s) }
     private var filterOptions: [SourceFilterOption] {
         streams.count < 2 ? [] : SourceFilter.options(streams.map { traits($0.stream) }, selected: filter)
     }
     /// Rows on screen: the full list narrowed by the chips the list still offers.
-    private var visibleStreams: [(addon: String, stream: StreamItem)] {
-        let active = SourceFilter.effective(filter, options: filterOptions)
+    private func visibleStreams(_ options: [SourceFilterOption]) -> [(addon: String, stream: StreamItem)] {
+        let active = SourceFilter.effective(filter, options: options)
         return active.isEmpty ? streams : streams.filter { SourceFilter.passes(traits($0.stream), active) }
     }
-    private var visibleIDs: [String] { visibleStreams.map(\.stream.id) }
+    private var visibleIDs: [String] { visibleStreams(filterOptions).map(\.stream.id) }
 
     var body: some View {
         // Welle E-b: Addon-Name nur, wenn die Liste mehrere Addons mischt (sonst steht er schon im Text des Addons).
         let showAddon = Set(streams.map(\.addon)).count > 1
         let options = filterOptions
-        let shown = visibleStreams
+        let shown = visibleStreams(options)
         // Titel als Listenkopf (scrollt mit weg) statt navigationTitle: der große tvOS-Titel lag über den Zeilen.
         ScrollViewReader { proxy in
             List {
@@ -693,11 +700,12 @@ struct StreamListView: View {
                     if !options.isEmpty {
                         SourceFilterBar(options: options, selected: SourceFilter.effective(filter, options: options),
                                         total: streams.count, onAll: { setFilter([]) },
-                                        onToggle: { setFilter(SourceFilter.toggle($0, in: SourceFilter.effective(filter, options: options))) })
+                                        onToggle: { setFilter(SourceFilter.toggle($0, in: SourceFilter.effective(filter, options: options))) },
+                                        onFocusChange: { chipBarFocused = $0 })
                             .listRowBackground(Color.clear)
                         if shown.isEmpty {
                             Text("Keine Quelle passt zum Filter.").foregroundStyle(.secondary)
-                            Button("Filter aufheben") { setFilter([]) }
+                            Button("Filter aufheben") { clearFilterToList() }
                                 .buttonStyle(ThemeRowButtonStyle(maxWidth: .infinity))
                                 .listRowBackground(Color.clear)
                         }
@@ -824,10 +832,12 @@ struct StreamListView: View {
         }
         .onChange(of: streams.map(\.stream.id)) { _, ids in
             // Wave Q: parse each source once (body runs on every focus move); drop gone ones.
-            let keep = Set(ids)
+            let keys = streams.map { Self.traitKey($0.stream) }
+            let keep = Set(keys)
             var t = traitsByID.filter { keep.contains($0.key) }
-            for e in streams where t[e.stream.id] == nil { t[e.stream.id] = StreamTraits.parse(e.stream) }
+            for (k, e) in zip(keys, streams) where t[k] == nil { t[k] = StreamTraits.parse(e.stream) }
             traitsByID = t
+            dropMissingChips()
         }
         .onChange(of: visibleIDs) { old, new in keepFocusPosition(old: old, new: new) }
         .onChange(of: playing) { old, s in
@@ -879,6 +889,11 @@ extension StreamListView {
         entryFocusDone = true
         let ids = visibleIDs
         guard focusedStream == nil || focusedStream == ids.first else { return }
+        // Review Q I3: nil also means "on the chip bar"; a chosen filter counts as the user's choice too.
+        if chipBarFocused || filterTouched {
+            RemoteLog.info("fokus", "Quellenliste Eintritt: Fokus bleibt bei den Filtern")
+            return
+        }
         let last = model.progress.lastSource(for: (current ?? request).id)?.match(in: streams)?.id
         guard let id = SourceFocus.entry(ids: ids, lastPlayed: last, isPlayable: focusPlayable) else { return }
         requestFocus(id, in: ids, reason: last == id ? "Eintritt, zuletzt gespielt" : "Eintritt", delayMs: 0)
@@ -912,17 +927,42 @@ extension StreamListView {
     /// Wave Q: new sources sort in while the list is shown. The focus keeps its row position instead of following
     /// its source (the list would scroll under the user's thumb). Not while a player is open or closing, or a focus
     /// move is pending: those set the focus themselves.
+    /// Review Q I2: goes through the checked request path (scroll, set, verify, up to 4 tries), which logs
+    /// "Platz gehalten: Zeile n (Versuch k)" only once the focus is verified there, else "nicht gesetzt". A newer
+    /// batch replaces a pending keep request and measures from its target; other requests are never replaced.
     private func keepFocusPosition(old: [String], new: [String]) {
-        guard playing == nil, closedPlayer == nil, focusRequest == nil,
-              let id = SourceFocus.keepPosition(focused: focusedStream, old: old, new: new) else { return }
-        focusedStream = id
-        RemoteLog.info("fokus", "Quellenliste: Platz gehalten, Zeile \((new.firstIndex(of: id) ?? 0) + 1) (\(new.count) Quellen)")
+        guard playing == nil, closedPlayer == nil else { return }
+        let pendingKeep = focusRequest?.keep == true
+        guard focusRequest == nil || pendingKeep else { return }
+        let focused = pendingKeep ? focusRequest?.id : focusedStream
+        guard let id = SourceFocus.keepPosition(focused: focused, old: old, new: new) else { return }
+        focusRequest = SourceFocusRequest(id: id, index: new.firstIndex(of: id) ?? 0, reason: "Platz gehalten",
+                                          delayMs: 0, keep: true)
     }
 
     private func setFilter(_ chips: Set<SourceFilterChip>) {
         filter = chips
+        filterTouched = true
         let names = chips.map(\.label).sorted().joined(separator: ", ")
-        RemoteLog.info("quellen", "Filter \(names.isEmpty ? "aus" : names) → \(visibleStreams.count) von \(streams.count)")
+        RemoteLog.info("quellen", "Filter \(names.isEmpty ? "aus" : names) → \(visibleIDs.count) von \(streams.count)")
+    }
+
+    /// Review Q I1: a chosen chip the current list no longer has (next episode without DV) drops out; the
+    /// selection falls back to "Alle".
+    private func dropMissingChips() {
+        guard !filter.isEmpty else { return }
+        let gone = SourceFilter.dropped(filter, options: filterOptions)
+        guard !gone.isEmpty else { return }
+        filter = []
+        RemoteLog.info("quellen", "Filter \(gone.map(\.label).sorted().joined(separator: ", ")) fehlt in der Liste → Alle")
+    }
+
+    /// Review Q M2: "Filter aufheben" disappears with the filter, so the focus goes to the first playable row.
+    private func clearFilterToList() {
+        setFilter([])
+        let ids = visibleIDs
+        guard let id = SourceFocus.entry(ids: ids, lastPlayed: nil, isPlayable: focusPlayable) else { return }
+        requestFocus(id, in: ids, reason: "Filter aufgehoben", delayMs: 0)
     }
 
     private func requestFocus(_ id: String, in ids: [String], reason: String, delayMs: Int) {
@@ -1020,6 +1060,8 @@ struct SourceFocusRequest: Equatable {
     let index: Int
     let reason: String
     let delayMs: Int
+    /// Wave Q: keep-position move while sources arrive (a newer batch may replace it).
+    var keep = false
     let token = UUID()
 }
 

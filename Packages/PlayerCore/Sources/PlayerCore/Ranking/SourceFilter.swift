@@ -1,7 +1,8 @@
 import Foundation
 
 /// Wave Q: filter chips above the source list. A chip appears only for a quality or feature that some but not all
-/// sources have (a chip that keeps or drops every row filters nothing); a selected chip always stays. The filter
+/// sources have (a chip that keeps or drops every row filters nothing); a selected chip stays while some source
+/// still has it, even if all do. One the list lacks (next episode without DV) drops out (`dropped`). The filter
 /// is a view over the list: ranking, autostart, fallback and the next episode keep working on the full list.
 public enum SourceFilterChip: Hashable, Sendable, Identifiable {
     /// Resolution as `StreamTraits.resolution` names it ("2160p", "1080p", …).
@@ -106,7 +107,7 @@ public enum SourceFilter {
         return all.compactMap { chip in
             let n = traits.reduce(0) { $0 + (chip.matches($1) ? 1 : 0) }
             let useful = n > 0 && n < traits.count
-            return useful || selected.contains(chip) ? SourceFilterOption(chip: chip, count: n) : nil
+            return useful || (n > 0 && selected.contains(chip)) ? SourceFilterOption(chip: chip, count: n) : nil
         }
     }
 
@@ -119,6 +120,11 @@ public enum SourceFilter {
     /// Selected chips that the current list still offers (a new episode may lack one).
     public static func effective(_ selected: Set<SourceFilterChip>, options: [SourceFilterOption]) -> Set<SourceFilterChip> {
         selected.intersection(options.map(\.chip))
+    }
+
+    /// Selected chips that the current list no longer offers; non-empty means the view falls back to "Alle".
+    public static func dropped(_ selected: Set<SourceFilterChip>, options: [SourceFilterOption]) -> Set<SourceFilterChip> {
+        selected.subtracting(options.map(\.chip))
     }
 
     /// True if the source passes every selected chip.

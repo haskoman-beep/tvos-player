@@ -117,14 +117,21 @@ public struct StreamRowText: Equatable, Sendable {
         fileName = Self.extraFileName(s.behaviorHints?.filename, shown: name + "\n" + b)
     }
 
-    /// File name not yet in `shown`. Compared on letters and digits only, ignoring case: the same name with spaces
-    /// for dots counts as shown, a cut one ("Movie.2023.2160p…") does not, so the full name follows.
+    /// File name not yet in `shown`. Compared on letters and digits only, ignoring case and a video extension:
+    /// the same name with spaces for dots or without ".mkv" counts as shown, a cut one ("Movie.2023.2160p…") does
+    /// not, so the full name follows.
     public static func extraFileName(_ file: String?, shown: String) -> String? {
         guard let f = file?.trimmingCharacters(in: .whitespacesAndNewlines), !f.isEmpty else { return nil }
-        let key = normalized(f)
+        var stem = f
+        if let dot = f.lastIndex(of: "."), videoExtensions.contains(f[f.index(after: dot)...].lowercased()) {
+            stem = String(f[..<dot])
+        }
+        let key = normalized(stem)
         guard !key.isEmpty else { return nil }
         return normalized(shown).contains(key) ? nil : f
     }
+
+    private static let videoExtensions: Set<String> = ["mkv", "mp4", "m4v", "avi", "mov", "ts", "m2ts", "webm", "wmv"]
 
     private static func normalized(_ s: String) -> String {
         String(s.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(Character.init))
