@@ -14,6 +14,26 @@ extension ContentKind {
     }
 }
 
+/// Wave F-p R2: outcome of a lookup that several callers share (one TMDB request for the detail page and the meta).
+public enum SharedLookup<T: Sendable>: Sendable {
+    case found(T)
+    /// Answered, but nothing to use (no match, no key, unreadable answer): asking again gives the same.
+    case none
+    /// Thrown error (timeout, network): may work on a second try.
+    case failed
+
+    public var value: T? {
+        if case .found(let v) = self { return v }
+        return nil
+    }
+
+    /// A caller that joined the shared request asks once more itself only after a real error.
+    public var retriesOnJoin: Bool {
+        if case .failed = self { return true }
+        return false
+    }
+}
+
 /// Wave F-p: when the parts of a detail page arrived, in ms since the page appeared; one log line per page
 /// („detail: Ladezeiten …“). Device log build 214: the badges and the poster came late again, the old lines showed
 /// only the first badge.

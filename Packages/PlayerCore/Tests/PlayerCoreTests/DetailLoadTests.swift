@@ -55,3 +55,11 @@ import Testing
 @Test func focusRestMatchesTheHeroRest() {
     #expect(FocusRest.milliseconds == 350)
 }
+
+@Test func sharedLookupRetriesOnlyAfterAnError() {
+    let found = SharedLookup<Int>.found(7), none = SharedLookup<Int>.none, failed = SharedLookup<Int>.failed
+    #expect(found.value == 7 && !found.retriesOnJoin)
+    // „kein TMDB-Treffer“: no second lookup, no second log line.
+    #expect(none.value == nil && !none.retriesOnJoin)
+    #expect(failed.value == nil && failed.retriesOnJoin)
+}

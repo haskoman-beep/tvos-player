@@ -372,7 +372,7 @@ final class AppModel: ObservableObject {
     func meta(type: String, imdb: String) async -> MetaDetail? { await mergedMeta(type: type, imdb: imdb) }
 
     private var localizedCache: [String: LocalizedMeta] = [:]
-    private var localizedFlights: [String: Task<LocalizedMeta?, Never>] = [:]
+    private var localizedFlights: [String: Task<SharedLookup<LocalizedMeta>, Never>] = [:]
     private var seasonCache: [String: [Int: LocalizedEpisode]] = [:]
 
     /// TMDB in Profilsprache (Titel, Text, Poster, Logo, FSK); nil ohne TMDB-Key.
@@ -381,30 +381,31 @@ final class AppModel: ObservableObject {
         // Wave F-p: the detail page asks in parallel to the meta, which asks too: one request, both wait for it.
         let key = "\(series ? "s" : "m"):\(imdb)"
         if let t = localizedFlights[key] {
-            // R1: joined a request that failed (timeout, network): ask once more, as the former second call did.
-            if let l = await t.value { return l }
-            return await fetchLocalized(imdb: imdb, series: series)
+            // R1/R2: joined a request that failed (timeout, network): ask once more, as the former second call did.
+            // No match, no key or an unreadable answer stay as they are (no second lookup, no second log line).
+            let o = await t.value
+            return o.retriesOnJoin ? await fetchLocalized(imdb: imdb, series: series).value : o.value
         }
         let t = Task { await fetchLocalized(imdb: imdb, series: series) }
         localizedFlights[key] = t
-        let l = await t.value
+        let o = await t.value
         localizedFlights[key] = nil
-        return l
+        return o.value
     }
 
-    private func fetchLocalized(imdb: String, series: Bool) async -> LocalizedMeta? {
-        guard let tmdb else { RemoteLog.info("tmdb", "kein TMDB-Key – keine Übersetzung"); return nil }
+    private func fetchLocalized(imdb: String, series: Bool) async -> SharedLookup<LocalizedMeta> {
+        guard let tmdb else { RemoteLog.info("tmdb", "kein TMDB-Key – keine Übersetzung"); return .none }
         do {
             guard let id = try await tmdb.tmdbID(imdb: imdb, series: series) else {
-                RemoteLog.info("tmdb", "\(imdb): kein TMDB-Treffer (\(series ? "tv" : "movie"))"); return nil
+                RemoteLog.info("tmdb", "\(imdb): kein TMDB-Treffer (\(series ? "tv" : "movie"))"); return .none
             }
             guard let l = try await tmdb.localized(tmdbID: id, series: series) else {
-                RemoteLog.info("tmdb", "\(imdb) → \(id): Antwort unlesbar"); return nil
+                RemoteLog.info("tmdb", "\(imdb) → \(id): Antwort unlesbar"); return .none
             }
             RemoteLog.info("tmdb", "\(imdb) → \(id) · \(tmdb.language) · Titel \(l.name ?? "-") · Text \(l.overview == nil ? "nein" : "ja") · Logo \(l.logo == nil ? "nein" : "ja") · Freigabe \(l.certification ?? "-")")
             localizedCache[imdb] = l
-            return l
-        } catch { RemoteLog.error("tmdb", "Übersetzung \(imdb): \(error)"); return nil }
+            return .found(l)
+        } catch { RemoteLog.error("tmdb", "Übersetzung \(imdb): \(error)"); return .failed }
     }
 
     /// Folgennamen/-texte einer Staffel in Profilsprache.
