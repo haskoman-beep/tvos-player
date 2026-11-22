@@ -12,6 +12,17 @@ public enum SyncChangeKind: String, Codable, Sendable, CaseIterable {
         case .removeFromContinue: "continue"
         }
     }
+
+    /// German name for the log.
+    public var logName: String {
+        switch self {
+        case .watchlistAdd: "Merkliste hinzufügen"
+        case .watchlistRemove: "Merkliste entfernen"
+        case .markWatched: "als gesehen"
+        case .markUnwatched: "als ungesehen"
+        case .removeFromContinue: "aus Weiterschauen entfernen"
+        }
+    }
 }
 
 /// One pending change (a tombstone for removals). `pending` = services that have not confirmed it yet.
@@ -26,8 +37,12 @@ public struct SyncChange: Codable, Sendable, Equatable, Identifiable {
     public var createdAt: Date
     public var pending: Set<String>
     public var confirmedAt: Date?
+    /// A service took it but changed nothing remotely: keep it until it expires (30 days), not just the grace time.
+    public var held: Bool?
 
-    public var id: String { "\(kind.slot):\(itemID)" }
+    /// Keyed by the canonical title ID (IMDb first, else the tile's own TMDB or addon ID), so a TMDB tile and an
+    /// IMDb tile of the same title share one entry.
+    public var id: String { "\(kind.slot):\(imdb ?? itemID)" }
 
     public init(kind: SyncChangeKind, itemID: String, imdb: String?, item: MetaPreview, series: Bool,
                 createdAt: Date, pending: Set<String>, confirmedAt: Date? = nil) {
@@ -40,11 +55,15 @@ public struct SyncChange: Codable, Sendable, Equatable, Identifiable {
 }
 
 /// Wave L: per-profile queue of local changes. It keeps them until every targeted service confirmed them, so a pull
-/// in between cannot bring back what the user just removed. Entries expire a short grace time after confirmation
-/// (the services may still answer from a cache for a few minutes) or after 30 days at the latest.
+/// in between cannot bring back what the user just removed. Watchlist entries stay until a pull that started a grace
+/// time after the confirmation has been stored (the app's own catalog cache can be a day old, and the services may
+/// still answer from their cache for a few minutes); other entries expire that grace time after confirmation.
+/// Everything expires after 30 days at the latest.
 public struct SyncQueue: Codable, Sendable, Equatable {
     public static let maxAge: TimeInterval = 30 * 24 * 3600
-    public static let confirmedGrace: TimeInterval = 15 * 60
+    public static let confirmedGrace: TimeInterval = 5 * 60
+    /// Remote timestamps up to this much after a local change still count as older (device clock drift).
+    public static let clockTolerance: TimeInterval = 5
     public var schemaVersion = 1
     public var changes: [String: SyncChange] = [:]
 
@@ -57,14 +76,17 @@ public struct SyncQueue: Codable, Sendable, Equatable {
         let targets = imdb == nil ? [] : services
         let c = SyncChange(kind: kind, itemID: item.id, imdb: imdb, item: item, series: series, createdAt: now,
                            pending: targets, confirmedAt: targets.isEmpty ? now : nil)
+        changes = changes.filter { _, o in o.kind.slot != kind.slot || !(o.matches(item.id) || (imdb != nil && o.matches(imdb!))) }
         changes[c.id] = c
         return c
     }
 
     /// A service confirmed (or definitely rejected) the change. Ignores a change that was replaced meanwhile.
-    public mutating func confirm(_ id: String, service: String, createdAt: Date, now: Date = Date()) {
+    /// `held`: the service is done with it but nothing changed remotely, so the entry stays until it expires.
+    public mutating func confirm(_ id: String, service: String, createdAt: Date, held: Bool = false, now: Date = Date()) {
         guard var c = changes[id], c.createdAt == createdAt else { return }
         c.pending.remove(service)
+        if held { c.held = true }
         if c.pending.isEmpty, c.confirmedAt == nil { c.confirmedAt = now }
         changes[id] = c
     }
@@ -84,8 +106,21 @@ public struct SyncQueue: Codable, Sendable, Equatable {
         let before = changes.count
         changes = changes.filter { _, c in
             if now.timeIntervalSince(c.createdAt) > Self.maxAge { return false }
+            if c.kind.slot == "watchlist" || c.held == true { return true }   // see notePull
             if let done = c.confirmedAt, now.timeIntervalSince(done) > Self.confirmedGrace { return false }
             return true
+        }
+        return before - changes.count
+    }
+
+    /// A watchlist pull that started at `startedAt` has been stored in the catalog cache: confirmed watchlist
+    /// entries older than that pull (by the grace time) are no longer needed. Returns how many went.
+    @discardableResult
+    public mutating func notePull(watchlistStartedAt startedAt: Date) -> Int {
+        let before = changes.count
+        changes = changes.filter { _, c in
+            guard c.kind.slot == "watchlist", c.held != true, let done = c.confirmedAt else { return true }
+            return startedAt.timeIntervalSince(done) < Self.confirmedGrace
         }
         return before - changes.count
     }
@@ -125,16 +160,20 @@ public struct SyncQueue: Codable, Sendable, Equatable {
     public func filterRemote(_ remote: [RemoteProgress]) -> [RemoteProgress] {
         let blocking = changes.values.filter { $0.kind != .watchlistAdd && $0.kind != .watchlistRemove }
         return remote.filter { r in
-            !blocking.contains { $0.matches(r.item.id) && r.updated <= $0.createdAt }
+            !blocking.contains { $0.matches(r.item.id) && r.updated <= $0.createdAt.addingTimeInterval(Self.clockTolerance) }
         }
     }
 
     /// Remote playback entries to delete for a Continue Watching removal (only those not newer than the removal).
     public static func playbackIDs(for c: SyncChange, in remote: [RemoteProgress]) -> [Int] {
-        remote.compactMap { r in
-            guard let pid = r.playbackID, c.matches(r.item.id), r.updated <= c.createdAt else { return nil }
-            return pid
-        }
+        playbackPlan(for: c, in: remote).ids
+    }
+
+    /// What a Continue Watching removal can delete: entry IDs, and how many matching entries carry no ID.
+    public static func playbackPlan(for c: SyncChange, in remote: [RemoteProgress]) -> (ids: [Int], withoutID: Int) {
+        let matching = remote.filter { c.matches($0.item.id) && $0.updated <= c.createdAt.addingTimeInterval(clockTolerance) }
+        let ids = matching.compactMap(\.playbackID)
+        return (ids, matching.count - ids.count)
     }
 }
 
@@ -146,6 +185,10 @@ public enum SyncWriteResult: Sendable, Equatable {
     case retry
     /// The service will never accept it (other 4xx); stop asking.
     case rejected(Int)
+    /// Deliberately not sent (no safe call for it); counts as done. The text is a German log line.
+    case skipped(String)
+    /// Sent, but nothing could be changed remotely (no entry or no entry ID): stays pending until it expires.
+    case unconfirmed(String)
 
     public static func classify(status: Int, deleting: Bool = false) -> SyncWriteResult {
         if (200..<300).contains(status) || (deleting && status == 404) { return .confirmed }
@@ -163,13 +206,14 @@ public struct SyncQueueStore: Sendable {
 
     public func load(profile: UUID) -> SyncQueue {
         guard let d = storage.read(name(profile)) else { return SyncQueue() }
-        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
-        return (try? dec.decode(SyncQueue.self, from: d)) ?? SyncQueue()
+        // Default date coding keeps sub-seconds, so `confirm(createdAt:)` still matches after a reload.
+        return (try? JSONDecoder().decode(SyncQueue.self, from: d)) ?? SyncQueue()
     }
 
+    public func remove(profile: UUID) { storage.remove(name(profile)) }
+
     public func save(_ q: SyncQueue, profile: UUID) throws {
-        let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
-        try storage.write(name(profile), try enc.encode(q))
+        try storage.write(name(profile), try JSONEncoder().encode(q))
     }
 }
 
@@ -232,6 +276,23 @@ public enum TileMenuAction: String, Sendable, CaseIterable {
         if inContinueRow { out.append(.removeFromContinue) }
         out.append(.openDetail)
         return out
+    }
+
+    /// Does the action take the tile out of the row it sits in (focus must move to a neighbour first)?
+    public func removesTile(inContinueRow: Bool, inWatchlistRow: Bool) -> Bool {
+        switch self {
+        case .removeFromContinue, .markWatched: inContinueRow
+        case .watchlistRemove: inWatchlistRow
+        default: false
+        }
+    }
+
+    /// Where focus goes when the tile at `index` leaves a row of `count` tiles: right neighbour first, then left;
+    /// nil = the row becomes empty.
+    public static func neighbour(removing index: Int, count: Int) -> Int? {
+        if index + 1 < count { return index + 1 }
+        if index > 0, index - 1 < count { return index - 1 }
+        return nil
     }
 
     /// The queue change this action records (nil = navigation only).

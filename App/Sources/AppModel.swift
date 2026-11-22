@@ -252,6 +252,7 @@ final class AppModel: ObservableObject {
         guard stored.profiles.count > 1 else { return }
         stored.profiles.removeAll { $0.id == id }
         removeCatalogFile(profile: id)
+        removeSyncQueue(profile: id)   // Welle L
         // Aktives Profil gelöscht: über den Profilwechsel (Cache leeren, Stand des neuen Profils lesen).
         if stored.activeProfileID == id, let next = stored.profiles.first?.id { switchProfile(next) } else { save() }
     }
@@ -327,6 +328,7 @@ final class AppModel: ObservableObject {
         if !refresh { await awaitCatalogSnapshot() }   // Welle C-b: Plattenstand zuerst
         if !refresh, let c = cache[source.id] { refreshCatalogIfStale(source); return CatalogLoad(items: applySyncQueue(source, c), fromCache: true) }
         let generation = cache.generation
+        let started = Date()   // Welle L: ab wann dieser Abruf den bestätigten Stand der Dienste sieht
         var out: [MetaPreview] = []
         do {
             switch source.kind {
@@ -348,9 +350,10 @@ final class AppModel: ObservableObject {
         out = source.applyingLimit(out)
         RemoteLog.info("katalog", "\(source.title): \(out.count) Einträge")
         // Nach Profilwechsel/Leeren nicht mehr ablegen; leere Erneuerung überschreibt keine gefüllte Liste.
-        if refresh { cache.storeRefreshed(out, for: source.id, generation: generation) }
-        else { cache.store(out, for: source.id, generation: generation) }
+        let stored = refresh ? cache.storeRefreshed(out, for: source.id, generation: generation)
+                             : cache.store(out, for: source.id, generation: generation)
         scheduleCatalogSave()
+        if stored, case .watchlist = source.kind { noteWatchlistPull(startedAt: started) }   // Welle L
         return CatalogLoad(items: applySyncQueue(source, out))
     }
 

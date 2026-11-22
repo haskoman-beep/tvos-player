@@ -7,7 +7,10 @@ import PlayerCore
 struct TileContextMenu: ViewModifier {
     let item: MetaPreview?
     var inContinueRow = false
+    var inWatchlistRow = false
     var row: HomeRowMenu?
+    /// Called before an action takes the tile out of its row (the row moves focus to a neighbour).
+    var onLeave: (() -> Void)?
     @EnvironmentObject private var model: AppModel
     @Environment(\.navigate) private var navigate
 
@@ -32,6 +35,7 @@ struct TileContextMenu: ViewModifier {
             navigate(.detail(m))
             return
         }
+        if a.removesTile(inContinueRow: inContinueRow, inWatchlistRow: inWatchlistRow) { onLeave?() }
         Task { await model.perform(a, on: m) }
     }
 
@@ -49,7 +53,8 @@ struct TileContextMenu: ViewModifier {
 
 extension View {
     /// Wave L: tile long-press menu (see `TileContextMenu`).
-    func tileMenu(_ item: MetaPreview?, inContinueRow: Bool = false, row: HomeRowMenu? = nil) -> some View {
-        modifier(TileContextMenu(item: item, inContinueRow: inContinueRow, row: row))
+    func tileMenu(_ item: MetaPreview?, inContinueRow: Bool = false, inWatchlistRow: Bool = false,
+                  row: HomeRowMenu? = nil, onLeave: (() -> Void)? = nil) -> some View {
+        modifier(TileContextMenu(item: item, inContinueRow: inContinueRow, inWatchlistRow: inWatchlistRow, row: row, onLeave: onLeave))
     }
 }

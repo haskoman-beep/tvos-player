@@ -53,9 +53,11 @@ extension AppModel {
         return q.isOnWatchlist(imdb, remote: remote)
     }
 
-    /// Menu entries for a tile.
+    /// Menu entries for a tile. The watchlist entry needs a title the services can address: an IMDb ID, or a TMDB
+    /// ID that resolves to one (addon-only IDs would stay local forever, so they get no watchlist entry).
     func tileMenu(for m: MetaPreview, inContinueRow: Bool) -> [TileMenuAction] {
-        TileMenuAction.menu(watchlistAvailable: watchlistAvailable, onWatchlist: isOnWatchlist(m),
+        let addressable = m.id.hasPrefix("tt") || m.id.hasPrefix("tmdb:") || cachedIMDbID(for: m) != nil
+        return TileMenuAction.menu(watchlistAvailable: watchlistAvailable && addressable, onWatchlist: isOnWatchlist(m),
                             watched: progress.isTileWatched(m.id) || cachedIMDbID(for: m).map(progress.isTileWatched) == true,
                             inContinueRow: inContinueRow)
     }
@@ -80,15 +82,26 @@ extension AppModel {
         let imdb = await imdbID(for: m)
         guard profile.id == profileID else { return }
         let series = ContentKind.isEpisodic(type: m.type)
+        // Canonical ID, as playback records it for Continue Watching and history: IMDb first, else the tile's own.
+        var canonical = m
+        canonical.id = imdb ?? m.id
         switch kind {
-        case .markWatched: editProgress { $0.markWatched(item: m, series: series) }
+        case .markWatched:
+            editProgress { b in
+                if canonical.id != m.id { _ = b.removeFromContinueWatching(itemID: m.id) }
+                b.markWatched(item: canonical, series: series)
+            }
         case .markUnwatched:
             // A catalog tile may carry a TMDB ID while playback recorded the IMDb ID: clear both.
             editProgress { b in
                 b.markUnwatched(itemID: m.id)
                 if let imdb, imdb != m.id { b.markUnwatched(itemID: imdb) }
             }
-        case .removeFromContinue: editProgress { _ = $0.removeFromContinueWatching(itemID: m.id) }
+        case .removeFromContinue:
+            editProgress { b in
+                _ = b.removeFromContinueWatching(itemID: canonical.id)
+                if canonical.id != m.id { _ = b.removeFromContinueWatching(itemID: m.id) }
+            }
         case .watchlistAdd, .watchlistRemove: break
         }
         let services = Set(Self.syncServices.filter(isConnected))
@@ -128,22 +141,45 @@ extension AppModel {
                 if s == "trakt", let trakt { r = await trakt.apply(c, token: t) }
                 else if s == "simkl", let simkl { r = await simkl.apply(c, token: t) }
                 else { continue }
-                guard profile.id == profileID else { return }
-                let name = "\(s) \(c.kind.rawValue) \(c.item.name)"
+                guard profile.id == profileID else { return }   // everything confirmed so far is saved already
+                let name = "\(s == "trakt" ? "Trakt" : "Simkl") \(c.kind.logName) · \(c.item.name)"
                 switch r {
                 case .confirmed:
                     RemoteLog.info("sync", "\(name): bestätigt")
                     syncQueue.confirm(c.id, service: s, createdAt: c.createdAt)
+                case .skipped(let why):
+                    RemoteLog.info("sync", "\(name): übersprungen – \(why)")
+                    syncQueue.confirm(c.id, service: s, createdAt: c.createdAt)
+                case .unconfirmed(let why):
+                    RemoteLog.info("sync", "\(name): nicht bestätigt – \(why); bleibt lokal bis zu 30 Tage gemerkt")
+                    syncQueue.confirm(c.id, service: s, createdAt: c.createdAt, held: true)
                 case .rejected(let status):
-                    RemoteLog.error("sync", "\(name): abgelehnt (\(status)), nicht erneut gesendet")
+                    RemoteLog.error("sync", "\(name): vom Dienst abgelehnt (HTTP \(status)), wird nicht erneut gesendet")
                     syncQueue.confirm(c.id, service: s, createdAt: c.createdAt)
                 case .retry:
-                    RemoteLog.info("sync", "\(name): später erneut")
+                    RemoteLog.info("sync", "\(name): nicht erreicht, später erneut")
                 }
                 if r == .retry { break }
+                saveSyncQueue()
             }
         }
         saveSyncQueue()
+    }
+
+    /// A watchlist pull that started at `startedAt` is in the catalog cache: confirmed entries older than it can go.
+    func noteWatchlistPull(startedAt: Date) {
+        var q = syncQueue
+        guard q.notePull(watchlistStartedAt: startedAt) > 0 else { return }
+        syncQueue = q
+        saveSyncQueue()
+    }
+
+    /// Profile deleted: its queue file goes too.
+    func removeSyncQueue(profile id: UUID) {
+        let h = SyncQueueHolder.shared
+        if h.store == nil { h.store = SyncQueueStore(storage: progressStore.storage) }
+        h.store?.remove(profile: id)
+        if h.profileID == id { h.profileID = nil; h.queue = SyncQueue() }
     }
 }
 

@@ -20,9 +20,37 @@ private func jsonBody(_ r: APIRequest) -> [String: Any] { (try? JSONSerializatio
     #expect(q.changes[c.id]?.confirmedAt == nil && q.due(for: "trakt").isEmpty)
     q.confirm(c.id, service: "simkl", createdAt: c.createdAt, now: t0.addingTimeInterval(10))
     #expect(q.changes[c.id]?.confirmedAt == t0.addingTimeInterval(10) && q.pendingCount == 0)
-    // Kept for the grace time, then gone.
-    #expect(q.prune(now: t0.addingTimeInterval(10 + SyncQueue.confirmedGrace - 1)) == 0)
-    #expect(q.prune(now: t0.addingTimeInterval(10 + SyncQueue.confirmedGrace + 1)) == 1 && q.changes.isEmpty)
+    // Confirmed + past the grace + stale cache: the watchlist tombstone stays and keeps hiding the title.
+    #expect(q.prune(now: t0.addingTimeInterval(10 + SyncQueue.confirmedGrace + 3600)) == 0)
+    #expect(q.applyWatchlist([dune, bear]).map(\.id) == [bear.id])
+    // A pull that started too soon after the confirmation (service cache) does not release it; a later one does.
+    #expect(q.notePull(watchlistStartedAt: t0.addingTimeInterval(10 + SyncQueue.confirmedGrace - 1)) == 0)
+    #expect(q.notePull(watchlistStartedAt: t0.addingTimeInterval(10 + SyncQueue.confirmedGrace + 1)) == 1 && q.changes.isEmpty)
+}
+
+@Test func syncQueueOtherSlotsExpireAfterGrace() {
+    var q = SyncQueue()
+    let c = q.record(.markWatched, item: dune, imdb: dune.id, series: false, services: ["trakt"], now: t0)
+    q.confirm(c.id, service: "trakt", createdAt: c.createdAt, now: t0)
+    #expect(q.notePull(watchlistStartedAt: t0.addingTimeInterval(3600)) == 0)
+    #expect(q.prune(now: t0.addingTimeInterval(SyncQueue.confirmedGrace - 1)) == 0)
+    #expect(q.prune(now: t0.addingTimeInterval(SyncQueue.confirmedGrace + 1)) == 1)
+}
+
+@Test func syncQueueTMDBAndIMDbTilesShareOneEntry() {
+    var q = SyncQueue()
+    let tmdbTile = MetaPreview(id: "tmdb:9", type: "movie", name: "Neu")
+    let imdbTile = MetaPreview(id: "tt9", type: "movie", name: "Neu")
+    q.record(.watchlistAdd, item: tmdbTile, imdb: "tt9", series: false, services: ["trakt"], now: t0)
+    let rem = q.record(.watchlistRemove, item: imdbTile, imdb: "tt9", series: false, services: ["trakt"], now: t0.addingTimeInterval(1))
+    #expect(q.changes.count == 1 && rem.id == "watchlist:tt9")
+    #expect(q.applyWatchlist([imdbTile]).isEmpty)
+    #expect(!q.isOnWatchlist("tt9", remote: true))   // the app looks up by the canonical (IMDb) ID
+    // An unresolved TMDB tile entry is replaced once the IMDb ID is known.
+    var r = SyncQueue()
+    r.record(.markWatched, item: tmdbTile, imdb: nil, series: false, services: [], now: t0)
+    r.record(.markUnwatched, item: tmdbTile, imdb: "tt9", series: false, services: ["trakt"], now: t0)
+    #expect(r.changes.keys.sorted() == ["watched:tt9"])
 }
 
 @Test func syncQueueExpiresUnconfirmedAfter30Days() {
@@ -80,13 +108,16 @@ private func jsonBody(_ r: APIRequest) -> [String: Any] { (try? JSONSerializatio
     #expect(q.filterRemote(remote).map(\.id) == ["tt14452776:1:3", "tt3"])
     let c = q.changes.values.first { $0.kind == .removeFromContinue }!
     #expect(SyncQueue.playbackIDs(for: c, in: remote) == [11])
+    // Small clock drift: an entry a few seconds "after" the removal still counts as older.
+    let drift = RemoteProgress(id: "tt14452776:1:4", item: bear, season: 1, episode: 4, fraction: 0.1, updated: t0.addingTimeInterval(3), playbackID: 15)
+    #expect(SyncQueue.playbackIDs(for: c, in: [drift]) == [15] && q.filterRemote([drift]).isEmpty)
 }
 
 @Test func syncQueueRoundTripsThroughStore() throws {
     let s = SyncQueueStore(storage: FileBlobStorage(directory: tempDir()))
     let p = UUID()
     var q = SyncQueue()
-    q.record(.watchlistAdd, item: bear, imdb: bear.id, series: true, services: ["trakt"], now: t0)
+    q.record(.watchlistAdd, item: bear, imdb: bear.id, series: true, services: ["trakt"], now: t0.addingTimeInterval(0.375))
     try s.save(q, profile: p)
     #expect(s.load(profile: p) == q)
     #expect(s.load(profile: UUID()) == SyncQueue())
@@ -139,6 +170,14 @@ private func jsonBody(_ r: APIRequest) -> [String: Any] { (try? JSONSerializatio
             == [.markWatched, .openDetail])
     #expect(TileMenuAction.removeFromContinue.title == "Aus „Weiterschauen“ entfernen")
     #expect(TileMenuAction.openDetail.change == nil && TileMenuAction.markUnwatched.change == .markUnwatched)
+    #expect(TileMenuAction.removeFromContinue.removesTile(inContinueRow: true, inWatchlistRow: false))
+    #expect(TileMenuAction.markWatched.removesTile(inContinueRow: true, inWatchlistRow: false))
+    #expect(!TileMenuAction.markWatched.removesTile(inContinueRow: false, inWatchlistRow: true))
+    #expect(TileMenuAction.watchlistRemove.removesTile(inContinueRow: false, inWatchlistRow: true))
+    #expect(!TileMenuAction.openDetail.removesTile(inContinueRow: true, inWatchlistRow: true))
+    #expect(TileMenuAction.neighbour(removing: 0, count: 3) == 1)
+    #expect(TileMenuAction.neighbour(removing: 2, count: 3) == 1)
+    #expect(TileMenuAction.neighbour(removing: 0, count: 1) == nil)
 }
 
 @Test func traktAppliesQueuedChanges() async {
@@ -166,18 +205,41 @@ private func jsonBody(_ r: APIRequest) -> [String: Any] { (try? JSONSerializatio
 }
 
 @Test func simklAppliesQueuedChanges() async {
-    let http = FakeSender([(201, "{}"), (200, "{}"), (400, "")])
+    let allItems = #"{"shows":[{"status":"completed","show":{"title":"The Bear","ids":{"imdb":"tt14452776"}}}]}"#
+    let http = FakeSender([(200, allItems), (201, "{}"), (200, allItems), (400, "")])
     let s = SimklClient(clientID: "C", http: http)
     let tok = SyncToken(accessToken: "A")
     var q = SyncQueue()
     let add = q.record(.watchlistAdd, item: dune, imdb: dune.id, series: false, services: ["simkl"], now: t0)
-    let rem = q.record(.watchlistRemove, item: bear, imdb: bear.id, series: true, services: ["simkl"], now: t0)
+    let addBear = q.record(.watchlistAdd, item: bear, imdb: bear.id, series: true, services: ["simkl"], now: t0)
     let w = q.record(.markWatched, item: dune, imdb: dune.id, series: false, services: ["simkl"], now: t0)
+    // Add: only when the title is on no Simkl list.
     #expect(await s.apply(add, token: tok) == .confirmed)
-    #expect(http.sent[0].url.path == "/sync/add-to-list")
-    #expect((jsonBody(http.sent[0])["movies"] as? [[String: Any]])?.first?["to"] as? String == "plantowatch")
-    #expect(await s.apply(rem, token: tok) == .confirmed)
-    #expect(http.sent[1].url.path == "/sync/history/remove" && jsonBody(http.sent[1])["shows"] != nil)
+    #expect(http.sent[0].url.path == "/sync/all-items" && http.sent[1].url.path == "/sync/add-to-list")
+    #expect((jsonBody(http.sent[1])["movies"] as? [[String: Any]])?.first?["to"] as? String == "plantowatch")
+    guard case .skipped = await s.apply(addBear, token: tok) else { Issue.record("completed show must not move"); return }
+    #expect(http.sent.count == 3)
+    // Removal never calls /sync/history/remove.
+    let rem = SyncChange(kind: .watchlistRemove, itemID: bear.id, imdb: bear.id, item: bear, series: true, createdAt: t0, pending: ["simkl"])
+    guard case .skipped = await s.apply(rem, token: tok) else { Issue.record("removal must be skipped"); return }
+    #expect(http.sent.count == 3 && !http.sent.contains { $0.url.path == "/sync/history/remove" })
     #expect(await s.apply(w, token: tok) == .rejected(400))
-    #expect(http.sent[2].url.path == "/sync/history")
+    #expect(http.sent[3].url.path == "/sync/history")
+}
+
+@Test func continueRemovalWithoutRemoteEntryStaysUnconfirmed() async {
+    let noID = #"[{"progress":20,"paused_at":"2020-01-01T00:00:00.000Z","type":"movie","movie":{"title":"Dune","ids":{"imdb":"tt1160419"}}}]"#
+    let strID = #"[{"id":"91","progress":20,"paused_at":"2020-01-01T00:00:00.000Z","type":"movie","movie":{"title":"Dune","ids":{"imdb":"tt1160419"}}}]"#
+    let http = FakeSender([(200, "[]"), (200, noID), (200, strID), (204, "")])
+    let t = TraktClient(clientID: "C", clientSecret: "S", http: http)
+    var q = SyncQueue()
+    let c = q.record(.removeFromContinue, item: dune, imdb: dune.id, series: false, services: ["trakt"], now: t0)
+    guard case .unconfirmed = await t.apply(c, token: SyncToken(accessToken: "A")) else { Issue.record("nothing found"); return }
+    guard case .unconfirmed = await t.apply(c, token: SyncToken(accessToken: "A")) else { Issue.record("no id"); return }
+    #expect(await t.apply(c, token: SyncToken(accessToken: "A")) == .confirmed)
+    #expect(http.sent.last?.url.path == "/sync/playback/91")
+    // Held: kept past the grace time and still blocking the pull, gone only after 30 days.
+    q.confirm(c.id, service: "trakt", createdAt: c.createdAt, held: true, now: t0)
+    #expect(q.pendingCount == 0 && q.prune(now: t0.addingTimeInterval(SyncQueue.confirmedGrace + 60)) == 0)
+    #expect(q.prune(now: t0.addingTimeInterval(SyncQueue.maxAge + 1)) == 1)
 }

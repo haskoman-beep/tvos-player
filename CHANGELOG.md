@@ -22,10 +22,15 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   „Auf die Merkliste“ / „Von der Merkliste entfernen“ (watchlist on/off, when Trakt or Simkl is connected),
   „Als gesehen markieren“ / „Als ungesehen markieren“ (mark watched/unwatched), „Aus „Weiterschauen“
   entfernen“ (remove from Continue Watching, only in that row) and „Zur Detailseite“ (open the detail page).
-  On home rows the row actions follow in the same menu.
+  On home rows the row actions follow in the same menu. When the card leaves its row, focus moves to the
+  neighbouring card (right first, then left).
 - Sync queue: these changes show at once and are kept per profile until Trakt/Simkl confirm them, so a
-  removed title no longer comes back with the next pull. Pending changes are sent on launch, on profile
-  switch and right after the action; they expire 15 minutes after confirmation or after 30 days.
+  removed title no longer comes back with the next pull. One entry per title (IMDb ID first, so TMDB and
+  IMDb tiles of the same title share it). Watchlist changes stay until a fresh watchlist pull after the
+  confirmation is stored; other changes expire 5 minutes after confirmation; a Continue Watching removal
+  that found nothing to delete remotely is kept for 30 days. Everything expires after 30 days at the latest.
+  Simkl's watchlist is only changed safely: a removal stays local (Simkl has no call that does not also
+  touch the watch history), and an add is skipped when the title is already on another Simkl list.
 - Detail page: the title's poster now sits to the left of the meta line, badges and description, exactly as
   tall as that block. It uses the same picture as the poster tiles (metadata addon poster when that setting
   is on, otherwise the catalog or TMDB poster) and is left out when the block is too short for it.

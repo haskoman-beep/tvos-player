@@ -241,7 +241,16 @@ struct HomeRowView: View {
     private func card<L: View>(_ route: Route, @ViewBuilder label: () -> L) -> some View {
         NavigationLinkish(route: route, onActivate: onActivate, label: label())
             .focused($focusedRoute, equals: route)
-            .tileMenu(route.tileItem, inContinueRow: row.content == .list(.continueWatching), row: menu)   // Wave L
+            .tileMenu(route.tileItem, inContinueRow: row.content == .list(.continueWatching),
+                      inWatchlistRow: row.content == .list(.watchlist), row: menu) { focusNeighbour(of: route) }   // Wave L
+    }
+
+    /// Wave L: the card leaves the row through its long-press menu: focus moves to the right neighbour, else the left.
+    private func focusNeighbour(of r: Route) {
+        let routes = displayed.map { route(for: $0) }
+        guard let i = routes.firstIndex(of: r), let n = TileMenuAction.neighbour(removing: i, count: routes.count) else { return }
+        let target = routes[n]
+        DispatchQueue.main.async { focusedRoute = target }   // after the menu has closed
     }
 }
 
