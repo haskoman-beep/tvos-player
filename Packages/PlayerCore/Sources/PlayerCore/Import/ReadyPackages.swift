@@ -136,3 +136,28 @@ extension ReadyPackages {
         return c
     }
 }
+
+/// Welle F-g Runde 2: Ergebnis von `ReadyPackages.withImportedArt` je Collection merken, bis sich Profil oder
+/// Kit-Stand ändern (`Stamp`). Die Suche über alle importierten Quellen läuft so nur nach einer Änderung,
+/// nicht bei jedem Lesen der Startseite.
+public struct PackageArtMemo {
+    public struct Stamp: Equatable, Sendable {
+        public var profile: Int
+        public var kit: Int
+        public init(profile: Int, kit: Int) { self.profile = profile; self.kit = kit }
+    }
+
+    private var stamp: Stamp?
+    private var cache: [String: MediaCollection] = [:]
+
+    public init() {}
+
+    /// `imported` wird nur bei einem Fehlgriff ausgewertet.
+    public mutating func collection(_ c: MediaCollection, stamp: Stamp, imported: () -> [MediaCollection]) -> MediaCollection {
+        if stamp != self.stamp { cache.removeAll(); self.stamp = stamp }
+        if let hit = cache[c.id] { return hit }
+        let out = ReadyPackages.withImportedArt(c, imported: imported())
+        cache[c.id] = out
+        return out
+    }
+}

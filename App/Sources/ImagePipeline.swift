@@ -130,6 +130,7 @@ actor ImagePipeline {
     private func clearMemory() {
         memory.removeAllObjects()
         animated.removeAllObjects()
+        lastKeys.removeAll()
         tracker.reset()
         // Speicheranteil des URLCache leeren, Plattencache behalten.
         urlCache.memoryCapacity = 0
@@ -392,6 +393,8 @@ struct RemoteImage: View {
     @Environment(\.displayScale) private var displayScale
     @State private var image: UIImage?
     @State private var loadedURL: String?
+    /// Weichzeichner, mit dem `image` geladen wurde: nach einem Wechsel (Spoilerschutz) nie das alte Bild zeigen.
+    @State private var loadedBlur: CGFloat?
     @State private var target: ImageTarget?
 
     private var syncHit: UIImage? {
@@ -414,7 +417,8 @@ struct RemoteImage: View {
     var body: some View {
         // Welle F-g: eine neu angelegte Zelle (LazyHStack) hat leeren @State; ihr erster Frame nimmt das Bild synchron
         // aus dem Speichercache statt grau zu zeichnen (die .task läuft erst nach dem ersten Frame).
-        let shown = image ?? syncHit
+        // Nur ein Bild derselben Adresse und desselben Weichzeichners zeigen (kein Spoiler nach Blur-Wechsel).
+        let shown = (loadedURL == url && loadedBlur == blur ? image : nil) ?? syncHit
         ZStack {
             if let shown {
                 Image(uiImage: shown).resizable().aspectRatio(contentMode: fit ? .fit : .fill)
@@ -435,18 +439,19 @@ struct RemoteImage: View {
             let blurPx = Int((blur * displayScale).rounded())
             // Speichercache-Treffer (auch nach dem Freigeben beim Zurückkehren): sofort, ohne Überblendung.
             if let hit = ImagePipeline.shared.cachedImage(u, target: target, blur: blurPx) {
-                image = hit; loadedURL = s
+                image = hit; loadedURL = s; loadedBlur = blur
                 return
             }
-            if loadedURL != s { image = nil }
+            if loadedURL != s || loadedBlur != blur { image = nil }
             let img = await ImagePipeline.shared.image(u, target: target, blur: blurPx)
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.2)) { image = img; loadedURL = s }
+            withAnimation(.easeOut(duration: 0.2)) { image = img; loadedURL = s; loadedBlur = blur }
         }
         .onDisappear {
             guard let image, ImagePipeline.cost(image) >= Self.releaseBytes else { return }
             self.image = nil
             loadedURL = nil
+            loadedBlur = nil
         }
     }
 }
@@ -520,7 +525,15 @@ final class LockedKeys: @unchecked Sendable {
     private let lock = NSLock()
     private var map: [String: String] = [:]
     func get(_ k: String) -> String? { lock.lock(); defer { lock.unlock() }; return map[k] }
-    func set(_ k: String, _ v: String) { lock.lock(); map[k] = v; lock.unlock() }
+    /// Höchstens so viele Einträge; voll → ganz leeren (die Bilder selbst hält der NSCache, hier nur Schlüssel).
+    static let limit = 2000
+    func set(_ k: String, _ v: String) {
+        lock.lock()
+        if map.count >= Self.limit && map[k] == nil { map.removeAll(keepingCapacity: true) }
+        map[k] = v
+        lock.unlock()
+    }
+    func removeAll() { lock.lock(); map.removeAll(); lock.unlock() }
 }
 
 /// Welle F-g: Treffer/Fehlgriffe des Bild-Speichercaches, höchstens alle 30 s eine Logzeile (nur wenn etwas passiert ist).

@@ -130,3 +130,22 @@ private func discover(_ id: String, _ filters: [String: String]) -> CatalogSourc
     #expect(folders.first { $0.id == "f1" }?.focusGif == "g1")
     #expect(folders.first { $0.id == "f2" }?.focusGif == nil)
 }
+
+@Test func packageArtMemoRecomputesOnlyAfterStampChange() {
+    let imported = MediaCollection(id: "nuvio.c", title: "Streaming", folders: [
+        Folder(id: "i1", title: "N", coverImage: "https://example.com/n.webp",
+               sources: [CatalogSource(id: "s1", title: "s1", kind: .tmdbDiscover(filters: ["with_watch_providers": "8"]), mediaType: .movie)]),
+    ])
+    var memo = PackageArtMemo()
+    var calls = 0
+    let s1 = PackageArtMemo.Stamp(profile: 1, kit: 1)
+    let a = memo.collection(ReadyPackages.streamingDE, stamp: s1) { calls += 1; return [imported] }
+    let b = memo.collection(ReadyPackages.streamingDE, stamp: s1) { calls += 1; return [] }
+    #expect(calls == 1)
+    #expect(a == b)
+    #expect(a.folders.first { $0.id == "pkg.streaming-de.8" }?.coverImage == "https://example.com/n.webp")
+    // Kit-Stand geändert (Import weg): neu berechnet, Symbol-Kachel ohne Bild.
+    let c = memo.collection(ReadyPackages.streamingDE, stamp: PackageArtMemo.Stamp(profile: 1, kit: 2)) { calls += 1; return [] }
+    #expect(calls == 2)
+    #expect(c.folders.first { $0.id == "pkg.streaming-de.8" }?.coverImage == nil)
+}
