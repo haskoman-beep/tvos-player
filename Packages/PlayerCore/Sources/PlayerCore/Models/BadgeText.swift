@@ -74,7 +74,7 @@ extension QualityBadge {
     /// Status-Plakette (Cache-Zustand) statt Technik: eigene Form (Kapsel in Zustandsfarbe, §4.5).
     public var isStatus: Bool { tone != .neutral }
 
-    /// Sichtbarer Text ohne vorangestelltes Symbol-Emoji („⚡ sofort“ → „sofort“; das Symbol zeichnet die App).
+    /// Sichtbarer Text ohne vorangestelltes Symbol-Emoji („⚡ Sofort bereit“ → „Sofort bereit“; das Symbol zeichnet die App).
     public var displayText: String {
         text.hasPrefix("⚡") ? text.dropFirst().trimmingCharacters(in: .whitespaces) : text
     }
@@ -83,8 +83,8 @@ extension QualityBadge {
     public var spokenText: String {
         if let logo { return logo.spokenName }
         switch tone {
-        case .ready: return "sofort abspielbar"
-        case .pending: return "lädt erst"
+        case .ready: return "sofort bereit"
+        case .pending: return "nicht gecacht"
         case .neutral: break
         }
         switch text {

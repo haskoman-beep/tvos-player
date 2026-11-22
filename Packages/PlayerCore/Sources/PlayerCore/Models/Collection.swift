@@ -59,11 +59,14 @@ public struct Folder: Codable, Sendable, Hashable, Identifiable {
     public var sources: [CatalogSource]
     /// Titel auf der Kachel ausblenden (Fusion `hideTitle`). nil = wie bisher: Titel nur ohne Bild.
     public var hideTitle: Bool?
+    /// Welle F-g: bewegtes Bild (GIF), das auf der fokussierten Kachel statt des Standbilds spielt. nil = keins.
+    /// Optional, also beim Lesen alter Profile `decodeIfPresent` (synthetisiert).
+    public var focusGif: String?
 
     public init(id: String, title: String, coverImage: String? = nil, logo: String? = nil, backdrop: String? = nil,
-                sources: [CatalogSource], hideTitle: Bool? = nil) {
+                sources: [CatalogSource], hideTitle: Bool? = nil, focusGif: String? = nil) {
         self.id = id; self.title = title; self.coverImage = coverImage; self.logo = logo; self.backdrop = backdrop; self.sources = sources
-        self.hideTitle = hideTitle
+        self.hideTitle = hideTitle; self.focusGif = focusGif
     }
 
     /// Titel über dem Kachelbild zeigen: ohne Bild immer, mit Bild nur bei `hideTitle == false`.

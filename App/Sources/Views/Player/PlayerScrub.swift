@@ -75,14 +75,18 @@ final class ScrubController: ObservableObject {
     private var holdOrigin: (Bool) -> Double = { _ in 0 }
     private var holdLimit: (Double) -> Double = { _ in .greatestFiniteMagnitude }
     private var holdTask: Task<Void, Never>?
+    /// Welle F-h: Wisch nach unten (Spur-Panel). tvOS meldet ihn nicht als `onMoveCommand(.down)`.
+    private var swipeDown: () -> Void = {}
 
     static let previewWidth = 480
     private static var now: Double { ProcessInfo.processInfo.systemUptime }
 
     func attach<E: PlaybackEngine>(engine: E, canScrub: @escaping () -> Bool, edges: @escaping () -> [Double],
                                    holdAllowed: @escaping () -> Bool,
-                                   holdOrigin: @escaping (Bool) -> Double, holdLimit: @escaping (Double) -> Double) {
+                                   holdOrigin: @escaping (Bool) -> Double, holdLimit: @escaping (Double) -> Double,
+                                   swipeDown: @escaping () -> Void) {
         self.canScrub = canScrub
+        self.swipeDown = swipeDown
         self.edges = edges
         self.holdAllowed = holdAllowed
         self.holdOrigin = holdOrigin
@@ -94,6 +98,7 @@ final class ScrubController: ObservableObject {
         release = { [weak engine] in await engine?.endScrubPreview() }
         input.onPan = { [weak self] dx, vx in self?.pan(dx, vx) }
         input.onPanEnded = { [weak self] in self?.planner.panEnded() }
+        input.onSwipeDown = { [weak self] in self?.swipeDown() }
         input.onTouch = { [weak self] x, y in self?.touch(x, y) }
         input.onTouchEnded = { [weak self] in self?.planner.touchEnded() }
         input.onHoldBegan = { [weak self] forward in self?.holdBegan(forward) }
@@ -292,6 +297,8 @@ final class ScrubController: ObservableObject {
 final class RemoteTouchInput: NSObject, UIGestureRecognizerDelegate {
     var onPan: (Double, Double) -> Void = { _, _ in }
     var onPanEnded: () -> Void = {}
+    /// Welle F-h: Wischbewegung endete als Wisch nach unten (`TrackPanelEntry.isSwipeDown`).
+    var onSwipeDown: () -> Void = {}
     var onTouch: (Double, Double) -> Void = { _, _ in }
     var onTouchEnded: () -> Void = {}
     /// Welle G-a: ◀/▶ gehalten (true = vor) bzw. losgelassen.
@@ -372,8 +379,17 @@ final class RemoteTouchInput: NSObject, UIGestureRecognizerDelegate {
             guard ScrubPlanner.panIsHorizontal(translationX: Double(tr.x), translationY: Double(tr.y)) else { return }
             onPan(Double(dx), Double(g.velocity(in: g.view).x))
         case .ended, .cancelled, .failed:
+            let tr = g.translation(in: g.view)
             lastTranslation = 0
             onPanEnded()
+            // Welle F-h: senkrechter Wisch nach unten öffnet das Spur-Panel (Spulen ist nur waagerecht).
+            guard g.state == .ended else { return }
+            let vy = Double(g.velocity(in: g.view).y)
+            if TrackPanelEntry.isSwipeDown(translationX: Double(tr.x), translationY: Double(tr.y), velocityY: vy) {
+                onSwipeDown()
+            } else if abs(tr.y) > abs(tr.x) * 1.5, abs(tr.y) >= TrackPanelEntry.swipeFastDistance {
+                RemoteLog.info("spulen", "Senkrechtes Wischen ohne Wirkung (dy \(Int(tr.y)), vy \(Int(vy)))")
+            }
         default: break
         }
     }
