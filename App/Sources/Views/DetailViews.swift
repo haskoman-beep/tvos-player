@@ -1032,8 +1032,25 @@ struct InfoBadges: View {
 /// Besetzung, ähnliche Titel und „Über“ (alles aus dem einen TMDB-Abruf).
 struct DetailExtras: View {
     @Environment(\.navigate) private var navigate
+    @EnvironmentObject var model: AppModel
     let info: LocalizedMeta
     let isSeries: Bool
+
+    /// Wave F-k: vertical room of „Ähnliche Titel“ (`.card` lift of a 360 pt poster + quality strip below).
+    private var similarPadding: CGFloat {
+        let strip = model.profile.appearance.titles.posterBadges == .bottom ? PosterQualityBadges.bandHeight : 0
+        return Theme.Focus.cardRowPadding(height: FocusHeadroom.tallest([.poster], cardScale: 1, posterExtra: strip),
+                                          minimum: Theme.Focus.tileRowPadding)
+    }
+
+    /// Wave F-k: „Plaketten: Ähnliche Titel n/m mit Qualität“ (source cache only; this row never prefetches).
+    private func noteSimilarBadges() {
+        let a = model.profile.appearance
+        let recs = info.recommendations
+        let n = recs.filter { PosterBadgeStats.hasBadges(QualityBadgeCache.shared.best(for: $0, model: model), settings: a.badges) }.count
+        let line = PosterBadgeStats.logLine(row: "Ähnliche Titel", withQuality: n, total: recs.count, placement: a.titles.posterBadges)
+        RemoteLog.info("home", line)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.l) {
@@ -1069,9 +1086,11 @@ struct DetailExtras: View {
                             NavigationLinkish(route: .detail(m), onActivate: { $0 }, label: PosterCard(item: m))
                         }
                     }
-                    .padding(.vertical, Theme.Focus.tileRowPadding)
+                    // Wave F-k: same room for the card lift as the home rows (poster at factor 1), at least 44.
+                    .padding(.vertical, similarPadding)
                 }
                 .scrollClipDisabled()
+                .task(id: info.recommendations.map(\.id)) { noteSimilarBadges() }
             }
             let rows = aboutRows
             if !rows.isEmpty {

@@ -390,6 +390,8 @@ struct RemoteImage: View {
     /// Feste Zielgröße statt der gezeichneten (aufgeklappte Karte nutzt die Variante des Vollbild-Hintergrunds:
     /// ein Download, ein Bitmap im Speichercache für beide).
     var fixedTarget: ImageTarget? = nil
+    /// Wave F-k: called with the address when it cannot be loaded (not on cancel); poster tiles then try the next one.
+    var onFailure: (@MainActor (String) -> Void)? = nil
     @Environment(\.displayScale) private var displayScale
     @State private var image: UIImage?
     @State private var loadedURL: String?
@@ -434,7 +436,11 @@ struct RemoteImage: View {
             if t != target { target = t }
         }
         .task(id: LoadKey(url: url, target: fixedTarget ?? target, blur: blur)) {
-            guard let s = url, let u = URL(string: s) else { image = nil; return }
+            guard let s = url, let u = URL(string: s) else {
+                image = nil
+                if let url { onFailure?(url) }
+                return
+            }
             guard let target = fixedTarget ?? target else { return }   // Größe noch unbekannt: nicht winzig dekodieren
             let blurPx = Int((blur * displayScale).rounded())
             // Speichercache-Treffer (auch nach dem Freigeben beim Zurückkehren): sofort, ohne Überblendung.
@@ -446,6 +452,7 @@ struct RemoteImage: View {
             let img = await ImagePipeline.shared.image(u, target: target, blur: blurPx)
             guard !Task.isCancelled else { return }
             withAnimation(.easeOut(duration: 0.2)) { image = img; loadedURL = s; loadedBlur = blur }
+            if img == nil { onFailure?(s) }
         }
         .onDisappear {
             guard let image, ImagePipeline.cost(image) >= Self.releaseBytes else { return }

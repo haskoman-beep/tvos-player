@@ -117,6 +117,23 @@ enum Theme {
         /// Senkrechter Rand um Kachelreihen (Besetzung, Ähnliche Titel): Wachsen beim Fokus (bis etwa 10 pt bei
         /// 300 pt Kachelhöhe) plus Schatten (Radius 14, y 8), damit nichts in Nachbarreihe oder Überschrift ragt.
         static let tileRowPadding: CGFloat = 44
+        /// Wave F-k: lift of the system card style (`.buttonStyle(.card)`, poster rows). tvOS does not publish the
+        /// factor; on device photos (build 187) a focused 360 pt poster grew by about 12 % including the tilt.
+        /// Rounded up so the room is never too small.
+        static let cardLiftScale: CGFloat = 1.15
+        /// Wave F-k: how far shadow and tilt of a lifted card reach beyond its scaled edge.
+        static let cardLiftShadow: CGFloat = 12
+        /// Wave F-k: soft fade at the top edge of the home list under the hero info.
+        static let listFade: CGFloat = 24
+        /// Wave F-k: vertical padding of a `.card` tile row (lift + shadow, PlayerCore `FocusHeadroom`), at least
+        /// `minimum` (rows with enough room keep it).
+        static func cardRowPadding(height: CGFloat, minimum: CGFloat) -> CGFloat {
+            FocusHeadroom.rowPadding(height: height, scale: cardLiftScale, shadow: cardLiftShadow, minimum: minimum)
+        }
+        /// Wave F-k: band above the home list's top edge in which a lifted card may draw (lift room + fade).
+        static func listEdgeBand(height: CGFloat) -> CGFloat {
+            FocusHeadroom.edgeBand(height: height, scale: cardLiftScale, shadow: cardLiftShadow, fade: listFade)
+        }
         static let pressedScale: CGFloat = 0.98
         /// Schatten der fokussierten Zeile.
         static let shadowOpacity: Double = 0.35

@@ -19,6 +19,13 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 
 <!-- Nothing user-facing is merged yet. In progress: a more compact audio and subtitle panel in the player, and a fix for the top menu bar that could not be reached after scrolling on the home screen. -->
 
+### Fixed
+- Home screen and „Ähnliche Titel“ (similar titles): a focused poster is no longer cut off, including its tag
+  at the top edge and its shadow, at every poster size. Poster rows get a little more room above and below
+  for this; a row keeps its height while its entries load.
+- Poster tiles: when a poster image cannot be loaded, the tile tries the next one (the metadata addon's
+  poster, then the TMDB poster) and finally shows the title instead of an empty grey card.
+
 ## [Build 174] – 2026-11-22 (integ)
 
 ### Added
