@@ -14,7 +14,14 @@ targets:
   Player:
     type: application
     platform: tvOS
-    sources: [Sources]
+    sources:
+      - Sources
+      # SFace face model (X-Ray), generated in CI by tools/xray_model/convert_sface.py and never committed.
+      # Xcode compiles the .mlpackage to SFace.mlmodelc in the app bundle. Optional: missing outside CI.
+      - path: Resources/SFace.mlpackage
+        type: file
+        buildPhase: sources
+        optional: true
     dependencies:
       - package: AetherFEL
       - package: PlayerCore

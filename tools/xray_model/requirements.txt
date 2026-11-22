@@ -1,0 +1,12 @@
+# Pinned Python packages for convert_sface.py. Installed in CI only (GitHub Actions macOS, Python 3.11),
+# binary wheels only (pip install --only-binary=:all: -r ...). The CI log prints `pip freeze` after the
+# install, so the full resolved set (including the transitive packages) is visible for every run.
+numpy==1.26.4
+protobuf==4.25.5
+sympy==1.13.1
+torch==2.5.1
+torchvision==0.20.1
+onnx==1.17.0
+onnx2torch==1.5.15
+onnxruntime==1.20.1
+coremltools==8.3.0
