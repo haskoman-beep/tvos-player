@@ -94,13 +94,13 @@ else
   echo "### Recent commits (no earlier release found)"
 fi
 echo
-log=$(git log --no-merges --format='%H%x09%s' "$range" | head -n $((max + 1)))
+log=$(git log --no-merges -n $((max + 1)) --format='%H%x09%s' "$range")
 count=$(printf '%s' "$log" | grep -c . || true)
 if [ "$count" -eq 0 ]; then
   echo "No new commits (only merges)."
 else
   # Subjects quoted as they are (German); "@name" is put in code so nobody gets notified.
-  printf '%s\n' "$log" | head -n $max | while IFS=$'\t' read -r h s; do
+  printf '%s\n' "$log" | sed -n "1,${max}p" | while IFS=$'\t' read -r h s; do
     s=$(printf '%s' "$s" | sed -e 's/</\&lt;/g' -e 's/@\([A-Za-z0-9_-]\{1,\}\)/`@\1`/g')
     echo "- [\`${h:0:7}\`]($url/commit/$h) $s"
   done
