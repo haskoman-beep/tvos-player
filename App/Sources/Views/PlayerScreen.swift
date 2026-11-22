@@ -296,7 +296,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                                      && !restorePending && !restoring && engine.duration > 0 && engine.errorText == nil },
                          edges: { SkipSegments.snapEdges(skip.segments) + engine.chapterMarks.map(\.start) })
             idleTick(failed: failureNotice != nil || loadError != nil)
-            NowPlayingBridge.route(engine, handlers: .init(context: { RemoteTransportContext(isPlaying: engine.isPlaying, position: pendingSeek ?? engine.currentTime, inputBlocked: leaving || scrub.isActive, upNextShowing: upNext != nil) }, toggle: { onUserInput(); togglePlay() }, seekBy: { onUserInput(); queueSeek($0); poke() }))
+            NowPlayingBridge.route(engine, handlers: .init(context: { RemoteTransportContext(isPlaying: engine.isPlaying, isBusy: engine.isLoading, position: pendingSeek ?? engine.currentTime, inputBlocked: leaving || scrub.isActive || showTracks || failureNotice != nil, upNextShowing: upNext != nil, sinceLastPress: Date().timeIntervalSince(lastToggle)) }, toggle: { onUserInput(); togglePlay() }, seekBy: { onUserInput(); queueSeek($0); poke() }))
             guard loadTask == nil else { return }
             loadTask = Task { await loadAndStart() }
         }

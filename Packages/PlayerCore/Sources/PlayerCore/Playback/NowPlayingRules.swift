@@ -64,17 +64,25 @@ public enum RemoteTransportCommand: Equatable, Sendable {
 /// Zustand des Players, wenn ein Systembefehl kommt.
 public struct RemoteTransportContext: Equatable, Sendable {
     public var isPlaying: Bool
+    /// Engine lädt oder springt (`.loading`/`.seeking`): gilt als Absicht „spielt“ (Play pausiert dann nie).
+    public var isBusy: Bool
     /// Ausgangspunkt für Sprünge: gesammeltes Sprungziel, sonst aktuelle Stelle.
     public var position: Double
-    /// Ausgang läuft oder Spulen über die Touchfläche ist aktiv: Systembefehle zählen nicht.
+    /// Ausgang, Spulen über die Touchfläche, Spur-Panel oder Fehlerkarte: Systembefehle zählen nicht.
     public var inputBlocked: Bool
     /// Up-next-Karte steht: Play/Pause startet wie der Klick die nächste Folge, Pause allein wird ignoriert.
     public var upNextShowing: Bool
+    /// Sekunden seit dem letzten Play/Pause-Druck der Siri-Remote (auch dem, der nur das Spulen bestätigt hat).
+    public var sinceLastPress: Double
 
-    public init(isPlaying: Bool, position: Double, inputBlocked: Bool = false, upNextShowing: Bool = false) {
-        self.isPlaying = isPlaying; self.position = position
-        self.inputBlocked = inputBlocked; self.upNextShowing = upNextShowing
+    public init(isPlaying: Bool, isBusy: Bool = false, position: Double, inputBlocked: Bool = false,
+                upNextShowing: Bool = false, sinceLastPress: Double = .infinity) {
+        self.isPlaying = isPlaying; self.isBusy = isBusy; self.position = position
+        self.inputBlocked = inputBlocked; self.upNextShowing = upNextShowing; self.sinceLastPress = sinceLastPress
     }
+
+    /// Absicht der Engine: spielt, lädt oder springt.
+    public var wantsPlaying: Bool { isPlaying || isBusy }
 }
 
 /// Was der Player mit einem Systembefehl tut. Es gibt keinen eigenen Weg: `.toggle` geht über dieselbe
@@ -98,6 +106,8 @@ public enum RemoteTransport {
     /// Wählbare Sprungweite der Systembefehle (iPhone-Fernbedienung, Kontrollzentrum) in Sekunden.
     public static let skipChoices = [10, 30]
     public static let defaultSkipSeconds = 10
+    /// Play/Pause so kurz nach einem Druck der Siri-Remote ist derselbe Druck (wie `togglePlay`, 350 ms).
+    public static let doublePressWindow = 0.35
     /// Kleinere Positionswechsel gelten als „bleibt stehen“.
     public static let minPositionChange = 0.5
 
@@ -111,11 +121,16 @@ public enum RemoteTransport {
     public static func action(for command: RemoteTransportCommand, context c: RemoteTransportContext) -> RemoteTransportAction {
         if c.inputBlocked { return .ignore("gesperrt") }
         switch command {
+        case .play, .pause, .togglePlayPause:
+            if c.sinceLastPress < doublePressWindow { return .ignore("doppelt zum Tastendruck") }
+        default: break
+        }
+        switch command {
         case .play:
-            return c.isPlaying ? .ignore("spielt schon") : .toggle
+            return c.wantsPlaying ? .ignore("spielt schon") : .toggle
         case .pause:
             if c.upNextShowing { return .ignore("Up-next läuft") }
-            return c.isPlaying ? .toggle : .ignore("schon pausiert")
+            return c.wantsPlaying ? .toggle : .ignore("schon pausiert")
         case .togglePlayPause:
             return .toggle
         case .skip(let s):

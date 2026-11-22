@@ -1,5 +1,6 @@
 import SwiftUI
 import MediaPlayer
+import AVFoundation
 import AetherFEL
 import PlayerCore
 
@@ -65,7 +66,9 @@ enum NowPlayingBridge {
             let action = RemoteTransport.action(for: c, context: handlers.context())
             RemoteLog.info("nowplaying", "Befehl \(c.logName) → \(action.logText)")
             switch action {
-            case .toggle: handlers.toggle()
+            case .toggle:
+                reactivateAudioIfPaused(e)
+                handlers.toggle()
             case .seek(let delta): handlers.seekBy(delta)
             case .ignore: break
             }
@@ -73,7 +76,7 @@ enum NowPlayingBridge {
         }
     }
 
-    /// Jeder Ausgang (`leave`): ab jetzt nichts mehr ausführen, Karte leeren. `stop()` meldet die Ziele ab.
+    /// Jeder Ausgang (`leave`): ab jetzt nichts mehr ausführen. `stop()` meldet Ziele ab und leert die Karte.
     static func detach<E: PlaybackEngine>(_ engine: E) {
         artworkTask?.cancel()
         artworkTask = nil
@@ -82,8 +85,16 @@ enum NowPlayingBridge {
             RemoteLog.info("nowplaying", "Befehl \(transport(command).logName) nach dem Verlassen ignoriert")
             return true
         }
-        e.setNowPlayingInfo([:])
-        RemoteLog.info("nowplaying", "Abgemeldet (Karte geleert, Befehle gesperrt bis zum Stopp)")
+        // Karte bleibt bis zum Stopp stehen: `stop()` räumt sie samt Zielen und Video-Identität (finishNowPlaying).
+        RemoteLog.info("nowplaying", "Abgemeldet (Befehle gesperrt, Stopp räumt Karte und Ziele)")
+    }
+
+    /// Wie die Engine beim eigenen Remote-Play (`playFromRemote`, intern): Das System kann die Audio-Session
+    /// während der Pause deaktiviert haben; ohne Reaktivierung liefe das Video stumm weiter. Synchron vor dem Play.
+    private static func reactivateAudioIfPaused(_ e: AetherEngine) {
+        guard e.rendererAudioSessionActivationEnabled, e.state == .paused else { return }
+        do { try AVAudioSession.sharedInstance().setActive(true) }
+        catch { RemoteLog.info("nowplaying", "Audio-Session nicht reaktiviert: \(error)") }
     }
 
     private static func transport(_ c: NowPlayingRemoteCommand) -> RemoteTransportCommand {

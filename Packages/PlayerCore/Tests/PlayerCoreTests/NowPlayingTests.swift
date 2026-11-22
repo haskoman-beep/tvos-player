@@ -78,6 +78,24 @@ private let paused = RemoteTransportContext(isPlaying: false, position: 600)
     #expect(RemoteTransport.action(for: .previousTrack, context: playing) == .ignore("keine Titelliste"))
 }
 
+@Test func remotePlayPauseRightAfterRemotePressIgnored() {
+    // Druck hat gerade das Spulen bestätigt (oder getoggelt): Systembefehl derselbe Druck → nichts tun.
+    let justPressed = RemoteTransportContext(isPlaying: true, position: 600, sinceLastPress: 0.1)
+    for c: RemoteTransportCommand in [.play, .pause, .togglePlayPause] {
+        #expect(RemoteTransport.action(for: c, context: justPressed) == .ignore("doppelt zum Tastendruck"))
+    }
+    #expect(RemoteTransport.action(for: .skip(seconds: 10), context: justPressed) == .seek(by: 10))   // Sprünge zählen
+    let later = RemoteTransportContext(isPlaying: true, position: 600, sinceLastPress: 0.4)
+    #expect(RemoteTransport.action(for: .togglePlayPause, context: later) == .toggle)
+}
+
+@Test func remotePlayDuringSeekOrLoadNeverPauses() {
+    let seeking = RemoteTransportContext(isPlaying: false, isBusy: true, position: 600)
+    #expect(seeking.wantsPlaying)
+    #expect(RemoteTransport.action(for: .play, context: seeking) == .ignore("spielt schon"))
+    #expect(RemoteTransport.action(for: .pause, context: seeking) == .toggle)
+}
+
 @Test func remoteSkipIntervalChoicesAndLogs() {
     #expect(RemoteTransport.skipInterval(10) == 10)
     #expect(RemoteTransport.skipInterval(30) == 30)
