@@ -43,6 +43,14 @@ find_prev() {
 if [ -z "$prev" ]; then
   [ "$branch" = main ] && prev=$(find_prev true)
   [ -n "$prev" ] || prev=$(find_prev false)
+  # No release yet: start after the previous successful CI build of the same branch.
+  if [ -z "$prev" ]; then
+    read -r pnum psha < <(gh run list -R "$repo" -b "$branch" -w build.yml -s success -L 100 --json number,headSha \
+      --jq "[.[] | select(.number < $build)] | max_by(.number) | \"\(.number) \(.headSha)\"" 2>/dev/null || true)
+    if [ -n "${psha:-}" ] && [ "$psha" != null ] && git rev-parse -q --verify "$psha^{commit}" > /dev/null; then
+      prev=$psha prev_label="CI build $pnum (\`$branch\`, no release)"
+    fi
+  fi
 fi
 [ -n "$prev_label" ] || prev_label=$prev
 

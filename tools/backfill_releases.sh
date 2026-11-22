@@ -42,17 +42,8 @@ for id in $sorted; do
   git fetch -q --tags origin
   git cat-file -e "$sha^{commit}" 2>/dev/null || git fetch -q origin "$sha"
 
-  # Previous release; if there is none, start after the previous successful CI build on the same branch.
+  # The previous release (or, without one, the previous CI build) is found by release_notes.sh.
   prev="" label=""
-  probe=$(bash "$here/release_notes.sh" "$num" "$branch" "$sha" "$id" "$created" | grep -m1 '^### ' || true)
-  if [[ "$probe" == "### Recent commits"* ]]; then
-    read -r pnum psha < <(gh run list -b "$branch" -w build.yml -s success -L 100 --json number,headSha \
-      --jq "[.[] | select(.number < $num)] | max_by(.number) | \"\(.number) \(.headSha)\"" 2>/dev/null || true)
-    if [ -n "${psha:-}" ] && [ "$psha" != null ]; then
-      git cat-file -e "$psha^{commit}" 2>/dev/null || git fetch -q origin "$psha"
-      prev=$psha label="CI build $pnum (\`$branch\`, before the version history)"
-    fi
-  fi
 
   dir="$work/$id"; mkdir -p "$dir"
   no_ipa=0
