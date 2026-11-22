@@ -57,11 +57,12 @@ public struct SimklClient: Sendable {
             let pct = (o["progress"] as? Double ?? 0) / 100
             let date = (o["paused_at"] as? String).flatMap(TraktClient.date) ?? .distantPast
             if let m = o["movie"] as? [String: Any], let item = TraktClient.meta(m, type: "movie") {
-                return RemoteProgress(id: item.id, item: item, fraction: pct, updated: date)
+                return RemoteProgress(id: item.id, item: item, fraction: pct, updated: date, playbackID: o["id"] as? Int)
             }
             if let sh = o["show"] as? [String: Any], let ep = o["episode"] as? [String: Any], let item = TraktClient.meta(sh, type: "series"),
                let s = ep["season"] as? Int, let e = (ep["episode"] ?? ep["number"]) as? Int {
-                return RemoteProgress(id: "\(item.id):\(s):\(e)", item: item, season: s, episode: e, fraction: pct, updated: date)
+                return RemoteProgress(id: "\(item.id):\(s):\(e)", item: item, season: s, episode: e, fraction: pct, updated: date,
+                                      playbackID: o["id"] as? Int)
             }
             return nil
         }

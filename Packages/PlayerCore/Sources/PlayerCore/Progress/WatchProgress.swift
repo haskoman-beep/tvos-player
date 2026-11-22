@@ -54,6 +54,7 @@ public struct ProgressBook: Codable, Sendable, Equatable {
                                 position: Double, duration: Double, now: Date = Date()) {
         guard duration > 0, position.isFinite else { return }
         let done = position / duration >= Self.finishedAt
+        clearSeriesMarker(itemID: item.id, episodeID: id, updated: now)
         entries[id] = WatchProgress(id: id, item: item, season: season, episode: episode,
                                     position: done ? 0 : position, duration: duration, updated: now, finished: done)
     }
@@ -113,6 +114,9 @@ public struct ProgressBook: Codable, Sendable, Equatable {
     public mutating func merge(remote: [RemoteProgress]) {
         for r in remote {
             if let l = entries[r.id], l.updated >= r.updated { continue }
+            // Wave L: an episode paused before the series was marked as watched stays out.
+            if r.id != r.item.id, let m = entries[r.item.id], m.season == nil, m.finished, m.updated >= r.updated { continue }
+            clearSeriesMarker(itemID: r.item.id, episodeID: r.id, updated: r.updated)
             let dur = entries[r.id]?.duration ?? 0
             entries[r.id] = WatchProgress(id: r.id, item: r.item, season: r.season, episode: r.episode,
                                           position: dur > 0 ? r.fraction * dur : 0, duration: dur, updated: r.updated,

@@ -43,6 +43,7 @@ struct CalendarView: View {
                                     NavigationLinkish(route: .detail(e.seriesPreview), onActivate: { $0 },
                                                       label: CalendarTile(episode: e))
                                         .focused($tile, equals: e.id)
+                                        .tileMenu(e.seriesPreview)   // Wave L
                                 }
                             }
                         }

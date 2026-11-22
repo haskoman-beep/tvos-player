@@ -49,6 +49,7 @@ private struct HistoryRow: View {
                 Strip(kind: .poster) {
                     ForEach(items) { m in
                         NavigationLinkish(route: .detail(m), onActivate: { $0 }, label: PosterCard(item: m))
+                            .tileMenu(m)   // Wave L
                     }
                 }
             }

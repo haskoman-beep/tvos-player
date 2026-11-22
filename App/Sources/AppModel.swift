@@ -60,6 +60,12 @@ final class AppModel: ObservableObject {
         scrobbleProgress(r, fraction: duration > 0 ? position / duration : 0)
     }
 
+    /// Wave L: local change from a tile action (AppModel+SyncQueue), saved at once.
+    func editProgress(_ change: (inout ProgressBook) -> Void) {
+        change(&progress)
+        do { try progressStore.save(progress, profile: profile.id) } catch { lastError = "Fortschritt nicht gespeichert: \(error)" }
+    }
+
     /// Gewählte Quelle merken, damit Weiterschauen sie direkt startet.
     func rememberSource(_ r: PlayRequest, stream: StreamItem, addon: String) {
         progress.rememberSource(stream, addon: addon, for: r.id)
@@ -156,12 +162,13 @@ final class AppModel: ObservableObject {
 
     /// Angefangenes aus dem gewählten Dienst holen und mit dem lokalen Stand zusammenführen.
     func syncRemoteProgress() async {
+        await processSyncQueue()   // Wave L: send pending tile changes before pulling
         let s: String
         switch profile.progressSource { case .local: return; case .trakt: s = "trakt"; case .simkl: s = "simkl" }
         guard let t = await token(s) else { return }
         do {
             let remote = s == "trakt" ? try await trakt?.playback(token: t) : try await simkl?.playback(token: t)
-            progress.merge(remote: remote ?? [])
+            progress.merge(remote: applySyncQueue(remote ?? []))
             RemoteLog.info("sync", "\(s): \(remote?.count ?? 0) angefangene Titel geholt")
             try progressStore.save(progress, profile: profile.id)
         } catch { lastError = "\(s == "trakt" ? "Trakt" : "Simkl") nicht erreichbar: \(error)" }
@@ -318,7 +325,7 @@ final class AppModel: ObservableObject {
         if case .continueWatching = source.kind { return CatalogLoad(items: progress.continueWatching().map(\.item), fromCache: true) }
         if case .upcoming = source.kind { return CatalogLoad(items: await upcomingToday()) }   // eigener 6-h-Cache (AppModel+Upcoming)
         if !refresh { await awaitCatalogSnapshot() }   // Welle C-b: Plattenstand zuerst
-        if !refresh, let c = cache[source.id] { refreshCatalogIfStale(source); return CatalogLoad(items: c, fromCache: true) }
+        if !refresh, let c = cache[source.id] { refreshCatalogIfStale(source); return CatalogLoad(items: applySyncQueue(source, c), fromCache: true) }
         let generation = cache.generation
         var out: [MetaPreview] = []
         do {
@@ -344,7 +351,7 @@ final class AppModel: ObservableObject {
         if refresh { cache.storeRefreshed(out, for: source.id, generation: generation) }
         else { cache.store(out, for: source.id, generation: generation) }
         scheduleCatalogSave()
-        return CatalogLoad(items: out)
+        return CatalogLoad(items: applySyncQueue(source, out))
     }
 
     /// Streams brauchen IMDb-IDs; TMDB-Einträge werden übersetzt.

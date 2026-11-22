@@ -241,7 +241,7 @@ struct HomeRowView: View {
     private func card<L: View>(_ route: Route, @ViewBuilder label: () -> L) -> some View {
         NavigationLinkish(route: route, onActivate: onActivate, label: label())
             .focused($focusedRoute, equals: route)
-            .homeRowMenu(menu)
+            .tileMenu(route.tileItem, inContinueRow: row.content == .list(.continueWatching), row: menu)   // Wave L
     }
 }
 
