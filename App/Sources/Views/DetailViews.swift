@@ -122,7 +122,8 @@ struct DetailView: View {
                             infoBlock
                                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
                                     guard DetailPage.shouldUpdate(measured: Double(h), stored: Double(infoHeight)) else { return }
-                                    infoHeight = h
+                                    // Review M2: animated, so the poster fades in and resizes smoothly.
+                                    withAnimation(.easeOut(duration: 0.2)) { infoHeight = h }
                                 }
                         }
 
@@ -353,7 +354,8 @@ struct DetailView: View {
             MetaLine(parts: [meta?.releaseInfo ?? item.releaseInfo, meta?.runtime, certification ?? ratings?.certification,
                              meta?.genres?.prefix(3).joined(separator: ", ")])
             InfoBadges(ratings: model.ratingBadges(imdbRating: meta?.imdbRating, mdblist: ratings), tech: techBadges)
-            if let t = extra?.tagline { Text(t).italic().textRole(.rowDetail) }
+            // Review M3: same width cap as the description, so the poster does not change its line breaks.
+            if let t = extra?.tagline { Text(t).italic().textRole(.rowDetail).frame(maxWidth: Theme.Layout.contentMaxWidth, alignment: .leading) }
             if !overview.isEmpty {
                 // Kurz halten; Klick zeigt den ganzen Text.
                 Button { showFullText = true } label: { FocusHighlight { Text(overview).font(.callout).foregroundStyle(.white).lineLimit(3).multilineTextAlignment(.leading) } }

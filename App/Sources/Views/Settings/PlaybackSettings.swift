@@ -25,7 +25,7 @@ struct PlaybackSettings: View {
             // Wave F-n: „Sofort abspielen“ card (wave G-a) only on request; default off, „Abspielen“ is the main button.
             SettingsSection("Detailseite") {
                 SettingsToggleRow(symbol: "bolt", tint: tint, title: "Sofort abspielen anzeigen",
-                                  detail: "Zeigt bei Filmen neben „Abspielen“ die Karte „Sofort abspielen“: startet die beste Quelle ohne Quellenliste.",
+                                  detail: "Zeigt bei Filmen neben „Abspielen“ die Karte „Sofort abspielen“: startet die beste Quelle ohne Auswahl.",
                                   reserveDetailSpace: false, isOn: model.binding(\.player.instantPlay))
             }
             SettingsSection("Ton & Untertitel im Player") {
