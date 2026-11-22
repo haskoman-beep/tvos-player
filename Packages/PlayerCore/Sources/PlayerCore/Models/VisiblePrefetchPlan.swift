@@ -164,10 +164,12 @@ public struct VisiblePrefetchPlan: Sendable {
             for r in credited { marks[r, default: [:]][tile] = .loaded }
         case .unavailable:
             remember(tile, now)
+            budget.giveBack(now: now)   // R3 (m-R2-2): ended before any source search
         case .cancelled:
             for r in credited where marks[r]?[tile] == nil { marks[r, default: [:]][tile] = .cancelled }
         case .known:
             for r in credited where marks[r]?[tile] == nil { marks[r, default: [:]][tile] = .cached }
+            budget.giveBack(now: now)
         }
     }
 
@@ -265,6 +267,12 @@ public struct PrefetchBudget: Sendable, Equatable {
         return recent[expire - 1].addingTimeInterval(60)
     }
 
+    /// Wave F-k R3 (m-R2-2): a started job ended before its source search (title known meanwhile, or no ID): its
+    /// start is free again. Takes back the newest start of the minute (the job's own one is not tracked).
+    public mutating func giveBack(now: Date) {
+        if let i = starts.lastIndex(where: { now.timeIntervalSince($0) < 60 }) { starts.remove(at: i) }
+    }
+
     public mutating func foregroundSearchBegan() { foregroundSearches += 1 }
     public mutating func foregroundSearchEnded() { foregroundSearches = max(0, foregroundSearches - 1) }
 
@@ -273,7 +281,7 @@ public struct PrefetchBudget: Sendable, Equatable {
 
 /// Wave F-k R2: the source cache keeps at most `limit` titles. Entries of the visible-tile prefetch are the weak tier
 /// and go first (oldest first), so they never push out what the focus prefetch or a page stored; only then the
-/// oldest of the rest. (A weak entry becomes strong when a page or the focus prefetch uses it.)
+/// oldest of the rest. (A weak entry becomes strong when a page or the focus prefetch uses it: `StreamCacheTierMarks`.)
 public enum StreamCacheTiers {
     /// Keys to drop so that at most `limit` remain.
     public static func overflow(storedAt: [String: Date], weak: Set<String>, limit: Int) -> [String] {
@@ -285,6 +293,48 @@ public enum StreamCacheTiers {
             return a.value != b.value ? a.value < b.value : a.key < b.key
         }
         return order.prefix(excess).map(\.key)
+    }
+}
+
+/// Wave F-k R3: the weak-tier marks of the source cache (kept by `AppModel`, rules here so they are testable).
+/// `weak`: stored entries from the visible-tile prefetch. `pending`: running searches started by it that no page or
+/// focus prefetch has joined yet; their result is stored weak.
+public struct StreamCacheTierMarks: Sendable, Equatable {
+    public private(set) var weak: Set<String> = []
+    public private(set) var pending: Set<String> = []
+
+    public init() {}
+
+    /// A new search for `id` starts. One of the visible-tile prefetch is weak unless it renews a usable strong entry
+    /// (a partial focus/page entry stays strong); any other is strong.
+    public mutating func searchStarted(_ id: String, visiblePrefetch: Bool, hasUsableEntry: Bool) {
+        if visiblePrefetch, !hasUsableEntry || weak.contains(id) { pending.insert(id) } else { pending.remove(id) }
+    }
+
+    /// A page or the focus prefetch uses the entry, joins its running search, or the focus rests on its tile
+    /// (R3, I-R2-1): strong from now on, also the result of a search still running.
+    public mutating func keep(_ id: String) {
+        weak.remove(id)
+        pending.remove(id)
+    }
+
+    /// The search ended without storing anything; a previous entry keeps its tier.
+    public mutating func searchDropped(_ id: String) { pending.remove(id) }
+
+    /// The result of `id` is stored; `storedAt` is the cache with it (expired entries already out). Returns the keys
+    /// to drop so that at most `limit` remain (`StreamCacheTiers.overflow`) and forgets marks of entries now gone.
+    public mutating func stored(_ id: String, storedAt: [String: Date], limit: Int) -> [String] {
+        if pending.remove(id) != nil { weak.insert(id) } else { weak.remove(id) }
+        let drop = StreamCacheTiers.overflow(storedAt: storedAt, weak: weak, limit: limit)
+        let gone = Set(drop)
+        weak = weak.filter { storedAt[$0] != nil && !gone.contains($0) }
+        return drop
+    }
+
+    /// Profile switch.
+    public mutating func removeAll() {
+        weak.removeAll()
+        pending.removeAll()
     }
 }
 

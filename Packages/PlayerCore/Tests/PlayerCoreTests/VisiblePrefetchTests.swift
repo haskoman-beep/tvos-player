@@ -220,3 +220,77 @@ private func plan(_ tiles: [String], row: String = "A", limits: VisiblePrefetchP
     // A weak entry goes before an older strong one.
     #expect(StreamCacheTiers.overflow(storedAt: ["x": at(0), "w": at(5)], weak: ["w"], limit: 1) == ["w"])
 }
+
+// Wave F-k R3: the focus rest keeps an entry of the visible-tile prefetch (I-R2-1); tier marks; starts given back.
+
+/// Source cache of 40 places as in `AppModel.streams`/`storeStreams`: a search starts, its result is stored.
+private struct CacheSim {
+    var cache: [String: Date] = [:]
+    var tiers = StreamCacheTierMarks()
+
+    mutating func search(_ id: String, visible: Bool, storedAt t: Date) {
+        tiers.searchStarted(id, visiblePrefetch: visible, hasUsableEntry: cache[id] != nil)
+        store(id, at: t)
+    }
+
+    mutating func store(_ id: String, at t: Date) {
+        cache[id] = t
+        for k in tiers.stored(id, storedAt: cache, limit: 40) { cache[k] = nil }
+    }
+}
+
+@Test func focusRestKeepsAVisiblePrefetchedEntry() {
+    // The visible prefetch caches x (weak), the focus rests on x, then 60 more visible tiles: x stays cached.
+    var s = CacheSim()
+    s.search("x", visible: true, storedAt: at(0))
+    #expect(s.tiers.weak == ["x"])
+    s.tiers.keep("x")   // StreamPrefetcher.enqueue → AppModel.keepStream
+    for i in 1...60 { s.search("v\(i)", visible: true, storedAt: at(Double(i))) }
+    #expect(s.cache["x"] != nil)
+    #expect(s.cache.count == 40)
+    #expect(!s.tiers.weak.contains("x"))
+    // Without the focus rest x is the oldest weak entry and goes first.
+    var u = CacheSim()
+    u.search("x", visible: true, storedAt: at(0))
+    for i in 1...60 { u.search("v\(i)", visible: true, storedAt: at(Double(i))) }
+    #expect(u.cache["x"] == nil)
+    #expect(u.tiers.weak.count == 40)
+}
+
+@Test func streamTierMarksRunningSearchRenewalAndPage() {
+    var s = CacheSim()
+    // The focus rests on a tile whose visible search still runs: its result is strong.
+    s.tiers.searchStarted("y", visiblePrefetch: true, hasUsableEntry: false)
+    s.tiers.keep("y")
+    s.store("y", at: at(0))
+    #expect(s.tiers.weak.isEmpty)
+    // A visible renewal keeps a usable strong entry strong and a weak one weak.
+    s.search("y", visible: true, storedAt: at(1))
+    #expect(s.tiers.weak.isEmpty)
+    s.search("w", visible: true, storedAt: at(2))
+    s.search("w", visible: true, storedAt: at(3))
+    #expect(s.tiers.weak == ["w"])
+    // m-R2-1: an expired strong entry does not count, the visible result is weak.
+    s.tiers.searchStarted("y", visiblePrefetch: true, hasUsableEntry: false)
+    s.store("y", at: at(4))
+    #expect(s.tiers.weak == ["w", "y"])
+    // A page search makes a weak entry strong; a search that stores nothing leaves the tiers alone.
+    s.search("w", visible: false, storedAt: at(5))
+    #expect(s.tiers.weak == ["y"])
+    s.tiers.searchStarted("z", visiblePrefetch: true, hasUsableEntry: false)
+    s.tiers.searchDropped("z")
+    #expect(s.tiers.pending.isEmpty)
+    #expect(s.tiers.weak == ["y"])
+}
+
+@Test func visiblePrefetchGivesBackStartsWithoutSearch() {
+    // m-R2-2: a tile that turns out known (or has no ID) before its source search does not use up a start.
+    let tiles = (0..<10).map { "t\($0)" }
+    var p = plan(tiles, limits: .init(maxRunning: 10))
+    #expect(p.pass(now: at(1)) { _ in .needed } == Array(tiles.prefix(8)))   // 12 − focus reserve 4
+    p.finished("t0", outcome: .known, now: at(2))
+    p.finished("t1", outcome: .unavailable, now: at(2))
+    p.finished("t2", outcome: .loaded, now: at(2))
+    #expect(p.budget.free(.visible, now: at(2)) == 2)
+    #expect(p.pass(now: at(3)) { ["t0", "t1", "t2"].contains($0) ? .known : .needed } == ["t8", "t9"])
+}

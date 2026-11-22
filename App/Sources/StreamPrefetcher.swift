@@ -141,6 +141,9 @@ final class StreamPrefetcher {
     private func freeStarts() -> Int { visible.budget.free(.focus, now: Date()) }
 
     private func enqueue(_ job: Job, model: AppModel) {
+        // Wave F-k R3 (I-R2-1): the focus rests here, also when the visible-tile prefetch already has the entry or is
+        // searching it: strong tier from now on (no new search for that).
+        model.keepStream(id: job.id)
         guard allowed(model), model.streamCacheState(id: job.id) == .missing,
               !running.contains(job.id) else { return }
         waiting.removeAll { $0.id == job.id }
@@ -192,6 +195,7 @@ final class StreamPrefetcher {
         // Eimer leer: Überschuss verwerfen statt ihn später nachzuholen.
         guard freeStarts() > 0 else { waiting.removeAll(); return }
         while running.count < Self.maxRunning, freeStarts() > 0, let job = waiting.popLast() {
+            model.keepStream(id: job.id)   // R3: a visible tile may have started it while it waited
             guard model.streamCacheState(id: job.id) == .missing, !running.contains(job.id) else { continue }
             start(job, model: model)
         }
