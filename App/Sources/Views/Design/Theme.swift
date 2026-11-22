@@ -60,6 +60,12 @@ enum Theme {
         static let edgeVertical: CGFloat = 60
     }
 
+    /// Wave F-k R1: tvOS lays out every screen at 1920 × 1080 points (HD and 4K alike); window frame for
+    /// „tile on screen“ (visible-tile prefetch).
+    enum Screen {
+        static let bounds = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+    }
+
     /// Feste Maße der Bedienseiten (§4.3, §4.6).
     enum Layout {
         /// Linke Spalte der Einstellungen bzw. des Browsers („Am Handy einrichten“ bricht sonst um).

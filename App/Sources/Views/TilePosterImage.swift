@@ -5,10 +5,12 @@ import PlayerCore
 /// Poster des Metadaten-Addons, sobald es da ist (Cache-Treffer synchron, also ohne Flackern beim Neuzeichnen).
 /// Geladen wird nur, solange die Kachel sichtbar ist; `.task` bricht beim Verschwinden ab.
 /// Wave F-k: an address that fails to load is skipped (addon poster → TMDB poster, PlayerCore `TilePosterChoice`);
-/// with no picture left the tile shows its title instead of an empty grey card.
+/// the title lies under the picture from the start (R1: also while a slow picture loads), so a tile is never an empty
+/// grey card.
 struct TilePosterImage: View {
     let item: MetaPreview
-    /// Title on the tile when no picture can be shown (off while the card is expanded: it shows logo or title itself).
+    /// Title under the picture, visible until the picture covers it (off while the card is expanded: it shows logo or
+    /// title itself).
     var showsTitle = true
     @EnvironmentObject var model: AppModel
     /// Ergebnis samt Schlüssel: nach Profil- oder Addon-Wechsel gilt ein altes Ergebnis nicht mehr.
@@ -29,8 +31,9 @@ struct TilePosterImage: View {
             failed = Failed(item: item.id, urls: urls)
             TilePosterLog.note(url: s, next: TilePosterChoice.fallbackText(addon: addon, poster: item.poster, failed: urls))
         })
-        .overlay(alignment: .bottomLeading) {
-            if url == nil && showsTitle { Text(item.name).font(.caption).padding(10) }
+        // Wave F-k R1: base layer; the placeholder is 92 % transparent, the loaded picture covers the title.
+        .background(alignment: .bottomLeading) {
+            if showsTitle { Text(item.name).font(.caption).padding(10) }
         }
         .task(id: key) {
             guard addonOn else { loaded = nil; return }

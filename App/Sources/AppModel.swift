@@ -609,19 +609,13 @@ extension AppModel {
 }
 
 // Task 8: Plaketten auf Postern – Schlüssel des Quellen-Caches für eine Kachel, ohne Netzabfrage
-// (gleiche Regeln wie StreamPrefetcher.request: Film = IMDb-ID, auch aus dem TMDB-Nachschlage-Cache; Serie = angefangene Folge).
+// (gleiche Regeln wie StreamPrefetcher.request: Film = IMDb-ID, auch aus dem TMDB-Nachschlage-Cache; Serie = angefangene
+// Folge, sonst S1E1).
 extension AppModel {
     func streamCacheKey(for m: MetaPreview) -> String? {
-        switch m.type {
-        case "movie":
-            if m.id.hasPrefix("tt") { return m.id }
-            guard m.id.hasPrefix("tmdb:"), let n = Int(m.id.dropFirst(5)) else { return nil }
-            return imdbCache["movie:\(n)"]
-        case "series":
-            guard let p = progress.latest(forItem: m.id), p.season != nil, p.episode != nil, !p.finished else { return nil }
-            return p.id
-        default:
-            return nil
-        }
+        // Wave F-k R1: one rule with the visible-tile prefetch (PlayerCore `PrefetchTarget`): film → IMDb ID,
+        // series → started episode, otherwise S1E1 (before: series without progress never had a badge).
+        PrefetchTarget.streamID(type: m.type, imdb: cachedIMDbID(for: m),
+                                progress: m.type == "series" ? progress.latest(forItem: m.id) : nil)
     }
 }

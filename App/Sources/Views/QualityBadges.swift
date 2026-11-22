@@ -13,6 +13,9 @@ struct PosterQualityBadges: View {
     let item: MetaPreview
     var scale: CGFloat = 1
     @State private var best: BestQuality?
+    /// Wave F-k R1: row of this tile for the visible-tile prefetch; whether the card is on screen.
+    @Environment(\.prefetchRow) private var prefetchRow
+    @State private var onScreen = false
     /// Plakettenhöhe auf Postern (§4.5: 26, unabhängig von der Kartengröße wie die Schrift darin).
     static let badgeHeight: CGFloat = ThemeBadge.TechSize.poster.height
     /// Innenabstand im Streifen unter dem Bild (oben und unten).
@@ -50,11 +53,22 @@ struct PosterQualityBadges: View {
         .allowsHitTesting(false)
         .task(id: "\(item.id)|\(placement.rawValue)") {
             best = placement != .off ? QualityBadgeCache.shared.best(for: item, model: model) : nil
+            // Wave F-k R1: badges switched on/off while the card is on screen.
+            StreamPrefetcher.shared.tile(item, row: prefetchRow, visible: onScreen && placement != .off, model: model)
         }
         .onReceive(QualityBadgeCache.shared.stored) { id in
             guard placement != .off, model.streamCacheKey(for: item) == id else { return }
             withAnimation(.easeOut(duration: 0.2)) { best = QualityBadgeCache.shared.best(id: id, model: model) }
         }
+        // Wave F-k R1: on screen (≥ half of the card inside the screen, both scroll views applied) → quiet source
+        // prefetch, so the badge appears without focus. Fades in like above, in place (overlay, no layout change).
+        .onGeometryChange(for: Bool.self) { proxy in
+            TileVisibility.isOnScreen(proxy.frame(in: .global), screen: Theme.Screen.bounds)
+        } action: { on in
+            onScreen = on
+            StreamPrefetcher.shared.tile(item, row: prefetchRow, visible: on && placement != .off, model: model)
+        }
+        .onDisappear { StreamPrefetcher.shared.tile(item, row: prefetchRow, visible: false, model: model) }
     }
 
     /// Oben rechts: unter Haken bzw. Folgen-/Restzeit-Kapsel (CardStateOverlay), sonst direkt an der Kante.
@@ -89,6 +103,11 @@ final class QualityBadgeCache {
     let stored = PassthroughSubject<String, Never>()
     private var cache: [String: BestQuality] = [:]
 
+    /// Wave F-k R1: best values after the source list left the AppModel cache (it holds 40 titles, more tiles can be
+    /// on screen), for the source cache lifetime; tiny, so a badge does not vanish while its title is not fetched again.
+    private var remembered: [String: (best: BestQuality, at: Date)] = [:]
+    private static let rememberLimit = 400
+
     private init() {}
 
     func streamsStored(id: String) {
@@ -96,19 +115,49 @@ final class QualityBadgeCache {
         stored.send(id)
     }
 
-    /// Nur solange die Quellen im AppModel-Cache liegen; sonst nil.
+    /// Wave F-k R1: profile switch (other addons, other sources).
+    func forget() {
+        cache.removeAll()
+        remembered.removeAll()
+    }
+
+    /// Aus dem AppModel-Cache; danach noch bis zum Ablauf der Quellen (`RevalidationPolicy.streams`) gemerkt.
     func best(id: String, model: AppModel) -> BestQuality? {
-        guard let list = model.cachedStreams(id: id), !list.isEmpty else { cache[id] = nil; return nil }
+        guard let list = model.cachedStreams(id: id), !list.isEmpty else {
+            cache[id] = nil
+            // A newer answer without usable sources replaces the remembered values.
+            if let c = model.streamCache[id], let r = remembered[id], c.at > r.at { remembered[id] = nil }
+            guard let r = remembered[id], RevalidationPolicy.streams.isUsable(storedAt: r.at) else { return nil }
+            return r.best
+        }
         if let b = cache[id] { return b }
         guard let b = BestQuality.from(list.map(\.stream)) else { return nil }
         if cache.count >= 2 * StreamPrefetcher.cacheLimit {
             cache = cache.filter { model.cachedStreams(id: $0.key) != nil }
         }
         cache[id] = b
+        remember(id, b, at: model.streamCache[id]?.at ?? Date())
         return b
+    }
+
+    private func remember(_ id: String, _ b: BestQuality, at: Date) {
+        remembered[id] = (b, at)
+        guard remembered.count > Self.rememberLimit else { return }
+        let drop = remembered.sorted { $0.value.at < $1.value.at }.prefix(remembered.count - Self.rememberLimit)
+        for (k, _) in drop { remembered[k] = nil }
     }
 
     func best(for item: MetaPreview, model: AppModel) -> BestQuality? {
         model.streamCacheKey(for: item).flatMap { best(id: $0, model: model) }
+    }
+}
+
+private struct PrefetchRowKey: EnvironmentKey { static let defaultValue = PrefetchRow(key: "tiles", title: "Kacheln") }
+
+extension EnvironmentValues {
+    /// Wave F-k R1: row of the poster tiles below (visible-tile prefetch).
+    var prefetchRow: PrefetchRow {
+        get { self[PrefetchRowKey.self] }
+        set { self[PrefetchRowKey.self] = newValue }
     }
 }

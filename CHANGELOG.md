@@ -24,7 +24,14 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   at the top edge and its shadow, at every poster size. Poster rows get a little more room above and below
   for this; a row keeps its height while its entries load.
 - Poster tiles: when a poster image cannot be loaded, the tile tries the next one (the metadata addon's
-  poster, then the TMDB poster) and finally shows the title instead of an empty grey card.
+  poster, then the TMDB poster). The title lies under the picture from the start, so a tile whose picture
+  loads slowly or not at all shows its title instead of an empty grey card. A picture service that stops
+  answering is given up after 15 seconds instead of 60.
+- Quality badges on posters (when „Qualität auf Postern“ is on): every poster on screen now gets its
+  badge, not only the ones that were focused. When scrolling stops, the app quietly looks up the sources
+  of the visible titles (at most a few at a time, never while a video plays, each title only once while
+  its sources are cached) and fades the badge in. Series without a started episode use their first
+  episode.
 
 ## [Build 174] – 2026-11-22 (integ)
 

@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import PlayerCore
 
 /// Ordner einer Collection: eine Reihe pro Quelle.
@@ -1043,13 +1044,16 @@ struct DetailExtras: View {
                                           minimum: Theme.Focus.tileRowPadding)
     }
 
-    /// Wave F-k: „Plaketten: Ähnliche Titel n/m mit Qualität“ (source cache only; this row never prefetches).
+    /// Wave F-k: „Plaketten: Ähnliche Titel n/m mit Qualität“ (source cache, filled by the visible-tile prefetch).
+    /// Once per page and count (`CollectionRowLog`, keyed by the page's titles), after the count rested 2 s.
     private func noteSimilarBadges() {
-        let a = model.profile.appearance
-        let recs = info.recommendations
-        let n = recs.filter { PosterBadgeStats.hasBadges(QualityBadgeCache.shared.best(for: $0, model: model), settings: a.badges) }.count
-        let line = PosterBadgeStats.logLine(row: "Ähnliche Titel", withQuality: n, total: recs.count, placement: a.titles.posterBadges)
-        RemoteLog.info("home", line)
+        let m = model, recs = info.recommendations
+        guard !recs.isEmpty else { return }
+        CollectionRowLog.noteLater(row: "badges|similar|" + recs.prefix(3).map(\.id).joined(separator: ",")) {
+            let a = m.profile.appearance
+            let n = recs.filter { PosterBadgeStats.hasBadges(QualityBadgeCache.shared.best(for: $0, model: m), settings: a.badges) }.count
+            return PosterBadgeStats.logLine(row: "Ähnliche Titel", withQuality: n, total: recs.count, placement: a.titles.posterBadges)
+        }
     }
 
     var body: some View {
@@ -1090,7 +1094,10 @@ struct DetailExtras: View {
                     .padding(.vertical, similarPadding)
                 }
                 .scrollClipDisabled()
+                // Wave F-k R1: these tiles prefetch their sources too (badge); log line per page, after 2 s of rest.
+                .environment(\.prefetchRow, PrefetchRow(key: "similar", title: "Ähnliche Titel"))
                 .task(id: info.recommendations.map(\.id)) { noteSimilarBadges() }
+                .onReceive(QualityBadgeCache.shared.stored) { _ in noteSimilarBadges() }
             }
             let rows = aboutRows
             if !rows.isEmpty {

@@ -50,6 +50,9 @@ actor ImagePipeline {
         cfg.urlCache = cache
         cfg.requestCachePolicy = .returnCacheDataElseLoad
         cfg.httpMaximumConnectionsPerHost = 6
+        // Wave F-k R1: a picture service that stops answering gives up after 15 s without data (default 60 s); a slow
+        // download that keeps receiving is not cut. The tile then tries its next picture (TilePosterImage).
+        cfg.timeoutIntervalForRequest = 15
         session = URLSession(configuration: cfg)
         urlCache = cache
         memory.totalCostLimit = ImageCacheBudget.maximum

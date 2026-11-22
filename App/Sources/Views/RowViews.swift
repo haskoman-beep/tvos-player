@@ -149,6 +149,8 @@ struct HomeRowView: View {
                         }
                     }
                 }
+                // Wave F-k R1: row of these tiles for the visible-tile prefetch (order, log line).
+                .environment(\.prefetchRow, PrefetchRow(key: "home|\(row.id.uuidString)", title: title))
                 // Wave F-k: how many tiles know their quality (source cache only), again when a prefetch lands here.
                 .task(id: displayed.map(\.id)) { noteBadges() }
                 .onReceive(QualityBadgeCache.shared.stored) { id in
@@ -160,13 +162,15 @@ struct HomeRowView: View {
     }
 
     /// Wave F-k: log line „Plaketten: <row> n/m mit Qualität“ for poster rows (only these carry quality badges);
-    /// logged only when the count changes.
+    /// logged only when the count changes and has rested 2 s (prefetch results arrive one by one).
     private func noteBadges() {
         guard tileKind == .poster, !displayed.isEmpty else { return }
-        let a = model.profile.appearance
-        let n = displayed.filter { PosterBadgeStats.hasBadges(QualityBadgeCache.shared.best(for: $0, model: model), settings: a.badges) }.count
-        CollectionRowLog.note(row: "badges|\(row.id.uuidString)", line: PosterBadgeStats.logLine(
-            row: title, withQuality: n, total: displayed.count, placement: a.titles.posterBadges))
+        let m = model, items = displayed, name = title
+        CollectionRowLog.noteLater(row: "badges|\(row.id.uuidString)") {
+            let a = m.profile.appearance
+            let n = items.filter { PosterBadgeStats.hasBadges(QualityBadgeCache.shared.best(for: $0, model: m), settings: a.badges) }.count
+            return PosterBadgeStats.logLine(row: name, withQuality: n, total: items.count, placement: a.titles.posterBadges)
+        }
     }
 
     /// Kachelform der Reihe; „Heute neu“ im Hero-Stil zeigt Querformat-Karten (UpcomingTodayCard).
@@ -248,6 +252,19 @@ enum CollectionRowLog {
         last[row] = line
         RemoteLog.info("home", line)
     }
+
+    private static var pending: [String: Task<Void, Never>] = [:]
+
+    /// Wave F-k R1: like `note`, but only after the line has rested 2 s (a newer call replaces a waiting one).
+    static func noteLater(row: String, line: @escaping @MainActor () -> String) {
+        pending[row]?.cancel()
+        pending[row] = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            CollectionRowLog.pending[row] = nil
+            CollectionRowLog.note(row: row, line: line())
+        }
+    }
 }
 
 /// Wie NavigationLink, aber das Ziel kann verschluckt werden (`onActivate` gibt nil zurück).
@@ -282,8 +299,8 @@ struct Strip<C: View>: View {
     /// Nur Posterreihen klappen auf (und bekommen den Platz am Reihenende).
     var expands = false
     /// Wave F-k: tile form of the row; sets the room for the focus lift (same for placeholders, status tile and
-    /// cards of one row, so the row does not jump when its entries arrive).
-    var kind: TileKind = .poster
+    /// cards of one row, so the row does not jump when its entries arrive). No default (R1 M4): every row names it.
+    let kind: TileKind
     @ViewBuilder let content: C
     /// Aufklappende Poster ändern die Reihenbreite: die Reihe bleibt am fokussierten Element verankert.
     @State private var anchorID: String?
