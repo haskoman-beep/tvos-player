@@ -220,8 +220,13 @@ struct DetailView: View {
             guard !Task.isCancelled else { return }
             if !didInitialFocus {
                 didInitialFocus = true
-                if focus == nil || focus == .overview { await applyFocus(playbackFocusTarget(), reason: "Eintritt") }
                 entryFocusAt = Date()
+                if focus == nil || focus == .overview { await applyFocus(playbackFocusTarget(), reason: "Eintritt") }
+                // R1 (M6): Karte kam während des Fokus-Setzens (Ziel war noch „Abspielen“).
+                if choice != nil, focus == .play, let at = entryFocusAt, Date().timeIntervalSince(at) <= 2 {
+                    focus = .best
+                    RemoteLog.info("fokus", "Detail Eintritt: Sofort abspielen (Karte während des Fokus-Setzens)")
+                }
             }
             await translateSeason()
         }
@@ -543,6 +548,9 @@ struct StreamListView: View {
     @State private var playing: StreamItem?
     /// Quellen, die in dieser Liste schon versagt haben, und Zahl der automatischen Wechsel.
     @State private var failed: Set<String> = []
+    /// Welle G-a R1 (I1): Autostart (Weiterschauen bzw. Beste Wahl) nur einmal je Liste; `.task` läuft nach dem
+    /// Vollbild-Player erneut, danach entscheidet allein die Rückfallleiter bzw. die Auswahl.
+    @State private var autostartDone = false
     @State private var fallbacks = 0
     /// „Noch da?“-Zähler, Addon je Quelle, offene Abfrage (StillWatchingPrompt.swift).
     @State private var autoNext = AutoNextState()
@@ -629,7 +637,8 @@ struct StreamListView: View {
         .settingsSurface()
         .streamSearchPartials(id: request.id, loading: loading && current == nil) { streams = model.orderedStreams($0) }
         .task {
-            streams = model.orderedStreams((request.resumeLastSource || request.bestChoice != nil) && playing == nil
+            let autostart = (request.resumeLastSource || request.bestChoice != nil) && playing == nil && !autostartDone
+            streams = model.orderedStreams(autostart
                 ? await model.streamsForAutoplay(type: request.type, id: request.id)
                 : await model.streams(type: request.type, id: request.id))
             loading = false
@@ -638,9 +647,13 @@ struct StreamListView: View {
                 let eps = EpisodeRef.list(from: await model.meta(type: "series", imdb: String(base))?.videos ?? [])
                 if current == nil { var r = request; r.episodes = eps; current = r }
             }
-            if request.resumeLastSource, playing == nil, let last = model.progress.lastSource(for: request.id) {
+            // Welle G-a R1: in dieser Liste schon gescheiterte Quellen nie automatisch (die Rückfallleiter entscheidet).
+            let untried = streams.filter { !failed.contains($0.stream.id) }
+            let autostartNow = autostart && !Task.isCancelled
+            if autostartNow { autostartDone = true }
+            if autostartNow, request.resumeLastSource, playing == nil, let last = model.progress.lastSource(for: request.id) {
                 // nie eine zuletzt fehlgeschlagene; Welle E-b: Wahl immer in kluger Ordnung, egal wie die Liste sortiert ist
-                let pick = Self.resumeCandidate(last, in: model.autoOrderedStreams(streams), title: request.id)
+                let pick = Self.resumeCandidate(last, in: model.autoOrderedStreams(untried), title: request.id)
                 if let s = pick.stream {
                     RemoteLog.info("player", "Weiterschauen mit letzter Quelle: \(s.name ?? "") \(s.label.prefix(60))")
                     entryFocusDone = true   // Review F-c M3: Rückkehr regelt focusAfterPlayer, nicht der Eintritt
@@ -650,12 +663,12 @@ struct StreamListView: View {
                     RemoteLog.info("player", "Letzte Quelle nicht gefunden (\(last.fingerprint.prefix(60)))")
                 }
             }
-            if let wanted = request.bestChoice, playing == nil {
+            if autostartNow, let wanted = request.bestChoice, playing == nil {
                 // Welle G-a: „Sofort abspielen“: die auf der Detailseite gezeigte Quelle; fehlt sie im frischen Stand
                 // oder ist sie inzwischen fehlgeschlagen, neu wählen (gleiche Regeln). Rückfall danach wie immer.
-                let auto = model.autoOrderedStreams(streams)
+                let auto = model.autoOrderedStreams(untried)
                 let same = wanted.match(in: PlaybackStability.shared.autoCandidates(auto, title: request.id))
-                if let s = same ?? model.bestChoice(streams, title: request.id)?.stream {
+                if let s = same ?? model.bestChoice(untried, title: request.id)?.stream {
                     RemoteLog.info("play", "Beste Wahl startet\(same == nil ? " (neu gewählt)" : ""): \(s.name ?? "") \(s.label.prefix(60))")
                     entryFocusDone = true
                     playing = s

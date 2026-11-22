@@ -199,3 +199,13 @@ private func entries(_ s: [StreamItem], addon: String = "A") -> [(addon: String,
     #expect(c)
     #expect(!p.isActive && !p.isHolding)
 }
+
+@Test func plannerHoldIgnoresPanAndWheel() {
+    var p = ScrubPlanner()
+    p.holdBegin(forward: true, position: 100, duration: 6000, upper: 5590, now: 0)
+    let panned = p.pan(deltaX: 400, velocityX: 2000, position: 100, duration: 6000, now: 0.1)
+    #expect(!panned)
+    let touched = p.touch(x: 0.95, y: 0, position: 100, duration: 6000, now: 0.2)
+    #expect(!touched)
+    #expect(p.target == 100)
+}

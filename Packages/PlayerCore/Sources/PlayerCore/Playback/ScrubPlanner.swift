@@ -90,6 +90,7 @@ public struct ScrubPlanner: Sendable {
     public mutating func pan(deltaX: Double, velocityX: Double, position: Double, duration: Double, now: Double) -> Bool {
         guard deltaX.isFinite, deltaX != 0 else { return false }
         lastPan = now
+        guard hold == nil else { pendingPoints = 0; return false }   // G-a R1: Halten hat Vorrang
         guard !wheelOn else { return false }   // Drehrad hat Vorrang (beide Eingaben kommen gleichzeitig)
         if !isActive {
             pendingPoints += deltaX
@@ -117,6 +118,7 @@ public struct ScrubPlanner: Sendable {
     @discardableResult
     public mutating func touch(x: Double, y: Double, position: Double, duration: Double, now: Double) -> Bool {
         guard x.isFinite, y.isFinite else { return false }
+        guard hold == nil else { touchEnded(); return false }   // G-a R1: kein Drehrad während des Haltens
         let r = (x * x + y * y).squareRoot()
         guard r > Self.ringRadius else { touchEnded(); return false }
         let angle = atan2(y, x)

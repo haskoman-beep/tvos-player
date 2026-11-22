@@ -71,6 +71,7 @@ final class ScrubController: ObservableObject {
     private var fetch: (Double, Bool) async -> ScrubStill? = { _, _ in nil }
     private var release: () async -> Void = {}
     /// Schnellsuchlauf: Ausgangsstelle (verbraucht einen gesammelten ±10-s-Sprung) und Obergrenze ab einer Stelle.
+    private var holdAllowed: () -> Bool = { false }
     private var holdOrigin: (Bool) -> Double = { _ in 0 }
     private var holdLimit: (Double) -> Double = { _ in .greatestFiniteMagnitude }
     private var holdTask: Task<Void, Never>?
@@ -79,9 +80,11 @@ final class ScrubController: ObservableObject {
     private static var now: Double { ProcessInfo.processInfo.systemUptime }
 
     func attach<E: PlaybackEngine>(engine: E, canScrub: @escaping () -> Bool, edges: @escaping () -> [Double],
+                                   holdAllowed: @escaping () -> Bool,
                                    holdOrigin: @escaping (Bool) -> Double, holdLimit: @escaping (Double) -> Double) {
         self.canScrub = canScrub
         self.edges = edges
+        self.holdAllowed = holdAllowed
         self.holdOrigin = holdOrigin
         self.holdLimit = holdLimit
         position = { [weak engine] in engine?.currentTime ?? 0 }
@@ -95,7 +98,7 @@ final class ScrubController: ObservableObject {
         input.onTouchEnded = { [weak self] in self?.planner.touchEnded() }
         input.onHoldBegan = { [weak self] forward in self?.holdBegan(forward) }
         input.onHoldEnded = { [weak self] in self?.holdEnded() }
-        input.canHold = { [weak self] in guard let self else { return false }; return self.planner.isActive || self.canScrub() }
+        input.canHold = { [weak self] in self?.canHold() ?? false }
         input.start()
     }
 
@@ -150,8 +153,11 @@ final class ScrubController: ObservableObject {
     }
 
     /// ◀/▶ gehalten (`FastSeek.holdThreshold`): Ziel läuft mit steigender Geschwindigkeit, bis losgelassen wird.
+    /// Gleiche Bedingung für den Recognizer (`gestureRecognizerShouldBegin`) und den Beginn (R1 M4).
+    private func canHold() -> Bool { holdAllowed() && (planner.isActive || canScrub()) }
+
     private func holdBegan(_ forward: Bool) {
-        guard planner.isActive || canScrub() else { return }
+        guard canHold() else { return }
         let was = planner.isActive
         prepare(was)
         let from = was ? planner.target : holdOrigin(forward)

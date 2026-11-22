@@ -234,7 +234,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
         .focusable(skip.prompt == nil)
         .focused($surfaceFocused)
         .onChange(of: skip.prompt) { _, p in if p == nil { surfaceFocused = true } }
-        .onPlayPauseCommand { guard !leaving else { return }; onUserInput(); if scrub.isActive { confirmScrub(); return }; togglePlay() }
+        .onPlayPauseCommand { guard !leaving else { return }; onUserInput(); if scrub.isActive { lastToggle = Date(); confirmScrub(); return }; togglePlay() }   // G-a R1: Doppel als MP-Toggle fällt in den 350-ms-Filter
         .onTapGesture {   // Klick auf das Touchpad (Mitte) pausiert ebenfalls
             guard !leaving else { return }   // geordneter Ausstieg läuft (schwarz): keine Eingaben mehr
             if scrub.isActive { onUserInput(); confirmScrub(); return }   // Select bestätigt das Spulen
@@ -298,6 +298,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                          canScrub: { !leaving && !showTracks && upNext == nil && skip.prompt == nil && failureNotice == nil
                                      && !restorePending && !restoring && engine.duration > 0 && engine.errorText == nil },
                          edges: { SkipSegments.snapEdges(skip.segments) + engine.chapterMarks.map(\.start) },
+                         holdAllowed: { !leaving },
                          holdOrigin: { fastSeekOrigin(forward: $0) },
                          holdLimit: { FastSeek.upperLimit(duration: engine.duration, creditsStart: skip.upNextAt, origin: $0) })
             idleTick(failed: failureNotice != nil || loadError != nil)
@@ -332,6 +333,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
         }
         .onChange(of: showTracks) { _, open in onTracksShown(open) }
         .onChange(of: scrub.isActive) { _, a in if a { onUserInput() }; poke() }
+        .onChange(of: scrub.holdSpeed != nil) { _, h in if h { onUserInput() } }   // G-a R1: Halten zählt als Eingabe
         .onChange(of: scrub.target) { _, _ in poke() }
         .fullScreenCover(isPresented: $showTracks) { PlayerTrackPanel(engine: engine, profile: profile, sourceURL: url, audioLocked: restorePending, onRemember: onRemember) }
         // Play von außen (Siri, Kontrollzentrum) nach dem Hintergrund: erst neu aufbauen.
