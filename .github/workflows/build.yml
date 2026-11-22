@@ -1,9 +1,17 @@
 name: build-ipa
 on:
   push:
-    paths: ['App/**', 'Packages/**', '.github/workflows/**']
+    # Nur Branches: Tags (build-N, auch vom Backfill) starten keinen Lauf; für Tag-Pushes gilt paths nicht.
+    branches: ['**']
+    paths: ['App/**', 'Packages/**', '.github/workflows/**', 'tools/release_notes.sh', 'tools/check_ipa.sh']
   workflow_dispatch:
-# Standard nur lesen; Schreibrecht bekommt allein der Job „release“.
+    inputs:
+      release_dry_run:
+        description: "Version history: only print the release notes, publish nothing"
+        type: boolean
+        default: false
+# Standard nur lesen; Schreibrecht bekommen allein die Jobs „release“ (app-main) und „publish“ (build-N),
+# beide nur auf main bzw. integ/main und erst nach der IPA-Prüfung im Job „history“.
 permissions:
   contents: read
 jobs:
@@ -82,9 +90,11 @@ jobs:
           retention-days: 14
   release:
     # Öffentliches Release „app-main“ mit Player.ipa (nur main): atvloadly lädt es ohne Anmeldung,
+    # (nicht „Latest“: das ist das nummerierte Release build-<N> aus dem Job „publish“);
     # das Artefakt „Player-ipa“ dagegen braucht eine Anmeldung und ist gezippt.
-    needs: build
-    if: github.ref == 'refs/heads/main'
+    # Erst nach der IPA-Prüfung im Job „history“ (fällt sie durch, wird nichts veröffentlicht).
+    needs: [build, history]
+    if: github.ref == 'refs/heads/main' && needs.history.outputs.mode == 'publish'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -118,7 +128,7 @@ jobs:
             gh release upload app-main Player.ipa --clobber
             echo "move_tag=true" >> "$GITHUB_OUTPUT"
           else
-            gh release create app-main Player.ipa --target "$GITHUB_SHA" --title "$title" --notes "$notes" --latest
+            gh release create app-main Player.ipa --target "$GITHUB_SHA" --title "$title" --notes "$notes" --latest=false
           fi
       - name: Tag app-main nachziehen
         if: steps.release.outputs.move_tag == 'true'
@@ -129,3 +139,94 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: gh api -X PATCH "repos/$GH_REPO/git/refs/tags/app-main" -f sha="$GITHUB_SHA" -F force=true > /dev/null
+  history:
+    # Versionsverlauf, Teil 1 (nur Leserechte): IPA prüfen und Release-Notizen schreiben. Auf integ/main folgen
+    # „publish“ (build-N) und „release“ (app-main). Andere Branches und workflow_dispatch mit release_dry_run sind
+    # ein Probelauf; die Notizen stehen dann nur in der Job-Zusammenfassung.
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      mode: ${{ steps.mode.outputs.mode }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: Player-ipa
+      - name: Modus
+        id: mode
+        env:
+          DRY: ${{ inputs.release_dry_run }}
+        run: |
+          mode=dry-run
+          case "$GITHUB_REF" in refs/heads/integ|refs/heads/main) mode=publish ;; esac
+          [ "$DRY" = true ] && mode=dry-run
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "Modus: $mode (Ref $GITHUB_REF, Ereignis $GITHUB_EVENT_NAME)"
+      - name: IPA prüfen (keine Schlüssel, Adressen, Namen)
+        env:
+          EXTRA_DENY: ${{ secrets.IPA_DENYLIST }}
+        run: bash tools/check_ipa.sh Player.ipa
+      - name: Release-Notizen
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          MODE: ${{ steps.mode.outputs.mode }}
+        run: |
+          bash tools/release_notes.sh "$GITHUB_RUN_NUMBER" "$GITHUB_REF_NAME" "$GITHUB_SHA" "$GITHUB_RUN_ID" \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > notes.md
+          { echo "## Version history: build-$GITHUB_RUN_NUMBER ($MODE)"; echo; cat notes.md; } >> "$GITHUB_STEP_SUMMARY"
+          cat notes.md
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: steps.mode.outputs.mode == 'publish'
+        with:
+          name: release-notes
+          path: notes.md
+          retention-days: 3
+  publish:
+    # Versionsverlauf, Teil 2: Release build-<Laufnummer> (= CFBundleVersion) mit Player.ipa, erst nach der
+    # IPA-Prüfung. integ → Vorabversion (prerelease), main → Release („Latest“). Nur hier Schreibrecht.
+    needs: [build, history]
+    if: needs.history.outputs.mode == 'publish' && (github.ref == 'refs/heads/integ' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: release-history-${{ github.ref_name }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: Player-ipa
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-notes
+      - name: Release build-N
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="build-$GITHUB_RUN_NUMBER"
+          # Wiederholter Lauf (gleiche Laufnummer): Release steht schon, nichts zu tun. Ein liegengebliebener
+          # Entwurf (abgebrochenes Hochladen) gilt als fehlend: löschen und neu anlegen.
+          if draft=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$draft" != true ]; then echo "$tag existiert schon"; exit 0; fi
+            echo "$tag ist ein Entwurf: wird gelöscht und neu angelegt"
+            gh release delete "$tag" --yes
+          fi
+          if [ "$GITHUB_REF_NAME" = main ]; then
+            flags=(--latest); title="Player build $GITHUB_RUN_NUMBER"
+          else
+            flags=(--prerelease --latest=false); title="Player build $GITHUB_RUN_NUMBER (integ)"
+          fi
+          if ! gh release create "$tag" Player.ipa --target "$GITHUB_SHA" --title "$title" --notes-file notes.md "${flags[@]}"; then
+            # GITHUB_TOKEN darf manche Refs nicht anlegen (z. B. wenn der Lauf den Workflow selbst geändert hat).
+            # Der Build ist in Ordnung; das Release lässt sich lokal nachtragen.
+            echo "::warning title=Release::$tag nicht angelegt – lokal nachtragen: tools/backfill_releases.sh --publish $GITHUB_RUN_ID"
+            echo "**$tag not created** – add it locally: \`tools/backfill_releases.sh --publish $GITHUB_RUN_ID\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
