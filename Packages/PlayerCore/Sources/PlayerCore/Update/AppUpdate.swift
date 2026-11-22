@@ -294,7 +294,7 @@ public enum AppUpdateError: Error, Equatable, Sendable {
         case .noAddress: return "atvloadly-Adresse fehlt (Handy-Seite oder „Pi im Netz suchen“)."
         case .github(let s) where s == 403 || s == 429: return "GitHub-Abfragegrenze erreicht (60 pro Stunde) – später erneut versuchen."
         case .github(let s): return "GitHub antwortet mit \(s)."
-        case .noBuild: return "Kein erfolgreicher main-Build gefunden."
+        case .noBuild: return "Keine veröffentlichte Version gefunden."
         case .http(let s): return "atvloadly antwortet mit HTTP \(s)."
         case .invalidResponse: return "Unerwartete Antwort von atvloadly."
         case .atvloadly(let m): return "atvloadly: \(AppUpdateLog.redact(m))"
@@ -304,7 +304,7 @@ public enum AppUpdateError: Error, Equatable, Sendable {
         case .busy: return "atvloadly installiert die App bereits."
         case .needsChoice(let s): return "atvloadly verlangt eine Auswahl (\(s)) – bitte über die atvloadly-Seite installieren."
         case .mcp(let m): return "atvloadly-MCP: \(AppUpdateLog.redact(m))"
-        case .wrongPackage: return "Paketadresse ist nicht das Release „app-main“ – Installation abgelehnt."
+        case .wrongPackage: return "Paketadresse ist nicht das offizielle Installationspaket – Installation abgelehnt."
         }
     }
 }

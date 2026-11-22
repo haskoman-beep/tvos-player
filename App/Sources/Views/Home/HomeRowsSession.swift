@@ -51,7 +51,11 @@ final class HomeRowsSession {
 
     func beginMove(_ id: UUID) -> Bool { adoptProfile(); return manager.beginMove(id) }
     func step(up: Bool) -> Bool { manager.step(up: up) }
-    func endMove() -> HomeManager.Focus { apply(manager.endMove()) }
+    /// Ablegen auf dem aktuellen Profilstand: eine Handy-Änderung während des Verschiebens bleibt erhalten,
+    /// nur die verschobene Reihe wird gesetzt (F-b2-Review m3).
+    func endMove() -> HomeManager.Focus {
+        apply(manager.endMove(onto: model.profile.home, hidden: model.profile.hiddenRows))
+    }
     /// Menu im Verschiebemodus: die alte Stelle steht nie im Profil (erst `endMove` speichert).
     func cancelMove() -> HomeManager.Focus { manager.cancelMove().focus }
 

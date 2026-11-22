@@ -106,17 +106,12 @@ private struct HomeManagerContent: View {
         }
         .navigationDestination(isPresented: $showBrowser) { AddRowBrowser(session: session) }
         .onExitCommand { exit() }
-        .confirmationDialog(hideCandidate.map { "„\(session.title($0))“ ausblenden?" } ?? "",
-                            isPresented: Binding(get: { hideCandidate != nil }, set: { if !$0 { hideCandidate = nil } }),
-                            titleVisibility: .visible, presenting: hideCandidate) { row in
-            // „Behalten“ zuerst: Fokus startet dort (§2.4, Review M1).
-            Button("Behalten", role: .cancel) { set(.row(row.id)) }
-            Button("Ausblenden", role: .destructive) {
-                expanded = nil
-                set(session.hide(row.id))
-            }
-        } message: { _ in
-            Text("Die Reihe verschwindet von der Startseite. Unter „Ausgeblendet“ lässt sie sich wieder einblenden.")
+        // Eigene Rückfrage (F-a SettingsConfirmationView); Fokus-Rückgabe erst nach dem Schließen der Überlagerung.
+        .settingsConfirmation(item: $hideCandidate, title: { "„\(session.title($0))“ ausblenden?" },
+                              message: { _ in "Die Reihe verschwindet von der Startseite. Unter „Ausgeblendet“ lässt sie sich wieder einblenden." },
+                              verb: "Ausblenden", symbol: "eye.slash", onKeep: { row in set(.row(row.id)) }) { row in
+            expanded = nil
+            set(session.hide(row.id))
         }
         .sheet(item: $positionRow) { row in
             PositionPicker(title: session.title(row), current: manager.position(of: row.id) ?? 1,

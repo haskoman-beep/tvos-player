@@ -259,6 +259,8 @@ struct SettingsConfirmationView: View {
     let title: String
     let message: String
     let verb: String
+    /// Symbol der bestätigenden Zeile (Review F-a N1): Löschen = Papierkorb, Abmelden/Ausblenden eigene Symbole.
+    var symbol: String = "trash"
     let onKeep: () -> Void
     let onConfirm: () -> Void
 
@@ -267,10 +269,10 @@ struct SettingsConfirmationView: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.75).ignoresSafeArea()
+            Theme.Palette.scrim.ignoresSafeArea()
             VStack(alignment: .leading, spacing: Theme.Space.m) {
-                Text(title).font(.title3.weight(.semibold)).foregroundStyle(.white)
-                Text(message).font(.callout).foregroundStyle(.white.opacity(0.75))
+                Text(title).textRole(.sectionTitle)
+                Text(message).textRole(.rowDetail)
                     .fixedSize(horizontal: false, vertical: true)
                 VStack(spacing: Theme.Space.s) {
                     Button(action: keep) {
@@ -281,7 +283,7 @@ struct SettingsConfirmationView: View {
                     .focused($focus, equals: .keep)
                     .settingsRowAccessibility(title: "Behalten", detail: nil, accessory: .none)
                     Button(action: confirm) {
-                        SettingsRowLabel(symbol: "trash", tint: Theme.Tone.error.color, title: verb, reserveDetailSpace: false)
+                        SettingsRowLabel(symbol: symbol, tint: Theme.Tone.error.color, title: verb, reserveDetailSpace: false)
                     }
                     .buttonStyle(ThemeRowButtonStyle(maxWidth: .infinity))
                     .focused($focus, equals: .confirm)
@@ -290,8 +292,8 @@ struct SettingsConfirmationView: View {
                 .padding(.top, Theme.Space.s)
             }
             .padding(Theme.Space.l)
-            .frame(maxWidth: 760)
-            .background(Color(white: 0.12), in: RoundedRectangle(cornerRadius: 24))
+            .frame(maxWidth: Theme.Layout.confirmationWidth)
+            .background(Theme.Palette.overlayCard, in: RoundedRectangle(cornerRadius: Theme.Radius.overlayCard))
             .focusSection()
         }
         .defaultFocus($focus, .keep)
@@ -310,28 +312,39 @@ struct SettingsConfirmationView: View {
     }
 }
 
-/// Hält fest, ob bestätigt wurde, und führt die Aktion erst nach dem Schließen der Überlagerung aus
-/// (sonst kollidiert z. B. „Addon entfernen“ + Seite schließen mit der laufenden Ausblendung).
+/// Hält fest, ob bestätigt wurde, und führt die Aktion (bzw. `onKeep`) erst nach dem Schließen der Überlagerung aus
+/// (sonst kollidiert z. B. „Addon entfernen“ + Seite schließen mit der laufenden Ausblendung, und ein Fokus-Sprung
+/// käme vor dem Ende der Überlagerung).
 private struct SettingsConfirmationModifier: ViewModifier {
     let title: String
     @Binding var isPresented: Bool
     let message: String
     let verb: String
+    let symbol: String
+    let onKeep: (() -> Void)?
     let action: () -> Void
-    /// Aktion aus dem Moment der Bestätigung (bei item: noch mit dem Objekt).
+    /// Aktion aus dem Moment der Wahl (bei item: noch mit dem Objekt).
     @State private var pending: (() -> Void)?
+    /// Letzter sichtbarer Text: bei der item-Variante wird `title` beim Schließen leer, die Karte blendet aber noch aus.
+    @State private var shownTitle = ""
+    @State private var shownMessage = ""
 
     func body(content: Content) -> some View {
-        content.fullScreenCover(isPresented: $isPresented, onDismiss: {
-            let run = pending
-            pending = nil
-            run?()
-        }) {
-            SettingsConfirmationView(title: title, message: message, verb: verb,
-                                     onKeep: { isPresented = false },
-                                     onConfirm: { pending = action; isPresented = false })
-                .presentationBackground(.clear)
-        }
+        content
+            .onChange(of: title, initial: true) { _, t in if !t.isEmpty { shownTitle = t } }
+            .onChange(of: message, initial: true) { _, m in if !m.isEmpty { shownMessage = m } }
+            .fullScreenCover(isPresented: $isPresented, onDismiss: {
+                let run = pending
+                pending = nil
+                run?()
+            }) {
+                SettingsConfirmationView(title: title.isEmpty ? shownTitle : title,
+                                         message: message.isEmpty ? shownMessage : message,
+                                         verb: verb, symbol: symbol,
+                                         onKeep: { pending = onKeep; isPresented = false },
+                                         onConfirm: { pending = action; isPresented = false })
+                    .presentationBackground(.clear)
+            }
     }
 }
 
@@ -345,18 +358,26 @@ extension View {
 
     /// E6/§2.4: Rückfrage vor Zerstörendem (Titel = Frage mit Objektname, Nachricht = Folge, Verb + „Behalten“).
     /// Zeigt `SettingsConfirmationView` als Vollbild-Überlagerung; „Behalten“ hat den Standardfokus.
+    /// Die Aktion läuft erst nach dem Schließen: Werte, die `isPresented` steuern, sind dann schon zurückgesetzt –
+    /// für solche Fälle die item-Variante nehmen.
     func settingsConfirmation(_ title: String, isPresented: Binding<Bool>, message: String, verb: String,
+                              symbol: String = "trash", onKeep: (() -> Void)? = nil,
                               action: @escaping () -> Void) -> some View {
-        modifier(SettingsConfirmationModifier(title: title, isPresented: isPresented, message: message, verb: verb, action: action))
+        modifier(SettingsConfirmationModifier(title: title, isPresented: isPresented, message: message, verb: verb,
+                                              symbol: symbol, onKeep: onKeep, action: action))
     }
 
     /// Variante mit Objekt (z. B. „„X“ entfernen?“): zeigt die Rückfrage, solange `item` nicht nil ist.
+    /// `action`/`onKeep` bekommen das Objekt aus dem Moment der Wahl.
     func settingsConfirmation<Item>(item: Binding<Item?>, title: @escaping (Item) -> String, message: @escaping (Item) -> String,
-                                    verb: String, action: @escaping (Item) -> Void) -> some View {
+                                    verb: String, symbol: String = "trash", onKeep: ((Item) -> Void)? = nil,
+                                    action: @escaping (Item) -> Void) -> some View {
         let current = item.wrappedValue
+        let keep: (() -> Void)? = onKeep.map { f in { if let current { f(current) } } }
         return settingsConfirmation(current.map(title) ?? "",
-                             isPresented: Binding(get: { item.wrappedValue != nil }, set: { if !$0 { item.wrappedValue = nil } }),
-                             message: current.map(message) ?? "", verb: verb) {
+                                    isPresented: Binding(get: { item.wrappedValue != nil }, set: { if !$0 { item.wrappedValue = nil } }),
+                                    message: current.map(message) ?? "", verb: verb, symbol: symbol,
+                                    onKeep: keep) {
             if let current { action(current) }
         }
     }

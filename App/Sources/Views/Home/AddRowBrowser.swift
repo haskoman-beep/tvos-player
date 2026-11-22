@@ -274,14 +274,11 @@ private struct CatalogEntryRow: View {
 extension View {
     /// Rückfrage vor dem Ausblenden einer Reihe, die schon vor dieser Sitzung auf der Startseite lag (F-b1-Review M1).
     @MainActor func hideConfirmation(_ row: Binding<HomeRow?>, session: HomeRowsSession) -> some View {
-        confirmationDialog(row.wrappedValue.map { "„\(session.title($0))“ ausblenden?" } ?? "",
-                           isPresented: Binding(get: { row.wrappedValue != nil }, set: { if !$0 { row.wrappedValue = nil } }),
-                           titleVisibility: .visible, presenting: row.wrappedValue) { r in
-            // „Behalten“ zuerst: Fokus startet dort (§2.4, Review M1).
-            Button("Behalten", role: .cancel) {}
-            Button("Ausblenden", role: .destructive) { _ = session.hide(r.id) }
-        } message: { _ in
-            Text("Die Reihe verschwindet von der Startseite. Unter „Ausgeblendet“ lässt sie sich wieder einblenden.")
+        // Eigene Rückfrage (F-a SettingsConfirmationView): „Behalten“ oben mit sicherem Standardfokus (§2.4).
+        settingsConfirmation(item: row, title: { "„\(session.title($0))“ ausblenden?" },
+                             message: { _ in "Die Reihe verschwindet von der Startseite. Unter „Ausgeblendet“ lässt sie sich wieder einblenden." },
+                             verb: "Ausblenden", symbol: "eye.slash") { r in
+            _ = session.hide(r.id)
         }
     }
 }

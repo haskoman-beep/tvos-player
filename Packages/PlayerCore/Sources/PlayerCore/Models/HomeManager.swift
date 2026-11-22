@@ -198,6 +198,21 @@ public struct HomeManager: Sendable {
         return Outcome(event: event, focus: .row(m.id))
     }
 
+    /// OK auf einem fremd geänderten Stand (F-b2-Review m3): `current` ist das Profil jetzt (z. B. nach einer Handy-Änderung
+    /// während des Verschiebens). Übernommen wird der aktuelle Stand, nur die verschobene Reihe kommt an ihre neue Stelle.
+    /// Ist sie dort inzwischen verschwunden, bleibt es beim aktuellen Stand (kein Ereignis).
+    public mutating func endMove(onto current: HomeLayout, hidden currentHidden: [HomeRow]) -> Outcome {
+        guard let m = moving, let to = layout.index(of: m.id) else { return endMove() }
+        moving = nil
+        editor = HomeEditor(layout: current, added: editor.added)
+        hidden = currentHidden
+        guard layout.index(of: m.id) != nil else { return Outcome(event: nil, focus: entryFocus(row: nil)) }
+        guard let move = editor.move(m.id, to: to), let at = layout.index(of: m.id) else {
+            return Outcome(event: nil, focus: .row(m.id))
+        }
+        return Outcome(event: .moved(rows[at], move), focus: .row(m.id))
+    }
+
     /// Menu: alte Stelle wiederherstellen.
     public mutating func cancelMove() -> Outcome {
         guard let m = moving else { return Outcome(event: nil, focus: .add) }

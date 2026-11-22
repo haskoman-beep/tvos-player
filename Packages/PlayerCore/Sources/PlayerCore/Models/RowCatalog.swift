@@ -215,7 +215,9 @@ public struct RowCatalog: Sendable {
                 }
                 // Was fehlt, kurz im Untertitel (vorher in den Kit-Einstellungen, F-b2-Review M4).
                 if case .collection(let full) = row.body, case .collection(let v) = shown.body, v.folders.count < full.folders.count {
-                    kindText = "\(v.folders.count) von \(full.folders.count) Kacheln (ohne Trakt Client ID)"
+                    // Mit Client ID fehlt nur noch die Anmeldung (F-b2-Review m1).
+                    kindText = "\(v.folders.count) von \(full.folders.count) Kacheln ("
+                        + (traktID ? "ohne Trakt-Anmeldung" : "ohne Trakt Client ID") + ")"
                 }
                 let lacksTMDB = row.needs.contains(.tmdb) && !tmdb
                 let key = row.content.key

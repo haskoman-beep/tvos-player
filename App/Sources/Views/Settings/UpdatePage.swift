@@ -1,7 +1,7 @@
 import SwiftUI
 import PlayerCore
 
-/// Unterseite „App aktualisieren“ (System): neuesten main-Build suchen und über atvloadly am Pi installieren.
+/// Unterseite „App aktualisieren“ (System): neueste veröffentlichte Version suchen und über atvloadly am Pi installieren.
 /// E7: Die Adresse kommt von der Bonjour-Suche oder der Handy-Seite (#system), kein Textfeld am Fernseher.
 struct UpdatePage: View {
     @EnvironmentObject var model: AppModel
@@ -59,7 +59,7 @@ struct UpdatePage: View {
     private var statusText: String? {
         switch updater.phase {
         case .idle: nil
-        case .checking: "Frage GitHub nach dem neuesten main-Build …"
+        case .checking: "Frage GitHub nach der neuesten veröffentlichten Version …"
         case .checked(let state): Self.describe(state)
         case .starting: "Auftrag an atvloadly …"
         case .installing(let m), .done(let m), .failed(let m): m
@@ -71,13 +71,13 @@ struct UpdatePage: View {
     static func describe(_ s: UpdateState) -> String {
         switch s {
         case .upToDate(let b):
-            return "Aktuell – neuester main-Build ist \(b.number) (\(b.shortCommit))."
+            return "Aktuell – neueste veröffentlichte Version ist Build \(b.number) (\(b.shortCommit))."
         case .available(let r, let b):
             let commit = r.commit.map { String($0.prefix(7)) } ?? "?"
             let lag = r.number == b.number ? "" : " (neuester Lauf: \(b.number))"
             return "Neu: Build \(num(r.number))\(lag) · \(commit)"
         case .notPublished(let b):
-            return "Build \(b.number) ist fertig, aber noch nicht als Installationspaket veröffentlicht (Release „app-main“)."
+            return "Build \(b.number) ist fertig, aber das Installationspaket ist noch nicht veröffentlicht."
         case .newerInstalled(let main):
             return "Installiert ist neuer als die veröffentlichte Version (Build \(main))"
         }

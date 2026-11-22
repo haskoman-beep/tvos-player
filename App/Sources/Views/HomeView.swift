@@ -44,14 +44,11 @@ struct HomeView: View {
             RemoteLog.info("hero", "\(slides.items.count) Folien")
         }
         .navigationDestination(item: $manager) { t in HomeManagerView(focusRow: t.row, openBrowser: t.openBrowser) }
-        .confirmationDialog(hideCandidate.map { "„\(model.homeRowTitle($0.content))“ ausblenden?" } ?? "",
-                            isPresented: Binding(get: { hideCandidate != nil }, set: { if !$0 { hideCandidate = nil } }),
-                            titleVisibility: .visible, presenting: hideCandidate) { row in
-            // „Behalten“ zuerst: Fokus startet dort (§2.4, Review M1).
-            Button("Behalten", role: .cancel) {}
-            Button("Ausblenden", role: .destructive) { quick { $0.hide(row.id) } }
-        } message: { _ in
-            Text("Die Reihe verschwindet von der Startseite. In „Reihen & Collections“ lässt sie sich wieder einblenden.")
+        // Eigene Rückfrage (F-a SettingsConfirmationView): „Behalten“ oben mit sicherem Standardfokus (§2.4).
+        .settingsConfirmation(item: $hideCandidate, title: { "„\(model.homeRowTitle($0.content))“ ausblenden?" },
+                              message: { _ in "Die Reihe verschwindet von der Startseite. In „Reihen & Collections“ lässt sie sich wieder einblenden." },
+                              verb: "Ausblenden", symbol: "eye.slash") { row in
+            quick { $0.hide(row.id) }
         }
     }
 

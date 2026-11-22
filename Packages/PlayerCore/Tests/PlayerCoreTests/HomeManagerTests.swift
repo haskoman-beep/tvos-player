@@ -50,6 +50,27 @@ private func rows(_ n: Int) -> HomeLayout {
     #expect(!m.beginMove(UUID()))
 }
 
+// F-b2-Review m3: Ablegen übernimmt eine fremde Änderung während des Verschiebens und setzt nur die verschobene Reihe.
+@Test func managerEndMoveOntoCurrentKeepsForeignChange() {
+    let l = rows(4)
+    var m = HomeManager(layout: l)
+    let id = l.rows[3].id
+    m.beginMove(id)
+    m.step(up: true); m.step(up: true)                  // Reihe 4 → Stelle 2
+    // Handy hat inzwischen Reihe 1 entfernt und eine neue unten angehängt.
+    let extra = HomeRow(content: .collection(id: "neu"))
+    let phone = HomeLayout(rows: [l.rows[1], l.rows[2], l.rows[3], extra])
+    let o = m.endMove(onto: phone, hidden: [l.rows[0]])
+    #expect(m.rows.map(\.id) == [l.rows[1].id, id, l.rows[2].id, extra.id])
+    #expect(m.hidden == [l.rows[0]] && m.moving == nil)
+    #expect(o.event == .moved(m.rows[1], RowMove(from: 2, to: 1)) && o.focus == .row(id))
+    // Verschobene Reihe am Handy entfernt: aktueller Stand bleibt, kein Ereignis.
+    m.beginMove(extra.id)
+    let gone = HomeLayout(rows: [l.rows[1], l.rows[3]])
+    #expect(m.endMove(onto: gone, hidden: []).event == nil)
+    #expect(m.rows.map(\.id) == gone.rows.map(\.id))
+}
+
 @Test func managerHidesIntoHiddenRowsAndRestoresAtBottom() {
     let l = rows(3)
     var m = HomeManager(layout: l, hidden: [])

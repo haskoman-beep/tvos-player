@@ -66,6 +66,8 @@ enum Theme {
         static let categoryColumnWidth: CGFloat = 560
         /// Größte Textbreite der rechten Spalte.
         static let contentMaxWidth: CGFloat = 1100
+        /// Breite der Rückfrage-Karte (`SettingsConfirmationView`).
+        static let confirmationWidth: CGFloat = 760
         /// Mindesthöhe einer `SettingsRow`.
         static let rowMinHeight: CGFloat = 80
         /// Symbolkachel einer Zeile (48×48) und Symbolgröße darin (32 pt).
@@ -102,6 +104,8 @@ enum Theme {
         static let badge: CGFloat = 8
         /// 20: Listenzeilen, Quellenzeilen, Statuskarte, Plus-Kachel.
         static let row: CGFloat = 20
+        /// 24: Rückfrage-Karte über abgedunkeltem Grund (`SettingsConfirmationView`).
+        static let overlayCard: CGFloat = 24
         // card: Systemradius von `.buttonStyle(.card)`; Karten setzen keinen eigenen Radius.
     }
 
@@ -113,6 +117,10 @@ enum Theme {
         /// `bg.surface`: dunkler, ruhiger Grund der Bedienseiten (Einstellungen, Verwalter, Quellen).
         /// Weiß 7 % über Schwarz, deckend gemischt, damit kein Bildgrund oder Glas durchscheint (Nutzerentscheidung 3).
         static let surface = Color(white: 0.07)
+        /// Abdunklung hinter einer Rückfrage (Schwarz 75 %), die Seite darunter bleibt erkennbar.
+        static let scrim = Color.black.opacity(0.75)
+        /// Karte einer Rückfrage über `scrim`: Weiß 12 %, deckend gemischt.
+        static let overlayCard = Color(white: 0.12)
         /// `bg.row`: ruhende Zeilen (Weiß 10 %).
         static let row = Color.white.opacity(0.10)
         /// Fokussierte Zeile: Systemweiß wie beim tvOS-Fokus.

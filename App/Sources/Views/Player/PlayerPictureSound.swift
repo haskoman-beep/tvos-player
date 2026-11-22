@@ -288,6 +288,7 @@ struct PlayerComfortSettingsRows: View {
                             reserveDetailSpace: false) {
                     if !cleared { confirmClear = true }
                 }
+                .settingsUnavailable(cleared)   // wie die Cache-Zeile: nach dem Löschen abgeschwächt (F-a N3)
                 .settingsConfirmation("Gemerkte Spur-Wahl löschen?", isPresented: $confirmClear,
                                       message: "Ton- und Untertitelwahl aller Serien und Filme dieses Profils wird vergessen.",
                                       verb: "Löschen") {
