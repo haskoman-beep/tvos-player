@@ -21,33 +21,26 @@ func threeRows() -> HomeLayout {
 
 @Test func styleCyclesOnlyAllowed() {
     let l = threeRows()
-    var e = HomeEditor(layout: l, grabbing: l.rows[1].id)
-    e.nextStyle()
-    #expect(e.layout.rows[1].style == .logoTiles)
-    e.nextStyle()
-    #expect(e.layout.rows[1].style == .collectionTiles)
-    e.previousStyle()
-    #expect(e.layout.rows[1].style == .logoTiles)
+    var e = HomeEditor(layout: l)
+    #expect(e.cycleStyle(l.rows[1].id) == .logoTiles)
+    #expect(e.cycleStyle(l.rows[1].id) == .collectionTiles)
+    #expect(e.cycleStyle(UUID()) == nil)
 }
 
-@Test func removeAndAdd() {
+// F-b2-Review M6: Einfügen eines ausgeblendeten Inhalts holt die gemerkte Reihe (ID, Stil) zurück und räumt
+// „Ausgeblendet“ auf; ein schon gezeigter Inhalt bleibt, nur der Eintrag verschwindet.
+@Test func insertBringsBackRememberedHiddenRow() {
     let l = threeRows()
-    var e = HomeEditor(layout: l, grabbing: l.rows[1].id)
-    e.removeGrabbed()
-    #expect(e.grabbed == nil && e.layout.rows.count == 2)
-    let avail = e.availableToAdd(collections: [MediaCollection(id: "c1", title: "S", folders: [])], extraLists: [.watchlist])
-    #expect(avail == [.collection(id: "c1")])
-    let id = e.add(.collection(id: "c1"))
-    #expect(e.layout.rows.last?.id == id && e.grabbed == id)
-    #expect(e.layout.rows.last?.style == .collectionTiles)
-}
-
-@Test func cancelRestoresOriginal() {
-    let l = threeRows()
-    var e = HomeEditor(layout: l, grabbing: l.rows[0].id)
-    e.moveDown(); e.nextStyle(); e.removeGrabbed(); e.add(.collection(id: "zz"))
-    #expect(e.commit() != l)
-    #expect(e.cancel() == l)
+    var e = HomeEditor(layout: l)
+    var remembered = HomeRow(content: .collection(id: "x")); remembered.style = .logoTiles
+    var hidden = [remembered, HomeRow(content: .list(.watchlist))]
+    let id = e.insert(.collection(id: "x"), hidden: &hidden)
+    #expect(id == remembered.id && e.layout.rows.last == remembered && e.isNew(id))
+    #expect(hidden.map(\.content.key) == ["list:" + CatalogSource.watchlist.id])
+    let again = e.insert(.list(.watchlist), hidden: &hidden)
+    #expect(again == l.rows[2].id && hidden.isEmpty && e.layout.rows.count == 4)
+    let fresh = e.insert(.collection(id: "neu"), style: .logoTiles, hidden: &hidden)
+    #expect(e.layout.rows.last?.id == fresh && e.layout.rows.last?.style == .logoTiles)
 }
 
 // MARK: Verwalter (Plan §2.5)
@@ -94,19 +87,6 @@ func numberedRows(_ n: Int) -> HomeLayout {
     do { let r = e.insert(.collection(id: "c1")); #expect(r == l.rows[1].id) }
     #expect(e.layout.rows.count == 6)
     #expect(e.added == [id, at1, far])
-}
-
-@Test func toggleAddsAtBottomThenRemoves() {
-    let l = threeRows()
-    var e = HomeEditor(layout: l)
-    guard case .added(let id) = e.toggle(.collection(id: "x")) else { Issue.record("nicht hinzugefügt"); return }
-    #expect(e.layout.rows.last?.id == id)
-    do { let r = e.toggle(.collection(id: "x")); #expect(r == .removed(id)) }
-    #expect(e.layout == l && e.added.isEmpty)
-    // Vorhandene Reihe: Umschalten nimmt sie weg.
-    do { let r = e.toggle(.list(.watchlist)); #expect(r == .removed(l.rows[2].id)) }
-    #expect(e.layout.rows.count == 2)
-    #expect(e.cancel() == l)
 }
 
 @Test func removeByIDClearsGrab() {

@@ -126,6 +126,21 @@ public struct FusionKitSettings: Codable, Sendable, Equatable {
         }
     }
 
+    /// Eine Kit-Reihe hinzufügen bzw. wieder einblenden (Browser, Verwalter, Handy). Ist das Kit aus, wird die alte
+    /// Auswahl verworfen: nur diese Reihe kommt zurück, nicht alle früher gewählten (F-b2-Review I1).
+    /// Rückgabe: verworfene Reihen-IDs (leer, wenn das Kit schon an war).
+    @discardableResult
+    public mutating func choose(_ rowID: String, source: FusionKitSource) -> [String] {
+        var dropped: [String] = []
+        if !enabled {
+            dropped = selected.filter { $0 != rowID }
+            selected = []
+            enabled = true
+        }
+        setSelected(rowID, true, source: source)
+        return dropped
+    }
+
     /// Ganze Kit-Datei übernehmen (Handy-Import): Kit an, alle Reihen gewählt.
     public mutating func addAll(_ content: FusionKitContent, source: FusionKitSource) {
         enabled = true

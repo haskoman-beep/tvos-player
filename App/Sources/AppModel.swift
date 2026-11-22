@@ -477,7 +477,7 @@ final class AppModel: ObservableObject {
             case .importNuvioURL(let u): await importNuvio(from: u)
             case .importNuvioJSON(let d): importNuvio(data: d)
             case .addTMDBLink(let l):
-                if let s = TMDBLink.source(from: l) ?? TraktLink.source(from: l) { update { $0.home.rows.append(HomeRow(content: .list(s), style: .poster)) } }
+                if let s = TMDBLink.source(from: l) ?? TraktLink.source(from: l) { addHomeRow(.list(s), style: .poster, via: "Handy-Link") }
                 else { lastError = "Link nicht erkannt: \(l)" }
             case .importBackup(let d):
                 do {

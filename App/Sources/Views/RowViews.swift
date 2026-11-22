@@ -7,8 +7,8 @@ struct HomeRowView: View {
     @EnvironmentObject var model: AppModel
     let row: HomeRow
     let onActivate: (Route) -> Route?
-    let onLongPress: () -> Void
-    var interactive = true
+    /// Welle F-b2: Kontextmenü der Startseite (langer Druck auf eine Kachel), nil = keins.
+    var menu: HomeRowMenu? = nil
     @State private var items: [MetaPreview] = []
     @State private var loaded = false
     /// Startseite mit Hero: fokussierte Kachel meldet sich (nil außerhalb der Startseite).
@@ -25,7 +25,6 @@ struct HomeRowView: View {
                 Text(title).font(.title3.bold()).padding(.leading, 60)
             }
             content
-                .disabled(!interactive)
                 .focusSection()
                 .defaultFocus($focusedRoute, rememberedRoute, priority: .userInitiated)
         }
@@ -114,11 +113,11 @@ struct HomeRowView: View {
     private func card<L: View>(_ route: Route, @ViewBuilder label: () -> L) -> some View {
         NavigationLinkish(route: route, onActivate: onActivate, label: label())
             .focused($focusedRoute, equals: route)
-            .simultaneousGesture(LongPressGesture(minimumDuration: 0.8).onEnded { _ in onLongPress() })
+            .homeRowMenu(menu)
     }
 }
 
-/// Wie NavigationLink, aber das Ziel kann verschluckt werden (nach langem Druck).
+/// Wie NavigationLink, aber das Ziel kann verschluckt werden (`onActivate` gibt nil zurück).
 struct NavigationLinkish<L: View>: View {
     let route: Route
     let onActivate: (Route) -> Route?

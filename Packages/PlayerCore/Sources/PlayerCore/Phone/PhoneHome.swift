@@ -45,14 +45,15 @@ public struct PhoneHomeState: Equatable, Sendable {
     }
     public static let empty = PhoneHomeState()
 
-    /// Gezeigt = Reihen der Startseite; ausgeblendet = gemerkte Reihen (neueste zuerst);
+    /// Gezeigt = Reihen der Startseite; ausgeblendet = gemerkte Reihen (neueste zuerst), ohne die, deren Inhalt
+    /// inzwischen wieder auf der Startseite liegt (F-e N1: kein „Wieder einblenden“, das nichts ändert);
     /// weitere = Angebote (`options`), die weder gezeigt noch ausgeblendet sind.
     public static func make(layout: HomeLayout, hiddenRows: [HomeRow] = [], options: [RowContent],
                             title: (RowContent) -> String, detail: (RowContent) -> String = { _ in "" }) -> PhoneHomeState {
         var seen = Set(layout.rows.map(\.content.key)).union(hiddenRows.map(\.content.key))
         let more = options.filter { seen.insert($0.key).inserted }
         func line(_ r: HomeRow) -> PhoneHomeRow { PhoneHomeRow(id: r.id.uuidString, title: title(r.content), detail: detail(r.content)) }
-        return PhoneHomeState(shown: layout.rows.map(line), hidden: hiddenRows.reversed().map(line),
+        return PhoneHomeState(shown: layout.rows.map(line), hidden: layout.restorable(hiddenRows).map(line),
                               more: more.map { PhoneHomeRow(id: $0.key, title: title($0), detail: detail($0)) })
     }
 
@@ -104,41 +105,29 @@ extension HomeLayout {
         case added(HomeRow, at: Int)
     }
 
-    /// Wendet einen Befehl aus „Startseite ordnen“ an. `hidden` sind die gemerkten ausgeblendeten Reihen
-    /// (`Profile.hiddenRows`), `options` löst den Schlüssel von `addRow` auf. Eingeblendetes kommt ans Ende
-    /// (Nutzerentscheidung 21.11.). nil = nichts geändert.
-    // wird nach F-b1-Merge auf HomeEditor umgestellt
+    /// Wendet einen Befehl aus „Startseite ordnen“ an, über `HomeEditor` (dieselben Regeln wie der Verwalter am
+    /// Fernseher). `hidden` sind die gemerkten ausgeblendeten Reihen (`Profile.hiddenRows`), `options` löst den
+    /// Schlüssel von `addRow` auf. Eingeblendetes kommt ans Ende (Nutzerentscheidung 21.11.). nil = Startseite
+    /// unverändert (beim Wiedereinblenden eines schon gezeigten Inhalts wird nur `hidden` aufgeräumt).
     @discardableResult
     public mutating func applyPhone(_ command: PhoneCommand, hidden: inout [HomeRow], options: [RowContent]) -> PhoneEdit? {
+        var editor = HomeEditor(layout: self)
+        defer { self = editor.layout }
         switch command {
         case .moveRow(let id, let to):
-            guard let i = rows.firstIndex(where: { $0.id == id }) else { return nil }
-            let target = min(max(to, 0), rows.count - 1)
-            guard target != i else { return nil }
-            let row = rows.remove(at: i)
-            rows.insert(row, at: target)
-            return .moved(row, from: i, to: target)
+            guard let m = editor.move(id, to: to) else { return nil }
+            return .moved(editor.layout.rows[m.to], from: m.from, to: m.to)
         case .removeRow(let id):
-            guard let i = rows.firstIndex(where: { $0.id == id }) else { return nil }
-            let row = rows.remove(at: i)
-            hidden.removeAll { $0.id == row.id || $0.content.key == row.content.key }
-            hidden.append(row)
-            if hidden.count > Self.hiddenLimit { hidden.removeFirst(hidden.count - Self.hiddenLimit) }
-            return .removed(row, at: i)
+            guard let h = editor.hide(id, into: &hidden) else { return nil }
+            return .removed(h.row, at: h.at)
         case .restoreRow(let id):
-            guard let j = hidden.firstIndex(where: { $0.id == id }) else { return nil }
-            let row = hidden.remove(at: j)
-            // Liegt der Inhalt inzwischen schon auf der Startseite, nur aus „Ausgeblendet“ nehmen.
-            guard !rows.contains(where: { $0.id == row.id || $0.content.key == row.content.key }) else { return nil }
-            rows.append(row)
-            return .restored(row, at: rows.count - 1)
+            guard case .restored(let row, let at)? = editor.restore(id, from: &hidden) else { return nil }
+            return .restored(row, at: at)
         case .addRow(let key):
-            guard !rows.contains(where: { $0.content.key == key }),
-                  let content = options.first(where: { $0.key == key }) else { return nil }
-            let row = HomeRow(content: content)
-            rows.append(row)
-            hidden.removeAll { $0.content.key == key }
-            return .added(row, at: rows.count - 1)
+            guard editor.layout.row(withKey: key) == nil, let content = options.first(where: { $0.key == key }) else { return nil }
+            let id = editor.insert(content, hidden: &hidden)
+            guard let at = editor.layout.index(of: id) else { return nil }
+            return .added(editor.layout.rows[at], at: at)
         default:
             return nil
         }

@@ -1,19 +1,27 @@
 import SwiftUI
 import PlayerCore
 
-/// Kategorie „Startseite“: Collections importieren, Überblick über die Reihen.
+/// Kategorie „Startseite“ (Plan §2.2): Verwalter „Reihen & Collections“, Fusion-Kit, Import am Handy.
+/// Reihen ordnen, hinzufügen und ausblenden passiert im Verwalter (Welle F-b2); Importe laufen über die Handy-Seite.
 struct HomeSettings: View {
     @EnvironmentObject var model: AppModel
-    @State private var nuvioURL = ""
 
     var body: some View {
-        Section("Collections") {
-            Text("\(model.profile.collections.count) Collections · \(model.profile.home.rows.count) Reihen auf der Startseite")
-            TextField("Nuvio-Export-URL (JSON)", text: $nuvioURL)
-            Button("Importieren") { Task { await model.importNuvio(from: nuvioURL); nuvioURL = "" } }.disabled(nuvioURL.isEmpty)
-            Text("Reihen ordnen: auf der Startseite „Startseite bearbeiten“ wählen oder eine Kachel lange drücken.")
-                .foregroundStyle(.secondary)
+        let n = model.profile.home.rows.count
+        NavigationLink { HomeManagerView() } label: {
+            SettingsRowLabel(symbol: "rectangle.stack", tint: Theme.CategoryTint.home.color, title: "Reihen & Collections",
+                             detail: "Reihenfolge, Stil, hinzufügen und ausblenden",
+                             accessory: .valueChevron(n == 1 ? "1 Reihe" : "\(n) Reihen"), reserveDetailSpace: false)
         }
+        .buttonStyle(ThemeRowButtonStyle())
+        .settingsRowAccessibility(title: "Reihen & Collections", detail: nil, accessory: .value(n == 1 ? "1 Reihe" : "\(n) Reihen"))
         FusionKitSettingsView()
+        NavigationLink { PhoneInputView(section: .quickImport) } label: {
+            SettingsRowLabel(symbol: "square.and.arrow.down", tint: Theme.CategoryTint.home.color, title: "Collections importieren",
+                             detail: "Nuvio-Export, Fusion-Kit-URL, TMDB- oder Trakt-Liste am Handy einfügen",
+                             accessory: .chevron, reserveDetailSpace: false)
+        }
+        .buttonStyle(ThemeRowButtonStyle())
+        .settingsRowAccessibility(title: "Collections importieren", detail: "Am Handy", accessory: .chevron)
     }
 }
