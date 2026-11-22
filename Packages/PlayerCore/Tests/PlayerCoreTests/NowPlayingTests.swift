@@ -89,11 +89,15 @@ private let paused = RemoteTransportContext(isPlaying: false, position: 600)
     #expect(RemoteTransport.action(for: .togglePlayPause, context: later) == .toggle)
 }
 
-@Test func remotePlayDuringSeekOrLoadNeverPauses() {
-    let seeking = RemoteTransportContext(isPlaying: false, isBusy: true, position: 600)
-    #expect(seeking.wantsPlaying)
-    #expect(RemoteTransport.action(for: .play, context: seeking) == .ignore("spielt schon"))
-    #expect(RemoteTransport.action(for: .pause, context: seeking) == .toggle)
+@Test func remotePlayPauseIgnoredWhileLoadingOrSeeking() {
+    // Springen aus der Pause oder aus dem Spielen: Zustand unklar → Play/Pause/Toggle nicht ausführen.
+    for playing in [true, false] {
+        let busy = RemoteTransportContext(isPlaying: playing, isBusy: true, position: 600)
+        for c: RemoteTransportCommand in [.play, .pause, .togglePlayPause] {
+            #expect(RemoteTransport.action(for: c, context: busy) == .ignore("lädt/springt"))
+        }
+        #expect(RemoteTransport.action(for: .skip(seconds: -10), context: busy) == .seek(by: -10))   // Sprünge zählen
+    }
 }
 
 @Test func remoteSkipIntervalChoicesAndLogs() {

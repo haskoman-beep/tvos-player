@@ -64,7 +64,7 @@ public enum RemoteTransportCommand: Equatable, Sendable {
 /// Zustand des Players, wenn ein Systembefehl kommt.
 public struct RemoteTransportContext: Equatable, Sendable {
     public var isPlaying: Bool
-    /// Engine lädt oder springt (`.loading`/`.seeking`): gilt als Absicht „spielt“ (Play pausiert dann nie).
+    /// Engine lädt oder springt (`.loading`/`.seeking`): Zustand unklar, Play/Pause/Toggle werden ignoriert.
     public var isBusy: Bool
     /// Ausgangspunkt für Sprünge: gesammeltes Sprungziel, sonst aktuelle Stelle.
     public var position: Double
@@ -80,9 +80,6 @@ public struct RemoteTransportContext: Equatable, Sendable {
         self.isPlaying = isPlaying; self.isBusy = isBusy; self.position = position
         self.inputBlocked = inputBlocked; self.upNextShowing = upNextShowing; self.sinceLastPress = sinceLastPress
     }
-
-    /// Absicht der Engine: spielt, lädt oder springt.
-    public var wantsPlaying: Bool { isPlaying || isBusy }
 }
 
 /// Was der Player mit einem Systembefehl tut. Es gibt keinen eigenen Weg: `.toggle` geht über dieselbe
@@ -122,15 +119,16 @@ public enum RemoteTransport {
         if c.inputBlocked { return .ignore("gesperrt") }
         switch command {
         case .play, .pause, .togglePlayPause:
+            if c.isBusy { return .ignore("lädt/springt") }
             if c.sinceLastPress < doublePressWindow { return .ignore("doppelt zum Tastendruck") }
         default: break
         }
         switch command {
         case .play:
-            return c.wantsPlaying ? .ignore("spielt schon") : .toggle
+            return c.isPlaying ? .ignore("spielt schon") : .toggle
         case .pause:
             if c.upNextShowing { return .ignore("Up-next läuft") }
-            return c.wantsPlaying ? .toggle : .ignore("schon pausiert")
+            return c.isPlaying ? .toggle : .ignore("schon pausiert")
         case .togglePlayPause:
             return .toggle
         case .skip(let s):
