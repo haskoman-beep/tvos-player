@@ -71,10 +71,8 @@ public enum BestChoice {
         }
     }
 
-    static func isPlayable(_ s: StreamItem) -> Bool {
-        guard let u = s.url, let scheme = URL(string: u)?.scheme?.lowercased() else { return false }
-        return scheme == "http" || scheme == "https"
-    }
+    /// Wave W-a: http(s) and not an addon notice; same rule as the source list (`playableStreams`).
+    static func isPlayable(_ s: StreamItem) -> Bool { s.isPlayableVideo }
 
     // MARK: Kartentext
 

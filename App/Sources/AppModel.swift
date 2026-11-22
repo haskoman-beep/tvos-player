@@ -14,7 +14,8 @@ final class AppModel: ObservableObject {
     let progressStore: ProgressStore
     /// Fortschritt des aktiven Profils.
     @Published private(set) var progress = ProgressBook()
-    let addons = AddonClient()
+    /// Wave W-a: PlayerCore reports skipped catalog items, addon notices and error subtitles through `log`.
+    let addons = AddonClient(log: { cat, msg in Task { @MainActor in RemoteLog.info(cat, msg) } })
     /// Katalog-Cache: 24 h frisch, danach alter Stand sichtbar + Erneuerung im Hintergrund (AppModel+CatalogCache).
     var cache = TimedCache<[MetaPreview]>()
     var catalogRefreshing: Set<String> = []

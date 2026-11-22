@@ -36,19 +36,62 @@ public struct InstalledAddon: Codable, Sendable, Equatable, Identifiable {
 
     /// Basis-URL; Stremio erlaubt auch `stremio://`, das wird zu `https://`.
     public var baseURL: String { AddonClient.baseURL(fromManifest: manifestURL) ?? manifestURL }
+    /// Wave W-a: query of the manifest link (variant links `…/manifest.json?v=…`), sent with every request.
+    public var manifestQuery: String? { AddonClient.parseManifest(manifestURL)?.query }
 }
 
 public struct AddonClient: Sendable {
     let http: HTTPFetching
-    public init(http: HTTPFetching = URLSessionFetcher()) { self.http = http }
+    /// Wave W-a: log line (category, text) for things the caller should see, e.g. skipped catalog items.
+    let log: @Sendable (_ category: String, _ message: String) -> Void
 
-    public static func baseURL(fromManifest raw: String) -> String? {
+    public init(http: HTTPFetching = URLSessionFetcher(),
+                log: @escaping @Sendable (_ category: String, _ message: String) -> Void = { _, _ in }) {
+        self.http = http; self.log = log
+    }
+
+    public static func baseURL(fromManifest raw: String) -> String? { parseManifest(raw)?.base }
+
+    /// Wave W-a: install link → base address (without `/manifest.json`) and the manifest's query (without „?“).
+    /// Accepted: `https://…/manifest.json`, the same with a query (`?v=a,b`, kept for all requests), `stremio://…`
+    /// (becomes https), a link to the addon's configure page (`…/configure`, its query is dropped) and a web install
+    /// link that carries the manifest address URL-encoded in `addon=`. nil without http(s) address.
+    public static func parseManifest(_ raw: String) -> (base: String, query: String?)? {
         var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if s.hasPrefix("stremio://") { s = "https://" + s.dropFirst("stremio://".count) }
-        guard s.hasPrefix("http://") || s.hasPrefix("https://") else { return nil }
-        if s.hasSuffix("/manifest.json") { s.removeLast("/manifest.json".count) }
+        if let inner = webInstallTarget(s) { s = inner }
+        if s.lowercased().hasPrefix("stremio://") { s = "https://" + s.dropFirst("stremio://".count) }
+        let low = s.lowercased()
+        guard low.hasPrefix("http://") || low.hasPrefix("https://") else { return nil }
+        if let hash = s.firstIndex(of: "#") { s = String(s[..<hash]) }
+        var query: String?
+        if let q = s.firstIndex(of: "?") {
+            query = String(s[s.index(after: q)...])
+            s = String(s[..<q])
+        }
         while s.hasSuffix("/") { s.removeLast() }
-        return s
+        if s.lowercased().hasSuffix("/manifest.json") {
+            s.removeLast("/manifest.json".count)
+        } else {
+            if s.lowercased().hasSuffix("/configure") { s.removeLast("/configure".count) }
+            query = nil   // only the manifest's own query selects anything
+        }
+        while s.hasSuffix("/") { s.removeLast() }
+        guard let host = URL(string: s)?.host, !host.isEmpty else { return nil }
+        if query?.isEmpty == true { query = nil }
+        return (s, query)
+    }
+
+    /// Manifest address inside a web install link (`…#/addons?addon=https%3A%2F%2F…%2Fmanifest.json`); nil otherwise.
+    static func webInstallTarget(_ s: String) -> String? {
+        guard let r = s.range(of: "addon=", options: .caseInsensitive) else { return nil }
+        let before = s[..<r.lowerBound]
+        guard before.hasSuffix("?") || before.hasSuffix("&"), !before.lowercased().contains("/manifest.json") else { return nil }
+        var value = String(s[r.upperBound...])
+        if let amp = value.firstIndex(of: "&") { value = String(value[..<amp]) }
+        guard let decoded = value.removingPercentEncoding?.trimmingCharacters(in: .whitespaces) else { return nil }
+        let low = decoded.lowercased()
+        guard low.hasPrefix("http://") || low.hasPrefix("https://") || low.hasPrefix("stremio://") else { return nil }
+        return decoded
     }
 
     /// Pfadsegmente nach Stremio-Regeln kodieren (IDs wie `tt123:1:2` bleiben lesbar).
@@ -59,36 +102,60 @@ public struct AddonClient: Sendable {
     }
 
     public func install(manifestURL: String) async throws -> InstalledAddon {
-        guard let base = Self.baseURL(fromManifest: manifestURL), let url = URL(string: base + "/manifest.json") else {
-            throw AddonError.invalidManifestURL(manifestURL)
-        }
+        guard let parsed = Self.parseManifest(manifestURL) else { throw AddonError.invalidManifestURL(manifestURL) }
+        let manifest = parsed.base + "/manifest.json" + (parsed.query.map { "?" + $0 } ?? "")
+        guard let url = URL(string: manifest) else { throw AddonError.invalidManifestURL(manifestURL) }
         let m = try JSONDecoder().decode(AddonManifest.self, from: try await http.data(from: url))
-        return InstalledAddon(manifestURL: base + "/manifest.json", manifest: m)
+        return InstalledAddon(manifestURL: manifest, manifest: m)
     }
 
     public func streams(_ addon: InstalledAddon, type: String, id: String) async throws -> [StreamItem] {
         let url = try resourceURL(addon, "stream", type: type, id: id)
-        return try JSONDecoder().decode(StreamsResponse.self, from: try await http.data(from: url)).streams
+        let r = try JSONDecoder().decode(StreamsResponse.self, from: try await http.data(from: url))
+        if r.skipped > 0 { log("streams", "\(addon.manifest.name) \(type)/\(id): \(AddonNotices.skippedText(r.skipped))") }
+        return r.streams
     }
 
     public func catalog(_ addon: InstalledAddon, type: String, id: String, extra: [String: String] = [:]) async throws -> [MetaPreview] {
-        let url = try resourceURL(addon, "catalog", type: type, id: id, extra: extra)
-        return try JSONDecoder().decode(MetasResponse.self, from: try await http.data(from: url)).metas
+        try await catalogPage(addon, type: type, id: id, extra: extra).items
     }
 
+    /// Wave W-a: a catalog answer with what was dropped (unreadable items, error items); both are logged here.
+    public func catalogPage(_ addon: InstalledAddon, type: String, id: String,
+                            extra: [String: String] = [:]) async throws -> AddonCatalogPage {
+        let url = try resourceURL(addon, "catalog", type: type, id: id, extra: extra)
+        let r = try JSONDecoder().decode(MetasResponse.self, from: try await http.data(from: url))
+        let page = AddonCatalogPage(decoded: r.metas, skipped: r.skipped, catalogType: type)
+        if let note = page.logNote { log("katalog", "\(addon.manifest.name) \(type)/\(id): \(note)") }
+        return page
+    }
+
+    /// Wave W-a: a missing `id`/`type` is filled in from the request; an error item instead of a meta throws
+    /// `AddonNoticeError` (logged).
     public func meta(_ addon: InstalledAddon, type: String, id: String) async throws -> MetaDetail {
         let url = try resourceURL(addon, "meta", type: type, id: id)
-        return try JSONDecoder().decode(MetaResponse.self, from: try await http.data(from: url)).meta
+        var m = try JSONDecoder().decode(MetaResponse.self, from: try await http.data(from: url)).meta
+        if AddonNotices.isErrorItem(id: m.id) {
+            let text = AddonNotices.text(name: m.name, description: m.description, id: m.id)
+            log("meta", "\(addon.manifest.name) \(type)/\(id): Fehlereintrag statt Metadaten: \(text)")
+            throw AddonNoticeError(text)
+        }
+        if m.id.isEmpty { m.id = id }
+        if m.type.isEmpty { m.type = type }
+        return m
     }
 
+    /// `{base}/{resource}/{type}/{id}[/{extra}].json`; Wave W-a: plus the manifest's query (`?v=…`) if it has one.
     public func resourceURL(_ addon: InstalledAddon, _ resource: String, type: String, id: String,
                             extra: [String: String] = [:]) throws -> URL {
-        var path = "\(addon.baseURL)/\(resource)/\(Self.encode(type))/\(Self.encode(id))"
+        let parsed = Self.parseManifest(addon.manifestURL)
+        var path = "\(parsed?.base ?? addon.manifestURL)/\(resource)/\(Self.encode(type))/\(Self.encode(id))"
         if !extra.isEmpty {
             let parts = extra.sorted { $0.key < $1.key }.map { "\(Self.encode($0.key))=\(Self.encode($0.value))" }
             path += "/" + parts.joined(separator: "&")
         }
-        guard let url = URL(string: path + ".json") else { throw AddonError.invalidManifestURL(path) }
+        path += ".json" + (parsed?.query.map { "?" + $0 } ?? "")
+        guard let url = URL(string: path) else { throw AddonError.invalidManifestURL(path) }
         return url
     }
 

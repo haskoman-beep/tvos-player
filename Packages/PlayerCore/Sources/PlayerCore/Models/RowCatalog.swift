@@ -151,7 +151,7 @@ public struct RowCatalog: Sendable {
     public static func addonSource(addon a: AddonManifest, catalog c: CatalogDescriptor) -> CatalogSource {
         CatalogSource(id: "addon:\(a.id):\(c.type):\(c.id)", title: "\(c.name ?? c.id) (\(a.name))",
                       kind: .addon(addonId: a.id, catalogId: c.id, type: c.type),
-                      mediaType: c.type == "series" ? .series : .movie)
+                      mediaType: ContentKind.isEpisodic(type: c.type) ? .series : .movie)   // Wave W-a: "anime" too
     }
 
     static func typePlural(_ type: String) -> String {

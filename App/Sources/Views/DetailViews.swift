@@ -94,7 +94,9 @@ struct DetailView: View {
     @State private var scrollTarget: String?
     @State private var scrollRequest = 0
 
-    private var isSeries: Bool { item.type == "series" }
+    /// Wave W-a: "anime" and other episodic addon types count as series (`ContentKind`); an unknown type once its
+    /// meta lists episodes.
+    private var isSeries: Bool { ContentKind.isEpisodic(type: item.type, hasVideos: (meta?.videos?.count ?? 0) > 1) }
 
     var body: some View {
         ZStack(alignment: .topLeading) {

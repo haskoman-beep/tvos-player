@@ -48,7 +48,8 @@ public struct AddonSearchProgress: Sendable {
         guard let i = statuses.firstIndex(where: { $0.index == index }) else { return }
         statuses[i].milliseconds = milliseconds
         switch outcome {
-        case .streams(let s): statuses[i].state = .ok(count: s.count); found[index] = (addon, s)
+        // Wave W-a: addon notices (error/statistics/action entries) are not sources and do not count.
+        case .streams(let s): statuses[i].state = .ok(count: s.filter { !$0.addonKind.isNotice }.count); found[index] = (addon, s)
         case .failed(let r): statuses[i].state = .failed(reason: r)
         case .timedOut: statuses[i].state = .timedOut
         }
@@ -178,6 +179,8 @@ extension AddonClient {
                 await onUpdate(progress)
             }
         }
+        // Wave W-a: one log line per load with the addons' notices (user decision: log only, never listed).
+        if let line = AddonStreamNotices.logLine(progress.results.flatMap(\.streams)) { log("streams", "\(id): \(line)") }
         return progress.results
     }
 }
