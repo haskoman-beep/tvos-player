@@ -8,8 +8,9 @@ private let t0 = Date(timeIntervalSince1970: 1_000_000)
 private func at(_ s: TimeInterval) -> Date { t0.addingTimeInterval(s) }
 
 /// Plan with the given tiles visible in `row` at t0.
-private func plan(_ tiles: [String], row: String = "A", limits: VisiblePrefetchPlan.Limits = .init()) -> VisiblePrefetchPlan {
-    var p = VisiblePrefetchPlan(limits: limits)
+private func plan(_ tiles: [String], row: String = "A", limits: VisiblePrefetchPlan.Limits = .init(),
+                  budget: PrefetchBudget = .init()) -> VisiblePrefetchPlan {
+    var p = VisiblePrefetchPlan(limits: limits, budget: budget)
     for t in tiles { _ = p.setTile(t, row: row, visible: true, now: t0) }
     return p
 }
@@ -35,13 +36,13 @@ private func plan(_ tiles: [String], row: String = "A", limits: VisiblePrefetchP
 }
 
 @Test func visiblePrefetchPerMinuteLimit() {
-    let limits = VisiblePrefetchPlan.Limits(maxRunning: 10, maxStartsPerMinute: 3)
-    var p = plan(["a", "b", "c", "d"], limits: limits)
+    let limits = VisiblePrefetchPlan.Limits(maxRunning: 10)
+    var p = plan(["a", "b", "c", "d"], limits: limits, budget: PrefetchBudget(perMinute: 3, focusReserve: 0))
     #expect(p.pass(now: at(1)) { _ in .needed } == ["a", "b", "c"])
     for t in ["a", "b", "c"] { p.finished(t, outcome: .loaded, now: at(2)) }
     // Bucket empty: d waits; with nothing running the app needs the time of the next free start.
     #expect(p.pass(now: at(2)) { _ in .needed }.isEmpty)
-    #expect(p.nextStartAt == at(61))
+    #expect(p.nextStartAt(now: at(2)) == at(61))
     #expect(p.pass(now: at(61)) { _ in .needed } == ["d"])
 }
 
@@ -151,4 +152,71 @@ private func plan(_ tiles: [String], row: String = "A", limits: VisiblePrefetchP
     #expect(p.runningCount == 0)
     #expect(p.pass(now: at(3.1)) { _ in .needed }.isEmpty)
     #expect(p.pass(now: at(3.5)) { _ in .needed } == ["a", "b"])
+}
+
+// Wave F-k R2: one budget for focus and visible tiles; focus first; pages pause visible tiles; cache tiers.
+
+@Test func prefetchBudgetFocusHasPriority() {
+    var b = PrefetchBudget(perMinute: 12, focusReserve: 4)
+    // Visible tiles get what is left above the focus reserve: 8 of 12.
+    #expect(b.free(.visible, now: at(0)) == 8)
+    for i in 0..<8 { let ok = b.take(.visible, now: at(Double(i))); #expect(ok) }
+    let ninth = b.take(.visible, now: at(9))
+    #expect(!ninth)
+    // The focus prefetch still has its 4, then the minute is used up for both.
+    #expect(b.free(.focus, now: at(9)) == 4)
+    for _ in 0..<4 { let ok = b.take(.focus, now: at(10)); #expect(ok) }
+    let fifth = b.take(.focus, now: at(11))
+    #expect(!fifth)
+    // Visible again once its oldest starts are older than 60 s: 12 used, needs 5 to expire (at 0…4) → at 64.
+    #expect(b.nextFreeAt(.visible, now: at(11)) == at(64))
+    #expect(b.nextFreeAt(.focus, now: at(11)) == at(60))
+    #expect(b.free(.focus, now: at(60)) == 1)
+    #expect(b.free(.visible, now: at(60)) == 0)
+    #expect(b.free(.visible, now: at(64)) == 1)
+}
+
+@Test func visiblePrefetchSharesBudgetWithFocus() {
+    var p = plan(["a", "b", "c", "d", "e"], limits: .init(maxRunning: 10), budget: PrefetchBudget(perMinute: 6, focusReserve: 2))
+    // The focus prefetch took 3 starts this minute: 6 − 3 − 2 = 1 left for visible tiles.
+    for _ in 0..<3 { p.budget.take(.focus, now: at(0.5)) }
+    #expect(p.pass(now: at(1)) { _ in .needed } == ["a"])
+    #expect(p.queuedCount == 4)
+    // Focus may still take the reserve.
+    let reserve = p.budget.take(.focus, now: at(2))
+    #expect(reserve)
+}
+
+@Test func visiblePrefetchPausesWhileAPageSearches() {
+    var p = plan(["a", "b"])
+    p.budget.foregroundSearchBegan()
+    // A detail page loads its sources: no new visible start, no timer either (its end triggers the next pass).
+    #expect(p.pass(now: at(1)) { _ in .needed }.isEmpty)
+    #expect(p.queuedCount == 2)
+    #expect(p.nextStartAt(now: at(1)) == nil)
+    // The focus prefetch is not paused.
+    #expect(p.budget.free(.focus, now: at(1)) == 12)
+    p.budget.foregroundSearchEnded()
+    #expect(p.pass(now: at(2)) { _ in .needed } == ["a", "b"])
+}
+
+@Test func streamCacheKeepsFocusEntryAfterManyVisiblePrefetches() {
+    // Source cache with 40 places: the focus prefetch stores x, then 60 visible tiles are prefetched one by one.
+    var cache: [String: Date] = ["x": at(0)]
+    var weak = Set<String>()
+    for i in 1...60 {
+        let id = "v\(i)"
+        cache[id] = at(Double(i))
+        weak.insert(id)
+        for k in StreamCacheTiers.overflow(storedAt: cache, weak: weak, limit: 40) { cache[k] = nil; weak.remove(k) }
+    }
+    #expect(cache["x"] != nil)
+    #expect(cache.count == 40)
+    // The oldest visible ones went first.
+    #expect(cache["v1"] == nil)
+    #expect(cache["v60"] != nil)
+    // Without weak entries the oldest of the rest goes.
+    #expect(StreamCacheTiers.overflow(storedAt: ["x": at(0), "y": at(1), "z": at(2)], weak: [], limit: 2) == ["x"])
+    // A weak entry goes before an older strong one.
+    #expect(StreamCacheTiers.overflow(storedAt: ["x": at(0), "w": at(5)], weak: ["w"], limit: 1) == ["w"])
 }

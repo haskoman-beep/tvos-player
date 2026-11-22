@@ -5,18 +5,22 @@ import PlayerCore
 /// holt die App die Quellen dieses Titels über `AppModel.streams` (10-min-Cache, Abfragen dedupliziert).
 /// Höchstens 2 Abfragen gleichzeitig; neue Ruhe-Kacheln verdrängen die älteste wartende,
 /// laufende werden nie abgebrochen. Kein Vorladen, solange ein Player läuft.
-/// Schonung der Addons (AIOStreams/Debrid): höchstens 8 Starts je 60 s (Überschuss verworfen),
-/// leere Ergebnisse 120 s nicht erneut, nach „alle Addons leer“ 5 min Pause.
+/// Schonung der Addons (AIOStreams/Debrid): leere Ergebnisse 120 s nicht erneut, nach „alle Addons leer“ 5 min Pause.
 /// Wave F-k R1: also quietly for poster tiles on screen (quality badges for every visible tile), planned by PlayerCore
-/// `VisiblePrefetchPlan`: 400 ms after scrolling stops, at most 4 at once (+ the 2 focus slots = 6 in all) and 24
-/// starts per minute, off-screen tiles dropped, a title fetched once per source cache lifetime, only while poster
-/// badges are on. Same pauses as above (player open, „alle Addons leer“, setting off).
+/// `VisiblePrefetchPlan`: 400 ms after scrolling stops, at most 4 at once (+ the 2 focus slots = 6 in all),
+/// off-screen tiles dropped, a title fetched once per source cache lifetime, only while poster badges are on. Same
+/// pauses as above (player open, „alle Addons leer“, setting off).
+/// Wave F-k R2: one budget for both, 12 searches per 60 s (`PrefetchBudget`): the focus prefetch first (it may use
+/// all; surplus dropped as before), visible tiles only above a reserve of 4 and not while a page runs its own source
+/// search. Visible-tile results are the weak tier of the source cache (`StreamCacheTiers`).
 @MainActor
 final class StreamPrefetcher {
     static let shared = StreamPrefetcher()
     static let maxRunning = 2
     static let maxWaiting = 2
-    static let maxStartsPerMinute = 8
+    /// Wave F-k R2: searches per 60 s for both prefetchers together; starts the visible tiles leave to the focus.
+    static let searchesPerMinute = 12
+    static let focusReserve = 4
     static let allEmptyPause: TimeInterval = 300
     static let playerGrace: TimeInterval = 2
     /// Höchstzahl Einträge im Quellen-Cache (AppModel) und in `prefetched` – eine gemeinsame Grenze.
@@ -25,8 +29,6 @@ final class StreamPrefetcher {
     private struct Job { let type: String; let id: String }
     private var running = Set<String>()
     private var waiting: [Job] = []
-    /// Starts der letzten 60 s (Token-Eimer).
-    private var starts: [Date] = []
     /// Erfolgreich vorgeladene IDs mit Zeitpunkt (Log „vorgeladen“ nur, solange der Cache-Eintrag davon stammen kann).
     private var prefetched: [String: Date] = [:]
     /// Offene Player (je Bildschirm ein Kennzeichen, damit doppelte onAppear nichts verklemmen).
@@ -38,7 +40,9 @@ final class StreamPrefetcher {
     private var imagesVersion = 0
 
     /// Wave F-k R1: tiles on screen (plan), their entries, row names for the log, running jobs, pending pass.
-    private var visible = VisiblePrefetchPlan()
+    /// Its `budget` is the token bucket of both prefetchers (R2).
+    private var visible = VisiblePrefetchPlan(budget: PrefetchBudget(perMinute: StreamPrefetcher.searchesPerMinute,
+                                                                     focusReserve: StreamPrefetcher.focusReserve))
     private var visibleItems: [String: MetaPreview] = [:]
     private var rowTitles: [String: String] = [:]
     private var visibleJobs: [String: Task<Void, Never>] = [:]
@@ -115,17 +119,10 @@ final class StreamPrefetcher {
                 self.enqueue(Job(type: "movie", id: imdb), model: model)
             }
         case .detail(let m) where m.type == "series":
-            // Wave F-k R1: angefangene Folge aus dem Fortschritt, sonst S1E1 (PrefetchTarget, wie die Plakette).
-            let p = model.progress.latest(forItem: m.id)
-            if let id = PrefetchTarget.streamID(type: "series", imdb: model.cachedIMDbID(for: m), progress: p) {
-                enqueue(Job(type: "series", id: id), model: model); return
-            }
-            let gen = generation
-            Task {
-                guard let imdb = await model.imdbID(for: m), gen == self.generation,
-                      let id = PrefetchTarget.streamID(type: "series", imdb: imdb, progress: p) else { return }
-                self.enqueue(Job(type: "series", id: id), model: model)
-            }
+            // Nur wenn die Folge ohne Netzabfrage bekannt ist: angefangene Folge aus dem Fortschritt. (Wave F-k R2:
+            // no S1E1 here – the detail page then mostly needs another episode; the badge comes from visible tiles.)
+            guard let p = model.progress.latest(forItem: m.id), p.season != nil, p.episode != nil, !p.finished else { return }
+            enqueue(Job(type: "series", id: p.id), model: model)
         default:
             return
         }
@@ -140,12 +137,8 @@ final class StreamPrefetcher {
         return true
     }
 
-    /// Freie Starts im Token-Eimer (60 s).
-    private func freeStarts() -> Int {
-        let now = Date()
-        starts.removeAll { now.timeIntervalSince($0) >= 60 }
-        return Self.maxStartsPerMinute - starts.count
-    }
+    /// Freie Starts im gemeinsamen Eimer (60 s); das Fokus-Vorladen darf alle nehmen (R2).
+    private func freeStarts() -> Int { visible.budget.free(.focus, now: Date()) }
 
     private func enqueue(_ job: Job, model: AppModel) {
         guard allowed(model), model.streamCacheState(id: job.id) == .missing,
@@ -167,11 +160,12 @@ final class StreamPrefetcher {
         guard allowed(model), freeStarts() > 0 else { return }
         running.insert(job.id)
         let t0 = Date()
-        starts.append(t0)
+        visible.budget.take(.focus, now: t0)
         let epoch = resets
         Task {
             // Welle D-b (M3): veralteter, lückenhafter Stand → wirklich neu fragen (nicht nur den Cache-Treffer holen).
-            let list = await model.streams(type: job.type, id: job.id, revalidate: model.partialNeedsRefresh(id: job.id))
+            let list = await model.streams(type: job.type, id: job.id, revalidate: model.partialNeedsRefresh(id: job.id),
+                                           caller: .focusPrefetch)
             guard epoch == self.resets else { return }
             self.running.remove(job.id)
             if !list.isEmpty { self.markPrefetched(job.id) }
@@ -244,7 +238,7 @@ extension StreamPrefetcher {
         let start = visible.pass(now: Date()) { self.tileState($0, model: model) }
         for key in start { startVisible(key, model: model) }
         logVisibleRows()
-        if let next = visible.nextStartAt { scheduleVisiblePass(model, after: max(0, next.timeIntervalSinceNow)) }
+        if let next = visible.nextStartAt(now: Date()) { scheduleVisiblePass(model, after: max(0, next.timeIntervalSinceNow)) }
     }
 
     private func tileState(_ key: String, model: AppModel) -> VisiblePrefetchPlan.TileState {
@@ -287,9 +281,18 @@ extension StreamPrefetcher {
         case .emptyRecently: return .unavailable
         case .missing: break
         }
-        let list = await model.streams(type: item.type, id: id, revalidate: model.partialNeedsRefresh(id: id))
+        let list = await model.streams(type: item.type, id: id, revalidate: model.partialNeedsRefresh(id: id),
+                                       caller: .visiblePrefetch)
         if !list.isEmpty { markPrefetched(id) }
         return .loaded
+    }
+
+    /// Wave F-k R2: a page (detail, source list, player) runs its own source search: no new visible-tile starts.
+    func pageSearchBegan() { visible.budget.foregroundSearchBegan() }
+
+    func pageSearchEnded(_ model: AppModel) {
+        visible.budget.foregroundSearchEnded()
+        if visible.budget.foregroundSearches == 0, visibleModel != nil { scheduleVisiblePass(model) }
     }
 
     /// „Vorab-Quellen: <Reihe> n geladen, k aus Cache, m abgebrochen“, once per row when it has settled.

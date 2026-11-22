@@ -1097,7 +1097,11 @@ struct DetailExtras: View {
                 // Wave F-k R1: these tiles prefetch their sources too (badge); log line per page, after 2 s of rest.
                 .environment(\.prefetchRow, PrefetchRow(key: "similar", title: "Ähnliche Titel"))
                 .task(id: info.recommendations.map(\.id)) { noteSimilarBadges() }
-                .onReceive(QualityBadgeCache.shared.stored) { _ in noteSimilarBadges() }
+                .onReceive(QualityBadgeCache.shared.stored) { id in
+                    // Wave F-k R2 (m5): only when one of these titles got its sources.
+                    guard info.recommendations.contains(where: { model.streamCacheKey(for: $0) == id }) else { return }
+                    noteSimilarBadges()
+                }
             }
             let rows = aboutRows
             if !rows.isEmpty {

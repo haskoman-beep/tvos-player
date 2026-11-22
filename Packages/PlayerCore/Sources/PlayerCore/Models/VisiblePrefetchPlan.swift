@@ -4,7 +4,8 @@ import Foundation
 /// (badges come only from known sources). Pure bookkeeping; the app (`StreamPrefetcher`) runs the searches.
 /// - Tiles report on/off screen per row. A pass runs only after `debounce` without a change (scrolling stopped).
 /// - A pass starts the visible tiles that still need sources: the row with the latest change first, tiles in screen
-///   order; at most `maxRunning` at once and `maxStartsPerMinute`. A tile shown in two rows runs once.
+///   order; at most `maxRunning` at once and what the shared per-minute `budget` leaves (R2: shared with the focus
+///   prefetch, which has priority; none while a page runs its own source search). A tile shown in two rows runs once.
 /// - A tile fetched within `doneFor` (lifetime of the source cache) is never fetched again, even when the cache has
 ///   dropped it in the meantime (no refetch loop when more tiles are visible than the cache holds).
 /// - Off screen before its start: dropped and counted as cancelled. Off screen while running: returned to the app,
@@ -12,15 +13,13 @@ import Foundation
 public struct VisiblePrefetchPlan: Sendable {
     public struct Limits: Sendable, Equatable {
         public var maxRunning: Int
-        public var maxStartsPerMinute: Int
         public var debounce: TimeInterval
         public var doneFor: TimeInterval
         public var maxDone: Int
 
-        public init(maxRunning: Int = 4, maxStartsPerMinute: Int = 24, debounce: TimeInterval = 0.4,
+        public init(maxRunning: Int = 4, debounce: TimeInterval = 0.4,
                     doneFor: TimeInterval = 30 * 60, maxDone: Int = 400) {
             self.maxRunning = maxRunning
-            self.maxStartsPerMinute = maxStartsPerMinute
             self.debounce = debounce
             self.doneFor = doneFor
             self.maxDone = maxDone
@@ -70,6 +69,8 @@ public struct VisiblePrefetchPlan: Sendable {
     private enum Mark: Sendable { case loaded, cached, cancelled }
 
     public let limits: Limits
+    /// Wave F-k R2: the per-minute budget shared with the focus prefetch (it takes its starts from here too).
+    public var budget: PrefetchBudget
     /// Visible tiles per row in screen order (first reported first).
     private var rows: [String: [String]] = [:]
     /// Rows, latest change first.
@@ -79,12 +80,14 @@ public struct VisiblePrefetchPlan: Sendable {
     /// Needed tiles the last pass could not start (no free slot): the queue.
     private var queued: Set<String> = []
     private var done: [String: Date] = [:]
-    private var starts: [Date] = []
     private var changedAt: Date?
     private var marks: [String: [String: Mark]] = [:]
     private var reported: [String: Tally] = [:]
 
-    public init(limits: Limits = Limits()) { self.limits = limits }
+    public init(limits: Limits = Limits(), budget: PrefetchBudget = PrefetchBudget()) {
+        self.limits = limits
+        self.budget = budget
+    }
 
     public var runningCount: Int { running.count }
     public var queuedCount: Int { queued.count }
@@ -93,11 +96,11 @@ public struct VisiblePrefetchPlan: Sendable {
     /// Earliest time of the next pass after the last change (debounce).
     public var dueAt: Date? { changedAt.map { $0.addingTimeInterval(limits.debounce) } }
 
-    /// Tiles wait only for the per-minute limit (nothing running would trigger a pass): when the next start is free.
-    public var nextStartAt: Date? {
-        guard !queued.isEmpty, running.isEmpty, starts.count >= limits.maxStartsPerMinute, let first = starts.first
-        else { return nil }
-        return first.addingTimeInterval(60)
+    /// Tiles wait only for the per-minute budget (nothing running would trigger a pass): when the next start is
+    /// free. nil while a page's own search pauses visible tiles (its end triggers the next pass).
+    public func nextStartAt(now: Date) -> Date? {
+        guard !queued.isEmpty, running.isEmpty else { return nil }
+        return budget.nextFreeAt(.visible, now: now)
     }
 
     /// The tile is on screen in at least one row.
@@ -128,9 +131,8 @@ public struct VisiblePrefetchPlan: Sendable {
     /// Tiles to start now (empty while the debounce runs). `state` says what the app knows about a tile.
     public mutating func pass(now: Date, state: (String) -> TileState) -> [String] {
         if let due = dueAt, now < due { return [] }
-        starts.removeAll { now.timeIntervalSince($0) >= 60 }
         done = done.filter { now.timeIntervalSince($0.value) < limits.doneFor }
-        var free = min(limits.maxRunning - running.count, limits.maxStartsPerMinute - starts.count)
+        var free = min(limits.maxRunning - running.count, budget.free(.visible, now: now))
         var out: [String] = []
         var waiting = Set<String>()
         for tile in visibleInOrder() where running[tile] == nil && done[tile] == nil {
@@ -140,10 +142,9 @@ public struct VisiblePrefetchPlan: Sendable {
             case .busy, .skip:
                 continue
             case .needed:
-                if free > 0 {
+                if free > 0, budget.take(.visible, now: now) {
                     free -= 1
                     running[tile] = rowsContaining(tile)
-                    starts.append(now)
                     out.append(tile)
                 } else {
                     waiting.insert(tile)
@@ -171,9 +172,9 @@ public struct VisiblePrefetchPlan: Sendable {
     }
 
     /// Profile switch: forget every result, keep the tiles on screen (they are fetched again for the new profile).
-    /// Running jobs belong to the old profile; the app drops their `finished`.
+    /// Running jobs belong to the old profile; the app drops their `finished`. The budget stays (the searches ran).
     public mutating func resetResults(now: Date) {
-        running.removeAll(); queued.removeAll(); done.removeAll(); starts.removeAll()
+        running.removeAll(); queued.removeAll(); done.removeAll()
         marks.removeAll(); reported.removeAll()
         changedAt = now
     }
@@ -216,6 +217,74 @@ public struct VisiblePrefetchPlan: Sendable {
         done[tile] = now
         guard done.count > limits.maxDone else { return }
         for (k, _) in done.sorted(by: { $0.value < $1.value }).prefix(done.count - limits.maxDone) { done[k] = nil }
+    }
+}
+
+/// Wave F-k R2: one per-minute budget of source searches for both prefetchers (focus rest and visible tiles), to spare
+/// the addons (AIOStreams, debrid). The focus prefetch has priority: it may use every free start; visible tiles only
+/// get what is left above `focusReserve`, and none while a page (detail, source list) runs its own source search.
+public struct PrefetchBudget: Sendable, Equatable {
+    public enum Kind: Sendable { case focus, visible }
+
+    public let perMinute: Int
+    public let focusReserve: Int
+    /// Source searches of pages running now (`foregroundSearchBegan`/`Ended`).
+    public private(set) var foregroundSearches = 0
+    private var starts: [Date] = []
+
+    public init(perMinute: Int = 12, focusReserve: Int = 4) {
+        self.perMinute = perMinute
+        self.focusReserve = focusReserve
+    }
+
+    /// Starts `kind` may take now.
+    public func free(_ kind: Kind, now: Date) -> Int {
+        let left = perMinute - live(now).count
+        switch kind {
+        case .focus: return max(0, left)
+        case .visible: return foregroundSearches > 0 ? 0 : max(0, left - focusReserve)
+        }
+    }
+
+    /// Takes one start if `kind` may (false otherwise).
+    @discardableResult
+    public mutating func take(_ kind: Kind, now: Date) -> Bool {
+        starts.removeAll { now.timeIntervalSince($0) >= 60 }
+        guard free(kind, now: now) > 0 else { return false }
+        starts.append(now)
+        return true
+    }
+
+    /// When `kind` gets its next start; nil when it has one now, or visible tiles are paused by a page's search.
+    public func nextFreeAt(_ kind: Kind, now: Date) -> Date? {
+        guard free(kind, now: now) == 0, kind == .focus || foregroundSearches == 0 else { return nil }
+        let recent = live(now).sorted()
+        let allowed = perMinute - (kind == .focus ? 0 : focusReserve)   // starts in 60 s that still leave one free
+        let expire = recent.count - allowed + 1
+        guard allowed > 0, expire > 0, expire <= recent.count else { return nil }
+        return recent[expire - 1].addingTimeInterval(60)
+    }
+
+    public mutating func foregroundSearchBegan() { foregroundSearches += 1 }
+    public mutating func foregroundSearchEnded() { foregroundSearches = max(0, foregroundSearches - 1) }
+
+    private func live(_ now: Date) -> [Date] { starts.filter { now.timeIntervalSince($0) < 60 } }
+}
+
+/// Wave F-k R2: the source cache keeps at most `limit` titles. Entries of the visible-tile prefetch are the weak tier
+/// and go first (oldest first), so they never push out what the focus prefetch or a page stored; only then the
+/// oldest of the rest. (A weak entry becomes strong when a page or the focus prefetch uses it.)
+public enum StreamCacheTiers {
+    /// Keys to drop so that at most `limit` remain.
+    public static func overflow(storedAt: [String: Date], weak: Set<String>, limit: Int) -> [String] {
+        let excess = storedAt.count - limit
+        guard excess > 0 else { return [] }
+        let order = storedAt.sorted { a, b in
+            let wa = weak.contains(a.key), wb = weak.contains(b.key)
+            if wa != wb { return wa }
+            return a.value != b.value ? a.value < b.value : a.key < b.key
+        }
+        return order.prefix(excess).map(\.key)
     }
 }
 

@@ -110,8 +110,11 @@ final class QualityBadgeCache {
 
     private init() {}
 
-    func streamsStored(id: String) {
+    /// Wave F-k R2 (m2): new list stored – its best values are remembered at once (the weak cache tier may drop the
+    /// list right away, the badge stays).
+    func streamsStored(id: String, list: [(addon: String, stream: StreamItem)], at: Date) {
         cache[id] = nil
+        if let b = BestQuality.from(list.map(\.stream)) { remember(id, b, at: at) } else { remembered[id] = nil }
         stored.send(id)
     }
 

@@ -29,8 +29,10 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   answering is given up after 15 seconds instead of 60.
 - Quality badges on posters (when „Qualität auf Postern“ is on): every poster on screen now gets its
   badge, not only the ones that were focused. When scrolling stops, the app quietly looks up the sources
-  of the visible titles (at most a few at a time, never while a video plays, each title only once while
-  its sources are cached) and fades the badge in. Series without a started episode use their first
+  of the visible titles (at most a few at a time and a few per minute, never while a video plays or a
+  detail page loads its own sources, each title only once while its sources are cached) and fades the
+  badge in. These lookups never push out the sources of titles you focused or opened, so those still
+  open at once. Series without a started episode use their first
   episode.
 
 ## [Build 174] – 2026-11-22 (integ)

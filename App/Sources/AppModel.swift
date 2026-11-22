@@ -225,6 +225,7 @@ final class AppModel: ObservableObject {
         // Welle D-b (M1): laufende Suchen des alten Profils vergessen (sie legen nichts mehr ab, niemand wartet neu
         // auf sie), Leer-Pausen und Lückenmerker gelten nur für das Profil, in dem sie entstanden.
         streamTasks.reset(); streamEmptyUntil.removeAll(); streamsAllEmptyAt = nil; streamPartial.removeAll()
+        streamWeak.removeAll(); streamTaskWeak.removeAll()   // Wave F-k R2
         StreamSearchStatus.shared.reset(); StreamPrefetcher.shared.reset()
         // Welle E-a (I3): Addon-Bilder/-Bewertungen des alten Profils nicht weiter zeigen.
         HeroDetailsCache.all.removeAll(); AddonMetaCache.reset()
@@ -398,22 +399,39 @@ final class AppModel: ObservableObject {
         return eps
     }
 
+    /// Wave F-k R2: who asks. `.page` = detail page, source list, player, background renewal.
+    enum StreamCaller { case page, focusPrefetch, visiblePrefetch }
+
     /// `revalidate`: Cache überspringen (Hintergrund-Erneuerung, AppModel+StreamRevalidate).
-    func streams(type: String, id: String, revalidate: Bool = false) async -> [(addon: String, stream: StreamItem)] {
+    /// Wave F-k R2 `caller`: results of the visible-tile prefetch are the weak cache tier (`StreamCacheTiers`, go
+    /// first, until a page or the focus prefetch uses them); a page's own search pauses new visible-tile starts.
+    func streams(type: String, id: String, revalidate: Bool = false,
+                 caller: StreamCaller = .page) async -> [(addon: String, stream: StreamItem)] {
         // Detailseite holt vorab (für die Technik-Plaketten), die Quellenliste nutzt das Ergebnis.
         // Welle C-b: frisch → direkt; veraltet → sofort zeigen + im Hintergrund erneuern; abgelaufen → neu laden.
         if !revalidate, let c = streamCache[id], case let list = usableStreams(id: id, c), !list.isEmpty,
            let fresh = streamCacheHit(type: type, id: id, at: c.at) {
             RemoteLog.info("streams", "\(id): Cache-Treffer\(fresh ? "" : " (veraltet, Erneuerung läuft)")\(StreamPrefetcher.shared.wasPrefetched(id) ? " (vorgeladen)" : "") · \(list.count) Quellen")
+            if caller != .visiblePrefetch { streamWeak.remove(id) }
             return list
         }
         // Welle D-b (M1): Profil und Stand beim Start merken; nach einem Profilwechsel kein Ergebnis des alten Profils
         // ablegen oder an einen Aufrufer geben.
         let owner = profile.id, epoch = streamTasks.currentEpoch
+        if caller == .page { StreamPrefetcher.shared.pageSearchBegan() }
+        defer { if caller == .page { StreamPrefetcher.shared.pageSearchEnded(self) } }
         if let t = streamTasks[id] {
             RemoteLog.info("streams", "\(id): wartet auf laufende Abfrage\(StreamPrefetcher.shared.isRunning(id) ? " (Vorladen)" : "")")
+            if caller != .visiblePrefetch { streamTaskWeak.remove(id) }
             let list = await t.value
+            if caller != .visiblePrefetch { streamWeak.remove(id) }
             return profile.id == owner ? list : []
+        }
+        // Weak only if there is no strong entry to renew (a lückenhafter focus/page entry stays strong).
+        if caller == .visiblePrefetch, streamCache[id] == nil || streamWeak.contains(id) {
+            streamTaskWeak.insert(id)
+        } else {
+            streamTaskWeak.remove(id)
         }
         let task = Task { () -> [(addon: String, stream: StreamItem)] in
             // Welle C-a: Zeitgrenze und Status je Addon; `failed` = Addons mit Fehler oder Zeitüberschreitung.
@@ -458,6 +476,10 @@ final class AppModel: ObservableObject {
     var streamPartial: Set<String> = []
     /// Welle C-b: Abrufzeitpunkt je Addon im Stand von `streamCache[id]` (behaltene Einträge laufen nach ihm ab).
     var streamAddonFetchedAt: [String: [String: Date]] = [:]
+    /// Wave F-k R2: cache entries from the visible-tile prefetch (weak tier, evicted first) and running searches
+    /// started by it that no page or focus prefetch has joined yet.
+    private(set) var streamWeak: Set<String> = []
+    private(set) var streamTaskWeak: Set<String> = []
     /// Leeres/fehlgeschlagenes Ergebnis: bis dahin kein Vorladen dieser ID (die Detailseite fragt trotzdem).
     private(set) var streamEmptyUntil: [String: Date] = [:]
     /// Letztes Ergebnis, bei dem alle Addons leer blieben (vermutlich Ratenbegrenzung): Vorladen pausiert.
@@ -568,9 +590,9 @@ extension AppModel {
     }
 
     /// Ergebnis ablegen (`StreamCacheUpdate`): Treffer in den Cache (`RevalidationPolicy.streams`; abgelaufene raus,
-    /// höchstens 40, älteste zuerst raus), Addons mit Fehler/Zeitüberschreitung behalten ihre alten Einträge, ein
-    /// lückenhaftes Ergebnis ist nur kurz frisch. Leer (auch nach dem Behalten): 120 s als „leer“ merken, ein
-    /// vorhandener Stand bleibt unverändert. Ein Treffer hebt die Pause nach „alle Addons leer“ auf.
+    /// höchstens 40: Einträge sichtbarer Kacheln zuerst raus, dann die ältesten), Addons mit Fehler/Zeitüberschreitung
+    /// behalten ihre alten Einträge, ein lückenhaftes Ergebnis ist nur kurz frisch. Leer (auch nach dem Behalten):
+    /// 120 s als „leer“ merken, ein vorhandener Stand bleibt unverändert. Ein Treffer hebt die Pause nach „alle Addons leer“ auf.
     /// Rückgabe: der abgelegte Stand (leer bei leerem Ergebnis).
     fileprivate func storeStreams(id: String, fresh: [(addon: String, stream: StreamItem)],
                                   answered: Set<String>, failed: Set<String>) -> [(addon: String, stream: StreamItem)] {
@@ -579,6 +601,7 @@ extension AppModel {
         switch StreamCacheUpdate.apply(fresh: fresh, answered: answered, failed: failed, previous: streamCache[id],
                                        previousFetchedAt: streamAddonFetchedAt[id] ?? [:], now: now) {
         case .keepPrevious:
+            streamTaskWeak.remove(id)
             streamEmptyUntil[id] = now.addingTimeInterval(Self.emptyStreamsTTL)
             return []
         case let .store(at, list, fetchedAt):
@@ -592,15 +615,20 @@ extension AppModel {
             streamsAllEmptyAt = nil
             streamCache = streamCache.filter { RevalidationPolicy.streams.isUsable(storedAt: $0.value.at, now: now) }
             streamCache[id] = (at, list)
-            if streamCache.count > StreamPrefetcher.cacheLimit {
-                let drop = streamCache.sorted { $0.value.at < $1.value.at }.prefix(streamCache.count - StreamPrefetcher.cacheLimit)
-                for (k, _) in drop { streamCache[k] = nil }
+            // Wave F-k R2: visible-tile results are the weak tier and go first; focus/page entries are never pushed
+            // out by them (`StreamCacheTiers`).
+            if streamTaskWeak.remove(id) != nil { streamWeak.insert(id) } else { streamWeak.remove(id) }
+            for k in StreamCacheTiers.overflow(storedAt: streamCache.mapValues { $0.at }, weak: streamWeak,
+                                               limit: StreamPrefetcher.cacheLimit) {
+                streamCache[k] = nil
             }
+            streamWeak = streamWeak.filter { streamCache[$0] != nil }
             streamAddonFetchedAt = streamAddonFetchedAt.filter { streamCache[$0.key] != nil }
             streamAddonFetchedAt[id] = fetchedAt
             streamPartial = streamPartial.filter { streamCache[$0] != nil }
             if !failed.isEmpty { streamPartial.insert(id) } else { streamPartial.remove(id) }   // Mi1
-            QualityBadgeCache.shared.streamsStored(id: id)
+            // Wave F-k R2 (m2): best values remembered right away, even if this entry is dropped again at once.
+            QualityBadgeCache.shared.streamsStored(id: id, list: list, at: at)
             return list
         }
     }
