@@ -109,3 +109,12 @@ import Testing
     #expect(try JSONDecoder().decode(RecentKeySet.self, from: data) == set)
     #expect(RecentKeySet(keys: ["1", "2", "3", "4"], capacity: 2).keys == ["1", "2"])
 }
+
+@Test func xrayForwardsHeldPictureAndLadderLinesOnly() {
+    #expect(XRayProbe.forwardedLine(engineLine:
+        "[AetherEngine] held picture: up after 90ms (Dolby Vision reshaped, 1920x1080, hdr=false)")
+            == "P5 gehaltenes Bild per CPU (90 ms)")
+    #expect(XRayProbe.forwardedLine(engineLine: "[HLSVideoEngine] [StillLadder] rung idx=12 t=480.0s")
+            == "Leiter: [StillLadder] rung idx=12 t=480.0s")
+    #expect(XRayProbe.forwardedLine(engineLine: "[HLSVideoEngine] segment 4 ready") == nil)
+}

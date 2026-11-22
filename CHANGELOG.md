@@ -26,11 +26,13 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 ### Changed
 - Dolby Vision Profile 5: the engine is now built with its still reshaping part, so the face test above can take
   the paused frame of a Profile 5 source. Profile 5 otherwise keeps its earlier behaviour: no scrub previews and
-  no background still pictures (no second connection to the source). To know a source is Profile 5, the player
-  has to open it once: the first time a Profile 5 source plays, the player rebuilds it once right after loading,
-  and remembers the source for later. One difference stays: the picture held during an audio switch or reload
-  is now decoded and converted on the processor (shown in SDR, up to 3 s) instead of through the system. The
-  event log notes its time as `xray: P5 gehaltenes Bild per CPU (… ms)`.
+  no background still pictures (no second connection to the source). To know this before playback starts, the
+  player checks a source it has not seen before while it prepares the stream (at most 1.5 s, in parallel with the
+  disk cache) and remembers Profile 5 sources. If that check gives no answer in time, the source plays normally
+  and is only remembered for the next time. There is no restart during playback.
+- Accepted trade-off for Dolby Vision Profile 5: the picture held during an audio switch or reload is now decoded
+  and converted on the processor (shown in SDR, up to 3 s) instead of through the system. The event log notes its
+  time as `xray: P5 gehaltenes Bild per CPU (… ms)`.
 
 ## [Build 198] – 2026-11-22 (integ)
 

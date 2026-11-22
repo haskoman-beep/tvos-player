@@ -209,11 +209,9 @@ final class AetherBackend: PlaybackEngine {
         o.maxAnalyzeDuration = 5_000_000
         o.skipsContainerAttachments = true
         applyAudioOptions(prefs, to: &o)   // Ton/„Inhalt anpassen“ (PlayerAudioOptions.swift)
-        o.generatesBackgroundScrubPreviews = Self.backgroundScrubPreviews(for: url)   // X0/I1: no ladder for known DV P5 (XRayProfile5.swift)
         stopped = false
         // Plattencache: nur die Adresse tauschen; jeder Fehler dort → direkte Adresse.
-        let routed = await DiskCacheProxy.shared.route(url, headers: prefs.headers, settings: prefs.diskCache,
-                                                      nativeHLS: prefs.nativeRemoteHLS, reuse: cacheSession)
+        let routed = await routeCheckingProfile5(url, prefs: prefs, options: &o)   // X0: route + DV P5 pre-check → ladder option (XRayProfile5.swift)
         if let s = routed.session, Task.isCancelled || stopped {
             if cacheSession == s { cacheSession = nil }
             await DiskCacheProxy.shared.close(s); throw CancellationError()

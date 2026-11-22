@@ -35,6 +35,15 @@ public enum XRayProbe {
         return "P5 gehaltenes Bild per CPU (\(digits) ms)"
     }
 
+    /// Engine lines the X0 handler forwards as `xray:` lines: a CPU-reshaped held picture (see `heldPictureLine`)
+    /// and the background still ladder (`[StillLadder] …`, at most one per rung), which the app's engine log
+    /// filter drops otherwise. nil for every other line.
+    public static func forwardedLine(engineLine line: String) -> String? {
+        if let held = heldPictureLine(engineLine: line) { return held }
+        guard let r = line.range(of: "[StillLadder]") else { return nil }
+        return "Leiter: " + line[r.lowerBound...].prefix(200)
+    }
+
     /// Key for the memory of sources known to be Profile 5: scheme, host, port and path. The query is dropped
     /// (tokens and expiry stamps change between resolves of the same file).
     public static func sourceKey(_ url: URL) -> String {
