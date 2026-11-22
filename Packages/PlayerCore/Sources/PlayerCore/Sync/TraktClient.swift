@@ -40,6 +40,8 @@ public struct RemoteProgress: Sendable, Equatable {
     /// 0…1
     public var fraction: Double
     public var updated: Date
+    /// Wave L: the service's playback entry ID (needed to delete it); nil if the service did not send one.
+    public var playbackID: Int? = nil
 }
 
 public enum ScrobbleAction: String, Sendable { case start, pause, stop }
@@ -140,11 +142,12 @@ public struct TraktClient: Sendable {
             let pct = (o["progress"] as? Double ?? 0) / 100
             let date = (o["paused_at"] as? String).flatMap(Self.date) ?? .distantPast
             if let m = o["movie"] as? [String: Any], let item = Self.meta(m, type: "movie") {
-                return RemoteProgress(id: item.id, item: item, fraction: pct, updated: date)
+                return RemoteProgress(id: item.id, item: item, fraction: pct, updated: date, playbackID: SyncWriteBody.playbackID(o["id"]))
             }
             if let sh = o["show"] as? [String: Any], let ep = o["episode"] as? [String: Any], let item = Self.meta(sh, type: "series"),
                let s = ep["season"] as? Int, let e = ep["number"] as? Int {
-                return RemoteProgress(id: "\(item.id):\(s):\(e)", item: item, season: s, episode: e, fraction: pct, updated: date)
+                return RemoteProgress(id: "\(item.id):\(s):\(e)", item: item, season: s, episode: e, fraction: pct, updated: date,
+                                      playbackID: SyncWriteBody.playbackID(o["id"]))
             }
             return nil
         }

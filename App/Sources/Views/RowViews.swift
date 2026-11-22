@@ -254,7 +254,23 @@ struct HomeRowView: View {
     private func card<L: View>(_ route: Route, @ViewBuilder label: () -> L) -> some View {
         NavigationLinkish(route: route, onActivate: onActivate, label: label())
             .focused($focusedRoute, equals: route)
-            .homeRowMenu(menu)
+            .tileMenu(route.tileItem, inContinueRow: row.content == .list(.continueWatching),
+                      inWatchlistRow: row.content == .list(.watchlist), row: menu) { focusNeighbour(of: route) }   // Wave L
+    }
+
+    /// Wave L: the card leaves the row through its long-press menu: focus moves to the right neighbour, else the left.
+    private func focusNeighbour(of r: Route) {
+        let routes = displayed.map { route(for: $0) }
+        guard let i = routes.firstIndex(of: r), let n = TileMenuAction.neighbour(removing: i, count: routes.count) else { return }
+        let target = routes[n]
+        // Closing the menu hands focus back to the card: retry up to 3 times, 100 ms apart, until it lands.
+        Task { @MainActor in
+            for _ in 0..<3 {
+                try? await Task.sleep(for: .milliseconds(100))
+                if focusedRoute == target { return }
+                focusedRoute = target
+            }
+        }
     }
 }
 

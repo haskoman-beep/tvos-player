@@ -139,6 +139,7 @@ struct GenrePageView: View {
                       alignment: .leading, spacing: rowGap) {
                 ForEach(state.items) { m in
                     NavigationLinkish(route: .detail(m), onActivate: { $0 }, label: PosterCard(item: m).equatable())
+                        .tileMenu(m)   // Wave L (added at the L merge, see wave G2 note)
                         .focused($focusedID, equals: m.id)
                         // The lifted card draws above its neighbours (spacing is the home rows' spacing).
                         .zIndex(focusedID == m.id ? 1 : 0)

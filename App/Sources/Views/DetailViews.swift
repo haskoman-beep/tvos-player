@@ -1249,6 +1249,7 @@ struct SearchView: View {
                 LazyVGrid(columns: Array(repeating: GridItem(.fixed(240), spacing: 40), count: 6), alignment: .leading, spacing: 50) {
                     ForEach(results) { m in
                         NavigationLinkish(route: .detail(m), onActivate: { $0 }, label: PosterCard(item: m))
+                            .tileMenu(m)   // Wave L
                     }
                 }
                 .padding(.horizontal, 60)
@@ -1375,6 +1376,7 @@ struct DetailExtras: View {
                         ForEach(info.recommendations) { m in
                             NavigationLinkish(route: .detail(m), onActivate: { $0 }, label: PosterCard(item: m))
                                 .modifier(RestPrefetch(route: .detail(m)))
+                                .tileMenu(m)   // Wave L
                         }
                     }
                     // Wave F-k: same room for the card lift as the home rows (poster at factor 1), at least 44.

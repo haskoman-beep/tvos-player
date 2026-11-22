@@ -97,6 +97,20 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   „Erneut versuchen“ (try again) row instead of failing the page. Tiles use the poster size, rating and
   quality badges of the home rows. Folders with other shapes (for example the streaming folders with four
   lists) keep the page with one row per list.
+- Long-press menu on every poster and tile (home rows, library, search, person page, similar titles, calendar):
+  „Auf die Merkliste“ / „Von der Merkliste entfernen“ (watchlist on/off, when Trakt or Simkl is connected),
+  „Als gesehen markieren“ / „Als ungesehen markieren“ (mark watched/unwatched), „Aus „Weiterschauen“
+  entfernen“ (remove from Continue Watching, only in that row) and „Zur Detailseite“ (open the detail page).
+  On home rows the row actions follow in the same menu. When the card leaves its row, focus moves to the
+  neighbouring card (right first, then left).
+- Sync queue: these changes show at once and are kept per profile until Trakt/Simkl confirm them, so a
+  removed title no longer comes back with the next pull. One entry per title (IMDb ID first, so TMDB and
+  IMDb tiles of the same title share it). Watchlist changes stay until a fresh watchlist pull after the
+  confirmation is stored; other changes expire 5 minutes after confirmation; a Continue Watching removal
+  that found nothing to delete remotely is kept for 30 days. Everything expires after 30 days at the latest.
+  Simkl's watchlist is only changed safely: a removal stays local and is kept hidden for 30 days (Simkl has
+  no call that does not also touch the watch history), and an add is skipped when the title is already on
+  another Simkl list. An empty watchlist pull now replaces the cached list (last title removed).
 
 ### Changed
 - Settings: the left column is regrouped into three groups with headers plus System at the end:
