@@ -207,7 +207,13 @@ public struct SyncQueueStore: Sendable {
     public func load(profile: UUID) -> SyncQueue {
         guard let d = storage.read(name(profile)) else { return SyncQueue() }
         // Default date coding keeps sub-seconds, so `confirm(createdAt:)` still matches after a reload.
-        return (try? JSONDecoder().decode(SyncQueue.self, from: d)) ?? SyncQueue()
+        // Files of the first build used ISO-8601 dates and tile-ID keys: read those too and re-key.
+        let iso = JSONDecoder(); iso.dateDecodingStrategy = .iso8601
+        guard var q = (try? JSONDecoder().decode(SyncQueue.self, from: d)) ?? (try? iso.decode(SyncQueue.self, from: d)) else {
+            return SyncQueue()
+        }
+        q.changes = Dictionary(q.changes.values.map { ($0.id, $0) }) { a, b in a.createdAt >= b.createdAt ? a : b }
+        return q
     }
 
     public func remove(profile: UUID) { storage.remove(name(profile)) }

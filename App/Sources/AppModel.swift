@@ -350,10 +350,14 @@ final class AppModel: ObservableObject {
         out = source.applyingLimit(out)
         RemoteLog.info("katalog", "\(source.title): \(out.count) Einträge")
         // Nach Profilwechsel/Leeren nicht mehr ablegen; leere Erneuerung überschreibt keine gefüllte Liste.
-        let stored = refresh ? cache.storeRefreshed(out, for: source.id, generation: generation)
+        // Welle L: eine leere Merkliste ist echt (letzter Titel entfernt) und überschreibt den alten Stand.
+        var isWatchlist = false
+        if case .watchlist = source.kind { isWatchlist = true }
+        let keepFilled = refresh && !isWatchlist
+        let stored = keepFilled ? cache.storeRefreshed(out, for: source.id, generation: generation)
                              : cache.store(out, for: source.id, generation: generation)
         scheduleCatalogSave()
-        if stored, case .watchlist = source.kind { noteWatchlistPull(startedAt: started) }   // Welle L
+        if stored, isWatchlist { noteWatchlistPull(startedAt: started) }   // Welle L
         return CatalogLoad(items: applySyncQueue(source, out))
     }
 

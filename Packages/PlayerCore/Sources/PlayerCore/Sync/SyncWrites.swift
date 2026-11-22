@@ -59,9 +59,9 @@ extension TraktClient {
 
 extension SimklClient {
     /// Simkl list of a title ("plantowatch", "watching", "completed", …), nil = on no list.
-    /// Reads `/sync/all-items` fresh, because Simkl list membership is exclusive.
-    func listStatus(imdb: String, token: SyncToken) async throws -> String? {
-        let o = try await json(request("GET", "/sync/all-items", token: token)) as? [String: Any] ?? [:]
+    /// Reads `/sync/all-items/{movies|shows}` fresh, because Simkl list membership is exclusive.
+    func listStatus(imdb: String, series: Bool, token: SyncToken) async throws -> String? {
+        let o = try await json(request("GET", "/sync/all-items/\(series ? "shows" : "movies")", token: token)) as? [String: Any] ?? [:]
         for key in ["movies", "shows", "anime"] {
             for e in o[key] as? [[String: Any]] ?? [] {
                 let t = (e["movie"] ?? e["show"]) as? [String: Any]
@@ -73,7 +73,8 @@ extension SimklClient {
 
     /// Sends one queued change. Never throws: network errors count as `.retry`.
     /// The watchlist never uses `/sync/history/remove` (it would also delete watched episodes): Simkl has no call
-    /// that only takes a title off "plan to watch", so a removal is skipped there. An add only goes out when the
+    /// that only takes a title off "plan to watch", so a removal stays local (held for 30 days, so the next pull
+    /// does not bring it back onto a Simkl-backed watchlist row). An add only goes out when the
     /// title is on no Simkl list, because adding moves it out of "watching"/"completed".
     public func apply(_ c: SyncChange, token: SyncToken) async -> SyncWriteResult {
         guard let imdb = c.imdb else { return .confirmed }
@@ -81,12 +82,12 @@ extension SimklClient {
         do {
             switch c.kind {
             case .watchlistAdd:
-                if let status = try await listStatus(imdb: imdb, token: token) {
+                if let status = try await listStatus(imdb: imdb, series: c.series, token: token) {
                     return .skipped("Simkl: Merkliste nicht geändert (Titel steht in „\(status)“)")
                 }
                 return try await post("/sync/add-to-list", SyncWriteBody.titles(imdb: imdb, series: c.series, extra: ["to": "plantowatch"]), token)
             case .watchlistRemove:
-                return .skipped("Simkl: von der Merkliste nur lokal entfernt (Simkl kann das nicht ohne den Verlauf zu löschen)")
+                return .unconfirmed("Merkliste: Simkl nur lokal entfernt (Simkl kann das nicht, ohne den Verlauf zu löschen)")
             case .markUnwatched: return try await post("/sync/history/remove", plain, token)
             case .markWatched: return try await post("/sync/history", plain, token)
             case .removeFromContinue:

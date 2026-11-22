@@ -151,7 +151,7 @@ extension AppModel {
                     RemoteLog.info("sync", "\(name): übersprungen – \(why)")
                     syncQueue.confirm(c.id, service: s, createdAt: c.createdAt)
                 case .unconfirmed(let why):
-                    RemoteLog.info("sync", "\(name): nicht bestätigt – \(why); bleibt lokal bis zu 30 Tage gemerkt")
+                    RemoteLog.info("sync", "\(why) · \(c.item.name): bleibt lokal bis zu 30 Tage gemerkt")
                     syncQueue.confirm(c.id, service: s, createdAt: c.createdAt, held: true)
                 case .rejected(let status):
                     RemoteLog.error("sync", "\(name): vom Dienst abgelehnt (HTTP \(status)), wird nicht erneut gesendet")

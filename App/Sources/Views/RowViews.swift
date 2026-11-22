@@ -250,7 +250,14 @@ struct HomeRowView: View {
         let routes = displayed.map { route(for: $0) }
         guard let i = routes.firstIndex(of: r), let n = TileMenuAction.neighbour(removing: i, count: routes.count) else { return }
         let target = routes[n]
-        DispatchQueue.main.async { focusedRoute = target }   // after the menu has closed
+        // Closing the menu hands focus back to the card: retry up to 3 times, 100 ms apart, until it lands.
+        Task { @MainActor in
+            for _ in 0..<3 {
+                try? await Task.sleep(for: .milliseconds(100))
+                if focusedRoute == target { return }
+                focusedRoute = target
+            }
+        }
     }
 }
 

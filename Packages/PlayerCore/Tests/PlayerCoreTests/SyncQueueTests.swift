@@ -215,13 +215,14 @@ private func jsonBody(_ r: APIRequest) -> [String: Any] { (try? JSONSerializatio
     let w = q.record(.markWatched, item: dune, imdb: dune.id, series: false, services: ["simkl"], now: t0)
     // Add: only when the title is on no Simkl list.
     #expect(await s.apply(add, token: tok) == .confirmed)
-    #expect(http.sent[0].url.path == "/sync/all-items" && http.sent[1].url.path == "/sync/add-to-list")
+    #expect(http.sent[0].url.path == "/sync/all-items/movies" && http.sent[1].url.path == "/sync/add-to-list")
     #expect((jsonBody(http.sent[1])["movies"] as? [[String: Any]])?.first?["to"] as? String == "plantowatch")
     guard case .skipped = await s.apply(addBear, token: tok) else { Issue.record("completed show must not move"); return }
     #expect(http.sent.count == 3)
     // Removal never calls /sync/history/remove.
     let rem = SyncChange(kind: .watchlistRemove, itemID: bear.id, imdb: bear.id, item: bear, series: true, createdAt: t0, pending: ["simkl"])
-    guard case .skipped = await s.apply(rem, token: tok) else { Issue.record("removal must be skipped"); return }
+    guard case .unconfirmed = await s.apply(rem, token: tok) else { Issue.record("removal stays local"); return }
+    #expect(http.sent[2].url.path == "/sync/all-items/shows")
     #expect(http.sent.count == 3 && !http.sent.contains { $0.url.path == "/sync/history/remove" })
     #expect(await s.apply(w, token: tok) == .rejected(400))
     #expect(http.sent[3].url.path == "/sync/history")
@@ -242,4 +243,30 @@ private func jsonBody(_ r: APIRequest) -> [String: Any] { (try? JSONSerializatio
     q.confirm(c.id, service: "trakt", createdAt: c.createdAt, held: true, now: t0)
     #expect(q.pendingCount == 0 && q.prune(now: t0.addingTimeInterval(SyncQueue.confirmedGrace + 60)) == 0)
     #expect(q.prune(now: t0.addingTimeInterval(SyncQueue.maxAge + 1)) == 1)
+}
+
+@Test func simklOnlyWatchlistRemovalStaysHiddenAfterFreshPull() async {
+    let s = SimklClient(clientID: "C", http: FakeSender([]))
+    var q = SyncQueue()
+    let rem = q.record(.watchlistRemove, item: dune, imdb: dune.id, series: false, services: ["simkl"], now: t0)
+    guard case .unconfirmed = await s.apply(rem, token: SyncToken(accessToken: "A")) else { Issue.record("held expected"); return }
+    q.confirm(rem.id, service: "simkl", createdAt: rem.createdAt, held: true, now: t0)
+    // A fresh Simkl pull long after still lists the title: it stays hidden until the 30 days are over.
+    #expect(q.notePull(watchlistStartedAt: t0.addingTimeInterval(24 * 3600)) == 0)
+    #expect(q.prune(now: t0.addingTimeInterval(24 * 3600)) == 0)
+    #expect(q.applyWatchlist([dune, bear]).map(\.id) == [bear.id])
+    #expect(q.prune(now: t0.addingTimeInterval(SyncQueue.maxAge + 1)) == 1)
+}
+
+@Test func syncQueueStoreReadsFirstBuildFiles() throws {
+    let storage = FileBlobStorage(directory: tempDir())
+    let p = UUID()
+    var q = SyncQueue()
+    q.record(.watchlistRemove, item: MetaPreview(id: "tmdb:9", type: "movie", name: "Neu"), imdb: "tt9", series: false, services: ["trakt"], now: t0)
+    // Old format: ISO-8601 dates, keyed by the tile ID.
+    q.changes = Dictionary(uniqueKeysWithValues: q.changes.values.map { ("watchlist:tmdb:9", $0) })
+    let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
+    try storage.write("syncqueue-\(p.uuidString).json", try enc.encode(q))
+    let back = SyncQueueStore(storage: storage).load(profile: p)
+    #expect(back.changes.keys.sorted() == ["watchlist:tt9"])
 }
