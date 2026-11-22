@@ -247,9 +247,20 @@ final class FusionKitStore: ObservableObject {
     /// 24-h-Zwischenspeicher, sonst von GitHub; ohne Netz der alte Stand von der Platte.
     private func loadPackageArt() async {
         // Erst der Stand von der Platte (sofort Bilder, auch ohne Netz), dann Dateiliste und Dateien auffrischen.
-        for s in FusionKitCatalog.packageArtSources(listing) where contents[s.id] == nil {
-            if let c = cached(s) { contents[s.id] = c }
-        }
+        // Das Zerlegen der Dateien läuft abseits des Main Actors (die Startseite zeichnet gerade).
+        let disk = self.disk
+        let pending = FusionKitCatalog.packageArtSources(listing).filter { contents[$0.id] == nil }
+            .map { (src: $0, file: contentFile($0.id)) }
+        let parsed = await Task.detached { () -> [(String, FusionKitContent)] in
+            var out: [(String, FusionKitContent)] = []
+            for p in pending {
+                guard let d = disk.read(p.file),
+                      let c = try? FusionImport.parse(d, sourceKey: p.src.id, title: p.src.title) else { continue }
+                out.append((p.src.id, c))
+            }
+            return out
+        }.value
+        for (id, c) in parsed where contents[id] == nil { contents[id] = c }
         sync()
         await loadListing(force: false)
         let list = FusionKitCatalog.packageArtSources(listing)
@@ -327,21 +338,13 @@ final class FusionKitStore: ObservableObject {
         }
     }
 
-    /// Bildquellen aus allen geladenen Kit-Dateien: gewählte (Reihen bei aktivem Kit, per Handy eingetragene URLs)
-    /// vor den übrigen, sonst nach Titel.
+    /// Bildquellen aus den geladenen Kit-Dateien (`PackageArtSource.kitSources`): gewählte Dateien (Reihen bei
+    /// aktivem Kit, per Handy eingetragene URLs) und die Paket-Bilddateien, keine anderen Kit-Dateien.
     private func computeArtSources(settings s: FusionKitSettings) -> [PackageArtSource] {
         var chosen = Set(s.sources.filter(\.custom).map(\.id))
         if s.enabled { chosen.formUnion(s.selected.compactMap { FusionImport.sourceKey(ofID: $0) }) }
-        let all = sources
-        func title(_ key: String) -> String { all.first { $0.id == key }?.title ?? key }
-        let keys = contents.keys.sorted { a, b in
-            let ca = chosen.contains(a), cb = chosen.contains(b)
-            if ca != cb { return ca }
-            let ta = title(a), tb = title(b)
-            return ta != tb ? ta < tb : a < b
-        }
-        return keys.flatMap { k in
-            contents[k].map { PackageArtSource.kit($0, origin: chosen.contains(k) ? .chosenKit : .kit) } ?? []
-        }
+        let titles = Dictionary(sources.map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first })
+        return PackageArtSource.kitSources(contents: contents, titles: titles, chosen: chosen,
+                                           packFiles: Set(FusionKitCatalog.packageArtSources(listing).map(\.id)))
     }
 }

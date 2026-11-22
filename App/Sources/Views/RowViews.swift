@@ -438,17 +438,19 @@ struct FolderTile: View {
             }
             .frame(width: Theme.Tile.width(.logo, scale), height: Theme.Tile.height(.logo, scale))
         } else {
-            // Welle F-l: Paket-Kachel, deren Bild noch lädt (oder nicht lädt): eigener Farbverlauf statt grauer Fläche;
-            // der Titel steht unten links wie über dem Bild.
+            // Welle F-l: Titel über dem Bild wie bei der Quelle der Kachel. Paket-Kacheln mit Bild aus Kit oder Import
+            // zeigen keinen zweiten Titel (der Name steht im Bild); die Bedienungshilfe liest ihn weiter vor.
+            let titleOverImage = folder.coverImage == nil || folder.showsTitleOverImage
+            // Welle F-l: Paket-Kachel, deren Bild noch lädt (oder nicht lädt): eigener Farbverlauf statt grauer Fläche,
+            // mit Titel, solange keiner über dem Bild steht.
             RemoteImage(url: folder.coverImage ?? folder.backdrop,
-                        placeholder: style.map { AnyView(packageTile($0, kind: .landscape, title: false)) })
+                        placeholder: style.map { AnyView(packageTile($0, kind: .landscape, title: !titleOverImage)) })
                 .frame(width: Theme.Tile.width(.landscape, scale), height: Theme.Tile.height(.landscape, scale)).clipped()
                 // Welle F-g: bewegtes Fokusbild über dem Standbild (nur auf der fokussierten Kachel).
                 .overlay { if let g = folder.focusGif { FocusGIF(url: g, focused: focused) } }
                 .clipped()
                 .overlay(alignment: .bottomLeading) {
-                    // Paket-Kacheln zeigen immer den deutschen Titel, auch mit importiertem Bild.
-                    if folder.coverImage == nil || folder.showsTitleOverImage || ReadyPackages.isPackageFolder(folder.id) { Text(folder.title).font(.headline).shadow(radius: 4).padding(14) }
+                    if titleOverImage { Text(folder.title).font(.headline).shadow(radius: 4).padding(14) }
                 }
         }
     }

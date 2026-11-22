@@ -20,10 +20,16 @@ public struct PackageArtSource: Sendable, Equatable {
     public var id: String
     public var folders: [Folder]
     public var origin: Origin
+    /// Seitenverhältnis der Kachelbilder (`wide`, `poster`, `square`), nil = unbekannt. Die Paket-Kachel ist
+    /// breit; Quellen in anderem Format kommen nur zum Zug, wenn keine breite passt.
+    public var aspect: String?
 
-    public init(id: String, folders: [Folder], origin: Origin) {
-        self.id = id; self.folders = folders; self.origin = origin
+    public init(id: String, folders: [Folder], origin: Origin, aspect: String? = nil) {
+        self.id = id; self.folders = folders; self.origin = origin; self.aspect = aspect
     }
+
+    /// Breit oder unbekannt: passt zur 16:9-Paket-Kachel.
+    var fitsWideTile: Bool { aspect == nil || aspect?.lowercased() == "wide" }
 
     /// Importierte Collections des Profils (ohne die Pakete selbst).
     public static func userImports(_ collections: [MediaCollection]) -> [PackageArtSource] {
@@ -35,7 +41,23 @@ public struct PackageArtSource: Sendable, Equatable {
     public static func kit(_ content: FusionKitContent, origin: Origin) -> [PackageArtSource] {
         content.rows.compactMap { row in
             guard case .collection(let c) = row.body else { return nil }
-            return PackageArtSource(id: row.id, folders: c.folders, origin: origin)
+            return PackageArtSource(id: row.id, folders: c.folders, origin: origin, aspect: row.imageAspect)
+        }
+    }
+
+    /// Bildquellen aus geladenen Kit-Dateien (Schlüssel → Inhalt): gewählte Dateien (`chosen`) vor den übrigen,
+    /// sonst nach Titel, dann Schlüssel. Ungewählte Dateien nur, wenn sie Paket-Bilddateien sind (`packFiles`,
+    /// Breitformat Streaming/Genres) – sonst gewänne nach „Kit neu laden“ in den Einstellungen etwa eine Poster-Datei.
+    public static func kitSources(contents: [String: FusionKitContent], titles: [String: String],
+                                  chosen: Set<String>, packFiles: Set<String>) -> [PackageArtSource] {
+        let keys = contents.keys.filter { chosen.contains($0) || packFiles.contains($0) }.sorted { a, b in
+            let ca = chosen.contains(a), cb = chosen.contains(b)
+            if ca != cb { return ca }
+            let ta = titles[a] ?? a, tb = titles[b] ?? b
+            return ta != tb ? ta < tb : a < b
+        }
+        return keys.flatMap { k in
+            contents[k].map { kit($0, origin: chosen.contains(k) ? .chosenKit : .kit) } ?? []
         }
     }
 }
@@ -129,10 +151,12 @@ extension ReadyPackages {
         return cover
     }
 
-    /// Paket-Kacheln ohne eigenes Standbild übernehmen Standbild, Logo und Fokus-GIF einer passenden Kachel aus
-    /// `sources` (alle drei zusammen). Vorrang der Quellen: Herkunft (Nutzer-Import vor gewähltem Kit vor übrigem Kit),
-    /// dann die meisten Treffer in dieser Reihe (eine Reihe sieht einheitlich aus), dann die meisten GIFs, dann die
-    /// Reihenfolge in `sources`. Lücken füllt die nächste Quelle. Ohne Treffer: unverändert (Symbol-Kachel).
+    /// Paket-Kacheln ohne eigenes Standbild übernehmen Standbild, Logo, Fokus-GIF und Titel-Schalter (`hideTitle`)
+    /// einer passenden Kachel aus `sources`. Vorrang der Quellen: Breitformat (oder unbekannt) vor anderem Format –
+    /// ein Poster wäre in der 16:9-Kachel beschnitten –, dann Herkunft (Nutzer-Import vor gewähltem Kit vor übrigem
+    /// Kit), dann die meisten Treffer in dieser Reihe (eine Reihe sieht einheitlich aus), dann die meisten GIFs, dann
+    /// die Reihenfolge in `sources`. Lücken füllt die nächste Quelle.
+    /// Ohne Treffer: unverändert (Symbol-Kachel).
     public static func withArt(_ c: MediaCollection, sources: [PackageArtSource]) -> MediaCollection {
         let targets = c.folders.indices.filter { isPackageFolder(c.folders[$0].id) && c.folders[$0].coverImage == nil }
         guard !targets.isEmpty, !sources.isEmpty else { return c }
@@ -142,11 +166,14 @@ extension ReadyPackages {
             return (t, names, matchKeys(forFolderID: id))
         }
 
-        struct Hits { var order: Int; var origin: PackageArtSource.Origin; var gifs = 0; var byTarget: [Int: (folder: Folder, rank: Int)] = [:] }
+        struct Hits {
+            var order: Int; var origin: PackageArtSource.Origin; var wide: Bool
+            var gifs = 0; var byTarget: [Int: (folder: Folder, rank: Int)] = [:]
+        }
         var ranked: [Hits] = []
         for (order, s) in sources.enumerated() where !s.id.hasPrefix("pkg.") {
             let titled = s.folders.map { (normalizedArtName($0.title), $0) }
-            var h = Hits(order: order, origin: s.origin)
+            var h = Hits(order: order, origin: s.origin, wide: s.fitsWideTile)
             for w in wanted {
                 var best: (folder: Folder, rank: Int)?
                 for (title, f) in titled {
@@ -162,6 +189,7 @@ extension ReadyPackages {
         }
         guard !ranked.isEmpty else { return c }
         ranked.sort { a, b in
+            if a.wide != b.wide { return a.wide }
             if a.origin != b.origin { return a.origin < b.origin }
             if a.byTarget.count != b.byTarget.count { return a.byTarget.count > b.byTarget.count }
             if a.gifs != b.gifs { return a.gifs > b.gifs }
@@ -174,6 +202,8 @@ extension ReadyPackages {
             out.folders[w.index].coverImage = src.coverImage
             out.folders[w.index].logo = src.logo
             out.folders[w.index].focusGif = gifURL(of: src)
+            // Steht der Name schon im Bild (Kit: `hideTitle`), zeigt die Kachel keinen zweiten Titel darüber.
+            out.folders[w.index].hideTitle = src.hideTitle
         }
         return out
     }

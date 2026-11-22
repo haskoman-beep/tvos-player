@@ -129,8 +129,12 @@ private func art(_ c: MediaCollection, _ id: String) -> Folder? { c.folders.firs
     #expect(sources.count == 1)
     // Ohne Trakt Client ID wären die Kacheln ausgeblendet; als Bildquelle zählen sie trotzdem.
     #expect(sources.first?.folders.count == 2)
+    #expect(sources.first?.aspect == "wide")
     let out = ReadyPackages.withArt(ReadyPackages.genreCollection, sources: sources)
     #expect(art(out, "pkg.genres.Action")?.coverImage == "https://example.com/action-wide.png")
+    // Der Name steht im Kit-Bild: kein zweiter Titel über der Kachel.
+    #expect(art(out, "pkg.genres.Action")?.hideTitle == true)
+    #expect(art(out, "pkg.genres.Action")?.showsTitleOverImage == false)
     #expect(art(out, "pkg.genres.Krimi")?.coverImage == "https://example.com/crime-wide.png")
     #expect(PackageArtStats(folders: out.folders)?.logLine(row: "Genres") == "Paket-Bilder: Genres 2/10 mit Bild, 0 mit GIF")
 }
@@ -142,22 +146,69 @@ private func art(_ c: MediaCollection, _ id: String) -> Folder? { c.folders.firs
         return s
     }
     let listing = [
-        entry("widgets/widgets-sourced-streaming-wide-rdnoni-tinted.json"),
+        entry("widgets/widgets-sourced-streaming-wide-b-tinted.json"),
         entry("widgets/widgets-sourced-decades-wide-x.json"),
-        entry("widgets/widgets-sourced-genres-wide-mousa.a.json"),
-        entry("widgets/widgets-sourced-streaming-wide-rdnoni-color.json"),
+        entry("widgets/widgets-sourced-genres-wide-a.json"),
+        entry("widgets/widgets-sourced-streaming-wide-b-color.json"),
+        entry("widgets/widgets-sourced-genres-poster-a.json"),
         entry("setup/setup-x.json"),
         entry("widgets/widgets-sourced-genres-wide-own.json", custom: true),
     ]
     let picked = FusionKitCatalog.packageArtSources(listing)
-    #expect(picked.map(\.title) == ["Genres · mousa.a", "Streaming · rdnoni-color", "Streaming · rdnoni-tinted"])
+    #expect(picked.map(\.title) == ["Genres · a", "Streaming · b-color", "Streaming · b-tinted"])
     // Ohne Dateiliste: bekannte Dateien mit denselben IDs wie im Katalog.
     let fallback = FusionKitCatalog.packageArtSources([])
     #expect(fallback.count == 3)
-    #expect(fallback.contains { $0.id == FusionKitCatalog.kitSource(path: "widgets/widgets-sourced-genres-wide-mousa.a.json").id })
+    #expect(Set(fallback.map(\.id)) == Set(FusionKitCatalog.packageArtFallback.map { FusionKitCatalog.kitSource(path: $0).id }))
     #expect(fallback.allSatisfy { !$0.custom && $0.url.hasPrefix("https://") })
 }
 
 @Test func krimiTileHasOwnSymbol() {
     #expect(ReadyPackages.tileStyle(forFolderID: "pkg.genres.Krimi")?.symbol == "touchid")
+}
+
+@Test func wideArtBeatsOtherFormats() {
+    // Poster-Datei mit mehr Treffern verliert gegen die breite; unbekanntes Format zählt als breit.
+    let poster = PackageArtSource(id: "kit.poster", folders: [
+        tile("Netflix", "https://example.com/p-n.jpg"), tile("Disney", "https://example.com/p-d.jpg"),
+        tile("Joyn", "https://example.com/p-j.jpg"),
+    ], origin: .chosenKit, aspect: "poster")
+    let wide = PackageArtSource(id: "kit.wide", folders: [tile("Netflix", "https://example.com/w-n.jpg")], origin: .kit, aspect: "wide")
+    let unknown = PackageArtSource(id: "nuvio.c", folders: [tile("Disney+", "https://example.com/u-d.webp")], origin: .userImport)
+    let out = ReadyPackages.withArt(ReadyPackages.streamingDE, sources: [poster, wide, unknown])
+    #expect(art(out, "pkg.streaming-de.8")?.coverImage == "https://example.com/w-n.jpg")
+    #expect(art(out, "pkg.streaming-de.337")?.coverImage == "https://example.com/u-d.webp")
+    // Nur die Poster-Datei kennt Joyn: dann kommt sie zum Zug.
+    #expect(art(out, "pkg.streaming-de.304")?.coverImage == "https://example.com/p-j.jpg")
+}
+
+@Test func packageArtCopiesTitleSwitch() {
+    var shown = tile("Drama", "https://example.com/d.webp")
+    shown.hideTitle = false
+    var hidden = tile("Horror", "https://example.com/h.webp")
+    hidden.hideTitle = true
+    let src = PackageArtSource(id: "nuvio.g", folders: [shown, hidden, tile("Action", "https://example.com/a.webp")], origin: .userImport)
+    let out = ReadyPackages.withArt(ReadyPackages.genreCollection, sources: [src])
+    #expect(art(out, "pkg.genres.Drama")?.showsTitleOverImage == true)
+    #expect(art(out, "pkg.genres.Horror")?.showsTitleOverImage == false)
+    // Import ohne Angabe: wie dessen eigene Kachel kein Titel über dem Bild.
+    #expect(art(out, "pkg.genres.Action")?.hideTitle == nil)
+    #expect(art(out, "pkg.genres.Action")?.showsTitleOverImage == false)
+    // Ohne Bild bleibt der Titel-Schalter der Paket-Kachel unberührt.
+    #expect(art(out, "pkg.genres.Krimi")?.hideTitle == nil)
+}
+
+@Test func kitSourcesSkipUnchosenNonPackFiles() {
+    func content(_ title: String) -> FusionKitContent {
+        FusionKitContent(rows: [FusionKitRow(id: "fusion.\(title).r", title: title, style: .landscape,
+            body: .collection(MediaCollection(id: "fusion.\(title).r", title: title, folders: [tile("Netflix", "https://example.com/\(title).jpg")])),
+            imageAspect: "wide")])
+    }
+    let contents = ["pack2": content("pack2"), "pack1": content("pack1"), "poster": content("poster"), "chosen": content("chosen")]
+    let titles = ["pack1": "Streaming · a", "pack2": "Genres · b", "poster": "Genres (Poster) · c", "chosen": "Zuletzt gewählt"]
+    let out = PackageArtSource.kitSources(contents: contents, titles: titles, chosen: ["chosen"], packFiles: ["pack1", "pack2"])
+    // Gewählte zuerst, dann Paket-Bilddateien nach Titel; die ungewählte andere Datei fehlt.
+    #expect(out.map(\.id) == ["fusion.chosen.r", "fusion.pack2.r", "fusion.pack1.r"])
+    #expect(out.map(\.origin) == [.chosenKit, .kit, .kit])
+    #expect(out.allSatisfy { $0.aspect == "wide" })
 }
