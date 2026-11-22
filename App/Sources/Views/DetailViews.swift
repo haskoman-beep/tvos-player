@@ -21,12 +21,21 @@ struct FolderView: View {
 struct CollectionView: View {
     @EnvironmentObject var model: AppModel
     let collectionID: String
+    /// Fehlende Collection erst nach kurzer Ladezeit als fehlend werten (Fusion-Kit lädt nach; kein „Zurück“-Flackern).
+    @State private var missingSettled = false
     var body: some View {
+        let c = model.collection(collectionID)
         ScrollView(.vertical) {
             HomeRowView(row: HomeRow(content: .collection(id: collectionID)), onActivate: { $0 })
-            if model.collection(collectionID)?.folders.isEmpty == true {
-                FocusAnchor(kind: .back).padding(.leading, 60)   // N6 (Welle F-c): leere oder fehlende Collection
+            // N6 (Welle F-c): leere Collection sofort, fehlende erst nach der Ladezeit.
+            if c?.folders.isEmpty == true || (c == nil && missingSettled) {
+                FocusAnchor(kind: .back).padding(.leading, 60)
             }
+        }
+        .task {
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            missingSettled = true
         }
     }
 }
@@ -205,10 +214,12 @@ struct DetailView: View {
         }
         .task(id: returnFocusToken) {
             guard pendingReturnFocus else { return }
-            pendingReturnFocus = false
             // Erst nach dem Zurück-Übergang: sonst setzt die Rückkehr-Animation den Fokus wieder auf den alten Knopf.
             try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled else { return }
+            // Erst hier verbrauchen (Re-Review N1): eine abgebrochene Aufgabe (alte id beim Erscheinen) lässt das
+            // Flag für die neu gestartete stehen.
+            pendingReturnFocus = false
             let target = playbackFocusTarget()
             if let s = target.season, s != season { season = s }
             await applyFocus(target, reason: "nach dem Player")
