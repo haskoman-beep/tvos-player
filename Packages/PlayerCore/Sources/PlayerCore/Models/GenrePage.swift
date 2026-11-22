@@ -68,6 +68,44 @@ public struct GenrePageSources: Equatable, Sendable {
     }
 }
 
+/// Wave G2 R1: which folders open as a genre page. Only genre folders: the package `pkg.genres.*` and folders of a
+/// genre collection (kit or import titled „Genres“, „Film-Genres“, „Beliebte Genres“ …). Streaming, decades,
+/// directors, awards and the user's own folders keep the row page (`FolderView`), even with the same shape.
+public enum GenrePageRule {
+    public static let packagePrefix = "pkg.genres."
+
+    /// A collection that holds genre tiles: the genre package, or a title / ID naming genres.
+    public static func isGenreCollection(id: String, title: String) -> Bool {
+        if id == "pkg.genres" { return true }
+        if id.hasPrefix("pkg.") { return false }
+        let t = title.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+        return t.contains("genre") || id.lowercased().contains("-genres")
+    }
+
+    /// Collection IDs a folder ID may belong to: kit and import folders are `<collection id>.<item id>` (item IDs
+    /// may hold dots), so every dot prefix, longest first.
+    public static func parentCandidates(ofFolderID id: String) -> [String] {
+        var out: [String] = []
+        var rest = Substring(id)
+        while let dot = rest.lastIndex(of: ".") {
+            rest = rest[..<dot]
+            if !rest.isEmpty { out.append(String(rest)) }
+        }
+        return out
+    }
+
+    /// Genre page sources for `folder`, or nil for the row page. `collection` looks up a collection by ID (profile
+    /// or kit); the parent is the candidate that really lists this folder.
+    public static func sources(for folder: Folder, collection: (String) -> MediaCollection?) -> GenrePageSources? {
+        if folder.id.hasPrefix(packagePrefix) { return GenrePageSources.of(folder) }
+        for c in parentCandidates(ofFolderID: folder.id) {
+            guard let parent = collection(c), parent.folders.contains(where: { $0.id == folder.id }) else { continue }
+            return isGenreCollection(id: parent.id, title: parent.title) ? GenrePageSources.of(folder) : nil
+        }
+        return nil
+    }
+}
+
 /// Paging state of one grid (one filter). Collects blocks, drops titles already shown, knows the end of the source,
 /// a failed block (retry row at the end, the shown titles stay) and when the focus is close enough to the end to
 /// load the next block.
@@ -84,10 +122,16 @@ public struct GenrePaging: Equatable, Sendable {
     public private(set) var inFlight: GenrePageRequest?
     public private(set) var failed = false
     public private(set) var reachedEnd = false
+    /// Blocks in a row without a new title (review M-3/M-4).
+    public private(set) var duplicateStreak = 0
     private var seen = Set<String>()
 
     /// TMDB serves at most page 500 of a discover query.
     public static let tmdbMaxPage = 500
+    /// Blocks in a row without a new title that end the source: an addon that ignores `skip` repeats its first page
+    /// (2: one shifted block alone does not end it); a TMDB answer that ignores `page` (3; else up to page 500).
+    public static let duplicateLimitAddon = 2
+    public static let duplicateLimitTMDB = 3
     /// Rows before the end at which the next block is requested.
     public static let prefetchRows = 2
 
@@ -107,9 +151,9 @@ public struct GenrePaging: Equatable, Sendable {
     }
 
     /// Answer to `request`. `totalPages`: TMDB's `total_pages` (nil = unknown). Returns how many new titles were
-    /// added. An empty block ends the source; for an addon also a block with no new title (an addon that ignores
-    /// `skip` repeats its first page). A TMDB page of only duplicates does not end it (the order shifted between
-    /// two requests); its last page is `totalPages`.
+    /// added. An empty block ends the source, and so do `duplicateLimitAddon` / `duplicateLimitTMDB` blocks in a row
+    /// with no new title (a single such block only means the order shifted between two requests); TMDB also ends at
+    /// `totalPages` and page 500.
     /// An answer to an older request (e.g. after a filter switch) is ignored and returns 0.
     @discardableResult
     public mutating func receive(_ request: GenrePageRequest, items new: [MetaPreview], totalPages: Int? = nil) -> Int {
@@ -122,7 +166,9 @@ public struct GenrePaging: Equatable, Sendable {
         for m in new where seen.insert(m.id).inserted {
             items.append(m); added += 1
         }
-        if new.isEmpty || (style == .addon && added == 0) { reachedEnd = true }
+        duplicateStreak = added == 0 ? duplicateStreak + 1 : 0
+        let limit = style == .addon ? Self.duplicateLimitAddon : Self.duplicateLimitTMDB
+        if new.isEmpty || duplicateStreak >= limit { reachedEnd = true }
         if case .tmdbPage(let p) = request {
             if let totalPages, p >= totalPages { reachedEnd = true }
             if p >= Self.tmdbMaxPage { reachedEnd = true }

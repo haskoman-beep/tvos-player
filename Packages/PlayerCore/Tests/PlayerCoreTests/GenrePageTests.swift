@@ -103,10 +103,20 @@ private func discover(_ id: String, _ t: MediaType) -> CatalogSource {
     // Overlap: skip counts raw entries, dedup drops the overlap.
     #expect(p.receive(.addonSkip(100), items: ms(95...150)) == 50)
     #expect(p.beginNext() == .addonSkip(156))
-    // An addon that ignores skip returns its first page again: no new title, end.
+    // An addon that ignores skip returns its first page again: one such block alone does not end (order may
+    // shift), the second in a row does.
     #expect(p.receive(.addonSkip(156), items: ms(1...100)) == 0)
+    #expect(!p.reachedEnd)
+    #expect(p.beginNext() == .addonSkip(256))
+    #expect(p.receive(.addonSkip(256), items: ms(1...100)) == 0)
     #expect(p.reachedEnd && p.beginNext() == nil)
     #expect(p.items.count == 150)
+    // A new title in between resets the streak.
+    var q = GenrePaging(style: .addon)
+    _ = q.beginNext(); q.receive(.addonSkip(0), items: ms(1...10))
+    _ = q.beginNext(); q.receive(.addonSkip(10), items: ms(1...10))
+    _ = q.beginNext(); q.receive(.addonSkip(20), items: ms(11...20))
+    #expect(q.duplicateStreak == 0 && !q.reachedEnd)
 }
 
 @Test func pagingErrorAndRetry() {
@@ -184,4 +194,66 @@ private func discover(_ id: String, _ t: MediaType) -> CatalogSource {
     await #expect(throws: TMDBError.unsupported) {
         _ = try await client.page(for: CatalogSource(id: "c", title: "c", kind: .tmdbCollection(id: "1"), mediaType: .movie), page: 1)
     }
+}
+
+@Test func tmdbDuplicateOnlyPagesStopAfterThree() {
+    // A list answer that ignores `page` and has no total_pages: ends after 3 pages in a row without a new title.
+    var p = GenrePaging(style: .tmdb)
+    _ = p.beginNext(); p.receive(.tmdbPage(1), items: ms(1...20))
+    for i in 2...3 {
+        _ = p.beginNext(); p.receive(.tmdbPage(i), items: ms(1...20))
+        #expect(!p.reachedEnd)
+    }
+    _ = p.beginNext(); p.receive(.tmdbPage(4), items: ms(1...20))
+    #expect(p.reachedEnd && p.pagesLoaded == 4)
+}
+
+// Wave G2 R1 (review I-1): only genre folders open as a genre page.
+private func kit(_ id: String, _ title: String, _ folders: [Folder]) -> MediaCollection {
+    MediaCollection(id: id, title: title, folders: folders)
+}
+private func pair(_ fid: String) -> Folder {
+    Folder(id: fid, title: fid, sources: [discover(fid + ".0", .movie), discover(fid + ".1", .series)])
+}
+
+@Test func genreRuleOnlyGenreFolders() throws {
+    let none: (String) -> MediaCollection? = { _ in nil }
+    // Genre package → page; streaming package (four lists, and also by rule) → old view.
+    let action = try #require(ReadyPackages.genreCollection.folders.first)
+    #expect(GenrePageRule.sources(for: action, collection: none) != nil)
+    for f in ReadyPackages.streamingDE.folders {
+        #expect(GenrePageRule.sources(for: f, collection: { $0 == "pkg.streaming-de" ? ReadyPackages.streamingDE : nil }) == nil)
+    }
+    // Kit collections with 1 film + 1 series list per tile.
+    let genres = kit("fusion.widgets-genres.collection", "Genres", [pair("fusion.widgets-genres.collection.action.v2")])
+    let movieGenres = kit("fusion.abc123.w1", "Film-Genres", [pair("fusion.abc123.w1.i0")])
+    let streaming = kit("fusion.widgets-streaming.collection", "Streaming", [pair("fusion.widgets-streaming.collection.netflix")])
+    let decades = kit("fusion.widgets-decades.collection", "Jahrzehnte", [pair("fusion.widgets-decades.collection.80s")])
+    let directors = kit("fusion.widgets-directors.collection", "Regie", [pair("fusion.widgets-directors.collection.nolan")])
+    let own = kit("own.1", "Meine Ordner", [pair("own.1.f")])
+    let all = [genres, movieGenres, streaming, decades, directors, own]
+    let lookup: (String) -> MediaCollection? = { id in all.first { $0.id == id } }
+    #expect(GenrePageRule.sources(for: genres.folders[0], collection: lookup) != nil)
+    #expect(GenrePageRule.sources(for: movieGenres.folders[0], collection: lookup) != nil)
+    #expect(GenrePageRule.sources(for: streaming.folders[0], collection: lookup) == nil)
+    #expect(GenrePageRule.sources(for: decades.folders[0], collection: lookup) == nil)
+    #expect(GenrePageRule.sources(for: directors.folders[0], collection: lookup) == nil)
+    #expect(GenrePageRule.sources(for: own.folders[0], collection: lookup) == nil)
+    // Unknown parent: old view.
+    #expect(GenrePageRule.sources(for: pair("x.y"), collection: none) == nil)
+    // A genre collection tile that is not pageable keeps the old view too.
+    let trakt = Folder(id: "fusion.widgets-genres.collection.t", title: "T",
+                       sources: [CatalogSource(id: "t", title: "t", kind: .trakt(user: "u", list: "l"), mediaType: .movie)])
+    let g2 = kit("fusion.widgets-genres.collection", "Genres", [trakt])
+    #expect(GenrePageRule.sources(for: trakt, collection: { $0 == g2.id ? g2 : nil }) == nil)
+}
+
+@Test func genreRuleCollectionNames() {
+    #expect(GenrePageRule.isGenreCollection(id: "pkg.genres", title: "Genres"))
+    #expect(!GenrePageRule.isGenreCollection(id: "pkg.streaming-de", title: "Streaming-Dienste"))
+    #expect(GenrePageRule.isGenreCollection(id: "fusion.k.collection", title: "Beliebte Genres"))
+    #expect(GenrePageRule.isGenreCollection(id: "fusion.widgets-genres.collection", title: "Kacheln"))
+    #expect(!GenrePageRule.isGenreCollection(id: "fusion.k.collection", title: "Preise"))
+    #expect(GenrePageRule.parentCandidates(ofFolderID: "a.b.c.d") == ["a.b.c", "a.b", "a"])
+    #expect(GenrePageRule.parentCandidates(ofFolderID: "plain").isEmpty)
 }

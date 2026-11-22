@@ -6,6 +6,19 @@ import PlayerCore
 /// duplicates dropped, a failed block ends the grid with a small "Erneut versuchen" row. Paging logic: PlayerCore
 /// `GenrePaging`; tiles, poster size and badges as in the home rows (`PosterCard`); focus room as wave F-m
 /// (`Theme.Focus`, `FocusHeadroom`).
+/// Wave G2 R1: genre folders open the genre page, every other folder the row page (PlayerCore `GenrePageRule`).
+struct FolderRouteView: View {
+    @EnvironmentObject var model: AppModel
+    let folder: Folder
+    var body: some View {
+        if let g = GenrePageRule.sources(for: folder, collection: { model.collection($0) }) {
+            GenrePageView(folder: folder, sources: g)
+        } else {
+            FolderView(folder: folder)
+        }
+    }
+}
+
 struct GenrePageView: View {
     @EnvironmentObject var model: AppModel
     let folder: Folder
@@ -15,6 +28,11 @@ struct GenrePageView: View {
     @State private var paging: [GenreFilter: GenrePaging] = [:]
     @FocusState private var focusedID: String?
     @FocusState private var focusedFilter: GenreFilter?
+    /// Review I-2: the footer retry button keeps the focus while its block loads (spinner inside).
+    @FocusState private var retryFocused: Bool
+    @State private var retrying = false
+    /// Review M-1: page on screen; a block that lands after leaving it does not chain the next one.
+    @State private var onScreen = false
 
     init(folder: Folder, sources: GenrePageSources) {
         self.folder = folder; self.sources = sources
@@ -41,7 +59,8 @@ struct GenrePageView: View {
                 Text(folder.title).textRole(.display).accessibilityAddTraits(.isHeader)
                 filterBar
                 grid(state, columns: cols, tileWidth: tile.width, spacing: spacing, rowGap: rowGap)
-                footer(state, cardHeight: cardHeight)
+                    .zIndex(1)   // review M-6: a lifted card of the last row draws above the footer
+                footer(state)
             }
             .padding(.horizontal, Theme.Space.edge)
             .padding(.top, max(0, 40 - room))
@@ -62,7 +81,11 @@ struct GenrePageView: View {
             lastIndex = i
             prefetchIfNeeded(columns: cols)
         }
-        .onAppear { RemoteLog.info("genre", "Genre: \(folder.title) geöffnet, Filter \(filter.title) (\(sources.available.map(\.title).joined(separator: "/")))") }
+        .onAppear {
+            onScreen = true
+            RemoteLog.info("genre", "Genre: \(folder.title) geöffnet, Filter \(filter.title) (\(sources.available.map(\.title).joined(separator: "/")))")
+        }
+        .onDisappear { onScreen = false }
     }
 
     /// Last focused grid position (for the prefetch check when a block lands).
@@ -110,7 +133,7 @@ struct GenrePageView: View {
             Text(model.tmdb == nil && isTMDB(filter) ? "TMDB-Key fehlt (Einstellungen)" : "Keine Titel gefunden.")
                 .textRole(.rowDetail)
         case .failedFirst:
-            retryButton(text: "Laden fehlgeschlagen – erneut versuchen")
+            retryButton(text: "Laden fehlgeschlagen – erneut versuchen", loading: false)
         case .items:
             LazyVGrid(columns: Array(repeating: GridItem(.fixed(tileWidth), spacing: spacing), count: columns),
                       alignment: .leading, spacing: rowGap) {
@@ -129,25 +152,30 @@ struct GenrePageView: View {
     }
 
     @ViewBuilder
-    private func footer(_ state: GenrePaging, cardHeight: CGFloat) -> some View {
-        switch state.footer {
-        case .none: EmptyView()
-        case .loading: ProgressView().frame(maxWidth: .infinity, alignment: .leading)
-        case .retry: retryButton(text: "Erneut versuchen")
+    private func footer(_ state: GenrePaging) -> some View {
+        // Review I-2: after "Erneut versuchen" the button stays (spinner inside, one branch = same view identity, so
+        // it keeps the focus also when the block fails again) and the focus does not fall back to the top of the page;
+        // when the block lands the focus moves to its first new title.
+        if state.footer == .retry || (state.footer == .loading && retrying) {
+            retryButton(text: "Erneut versuchen", loading: state.footer == .loading)
+        } else if state.footer == .loading {
+            ProgressView().frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private func retryButton(text: String) -> some View {
+    private func retryButton(text: String, loading: Bool) -> some View {
         Button {
+            guard !loading else { return }
             RemoteLog.info("genre", "Genre: \(folder.title) \(filter.title) erneut versuchen")
             retry(filter)
         } label: {
             HStack(spacing: Theme.Space.xs) {
-                Image(systemName: "arrow.clockwise")
+                if loading { ProgressView() } else { Image(systemName: "arrow.clockwise") }
                 Text(text)
             }
         }
         .buttonStyle(ThemeActionButtonStyle())
+        .focused($retryFocused)
         .padding(.vertical, Theme.Space.s)
     }
 
@@ -162,6 +190,11 @@ struct GenrePageView: View {
     private func startFirst(_ f: GenreFilter) {
         guard let src = sources.source(for: f) else { return }
         var p = GenrePaging(source: src)
+        // Review M-2: the home row's cached first block shows at once (same request: TMDB page 1 / addon skip 0).
+        if src.limit == nil, let cached = model.cache[src.id], !cached.isEmpty, let first = p.beginNext() {
+            let added = p.receive(first, items: cached)
+            RemoteLog.info("genre", p.logLine(genre: folder.title, filter: f, added: added) + " (Cache)")
+        }
         let r = p.beginNext()
         paging[f] = p
         if let r { load(f, r) }
@@ -177,6 +210,7 @@ struct GenrePageView: View {
 
     private func retry(_ f: GenreFilter) {
         guard var p = paging[f], let r = p.retry() else { return }
+        retrying = !p.items.isEmpty
         paging[f] = p
         load(f, r)
     }
@@ -188,16 +222,23 @@ struct GenrePageView: View {
             do {
                 let (items, total) = try await fetch(src, r)
                 guard var p = paging[f] else { return }
+                let before = p.items.count
                 let added = p.receive(r, items: items, totalPages: total)
                 paging[f] = p
                 RemoteLog.info("genre", p.logLine(genre: name, filter: f, added: added))
-                // A short or duplicate-only block does not move the focus: check again at once.
-                if f == filter { prefetchIfNeeded(columns: columnsNow) }
+                if retrying, f == filter {
+                    retrying = false
+                    // Review I-2: the retry button goes away; its focus moves to the first new (else the last) title.
+                    if retryFocused, let target = (p.items.count > before ? p.items[before] : p.items.last)?.id { focusedID = target }
+                }
+                // A short or duplicate-only block does not move the focus: check again at once (only on screen).
+                if f == filter, onScreen { prefetchIfNeeded(columns: columnsNow) }
             } catch {
                 guard var p = paging[f] else { return }
                 let line = p.failLine(genre: name, filter: f, request: r, error: "\(error)")
                 p.fail(r)
                 paging[f] = p
+                if f == filter { retrying = false }
                 RemoteLog.error("genre", line)
             }
         }

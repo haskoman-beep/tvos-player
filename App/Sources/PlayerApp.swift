@@ -201,7 +201,7 @@ struct RouteView: View {
     var body: some View {
         switch route {
         case .detail(let m): DetailView(item: m)
-        case .folder(let f): if let g = GenrePageSources.of(f) { GenrePageView(folder: f, sources: g) } else { FolderView(folder: f) }   // Wave G2
+        case .folder(let f): FolderRouteView(folder: f)   // Wave G2: genre folders → GenrePageView
         case .collection(let id): CollectionView(collectionID: id)
         case .streams(let r): StreamListView(request: r)
         case .person(let id, let name): PersonView(personID: id, name: name)
