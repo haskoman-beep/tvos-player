@@ -101,7 +101,7 @@ final class CollectionLinkStore: ObservableObject {
     // MARK: Import
 
     /// Largest body of a link (same as the phone page).
-    nonisolated static let maxLinkBytes = PhoneInputPage.maxBody
+    nonisolated static let maxLinkBytes = HTTPRequest.maxBody
     nonisolated static let linkTimeout: TimeInterval = 20
     /// Most stored imports per profile (they live in UserDefaults).
     static let maxLinks = 30
