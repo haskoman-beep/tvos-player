@@ -23,6 +23,14 @@ extension AetherBackend: PlaybackTechInfoSource {
     }
 }
 
+/// Spaltenbreiten und Zeilenhöhe (außerhalb des generischen Panels: dort gehen keine statischen Konstanten).
+private enum Size {
+    static let audioWidth: CGFloat = 520
+    static let subtitleWidth: CGFloat = 460
+    static let offsetWidth: CGFloat = 230
+    static let rowHeight: CGFloat = 52
+}
+
 /// Welle F-h2: schmales Panel oben über dem laufenden Video (Wisch nach unten), höchstens ein Drittel hoch.
 /// Spalten nebeneinander: Ton · Untertitel · Versatz, rechts Info als reine Textspalte. ◀/▶ wechselt die Spalte,
 /// ▲/▼ die Zeile, Auswahl wirkt sofort (Häkchen). Menü oder Wisch nach oben aus der obersten Zeile schließt nur das
@@ -43,13 +51,6 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
     /// Nutzer hat den Fokus bewegt (dann den Startfokus nicht mehr nachziehen).
     @State private var userMoved = false
     @State private var swipeUp = PanelSwipeUp()
-
-    private enum Size {
-        static let audioWidth: CGFloat = 520
-        static let subtitleWidth: CGFloat = 460
-        static let offsetWidth: CGFloat = 230
-        static let rowHeight: CGFloat = 52
-    }
 
     private var columns: [TrackPanelColumnModel] {
         let activeSub = engine.subtitleTracks.first { $0.id == engine.activeSubtitleID }
