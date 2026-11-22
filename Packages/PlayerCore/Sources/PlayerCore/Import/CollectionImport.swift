@@ -79,9 +79,16 @@ public struct PreviewPackEntry: Codable, Equatable, Hashable, Sendable {
 /// Preview pack: videos (with their sound track) and stills, matched to imported tiles by title.
 public enum PreviewPack {
     public static let maxTitleLength = 128
+    /// Most entries kept per pack (the pack is stored with the link).
+    public static let maxEntries = 1000
 
-    /// Title key: compatibility-decomposed, lower case, letters and digits only ("Disney+" → "disney",
-    /// " Apple  TV " → "appletv").
+    /// Exact key: only case and whitespace folded (" Disney +" → "disney+"). Tried first.
+    public static func exactKey(_ title: String) -> String {
+        String(title.lowercased().unicodeScalars.filter { !CharacterSet.whitespacesAndNewlines.contains($0) }.map(Character.init))
+    }
+
+    /// Coarse key: compatibility-decomposed, lower case, letters and digits only ("Disney+" → "disney",
+    /// " Apple  TV " → "appletv"). Fallback when the exact title has no entry.
     public static func key(_ title: String) -> String {
         let folded = title.decomposedStringWithCompatibilityMapping.lowercased()
         var v = String.UnicodeScalarView()
@@ -99,29 +106,26 @@ public enum PreviewPack {
                   !key(t).isEmpty, let v = FocusVideoURL.playable(r.videoURL) else { skipped += 1; continue }
             out.append(PreviewPackEntry(title: t, video: v, background: FusionImport.imageURL(r.backgroundURL)))
         }
+        if out.count > maxEntries { skipped += out.count - maxEntries; out = Array(out.prefix(maxEntries)) }
         return (out, skipped)
     }
 
-    /// Lookup by title key. A title that appears with different videos is ambiguous and dropped; later packs
-    /// (later in `entries`) do not override earlier ones.
+    /// Lookup by title: the exact key first ("Paramount+" and "Paramount" stay apart), then the coarse key. On equal
+    /// keys the first entry wins (earlier packs, earlier in a pack), as in the tool that writes the packs.
     public struct Index: Equatable, Sendable {
+        public private(set) var byExact: [String: PreviewPackEntry] = [:]
         public private(set) var byKey: [String: PreviewPackEntry] = [:]
         public var isEmpty: Bool { byKey.isEmpty }
 
         public init(_ entries: [PreviewPackEntry]) {
-            var ambiguous = Set<String>()
             for e in entries {
-                let k = PreviewPack.key(e.title)
-                if let old = byKey[k] {
-                    if old.video != e.video { ambiguous.insert(k) }
-                } else {
-                    byKey[k] = e
-                }
+                let x = PreviewPack.exactKey(e.title), k = PreviewPack.key(e.title)
+                if byExact[x] == nil { byExact[x] = e }
+                if byKey[k] == nil { byKey[k] = e }
             }
-            for k in ambiguous { byKey[k] = nil }
         }
 
-        public func entry(forTitle t: String) -> PreviewPackEntry? { byKey[PreviewPack.key(t)] }
+        public func entry(forTitle t: String) -> PreviewPackEntry? { byExact[PreviewPack.exactKey(t)] ?? byKey[PreviewPack.key(t)] }
     }
 
     /// Fills the gaps of matching tiles: focus video where there is none, still where there is none. The tile's own

@@ -272,16 +272,21 @@ final class AppModel: ObservableObject {
     }
 
     func importNuvio(data: Data) {
-        do {
-            let r = try NuvioImport.parse(data)
-            update { p in
-                for c in r.collections {
-                    if let i = p.collections.firstIndex(where: { $0.title == c.title }) {
-                        p.collections[i].folders = NuvioImport.mergeFolders(p.collections[i].folders, c.folders)
-                    } else { p.collections.append(c) }
-                }
+        do { importNuvio(result: try NuvioImport.parse(data)) } catch { lastError = "Import fehlgeschlagen: \(error)" }
+    }
+
+    /// Wave F-o round 3: `refresh` (media of the last import of a stored link) → the fresh media addresses win, the
+    /// user's own changes stay (`NuvioImport.refreshFolders`); nil → first import, only gaps are filled.
+    func importNuvio(result r: NuvioImportResult, refresh previous: [String: FolderMedia]? = nil) {
+        update { p in
+            for c in r.collections {
+                if let i = p.collections.firstIndex(where: { $0.title == c.title }) {
+                    p.collections[i].folders = previous.map {
+                        NuvioImport.refreshFolders(p.collections[i].folders, fresh: c.folders, collection: c.title, previous: $0)
+                    } ?? NuvioImport.mergeFolders(p.collections[i].folders, c.folders)
+                } else { p.collections.append(c) }
             }
-        } catch { lastError = "Import fehlgeschlagen: \(error)" }
+        }
     }
 
     /// Fertiges Paket oder anderes Collection-Objekt ins Profil übernehmen (falls noch nicht da).

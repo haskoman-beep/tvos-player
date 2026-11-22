@@ -31,6 +31,10 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 - Settings › Startseite: „Ton bei Kachel-Animation“ (default off) plays a tile video's own sound once per focus,
   faded in to reduced volume and faded out after about 12 s or at the end of the first pass. The picture keeps
   looping muted.
+- A collection link is read with a limit of 8 MB and a 20 s timeout and parsed once, off the main thread.
+  „Aktualisieren“ takes the fresh video, GIF and image addresses of a collection export and keeps only your own
+  changes. Pasted widget exports are kept in permanent storage. Preview packs match the exact title first, so
+  „Paramount+“ and „Paramount“ each get their own video. The sound count follows the result line.
 - Focus videos are cached on disk in two parts: silent clips (at most 50 MB, 20 MiB per file) and videos with a
   sound track (at most 150 MB, 30 MiB per file); only real video files are kept.
 

@@ -256,8 +256,8 @@ private func boxes(_ handlers: [String]) -> [UInt8] {
     let (entries, skipped) = try PreviewPack.parse(Data(json.utf8))
     #expect(entries.count == 6 && skipped == 2)
     let index = PreviewPack.Index(entries)
-    // Different videos under one title: dropped; same video twice: kept.
-    #expect(index.entry(forTitle: "Twin") == nil)
+    // Equal titles: the first entry wins.
+    #expect(index.entry(forTitle: "Twin")?.video == "https://example.invalid/t1.mp4")
     #expect(index.entry(forTitle: "SAME")?.video == "https://example.invalid/s.mp4")
     let c = MediaCollection(id: "c", title: "Dienste", folders: [
         Folder(id: "a", title: "netflix ", sources: []),
@@ -269,8 +269,8 @@ private func boxes(_ handlers: [String]) -> [UInt8] {
     #expect(art(out, "a")?.focusVideo == "https://example.invalid/n.mp4" && art(out, "a")?.coverImage == "https://example.invalid/n.jpg")
     // Own still kept, video added.
     #expect(art(out, "b")?.coverImage == "https://example.invalid/own.jpg" && art(out, "b")?.focusVideo == "https://example.invalid/d.mp4")
-    #expect(art(out, "c")?.focusVideo == nil && art(out, "d")?.focusVideo == "https://example.invalid/own.mp4")
-    #expect(PreviewPack.matches(index, in: [c]) == 2)
+    #expect(art(out, "c")?.focusVideo == "https://example.invalid/t1.mp4" && art(out, "d")?.focusVideo == "https://example.invalid/own.mp4")
+    #expect(PreviewPack.matches(index, in: [c]) == 3)
     #expect(PreviewPack.apply(PreviewPack.Index([]), to: c) == c)
 }
 
@@ -308,4 +308,43 @@ private func boxes(_ handlers: [String]) -> [UInt8] {
     let prime = folders.first { $0.title == "Prime" }
     #expect(prime?.focusVideo == nil && prime?.focusGif == "https://example.invalid/p.gif")
     #expect(prime.map(TileMotion.of) == .gif("https://example.invalid/p.gif"))
+}
+
+// Round 3 (I3): exact title first, so a service and a studio of the same brand keep their own videos.
+@Test func previewPackExactTitleBeforeCoarseKey() {
+    let index = PreviewPack.Index([
+        PreviewPackEntry(title: "Paramount+", video: "https://example.invalid/service.mp4"),
+        PreviewPackEntry(title: "Paramount", video: "https://example.invalid/studio.mp4"),
+        PreviewPackEntry(title: "Disney", video: "https://example.invalid/disney.mp4"),
+    ])
+    #expect(index.entry(forTitle: "Paramount+")?.video == "https://example.invalid/service.mp4")
+    #expect(index.entry(forTitle: " paramount ")?.video == "https://example.invalid/studio.mp4")
+    #expect(index.entry(forTitle: "PARAMOUNT +")?.video == "https://example.invalid/service.mp4")
+    // No exact entry: the coarse key ("disney") finds the first entry with that key.
+    #expect(index.entry(forTitle: "Disney+")?.video == "https://example.invalid/disney.mp4")
+    #expect(index.entry(forTitle: "Paramount Pictures") == nil)
+}
+
+// Round 3 (I4): "Aktualisieren" takes the fresh media addresses and keeps only the user's own changes.
+@Test func refreshReplacesMediaKeepsUserEdits() {
+    func f(_ t: String, cover: String?, video: String?) -> Folder {
+        Folder(id: "x." + t, title: t, coverImage: cover, sources: [], focusVideo: video)
+    }
+    let first = [f("N", cover: "https://example.invalid/n7.jpg", video: "https://example.invalid/n.focus.mp4?v=7"),
+                 f("P", cover: "https://example.invalid/p7.jpg", video: "https://example.invalid/p.focus.mp4?v=7")]
+    let snapshot = NuvioImport.media(of: [MediaCollection(id: "c", title: "Dienste", folders: first)])
+    var current = first
+    current[1].coverImage = "https://example.invalid/my-own.jpg"   // the user's own still
+    let fresh = [f("N", cover: "https://example.invalid/n8.jpg", video: "https://example.invalid/n.focus.mp4?v=8"),
+                 f("P", cover: "https://example.invalid/p8.jpg", video: "https://example.invalid/p.focus.mp4?v=8"),
+                 f("Q", cover: "https://example.invalid/q.jpg", video: nil)]
+    let out = NuvioImport.refreshFolders(current, fresh: fresh, collection: "Dienste", previous: snapshot)
+    #expect(out.count == 3)
+    #expect(out[0].focusVideo == "https://example.invalid/n.focus.mp4?v=8" && out[0].coverImage == "https://example.invalid/n8.jpg")
+    #expect(out[1].focusVideo == "https://example.invalid/p.focus.mp4?v=8" && out[1].coverImage == "https://example.invalid/my-own.jpg")
+    #expect(out[2].title == "Q")
+    // Without a snapshot (link stored before round 3) the fresh export wins.
+    #expect(NuvioImport.refreshFolders(current, fresh: fresh, collection: "Dienste", previous: [:])[1].coverImage == "https://example.invalid/p8.jpg")
+    // A plain first import still only fills gaps.
+    #expect(NuvioImport.mergeFolders(current, fresh)[0].focusVideo == "https://example.invalid/n.focus.mp4?v=7")
 }

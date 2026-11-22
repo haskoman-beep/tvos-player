@@ -11,9 +11,13 @@ struct CollectionLink: Codable, Hashable, Identifiable {
     var at: Date
     /// Entries of a preview pack (matched to tiles by title at display time).
     var pack: [PreviewPackEntry]?
+    /// Collection export: media addresses of the last import (a refresh keeps only the user's own changes).
+    var media: [String: FolderMedia]?
 
-    init(id: String, url: String?, format: String, summary: String, at: Date, pack: [PreviewPackEntry]? = nil) {
+    init(id: String, url: String?, format: String, summary: String, at: Date, pack: [PreviewPackEntry]? = nil,
+         media: [String: FolderMedia]? = nil) {
         self.id = id; self.url = url; self.format = format; self.summary = summary; self.at = at; self.pack = pack
+        self.media = media
     }
 
     init(from decoder: Decoder) throws {
@@ -24,6 +28,7 @@ struct CollectionLink: Codable, Hashable, Identifiable {
         summary = try c.decodeIfPresent(String.self, forKey: .summary) ?? ""
         at = try c.decodeIfPresent(Date.self, forKey: .at) ?? .distantPast
         pack = try c.decodeIfPresent([PreviewPackEntry].self, forKey: .pack)
+        media = try c.decodeIfPresent([String: FolderMedia].self, forKey: .media)
     }
 }
 
@@ -95,6 +100,29 @@ final class CollectionLinkStore: ObservableObject {
 
     // MARK: Import
 
+    /// Largest body of a link (same as the phone page).
+    nonisolated static let maxLinkBytes = PhoneInputPage.maxBody
+    nonisolated static let linkTimeout: TimeInterval = 20
+    /// Most stored imports per profile (they live in UserDefaults).
+    static let maxLinks = 30
+
+    private enum LinkError: Error { case http(Int), tooLarge }
+
+    /// Parsed once, off the main actor.
+    private enum Parsed: Sendable {
+        case widgets(FusionKitContent, FusionKitSource)
+        case collections(NuvioImportResult)
+        case pack([PreviewPackEntry], skipped: Int)
+    }
+
+    private let linkSession: URLSession = {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.urlCache = nil
+        cfg.timeoutIntervalForRequest = CollectionLinkStore.linkTimeout
+        cfg.timeoutIntervalForResource = CollectionLinkStore.linkTimeout
+        return URLSession(configuration: cfg)
+    }()
+
     /// Link from the TV field or the phone page: fetch, detect, import, keep the link.
     func importLink(_ raw: String, model: AppModel) async {
         ensure(model)
@@ -107,8 +135,8 @@ final class CollectionLinkStore: ObservableObject {
         defer { busy = false }
         RemoteLog.info("import", "Collection-Link: \(url.host ?? "?")")
         let data: Data
-        do { data = try await URLSessionFetcher().data(from: url) } catch {
-            model.lastError = "Import: Link nicht geladen (\(error))."
+        do { data = try await Self.fetch(url, session: linkSession) } catch {
+            model.lastError = "Import: Link nicht geladen (\(Self.describe(error)))."
             return
         }
         await importData(data, link: u, model: model)
@@ -139,58 +167,131 @@ final class CollectionLinkStore: ObservableObject {
         rebuildPack()
     }
 
-    private func importData(_ data: Data, link: String?, model: AppModel) async {
+    /// Body of a link, at most `maxLinkBytes` (a wrong link to a video or archive is stopped early).
+    private nonisolated static func fetch(_ url: URL, session: URLSession) async throws -> Data {
+        let (bytes, resp) = try await session.bytes(from: url)
+        if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            bytes.task.cancel()
+            throw LinkError.http(http.statusCode)
+        }
+        if resp.expectedContentLength > Int64(maxLinkBytes) { bytes.task.cancel(); throw LinkError.tooLarge }
+        var out = Data()
+        if resp.expectedContentLength > 0 { out.reserveCapacity(Int(resp.expectedContentLength)) }
+        for try await b in bytes {
+            out.append(b)
+            if out.count > maxLinkBytes { bytes.task.cancel(); throw LinkError.tooLarge }
+        }
+        return out
+    }
+
+    /// Plain German reason of a failed fetch.
+    private nonisolated static func describe(_ error: Error) -> String {
+        switch error {
+        case LinkError.http(let code): return "HTTP \(code)"
+        case LinkError.tooLarge: return "Datei größer als 8 MB – ist es wirklich ein JSON-Export?"
+        default:
+            switch (error as? URLError)?.code {
+            case .notConnectedToInternet?, .networkConnectionLost?: return "kein Netz"
+            case .timedOut?: return "Zeitüberschreitung"
+            case .cannotFindHost?, .dnsLookupFailed?: return "Server nicht gefunden"
+            case .secureConnectionFailed?, .serverCertificateUntrusted?: return "sichere Verbindung fehlgeschlagen"
+            case let c?: return "Netzfehler \(c.rawValue)"
+            case nil: return "unbekannter Fehler"
+            }
+        }
+    }
+
+    /// Detects and parses in one pass (off the main actor).
+    private nonisolated static func parse(_ data: Data, link: String?) -> (CollectionImportFormat, Result<Parsed, Error>) {
         let format = CollectionImportFormat.detect(data)
+        let r = Result<Parsed, Error> {
+            switch format {
+            case .widgets, .collectionList:
+                let src = FusionKitStore.source(link: link, data: data)
+                return .widgets(try FusionImport.parse(data, sourceKey: src.id, title: src.title), src)
+            case .collections: return .collections(try NuvioImport.parse(data))
+            case .previewPack:
+                let (entries, skipped) = try PreviewPack.parse(data)
+                return .pack(entries, skipped: skipped)
+            case .backup, .iconPack, .invalidJSON, .unknown: throw LinkError.http(0)
+            }
+        }
+        return (format, r)
+    }
+
+    private func importData(_ data: Data, link: String?, model: AppModel) async {
+        let (format, result) = await Task.detached(priority: .userInitiated) { Self.parse(data, link: link) }.value
         if let problem = format.problem {
             model.lastError = "Import: \(problem)"
             RemoteLog.info("import", "Collection-Import abgelehnt: \(format.name)")
             return
         }
-        var summary: String
-        var pack: [PreviewPackEntry]?
-        do {
-            switch format {
-            case .widgets, .collectionList:
-                let c = try FusionKitStore.shared.importData(data, link: link)
-                let collections = c.rows.compactMap { r -> MediaCollection? in
-                    if case .collection(let m) = r.body { return m }
-                    return nil
-                }.map { PreviewPack.apply(packIndex, to: $0) }
-                var s = ImportSummary.of(collections, soundVideos: await soundVideos(collections))
-                s.rows = c.rows.count
-                summary = s.line
-            case .collections:
-                let r = try NuvioImport.parse(data)
-                model.importNuvio(data: data)
-                let collections = r.collections.map { PreviewPack.apply(packIndex, to: $0) }
-                summary = ImportSummary.of(collections, soundVideos: await soundVideos(collections)).line
-            case .previewPack:
-                let (entries, skipped) = try PreviewPack.parse(data)
-                guard !entries.isEmpty else {
-                    model.lastError = "Import: Das Preview Pack enthält keine abspielbaren Videos (mp4/mov/m3u8 über https)."
-                    return
-                }
-                pack = entries
-                let index = PreviewPack.Index(entries)
-                let targets = model.profile.collections.filter { !$0.id.hasPrefix("pkg.") } + FusionKitStore.shared.importedCollections
-                let sound = await soundCount(Array(Set(entries.map(\.video))))
-                summary = ImportSummary.packLine(entries: entries.count, matched: PreviewPack.matches(index, in: targets), sound: sound)
-                if skipped > 0 { summary += " (\(skipped) übersprungen)" }
-            case .backup, .iconPack, .invalidJSON, .unknown:
-                return
-            }
-        } catch {
-            model.lastError = "Import: \(format.name) nicht lesbar (\(error))."
+        let parsed: Parsed
+        switch result {
+        case .success(let p): parsed = p
+        case .failure:
+            model.lastError = "Import: \(format.name) nicht lesbar (Aufbau unbekannt oder unvollständig)."
             return
         }
         let id = link.map { NuvioImport.stableHash("link:" + $0) } ?? NuvioImport.stableHash("code:" + String(decoding: data, as: UTF8.self))
-        let entry = CollectionLink(id: id, url: link, format: format.name, summary: summary, at: Date(), pack: pack)
-        if let i = links.firstIndex(where: { $0.id == id }) { links[i] = entry } else { links.append(entry) }
+        let previous = links.first { $0.id == id }
+        var pack: [PreviewPackEntry]?
+        var media: [String: FolderMedia]?
+        /// Collections whose videos are probed for a sound track, or the pack's videos.
+        var probe: [String] = []
+        var line: (Int?) -> String
+        switch parsed {
+        case .widgets(let c, let src):
+            FusionKitStore.shared.importContent(c, source: src, data: data)
+            let collections = c.rows.compactMap { r -> MediaCollection? in
+                if case .collection(let m) = r.body { return m }
+                return nil
+            }.map { PreviewPack.apply(packIndex, to: $0) }
+            probe = ImportSummary.videos(collections)
+            let base = ImportSummary.of(collections)
+            line = { n in var s = base; s.rows = c.rows.count; s.sound = n; return s.line }
+        case .collections(let r):
+            // A refresh of a stored link takes the fresh media addresses (I4); a first import only fills gaps.
+            model.importNuvio(result: r, refresh: previous.map { $0.media ?? [:] })
+            media = NuvioImport.media(of: r.collections)
+            let collections = r.collections.map { PreviewPack.apply(packIndex, to: $0) }
+            probe = ImportSummary.videos(collections)
+            let base = ImportSummary.of(collections)
+            line = { n in var s = base; s.sound = n; return s.line }
+        case .pack(let entries, let skipped):
+            guard !entries.isEmpty else {
+                model.lastError = "Import: Das Preview Pack enthält keine abspielbaren Videos (mp4/mov/m3u8 über https)."
+                return
+            }
+            pack = entries
+            let index = PreviewPack.Index(entries)
+            let targets = model.profile.collections.filter { !$0.id.hasPrefix("pkg.") } + FusionKitStore.shared.importedCollections
+            let matched = PreviewPack.matches(index, in: targets)
+            var seen = Set<String>()
+            probe = entries.map(\.video).filter { seen.insert($0).inserted }
+            line = { n in ImportSummary.packLine(entries: entries.count, matched: matched, sound: n) + (skipped > 0 ? " (\(skipped) übersprungen)" : "") }
+        }
+        if previous == nil, links.count >= Self.maxLinks, let oldest = links.min(by: { $0.at < $1.at }) {
+            links.removeAll { $0.id == oldest.id }   // keep UserDefaults small
+        }
+        var entry = CollectionLink(id: id, url: link, format: format.name, summary: line(nil), at: Date(), pack: pack, media: media)
+        store(entry)
+        model.lastError = nil
+        model.notice = entry.summary
+        RemoteLog.info("import", "\(format.name)\(link == nil ? " (Code)" : ""): \(entry.summary)")
+        // The sound count follows (range requests can take a while; the rows are already there).
+        guard let sound = await soundCount(probe) else { return }
+        let first = entry.summary
+        entry.summary = line(sound)
+        if links.contains(where: { $0.id == id }) { store(entry) }
+        if model.notice == first { model.notice = entry.summary }
+        RemoteLog.info("import", "\(format.name): \(sound) mit Ton")
+    }
+
+    private func store(_ entry: CollectionLink) {
+        if let i = links.firstIndex(where: { $0.id == entry.id }) { links[i] = entry } else { links.append(entry) }
         persist()
         rebuildPack()
-        model.lastError = nil
-        model.notice = summary
-        RemoteLog.info("import", "\(format.name)\(link == nil ? " (Code)" : ""): \(summary)")
     }
 
     // MARK: Sound probe
@@ -198,14 +299,8 @@ final class CollectionLinkStore: ObservableObject {
     /// Most videos checked per import (two small range requests each).
     static let maxProbes = 120
 
-    private func soundVideos(_ collections: [MediaCollection]) async -> Set<String>? {
-        let videos = ImportSummary.videos(collections)
-        guard !videos.isEmpty, videos.count <= Self.maxProbes else { return videos.isEmpty ? [] : nil }
-        await probe(videos)
-        return Set(videos.filter { soundProbe[$0] == true })
-    }
-
     private func soundCount(_ videos: [String]) async -> Int? {
+        guard !videos.isEmpty else { return 0 }
         guard videos.count <= Self.maxProbes else { return nil }
         await probe(videos)
         return videos.filter { soundProbe[$0] == true }.count

@@ -33,6 +33,9 @@ final class FusionKitStore: ObservableObject {
     private var inflight: [String: Task<Void, Never>] = [:]
     private let disk = FileBlobStorage(directory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("fusionkit"))
+    /// Pasted widget exports (persistent; no address to fetch them again).
+    private let pasteDisk = FileBlobStorage(directory: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("fusionkit-paste"))
 
     private init() {}
 
@@ -119,6 +122,7 @@ final class FusionKitStore: ObservableObject {
         change { $0.removeSource(id) }
         contents[id] = nil; errors[id] = nil
         disk.remove(contentFile(id))
+        pasteDisk.remove(contentFile(id))
     }
 
     /// Per Handy eingefügte Kit-URL: laden, Kit an, alle Reihen der Datei wählen. Rückgabe: Fehlertext oder nil.
@@ -133,21 +137,27 @@ final class FusionKitStore: ObservableObject {
 
     /// Wave F-o round 2: widget export already fetched (collection link) or pasted as code: keep it like a kit
     /// file and place all its rows. A pasted text gets a `paste:` source that is never fetched again.
-    func importData(_ data: Data, link: String?) throws -> FusionKitContent {
-        let src = link.map { FusionKitCatalog.source(forURL: $0) }
-            ?? FusionKitSource(id: NuvioImport.stableHash("paste:" + String(decoding: data, as: UTF8.self)),
-                               title: "Eingefügter Widget-Export", url: Self.pastePrefix, custom: true)
-        let c = try FusionImport.parse(data, sourceKey: src.id, title: src.title)
+    /// Already parsed off the main actor (`CollectionLinkStore`); `data` is kept for the next start. Pasted text goes
+    /// to Application Support (round 3, I2): it cannot be fetched again, so it must survive a purge of Caches.
+    func importContent(_ c: FusionKitContent, source src: FusionKitSource, data: Data) {
         contents[src.id] = c
         errors[src.id] = nil
-        try? disk.write(contentFile(src.id), data)
+        try? storage(src).write(contentFile(src.id), data)
         change { $0.addAll(c, source: src) }
         sync()
         RemoteLog.info("kit", "Import \(src.title): \(c.rows.count) Reihen gewählt")
-        return c
     }
 
-    static let pastePrefix = "paste:"
+    /// Source of a widget export: the kit source of a link, or a `paste:` source keyed by the pasted text.
+    nonisolated static func source(link: String?, data: Data) -> FusionKitSource {
+        link.map { FusionKitCatalog.source(forURL: $0) }
+            ?? FusionKitSource(id: NuvioImport.stableHash("paste:" + String(decoding: data, as: UTF8.self)),
+                               title: "Eingefügter Widget-Export", url: pastePrefix, custom: true)
+    }
+
+    private func storage(_ src: FusionKitSource) -> FileBlobStorage { src.url.hasPrefix(Self.pastePrefix) ? pasteDisk : disk }
+
+    nonisolated static let pastePrefix = "paste:"
 
     /// Wave F-o round 2: preview packs changed; tiles are enriched again on the next sync.
     func packChanged() { sync() }
@@ -242,7 +252,7 @@ final class FusionKitStore: ObservableObject {
 
     /// Zwischengespeicherte Fassung, auch wenn sie älter als 24 h ist.
     private func cached(_ src: FusionKitSource) -> FusionKitContent? {
-        disk.read(contentFile(src.id)).flatMap { try? FusionImport.parse($0, sourceKey: src.id, title: src.title) }
+        storage(src).read(contentFile(src.id)).flatMap { try? FusionImport.parse($0, sourceKey: src.id, title: src.title) }
     }
 
     private func loadListing(force: Bool) async {

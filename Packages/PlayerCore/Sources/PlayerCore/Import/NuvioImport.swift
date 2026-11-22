@@ -78,6 +78,39 @@ public enum NuvioImport {
         return out
     }
 
+    /// Wave F-o round 3: "Aktualisieren" of a stored link. Like `mergeFolders`, but the media addresses (still, logo,
+    /// backdrop, GIF, video, hero video) of a matching folder come from the fresh export. A field the user changed
+    /// since the last import (it differs from `previous`) is kept. `previous`: key `collection|folder` → media of the
+    /// last import (nil entry = no snapshot: the fresh export wins).
+    public static func refreshFolders(_ current: [Folder], fresh: [Folder], collection: String,
+                                      previous: [String: FolderMedia]) -> [Folder] {
+        var out = current
+        for f in fresh {
+            guard let i = out.firstIndex(where: { $0.title == f.title }) else {
+                out = mergeFolders(out, [f])
+                continue
+            }
+            var ids = Set(out[i].sources.map(\.id))
+            out[i].sources += f.sources.filter { ids.insert($0.id).inserted }
+            let old = previous[collection + "|" + f.title]
+            let now = FolderMedia(out[i]), new = FolderMedia(f)
+            func pick(_ k: KeyPath<FolderMedia, String?>) -> String? {
+                guard let old else { return new[keyPath: k] }
+                return now[keyPath: k] == old[keyPath: k] ? new[keyPath: k] : now[keyPath: k]
+            }
+            out[i].coverImage = pick(\.cover); out[i].logo = pick(\.logo); out[i].backdrop = pick(\.backdrop)
+            out[i].focusGif = pick(\.gif); out[i].focusVideo = pick(\.video); out[i].heroVideo = pick(\.hero)
+        }
+        return out
+    }
+
+    /// Snapshot of the media addresses of imported collections (for `refreshFolders`).
+    public static func media(of collections: [MediaCollection]) -> [String: FolderMedia] {
+        var out: [String: FolderMedia] = [:]
+        for c in collections { for f in c.folders where out[c.title + "|" + f.title] == nil { out[c.title + "|" + f.title] = FolderMedia(f) } }
+        return out
+    }
+
     static func mediaType(_ s: String?) -> MediaType {
         switch s?.lowercased() {
         case "movie": .movie
@@ -219,5 +252,19 @@ public enum NuvioImport {
             else if let s = try? c.decode(String.self) { string = s }
             else { string = "" }
         }
+    }
+}
+
+/// Media addresses of one tile (wave F-o round 3: refresh keeps the user's own changes).
+public struct FolderMedia: Codable, Hashable, Sendable {
+    public var cover: String?
+    public var logo: String?
+    public var backdrop: String?
+    public var gif: String?
+    public var video: String?
+    public var hero: String?
+
+    public init(_ f: Folder) {
+        cover = f.coverImage; logo = f.logo; backdrop = f.backdrop; gif = f.focusGif; video = f.focusVideo; hero = f.heroVideo
     }
 }
