@@ -657,10 +657,26 @@ struct StreamListView: View {
     @State private var autoSwitchScheduled = false
     /// Wave F-m: player that just closed; its focus move waits for the end of the cover dismissal (`playerDismissed`).
     @State private var closedPlayer: StreamItem?
+    /// Wave Q: chosen filter chips (view only, per list visit) and the parsed traits per source id.
+    @State private var filter: Set<SourceFilterChip> = []
+    @State private var traitsByID: [String: StreamTraits] = [:]
+
+    private func traits(_ s: StreamItem) -> StreamTraits { traitsByID[s.id] ?? StreamTraits.parse(s) }
+    private var filterOptions: [SourceFilterOption] {
+        streams.count < 2 ? [] : SourceFilter.options(streams.map { traits($0.stream) }, selected: filter)
+    }
+    /// Rows on screen: the full list narrowed by the chips the list still offers.
+    private var visibleStreams: [(addon: String, stream: StreamItem)] {
+        let active = SourceFilter.effective(filter, options: filterOptions)
+        return active.isEmpty ? streams : streams.filter { SourceFilter.passes(traits($0.stream), active) }
+    }
+    private var visibleIDs: [String] { visibleStreams.map(\.stream.id) }
 
     var body: some View {
         // Welle E-b: Addon-Name nur, wenn die Liste mehrere Addons mischt (sonst steht er schon im Text des Addons).
         let showAddon = Set(streams.map(\.addon)).count > 1
+        let options = filterOptions
+        let shown = visibleStreams
         // Titel als Listenkopf (scrollt mit weg) statt navigationTitle: der große tvOS-Titel lag über den Zeilen.
         ScrollViewReader { proxy in
             List {
@@ -674,7 +690,19 @@ struct StreamListView: View {
                         Text(model.profile.addons.isEmpty ? "Kein Addon installiert (Einstellungen → Addons)." : "Keine abspielbaren Quellen.")
                         FocusAnchor(kind: .back)   // N6: sonst nichts fokussierbar, Menu schlösse die App
                     }
-                    ForEach(streams, id: \.stream.id) { entry in
+                    if !options.isEmpty {
+                        SourceFilterBar(options: options, selected: SourceFilter.effective(filter, options: options),
+                                        total: streams.count, onAll: { setFilter([]) },
+                                        onToggle: { setFilter(SourceFilter.toggle($0, in: SourceFilter.effective(filter, options: options))) })
+                            .listRowBackground(Color.clear)
+                        if shown.isEmpty {
+                            Text("Keine Quelle passt zum Filter.").foregroundStyle(.secondary)
+                            Button("Filter aufheben") { setFilter([]) }
+                                .buttonStyle(ThemeRowButtonStyle(maxWidth: .infinity))
+                                .listRowBackground(Color.clear)
+                        }
+                    }
+                    ForEach(shown, id: \.stream.id) { entry in
                         Button {
                             fallbacks = 0; AutoNextState.userInput($autoNext); autoNext.ask = nil
                             PlaybackStability.shared.timing.markTap()
@@ -794,6 +822,14 @@ struct StreamListView: View {
                 }
             }
         }
+        .onChange(of: streams.map(\.stream.id)) { _, ids in
+            // Wave Q: parse each source once (body runs on every focus move); drop gone ones.
+            let keep = Set(ids)
+            var t = traitsByID.filter { keep.contains($0.key) }
+            for e in streams where t[e.stream.id] == nil { t[e.stream.id] = StreamTraits.parse(e.stream) }
+            traitsByID = t
+        }
+        .onChange(of: visibleIDs) { old, new in keepFocusPosition(old: old, new: new) }
         .onChange(of: playing) { old, s in
             if s == nil, let old { closedPlayer = old }
             guard let s else { return }
@@ -841,7 +877,7 @@ extension StreamListView {
     func focusOnEntry() {
         guard !entryFocusDone else { return }
         entryFocusDone = true
-        let ids = streams.map(\.stream.id)
+        let ids = visibleIDs
         guard focusedStream == nil || focusedStream == ids.first else { return }
         let last = model.progress.lastSource(for: (current ?? request).id)?.match(in: streams)?.id
         guard let id = SourceFocus.entry(ids: ids, lastPlayed: last, isPlayable: focusPlayable) else { return }
@@ -857,7 +893,7 @@ extension StreamListView {
             RemoteLog.info("fokus", "Quellenliste nach Fehler: automatischer Wechsel geplant, kein Fokuswunsch")
             return
         }
-        let ids = streams.map(\.stream.id)
+        let ids = visibleIDs
         guard let id = SourceFocus.afterPlayer(ids: ids, played: played.id, failed: failure, isPlayable: focusPlayable)
         else { return }
         requestFocus(id, in: ids, reason: failure ? "nach Fehler" : "nach dem Player", delayMs: 200)
@@ -871,6 +907,22 @@ extension StreamListView {
         guard let old = closedPlayer else { return }
         closedPlayer = nil
         focusAfterPlayer(old)
+    }
+
+    /// Wave Q: new sources sort in while the list is shown. The focus keeps its row position instead of following
+    /// its source (the list would scroll under the user's thumb). Not while a player is open or closing, or a focus
+    /// move is pending: those set the focus themselves.
+    private func keepFocusPosition(old: [String], new: [String]) {
+        guard playing == nil, closedPlayer == nil, focusRequest == nil,
+              let id = SourceFocus.keepPosition(focused: focusedStream, old: old, new: new) else { return }
+        focusedStream = id
+        RemoteLog.info("fokus", "Quellenliste: Platz gehalten, Zeile \((new.firstIndex(of: id) ?? 0) + 1) (\(new.count) Quellen)")
+    }
+
+    private func setFilter(_ chips: Set<SourceFilterChip>) {
+        filter = chips
+        let names = chips.map(\.label).sorted().joined(separator: ", ")
+        RemoteLog.info("quellen", "Filter \(names.isEmpty ? "aus" : names) → \(visibleStreams.count) von \(streams.count)")
     }
 
     private func requestFocus(_ id: String, in ids: [String], reason: String, delayMs: Int) {
@@ -997,9 +1049,16 @@ struct StreamRow: View {
                 .frame(width: 330, alignment: .leading)
             }
             // Keine Zeilengrenze: StreamRowText kürzt selbst (Cache-Zeilen zuerst); die Zeile wächst mit dem Text.
-            Text(text.body).textRoleInRow(.rowDetail)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                Text(text.body).textRoleInRow(.rowDetail)
+                    .fixedSize(horizontal: false, vertical: true)
+                // Wave Q: full file name, wrapped, when the formatter text does not carry it.
+                if let file = text.fileName {
+                    Text(file).textRoleInRow(.rowDetail).opacity(0.75)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             if !badges.isEmpty || addon != nil {
                 VStack(alignment: .trailing, spacing: Theme.Space.xs) {
                     if !badges.isEmpty {

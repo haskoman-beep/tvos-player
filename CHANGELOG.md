@@ -23,8 +23,16 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   is on, otherwise the catalog or TMDB poster) and is left out when the block is too short for it.
 - Settings › Playback › Detail page: a new setting „Sofort abspielen anzeigen“ (show instant play), off by
   default.
+- Source list: filter chips above the list, „Alle“ (all) first, then only the qualities and features that some
+  but not all sources have (4K, 1080p, Dolby Vision, HDR, Atmos, REMUX, „Deutsch“ (German), „Sofort bereit“
+  (cached) and three size ranges), each with its count. One resolution and one size range at a time; the
+  other chips combine. The filter only narrows the view; autostart, fallback and the next episode still use
+  the full list.
+- Source list: the full file name as its own wrapped line when the addon text cuts it or leaves it out.
 
 ### Changed
+- Source list: while sources are still arriving, the focus keeps its row position instead of following its
+  source to a new place, so the list no longer jumps under the remote.
 - Detail page: „Abspielen“ (play) is the main button again and takes the focus on entry and on return from
   the player. The „Sofort abspielen“ (instant play) card is only shown, and its best source only chosen,
   when the new setting is on; with it on, everything behaves as in build 198.
