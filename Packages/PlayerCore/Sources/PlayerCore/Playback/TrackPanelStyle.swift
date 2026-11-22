@@ -6,7 +6,7 @@ public enum TrackPanelStyle: String, Codable, Sendable, CaseIterable {
     case topBar
     /// Dieselbe Leiste unten (Wisch nach oben / ▲).
     case bottomBar
-    /// Kleines Menü unten rechts (Wisch nach oben, ▲ bei ausgeblendeter Steuerleiste), zwei Ebenen.
+    /// Kleines Menü unten rechts (Wisch nach oben / ▲), zwei Ebenen.
     case menu
 
     public var title: String {
@@ -48,23 +48,23 @@ public enum TrackPanelGesture: Equatable, Sendable {
 
 extension TrackPanelEntry {
     /// Öffnet diese Geste in diesem Stil das Panel bzw. Menü? Die jeweils andere Richtung tut nichts (wie bisher
-    /// Wisch nach oben bei „Leiste oben“). ▲ öffnet das kleine Menü nur bei ausgeblendeter Steuerleiste.
-    public static func opens(style: TrackPanelStyle, gesture: TrackPanelGesture, controlsVisible: Bool) -> Bool {
+    /// Wisch nach oben bei „Leiste oben“). F-h3 R1 M1: ▲ öffnet das Menü auch bei sichtbarer Steuerleiste – sie hat
+    /// keine fokussierbaren Elemente, und G-a hält nur ◀/▶; so verhält sich ▲ wie bei „Leiste unten“.
+    public static func opens(style: TrackPanelStyle, gesture: TrackPanelGesture) -> Bool {
         switch (style, gesture) {
         case (.topBar, .swipeDown), (.topBar, .clickDown): true
         case (.bottomBar, .swipeUp), (.bottomBar, .clickUp): true
-        case (.menu, .swipeUp): true
-        case (.menu, .clickUp): !controlsVisible
+        case (.menu, .swipeUp), (.menu, .clickUp): true
         default: false
         }
     }
 
     /// Welle F-h3: Geste → Schritt je Stil. Gehört die Geste nicht zum Stil, `.ignore(.otherGesture)` vor allem
     /// anderen (bricht auch kein Up-next ab); sonst wie `decide(leaving:…)`.
-    public static func decide(style: TrackPanelStyle, gesture: TrackPanelGesture, controlsVisible: Bool,
+    public static func decide(style: TrackPanelStyle, gesture: TrackPanelGesture,
                               leaving: Bool, scrubbing: Bool, upNextShowing: Bool, failureShowing: Bool,
                               alreadyOpen: Bool, skipPromptShowing: Bool, lock: TrackLock?) -> Step {
-        guard opens(style: style, gesture: gesture, controlsVisible: controlsVisible) else { return .ignore(.otherGesture) }
+        guard opens(style: style, gesture: gesture) else { return .ignore(.otherGesture) }
         return decide(leaving: leaving, scrubbing: scrubbing, upNextShowing: upNextShowing, failureShowing: failureShowing,
                       alreadyOpen: alreadyOpen, skipPromptShowing: skipPromptShowing, lock: lock)
     }

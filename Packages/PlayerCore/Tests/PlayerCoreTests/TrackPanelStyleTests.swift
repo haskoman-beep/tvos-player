@@ -10,9 +10,9 @@ private func s(_ id: Int, _ lang: String?) -> AudioTrackInfo {
     AudioTrackInfo(id: id, language: lang, codec: "subrip")
 }
 
-private func step(_ style: TrackPanelStyle, _ g: TrackPanelGesture, controls: Bool = false, upNext: Bool = false,
+private func step(_ style: TrackPanelStyle, _ g: TrackPanelGesture, upNext: Bool = false,
                   open: Bool = false, lock: TrackLock? = nil) -> TrackPanelEntry.Step {
-    TrackPanelEntry.decide(style: style, gesture: g, controlsVisible: controls, leaving: false, scrubbing: false,
+    TrackPanelEntry.decide(style: style, gesture: g, leaving: false, scrubbing: false,
                            upNextShowing: upNext, failureShowing: false, alreadyOpen: open, skipPromptShowing: false, lock: lock)
 }
 
@@ -26,13 +26,12 @@ private func step(_ style: TrackPanelStyle, _ g: TrackPanelGesture, controls: Bo
     #expect(step(.topBar, .clickUp) == .ignore(.otherGesture))
     // Leiste unten: gespiegelt
     #expect(step(.bottomBar, .swipeUp) == .open)
-    #expect(step(.bottomBar, .clickUp, controls: true) == .open)
+    #expect(step(.bottomBar, .clickUp) == .open)
     #expect(step(.bottomBar, .swipeDown) == .ignore(.otherGesture))
     #expect(step(.bottomBar, .clickDown) == .ignore(.otherGesture))
-    // Menü: Wisch nach oben immer, ▲ nur bei ausgeblendeter Steuerleiste
-    #expect(step(.menu, .swipeUp, controls: true) == .open)
+    // Menü: Wisch nach oben und ▲ (R1 M1: auch bei sichtbarer Steuerleiste)
+    #expect(step(.menu, .swipeUp) == .open)
     #expect(step(.menu, .clickUp) == .open)
-    #expect(step(.menu, .clickUp, controls: true) == .ignore(.otherGesture))
     #expect(step(.menu, .swipeDown) == .ignore(.otherGesture))
     #expect(step(.menu, .clickDown) == .ignore(.otherGesture))
 }
@@ -153,4 +152,14 @@ private func menuColumns(lock: TrackLock? = nil, audio: [AudioTrackInfo] = [a(0,
     s.trackPanelStyle = .menu
     let back = try JSONDecoder().decode(PlayerComfortSettings.self, from: JSONEncoder().encode(s))
     #expect(back.trackPanelStyle == .menu)
+}
+
+/// R1 M4: Versatz betreten landet auf +0,1 s, nicht auf dem größten Schritt zurück.
+@Test func offsetEntryRowIsGentle() {
+    let c = TrackPanelLayout.offsetColumn(offset: 0, nativeTrack: false)
+    #expect(c.entryRow == .step(2))
+    #expect(SubtitleOffset.steps[2] == 0.1)
+    // andere Spalten unverändert: aktive Zeile
+    let audio = TrackPanelLayout.audioColumn([a(0, "deu"), a(1, "eng")], activeID: 1, priority: ["de"])
+    #expect(audio.entryRow == .track(1))
 }

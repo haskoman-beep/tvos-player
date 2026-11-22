@@ -130,6 +130,8 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
     var onAudioSwitch: (Int) -> Void = { _ in }
     /// Welle D-a: Nutzerwahl merken (Spur-Gedächtnis je Serie); nil = aus.
     var onRemember: ((TrackMemoryChange) -> Void)? = nil
+    /// F-h3 R1: vom unteren Bildrand bedeckte Höhe (Leiste unten), damit der Player die Untertitel darüber hebt.
+    var onCoverBottom: (CGFloat) -> Void = { _ in }
     @Environment(\.dismiss) private var dismiss
     @FocusState private var focus: TrackPanelSpot?
     /// Nutzer hat den Fokus bewegt (dann den Startfokus nicht mehr nachziehen).
@@ -166,6 +168,8 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
                         .ignoresSafeArea(edges: atBottom ? [.bottom, .horizontal] : [.top, .horizontal])
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: atBottom ? .bottom : .top)
+                .onAppear { if atBottom { onCoverBottom(height + edgeInset) } }
+                .onChange(of: height + edgeInset) { _, h in if atBottom { onCoverBottom(h) } }
         }
         .environment(\.colorScheme, .dark)
         .defaultFocus($focus, TrackPanelLayout.initialSpot(columns))
@@ -281,6 +285,8 @@ struct PlayerTrackMenu<E: PlaybackEngine>: View {
     var lock: () -> TrackLock? = { nil }
     var onAudioSwitch: (Int) -> Void = { _ in }
     var onRemember: ((TrackMemoryChange) -> Void)? = nil
+    /// F-h3 R1 I1: vom unteren Bildrand bedeckte Höhe (Menü samt Rand), damit der Player die Untertitel darüber hebt.
+    var onCoverBottom: (CGFloat) -> Void = { _ in }
     @Environment(\.dismiss) private var dismiss
     @State private var nav = TrackMenuNav()
     @FocusState private var focus: MenuFocus?
@@ -295,27 +301,22 @@ struct PlayerTrackMenu<E: PlaybackEngine>: View {
     }
 
     private var columns: [TrackPanelColumnModel] {
-        TrackPanelColumns.make(engine: engine, profile: profile, audioLocked: audioLocked, lock: shownLock,
-                               audioWidth: TrackMenuMetrics.width, subtitleWidth: TrackMenuMetrics.width)
+        // R1 M3: Zeichenbudget aus der echten Zeilenbreite (Menübreite minus Innenrand 2 × Space.s).
+        let w = TrackMenuMetrics.width - 2 * Double(Theme.Space.s)
+        return TrackPanelColumns.make(engine: engine, profile: profile, audioLocked: audioLocked, lock: shownLock,
+                                      audioWidth: w, subtitleWidth: w)
     }
 
     private var entries: [TrackMenuEntry] { TrackMenuNav.entries(columns, offset: engine.subtitleOffset) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.xs) {
-            if let l = shownLock, l != .audioSwitching { Text(l.text).font(.caption).foregroundStyle(Theme.Palette.secondary) }
-            switch nav.level {
-            case .root: rootLevel
-            case .list(let c): if let col = columns.first(where: { $0.column == c }) { listLevel(col) }
-            }
+        GeometryReader { geo in
+            // Bedeckte Höhe vom unteren Bildrand: ganzer Schirm (samt Sicherheitsrand) minus Oberkante der Karte.
+            let screen = geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom
+            card
+                .onGeometryChange(for: CGFloat.self) { max(0, screen - $0.frame(in: .global).minY) } action: { onCoverBottom($0) }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
         }
-        .padding(Theme.Space.s)
-        .frame(width: CGFloat(TrackMenuMetrics.width), alignment: .leading)
-        .background {
-            ZStack { Rectangle().fill(.ultraThinMaterial); Theme.Palette.scrim }
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.overlayCard, style: .continuous))
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
         .environment(\.colorScheme, .dark)
         .defaultFocus($focus, .entry(nav.rootFocus))
         .onAppear {
@@ -331,6 +332,22 @@ struct PlayerTrackMenu<E: PlaybackEngine>: View {
             }
         }
         .presentationBackground(.clear)
+    }
+
+    private var card: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            if let l = shownLock, l != .audioSwitching { Text(l.text).font(.caption).foregroundStyle(Theme.Palette.secondary) }
+            switch nav.level {
+            case .root: rootLevel
+            case .list(let c): if let col = columns.first(where: { $0.column == c }) { listLevel(col) }
+            }
+        }
+        .padding(Theme.Space.s)
+        .frame(width: CGFloat(TrackMenuMetrics.width), alignment: .leading)
+        .background {
+            ZStack { Rectangle().fill(.ultraThinMaterial); Theme.Palette.scrim }
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.overlayCard, style: .continuous))
+        }
     }
 
     private var rootLevel: some View {
@@ -362,6 +379,7 @@ struct PlayerTrackMenu<E: PlaybackEngine>: View {
                 .padding(.vertical, 4)
             }
             .frame(maxHeight: CGFloat(TrackMenuMetrics.maxVisibleRows) * CGFloat(TrackMenuMetrics.rowHeight))
+            .focusSection()   // R1 M2
         }
     }
 

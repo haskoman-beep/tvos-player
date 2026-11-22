@@ -187,6 +187,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
     @Environment(\.dismiss) var dismiss
     @State private var showOverlay = true
     @State private var showTracks = false
+    /// F-h3 R1: vom Panel (Leiste unten) bzw. Menü gemeldete bedeckte Höhe am unteren Rand; 0 = nichts gemeldet.
+    @State private var coverBottom: CGFloat = 0
     /// Welle F-h2 R1: Ton-Neuladen aus dem Panel läuft (sperrt Untertitel/Versatz, `TrackLock.audioSwitching`).
     @State private var audioSwitch = AudioSwitchWatch()
     /// R2 N2: Takt der Zeitgrenzen; als gehaltener Task, nicht `.task`, denn dieses View verschwindet unterm Panel.
@@ -347,18 +349,19 @@ struct PlayerControls<E: PlaybackEngine>: View {
             if engine.duration > 0 { report(engine.duration, engine.duration) }
             finishAtEnd(autoplay: !upNextCancelled)   // HDMI-Modus halten oder geordneter Ausstieg (PlayerExit.swift)
         }
-        .onChange(of: showTracks) { _, open in onTracksShown(open) }
+        .onChange(of: showTracks) { _, open in if !open { coverBottom = 0 }; onTracksShown(open) }
         .onChange(of: scrub.isActive) { _, a in if a { onUserInput() }; poke() }
         .onChange(of: scrub.holdSpeed != nil) { _, h in if h { onUserInput() } }   // G-a R1: Halten zählt als Eingabe
         .onChange(of: scrub.target) { _, _ in poke() }
         .fullScreenCover(isPresented: $showTracks) {
             if trackStyle == .menu {
                 PlayerTrackMenu(engine: engine, profile: profile, audioLocked: restorePending, shownLock: trackLock,
-                                lock: { trackLock }, onAudioSwitch: { beginAudioSwitch($0) }, onRemember: onRemember)
+                                lock: { trackLock }, onAudioSwitch: { beginAudioSwitch($0) }, onRemember: onRemember,
+                                onCoverBottom: { coverBottom = $0 })
             } else {
                 PlayerTrackPanel(engine: engine, profile: profile, style: trackStyle, sourceURL: url, audioLocked: restorePending,
                                  shownLock: trackLock, lock: { trackLock }, onAudioSwitch: { beginAudioSwitch($0) },
-                                 onRemember: onRemember)
+                                 onRemember: onRemember, onCoverBottom: { coverBottom = $0 })
             }
         }
         .onChange(of: engine.isLoading) { _, _ in checkAudioSwitch() }
@@ -498,11 +501,11 @@ struct PlayerControls<E: PlaybackEngine>: View {
     /// Leiste unten bzw. Menü offen: Steuerleiste und Überspringen-Knopf ausblenden.
     private var panelCoversBottom: Bool { showTracks && trackStyle.coversBottom }
 
-    /// Untertitel über der Steuerleiste; bei offener Leiste unten über der Leiste.
+    /// Untertitel über der Steuerleiste; bei offener Leiste unten bzw. offenem Menü darüber (gemessene Höhe, R1 I1/M5).
+    /// Gewählt statt das Menü zu verschieben: der Platz unten rechts bleibt wie vereinbart, und die Untertitel bleiben
+    /// ganz sichtbar, auch beim Einstellen des Versatzes.
     private var subtitleInset: CGFloat {
-        if showTracks && trackStyle == .bottomBar {
-            return CGFloat(TrackPanelLayout.panelHeight(screenHeight: Double(PlayerWindow.key?.bounds.height ?? 1080)))
-        }
+        if panelCoversBottom, coverBottom > 0 { return coverBottom }
         return showOverlay && !panelCoversBottom ? (controlsHeight ?? SubtitleOverlayView.fallbackControlsInset) : 0
     }
 
@@ -510,7 +513,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
     /// (`onMoveCommand`); tvOS meldet einen Wisch nicht als Move-Befehl. F-h3: welche Geste öffnet, hängt vom Stil ab.
     private func openTracks(_ gesture: TrackPanelGesture) {
         let via = "\(gesture.logText), \(trackStyle.title)"
-        switch TrackPanelEntry.decide(style: trackStyle, gesture: gesture, controlsVisible: showOverlay,
+        switch TrackPanelEntry.decide(style: trackStyle, gesture: gesture,
                                       leaving: leaving, scrubbing: scrub.isActive, upNextShowing: upNext != nil,
                                       failureShowing: failureNotice != nil, alreadyOpen: showTracks,
                                       skipPromptShowing: skip.prompt != nil, lock: trackLock) {

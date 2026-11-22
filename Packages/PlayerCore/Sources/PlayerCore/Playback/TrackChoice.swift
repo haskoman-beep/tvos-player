@@ -9,7 +9,7 @@ public enum TrackPanelEntry {
     /// Warum ein Öffnen-Wunsch nichts tut (für das Log).
     public enum IgnoreReason: Equatable, Sendable {
         case leaving, alreadyOpen, failure, scrubbing, skipPrompt
-        /// F-h3: Geste gehört nicht zum gewählten Stil (oder ▲ bei sichtbarer Steuerleiste im Menü-Stil).
+        /// F-h3: Geste gehört nicht zum gewählten Stil.
         case otherGesture
         case busy(TrackLock)
 
