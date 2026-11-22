@@ -46,6 +46,8 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     /// Welle F-e: am Handy ausgeblendete Reihen, vollständig (Stil, ID für den Hero-Bezug), neueste zuletzt,
     /// höchstens `HomeLayout.hiddenLimit`. „Wieder einblenden“ hängt sie unverändert unten an.
     public var hiddenRows: [HomeRow] = []
+    /// Wave U: look of text subtitles, with its own brightness for HDR/DV (default = the look before wave U).
+    public var subtitleStyle: SubtitleStyle = SubtitleStyle()
 
     public init(id: UUID = UUID(), name: String, language: AppLanguage = .de, audioPriority: [String] = ["de", "en", "orig"],
                 subtitleMode: SubtitleMode = .forcedOnly, subtitleLanguage: String = "de", progressSource: ProgressSource = .local,
@@ -73,6 +75,7 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         case sources
         case player
         case hiddenRows
+        case subtitleStyle
     }
     /// Nur zum Lesen alter Profile.
     private enum LegacyKeys: String, CodingKey { case subtitlesEnabled }
@@ -109,6 +112,7 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         sources = (try? c.decodeIfPresent(SourceSettings.self, forKey: .sources)) ?? nil ?? d.sources
         player = (try? c.decodeIfPresent(PlayerComfortSettings.self, forKey: .player)) ?? nil ?? d.player
         hiddenRows = (try? c.decodeIfPresent([HomeRow].self, forKey: .hiddenRows)) ?? nil ?? []
+        subtitleStyle = (try? c.decodeIfPresent(SubtitleStyle.self, forKey: .subtitleStyle)) ?? nil ?? d.subtitleStyle
     }
 
     public static func makeDefault(name: String = "Ich") -> Profile {

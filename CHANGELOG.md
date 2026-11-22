@@ -23,6 +23,12 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   is on, otherwise the catalog or TMDB poster) and is left out when the block is too short for it.
 - Settings › Playback › Detail page: a new setting „Sofort abspielen anzeigen“ (show instant play), off by
   default.
+- Settings › Audio & subtitles: a new page „Untertitel-Aussehen“ (subtitle look) with size, position, outline,
+  background (none, box, shadow) and a separate text brightness for HDR and Dolby Vision sources (100 % down to
+  40 %), so white subtitles no longer blind at HDR peak. A live preview shows two sample lines over a dark and a
+  bright picture; with the HDR row focused it shows the HDR brightness. The style is stored in the profile and
+  the defaults are the previous look. It applies to text subtitles (SRT, WebVTT, ASS as text); image
+  subtitles (PGS) only follow the position.
 
 ### Changed
 - Detail page: „Abspielen“ (play) is the main button again and takes the focus on entry and on return from

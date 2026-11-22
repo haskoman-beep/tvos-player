@@ -21,11 +21,9 @@ struct SubtitleOverlayView: View {
     /// 0 = Steuerleiste verborgen, sonst ihre gemessene Höhe.
     var controlsInset: CGFloat
 
-    /// Gut lesbar auf einem 4K-Fernseher aus Sofa-Entfernung (tvOS-Punkte, 1920×1080).
-    static let fontSize: CGFloat = 48
-    static let outlineWidth: CGFloat = 2.5
-    /// Abstand zum unteren Bildschirmrand ohne Steuerleiste.
-    static let bottomMargin: CGFloat = 70
+    /// Wave U: size, outline, margin and background come from the profile (`SubtitleStyle`, default = the old
+    /// fixed look: font 48, outline 2.5, 70 pt margin, soft shadow). HDR/DV sources use the HDR brightness.
+    @Environment(\.subtitleStyle) private var style
     /// Ersatz für die Höhe der Steuerleiste, solange noch keine Messung da ist (Schätzwert 272 pt).
     static let fallbackControlsInset: CGFloat = 272
     /// Abstand der Untertitel über der Oberkante der Steuerleiste.
@@ -36,6 +34,8 @@ struct SubtitleOverlayView: View {
     @State private var carry: [SubtitleCue] = []
     @State private var trackID: Int?
     @State private var nativeRendered = false
+    /// The source is HDR or Dolby Vision (engine `sourceVideoFormat`).
+    @State private var hdr = false
 
     var body: some View {
         GeometryReader { geo in
@@ -43,18 +43,20 @@ struct SubtitleOverlayView: View {
                                                   videoWidth: Int(engine.sourceVideoWidth),
                                                   videoHeight: Int(engine.sourceVideoHeight),
                                                   pixelAspect: engine.sourceVideoPixelAspectRatio)
-            let bottom = controlsInset > 0 ? controlsInset + Self.controlsGap : Self.bottomMargin
-            let lift = max(0, bottom - Self.bottomMargin)
+            let look = style.look(hdr: hdr)
+            let bottom = look.bottomInset(controlsInset: controlsInset, gap: Self.controlsGap)
+            let lift = look.textLift(controlsInset: controlsInset, gap: Self.controlsGap)
+            let shift = look.bitmapShift(controlsInset: controlsInset, gap: Self.controlsGap)
             ZStack(alignment: .topLeading) {
                 if !nativeRendered {
                     ForEach(bitmapCues) { cue in
-                        if case .image(let image) = cue.body { bitmap(image, in: rect, container: geo.size, lift: lift) }
+                        if case .image(let image) = cue.body { bitmap(image, in: rect, container: geo.size, shift: shift) }
                     }
                     ForEach(placedTextCues) { cue in
-                        if let placement = cue.placement { placed(cue, placement, in: rect, lift: lift) }
+                        if let placement = cue.placement { placed(cue, placement, in: rect, lift: lift, look: look) }
                     }
                     VStack(spacing: 12) {
-                        ForEach(bottomTextCues) { cue in textBody(cue, alignment: .center) }
+                        ForEach(bottomTextCues) { cue in textBody(cue, alignment: .center, look: look) }
                     }
                     .frame(maxWidth: max(min(rect.width, geo.size.width) * 0.86, 1))
                     .frame(width: geo.size.width, height: max(geo.size.height - bottom, 1),
@@ -63,6 +65,7 @@ struct SubtitleOverlayView: View {
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
             .animation(.easeInOut(duration: 0.22), value: controlsInset)
+            .animation(.easeInOut(duration: 0.22), value: look.bottomMargin)
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
@@ -81,6 +84,10 @@ struct SubtitleOverlayView: View {
             if trackChanged(to: id) { refresh(window: [], carry: [], at: engine.clock.sourceTime) }
             let track = engine.subtitleTracks.first { $0.id == id }
             nativeRendered = track?.isNativelyRenderedSubtitle ?? false
+        }
+        .onReceive(engine.$sourceVideoFormat) { f in
+            let now = SubtitleStyle.isHDR(formatName: "\(f)")
+            if now != hdr { hdr = now }
         }
     }
 
@@ -112,13 +119,14 @@ struct SubtitleOverlayView: View {
 
     // MARK: Bild-Untertitel
 
-    private func bitmap(_ image: SubtitleImage, in rect: CGRect, container: CGSize, lift: CGFloat) -> some View {
+    /// Image subtitles only take the position from the style (no size or colour).
+    private func bitmap(_ image: SubtitleImage, in rect: CGRect, container: CGSize, shift: CGFloat) -> some View {
         let frame = SubtitleGeometry.bitmapFrame(position: image.position, canvas: image.canvasSize,
                                                  codedVideo: CGSize(width: Int(engine.sourceVideoWidth),
                                                                     height: Int(engine.sourceVideoHeight)),
                                                  videoRect: rect)
-        // Nur Bilder in der unteren Hälfte weichen der Steuerleiste aus.
-        let dy = frame.midY > container.height / 2 ? -lift : 0
+        // Only images in the lower half follow the chosen position and move above the controls.
+        let dy = frame.midY > container.height / 2 ? shift : 0
         return Image(decorative: image.cgImage, scale: 1, orientation: .up)
             .resizable()
             .frame(width: max(frame.width, 1), height: max(frame.height, 1))
@@ -128,23 +136,24 @@ struct SubtitleOverlayView: View {
     // MARK: Text mit eigener Lage (ASS \an / \pos)
 
     @ViewBuilder
-    private func placed(_ cue: SubtitleCue, _ placement: SubtitleTextPlacement, in rect: CGRect, lift: CGFloat) -> some View {
+    private func placed(_ cue: SubtitleCue, _ placement: SubtitleTextPlacement, in rect: CGRect, lift: CGFloat,
+                        look: SubtitleLook) -> some View {
         let anchor = SubtitleGeometry.anchor(numpad: placement.alignment)
         let textAlign: TextAlignment = anchor.x == 0 ? .leading : (anchor.x == 1 ? .trailing : .center)
         let dy = anchor.y == 1 ? -lift : 0
         if let p = placement.position {
             let x = rect.minX + min(max(p.x, 0), 1) * rect.width
             let y = rect.minY + min(max(p.y, 0), 1) * rect.height
-            textBody(cue, alignment: textAlign)
+            textBody(cue, alignment: textAlign, look: look)
                 .frame(maxWidth: rect.width * 0.9)
                 .fixedSize(horizontal: false, vertical: true)
                 .position(x: x, y: y + dy)
         } else {
             let margin: CGFloat = 48
-            textBody(cue, alignment: textAlign)
+            textBody(cue, alignment: textAlign, look: look)
                 .frame(maxWidth: rect.width * 0.86)
                 .padding(.horizontal, margin)
-                .padding(.vertical, anchor.y == 1 ? Self.bottomMargin : margin)
+                .padding(.vertical, anchor.y == 1 ? look.bottomMargin : margin)
                 .frame(width: rect.width, height: rect.height,
                        alignment: Alignment(horizontal: anchor.x == 0 ? .leading : (anchor.x == 1 ? .trailing : .center),
                                             vertical: anchor.y == 0 ? .top : (anchor.y == 1 ? .bottom : .center)))
@@ -155,60 +164,16 @@ struct SubtitleOverlayView: View {
     // MARK: Text
 
     @ViewBuilder
-    private func textBody(_ cue: SubtitleCue, alignment: TextAlignment) -> some View {
+    private func textBody(_ cue: SubtitleCue, alignment: TextAlignment, look: SubtitleLook) -> some View {
         switch cue.body {
         case .text(let s):
-            let parts = [Part(text: SubtitleText.clean(s))]
-            outlined(fill: Self.attributed(parts, outline: false), stroke: Self.attributed(parts, outline: true), alignment: alignment)
+            SubtitleTextView(parts: [SubtitleTextPart(text: SubtitleText.clean(s))], look: look, alignment: alignment)
         case .richText(let runs):
-            let parts = runs.map { Part(text: SubtitleText.clean($0.text, trim: false), color: $0.color, bold: $0.isBold, italic: $0.isItalic,
-                                        underline: $0.isUnderlined, strike: $0.isStruckThrough) }
-            outlined(fill: Self.attributed(parts, outline: false), stroke: Self.attributed(parts, outline: true), alignment: alignment)
+            let parts = runs.map { SubtitleTextPart(text: SubtitleText.clean($0.text, trim: false), color: $0.color, bold: $0.isBold,
+                                                    italic: $0.isItalic, underline: $0.isUnderlined, strike: $0.isStruckThrough) }
+            SubtitleTextView(parts: parts, look: look, alignment: alignment)
         case .image:
             EmptyView()
         }
-    }
-
-    /// Weiße Schrift mit schwarzem Rand: dieselbe Zeile achtmal schwarz versetzt dahinter, dazu ein weicher Schatten.
-    private func outlined(fill: AttributedString, stroke: AttributedString, alignment: TextAlignment) -> some View {
-        let w = Self.outlineWidth
-        let offsets: [CGSize] = [CGSize(width: -w, height: -w), CGSize(width: 0, height: -w), CGSize(width: w, height: -w),
-                                 CGSize(width: -w, height: 0), CGSize(width: w, height: 0),
-                                 CGSize(width: -w, height: w), CGSize(width: 0, height: w), CGSize(width: w, height: w)]
-        return ZStack {
-            ForEach(offsets.indices, id: \.self) { i in
-                Text(stroke).multilineTextAlignment(alignment).offset(offsets[i])
-            }
-            Text(fill).multilineTextAlignment(alignment)
-        }
-        .shadow(color: .black.opacity(0.55), radius: 6, x: 0, y: 2)
-    }
-
-    private struct Part {
-        var text: String
-        var color: SubtitleColor? = nil
-        var bold = false, italic = false, underline = false, strike = false
-    }
-
-    /// Läufe als AttributedString. `outline` = Randkopie: alles schwarz, ohne Unter-/Durchstreichung.
-    /// Schriftart und relative Größe aus ASS (\fn, \fs) werden bewusst ignoriert: eine feste, gut lesbare Größe.
-    private static func attributed(_ parts: [Part], outline: Bool) -> AttributedString {
-        var out = AttributedString()
-        for p in parts {
-            var a = AttributedString(p.text)
-            var font = Font.system(size: fontSize, weight: p.bold ? .bold : .semibold)
-            if p.italic { font = font.italic() }
-            a.font = font
-            if outline {
-                a.foregroundColor = Color.black
-            } else {
-                let color: Color = p.color.map { Color(red: Double($0.r) / 255, green: Double($0.g) / 255, blue: Double($0.b) / 255) } ?? Color.white
-                a.foregroundColor = color
-                if p.underline { a.underlineStyle = Text.LineStyle.single }
-                if p.strike { a.strikethroughStyle = Text.LineStyle.single }
-            }
-            out += a
-        }
-        return out
     }
 }

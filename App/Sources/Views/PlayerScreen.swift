@@ -216,7 +216,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
         ZStack(alignment: .bottom) {
             Color.black.ignoresSafeArea()
             engine.surface().ignoresSafeArea()
-            engine.subtitleLayer(controlsInset: subtitleInset)
+            engine.subtitleLayer(controlsInset: subtitleInset).environment(\.subtitleStyle, profile.subtitleStyle)
             PlayerLoadingSteps(engine: engine)
             PlayerNetworkBanner(text: stab.networkNotice)
             if let e = loadError ?? engine.errorText {
