@@ -35,7 +35,7 @@ Tags und Releases ändert; sie ist eine eigene Entscheidung des Nutzers (Vorgehe
 
 # Teil A: Code
 
-Zweitgutachten zum Erstbericht `security-code.md`. Rein lesend; Laufzeitverhalten ist aus dem Code abgeleitet, nichts wurde gebaut oder ausgeführt. Keine Schlüssel, Namen oder Adressen im Bericht.
+Zweitgutachten zum Erstbericht des Code-Reviews. Rein lesend; Laufzeitverhalten ist aus dem Code abgeleitet, nichts wurde gebaut oder ausgeführt. Keine Schlüssel, Namen oder Adressen im Bericht.
 
 **Ergebnis:** 15 Befunde des Erstberichts geprüft – keiner ganz widerlegt, 4 herabgestuft (SEC-2, SEC-5, SEC-7, SEC-8), 3 Teil-Aussagen bzw. Gegenmaßnahmen verworfen (zu SEC-1, SEC-4, SEC-7). 2 neue Befunde (SEC-16, SEC-17).
 Stand danach: **2 hoch, 3 mittel, 12 niedrig, 0 kritisch.**
