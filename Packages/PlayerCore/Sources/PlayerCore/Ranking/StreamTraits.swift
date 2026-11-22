@@ -70,25 +70,53 @@ public struct StreamTraits: Equatable, Sendable {
         t.durationSeconds = s.behaviorHints?.duration
         t.seeders = s.behaviorHints?.seeders
 
-        // Strukturiertes Feld vor der Text-Erkennung (AIOStreams `behaviorHints.cached`).
-        t.cached = s.behaviorHints?.cached ?? cacheStatus(text)
+        // Strukturiertes Feld vor der Text-Erkennung (AIOStreams `behaviorHints.cached`); der Dateiname zählt nicht.
+        t.cached = s.behaviorHints?.cached ?? cacheStatus([s.name, s.title, s.description].compactMap { $0 }.joined(separator: "\n"))
         return t
     }
 
     /// Cache-Zustand aus dem Text des Addon-Formatters; nil = Text sagt nichts dazu (unbekannt bleibt unbekannt).
     /// Reihenfolge (Welle F-i):
-    /// 1. eindeutig ungecacht: „⏳“, „Uncached“, „Not cached“, „Not Ready“ (Prism: „❌ Not Ready“), „nicht gecacht“;
-    ///    vor den positiven Merkmalen, weil „UNCACHED“ „CACHED“ enthält.
-    /// 2. gecacht: „⚡“ (auch „⚡Ready“), „[TB+]“/„[RD+]“ (Torrentio-Stil), Wort „Cached“, „(Instant TB)“ (TorBox-Stil).
-    /// 3. schwach ungecacht: „[TB download]“ (Wort „Download“), „🎫“ (Gerätetest Nov. 2026: Platzhalter).
+    /// 1. Symbol-/Klammer-Merkmal gecacht: „⚡“ (auch „⚡Ready“), „[TB+]“ (Torrentio-Stil), „(Instant TB)“ (TorBox-Stil).
+    ///    ⚡ geht vor ⏳.
+    /// 2. Symbol-/Klammer-Merkmal ungecacht: „⏳“, „[TB download]“, „❌ Not Ready“ (Prism).
+    /// 3. Wörter nur als Statuszeile oder in Klammern, nie in der Titelzeile (🎬): eine Zeile, die nach Symbolen mit
+    ///    „Uncached“, „Not cached“, „Not Ready“, „nicht gecacht“, „nicht bereit“ (ungecacht) bzw. „Cached“ beginnt, oder
+    ///    ein solches Wort in […]/(…). Filmtitel wie „I'm Not Ready for Christmas“ oder „Download“ lösen nichts aus.
+    /// 4. „🎫“ ungecacht (Gerätetest 21.11.: Platzhalter). Risiko: die AIOStreams-Vorlage „minimalistic gdrive“ nutzt
+    ///    🎫 für gecacht (🎟️ für ungecacht); dort gälte ein gecachter Text ohne ⚡ hier fälschlich als ungecacht.
     public static func cacheStatus(_ text: String) -> Bool? {
         let up = text.uppercased()
-        let notCached = ["NOT CACHED", "NOT READY", "NICHT GECACHT", "NICHT BEREIT"]
-        if text.contains("⏳") || containsToken(up, "UNCACHED") || notCached.contains(where: { up.contains($0) }) { return false }
-        if text.contains("⚡") || containsToken(up, "CACHED") || up.contains("(INSTANT ")
-            || up.range(of: #"\[(TB|RD|AD|PM|DL|ED|OC|PKP)\+\]"#, options: .regularExpression) != nil { return true }
-        if text.contains("🎫") || containsToken(up, "DOWNLOAD") { return false }
+        if text.contains("⚡") || up.contains("(INSTANT ") || matches(cachedTag, up) { return true }
+        if text.contains("⏳") || matches(downloadTag, up) || up.contains("❌ NOT READY") || up.contains("❌NOT READY") { return false }
+        var word: Bool?
+        for line in up.components(separatedBy: "\n") where !line.trimmingCharacters(in: .whitespaces).hasPrefix("🎬") {
+            let core = String(line.drop { !($0.isLetter || $0.isNumber) })
+            let bracketed = bracketContents(line)
+            let says: (String) -> Bool = { w in core.hasPrefix(w) || bracketed.contains { containsToken($0, w) } }
+            if notCachedWords.contains(where: says) { return false }
+            if word == nil, says("CACHED") { word = true }
+        }
+        if let word { return word }
+        if text.contains("🎫") { return false }
         return nil
+    }
+
+    private static let notCachedWords = ["UNCACHED", "NOT CACHED", "NOT READY", "NICHT GECACHT", "NICHT BEREIT"]
+    /// „[TB+]“, „[RD+]“, „[EN+]“ … (zwei, drei Großbuchstaben; „[HDR10+]“ zählt nicht).
+    nonisolated(unsafe) private static let cachedTag = try! NSRegularExpression(pattern: #"\[[A-Z]{2,3}\+\]"#)
+    /// „[TB download]“ (Torrentio-Stil); das Wort „Download“ allein zählt nicht.
+    nonisolated(unsafe) private static let downloadTag = try! NSRegularExpression(pattern: #"\[[A-Z]{2,3} DOWNLOAD\]"#)
+    nonisolated(unsafe) private static let bracket = try! NSRegularExpression(pattern: #"[\[(]([^\[\]()]*)[\])]"#)
+
+    private static func matches(_ re: NSRegularExpression, _ s: String) -> Bool {
+        re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)) != nil
+    }
+
+    private static func bracketContents(_ s: String) -> [String] {
+        bracket.matches(in: s, range: NSRange(s.startIndex..., in: s)).compactMap { m in
+            Range(m.range(at: 1), in: s).map { String(s[$0]) }
+        }
     }
 
     /// Token = nicht von Buchstaben/Ziffern umschlossen (damit "DV" nicht in "DVD..." greift usw.).

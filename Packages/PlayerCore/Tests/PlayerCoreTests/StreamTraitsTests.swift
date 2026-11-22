@@ -131,10 +131,34 @@ import Testing
     // Wörter: „Uncached“ enthält „Cached“ und ist trotzdem ungecacht.
     #expect(c("AIO 1080p", "Uncached") == false)
     #expect(c("AIO 1080p", "Not cached") == false)
-    #expect(c("AIO 1080p", "TB Cached") == true)
+    #expect(c("AIO 1080p", "Cached (TB)") == true)
+    #expect(c("AIO 1080p", "[TB Cached]") == true)
+    #expect(c("AIO 1080p", "📡 DMM\n⏬ Uncached") == false)
+    // Allgemeine Dienstkürzel, aber nicht „[HDR10+]“.
+    #expect(c("[EN+] AIOStreams 1080p") == true)
+    #expect(c("AIO 2160p [HDR10+]") == nil)
     // Ohne Merkmal: unbekannt.
     #expect(c("🍿 4K • 🌈 DV", "🎬 Pixels (2015)\n💿 WEB-DL ⚙️ HEVC\n💾 12.1 GB") == nil)
     // Strukturiertes Feld geht vor dem Text.
     let hinted = StreamItem(name: "❌ Not Ready", url: "https://u", behaviorHints: StreamBehaviorHints(cached: true))
     #expect(StreamTraits.parse(hinted).cached == true)
+}
+
+/// Review F-i I1/M1: Filmtitel und Dateinamen mit Status-Wörtern kippen den Cache-Zustand nicht.
+@Test func cacheStatusIgnoresStatusWordsInTitles() {
+    func c(_ name: String, _ desc: String, file: String? = nil) -> Bool? {
+        var h = StreamBehaviorHints(); h.filename = file
+        return StreamTraits.parse(StreamItem(name: name, description: desc, url: "https://u", behaviorHints: h)).cached
+    }
+    let title = "🎬 I'm Not Ready for Christmas (2015)\n💿 WEB-DL ⚙️ HEVC\n💾 2.1 GB"
+    #expect(c("🚀 FHD", title + "\n⚡Ready (TB) 🔍AIOStreams") == true)
+    #expect(c("🚀 FHD", title + "\n❌ Not Ready (TB) ✤ Meteor") == false)
+    #expect(c("🚀 FHD", title) == nil)
+    // „Download“ als Titel oder Dateiname: unbekannt, nur „[TB download]“ zählt.
+    #expect(c("🚀 FHD", "🎬 The Download (2019)\n💾 2.1 GB", file: "The.Download.2019.1080p.mkv") == nil)
+    #expect(c("AIO 1080p", "Download (2019)") == nil)
+    // Dateiname mit Status-Wort zählt nicht.
+    #expect(c("AIO 1080p", "💾 2 GB", file: "Not Ready (2020) [Uncached].mkv") == nil)
+    // ⚡ geht vor ⏳ (⏳ in anderer Bedeutung).
+    #expect(c("[TB⚡] 1080p", "⏳ 2h 10m") == true)
 }

@@ -98,7 +98,7 @@ public enum BestChoice {
         if let svc = t.service {
             parts.append(serviceName(svc) + (t.cached == true ? " ⚡" : ""))
         } else if t.cached == true {
-            parts.append("⚡ sofort")
+            parts.append(QualityBadges.cachedText)
         }
         if parts.isEmpty {
             let name = StreamRowText(s).name.components(separatedBy: "\n").first ?? ""

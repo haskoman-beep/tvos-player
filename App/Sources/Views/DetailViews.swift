@@ -125,7 +125,7 @@ struct DetailView: View {
                             ProgressView().quietFocusTarget(overview.isEmpty)
                         } else if let imdb {
                             if isSeries {
-                                if let k = extra?.trailerYouTube { trailerButton(k) }
+                                if let k = extra?.trailerYouTube { trailerButton(k).buttonStyle(ThemeActionButtonStyle()) }
                                 episodes(imdb)
                             } else {
                                 let resume = model.progress.resumePosition(for: imdb)
@@ -138,6 +138,8 @@ struct DetailView: View {
                                     .focused($focus, equals: .play)
                                     if let k = extra?.trailerYouTube { trailerButton(k) }
                                 }
+                                // Welle F-i: Token-Farben statt Systemknopf (der zog wieder Blau ins Label).
+                                .buttonStyle(ThemeActionButtonStyle())
                             }
                             if let trailerNote { Text(trailerNote).textRole(.rowDetail) }
                             if let x = extra { DetailExtras(info: x, isSeries: isSeries) }
@@ -371,8 +373,8 @@ struct DetailView: View {
                 navigate(.streams(r))
             } label: {
                 VStack(alignment: .leading, spacing: Theme.Space.xs) {
-                    Text("▶ " + BestChoice.title(c.reason, resumeText: resume.map(timeText))).font(.headline)
-                    Text(detail).font(.callout).lineLimit(1)
+                    Text("▶ " + BestChoice.title(c.reason, resumeText: resume.map(timeText))).textRoleInRow(.rowTitleEmphasis)
+                    Text(detail).textRoleInRow(.rowDetail).lineLimit(1)
                 }
                 .frame(maxWidth: 620, alignment: .leading)
             }
@@ -455,7 +457,7 @@ struct DetailView: View {
                 HStack {
                     ForEach(seasons, id: \.self) { s in
                         Button("Staffel \(s)") { season = s }
-                            .background(s == season ? Color.white.opacity(0.2) : .clear, in: Capsule())
+                            .buttonStyle(ThemeActionButtonStyle(selected: s == season))
                     }
                 }
             }
@@ -475,21 +477,22 @@ struct DetailView: View {
                             RemoteImage(url: v.thumbnail, maxPixels: 560, blur: spoiler ? SpoilerStill.blurRadius : 0)
                                 .frame(width: 280, height: 158).clipped()
                                 .spoilerMark(spoiler)
-                            // Nur Schriftrollen: Farben regelt der Systemknopf (dunkel auf der weißen Fokusfläche).
+                            // Welle F-i: Farben aus den Tokens (`textRoleInRow`, Zeilenstil), kein Systemknopf mit Akzentfarbe.
                             VStack(alignment: .leading, spacing: Theme.Space.xs) {
                                 HStack {
-                                    Text("\(v.episode ?? 0). \(v.name ?? v.title ?? "Folge")").font(Theme.TextRole.rowTitleEmphasis.font)
+                                    Text("\(v.episode ?? 0). \(v.name ?? v.title ?? "Folge")").textRoleInRow(.rowTitleEmphasis)
                                     let key = "\(imdb):\(season):\(v.episode ?? 0)"
-                                    if model.progress.isWatched(key) { Image(systemName: "checkmark.circle.fill").foregroundStyle(.green) }
+                                    if model.progress.isWatched(key) { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.Tone.ok.color) }
                                     else if let p = model.progress.entries[key], p.position >= 60 {
                                         ProgressView(value: p.fraction).frame(width: 120)
                                     }
                                 }
-                                if let o = v.overview { Text(o).font(Theme.TextRole.rowDetail.font).lineLimit(2).foregroundStyle(.secondary) }
+                                if let o = v.overview { Text(o).textRoleInRow(.rowDetail).lineLimit(2).multilineTextAlignment(.leading) }
                             }
                             Spacer()
                         }
                     }
+                    .buttonStyle(ThemeRowButtonStyle(maxWidth: .infinity))
                     .focused($focus, equals: isFirst ? .play : .episode(v.id))
                     .id(v.id)
                 }
@@ -592,9 +595,9 @@ struct StreamListView: View {
                                 .recentlyFailedMark(entry.stream, title: (current ?? request).id)
                         }
                         // Welle F-d: Zeilenform aus den Tokens (bg.row, radius.row, weiße Fokusfläche) über die volle Breite.
-                        // Welle F-i: hohe Zeilen (ganzer Formatter-Text) wachsen beim Fokus höchstens um `Space.xs / 2`
+                        // Welle F-i: hohe Zeilen (ganzer Formatter-Text) wachsen beim Fokus höchstens um `Focus.rowMaxGrowth`
                         // je Seite, damit sie die Nachbarzeile nicht überdecken.
-                        .buttonStyle(ThemeRowButtonStyle(maxWidth: .infinity, maxFocusGrowth: Theme.Space.xs / 2))
+                        .buttonStyle(ThemeRowButtonStyle(maxWidth: .infinity, maxFocusGrowth: Theme.Focus.rowMaxGrowth))
                         .listRowBackground(Color.clear)
                         .focused($focusedStream, equals: entry.stream.id)
                         .id(entry.stream.id)
@@ -1006,7 +1009,9 @@ struct DetailExtras: View {
             if !info.cast.isEmpty {
                 Text("Besetzung").textRole(.sectionTitle).accessibilityAddTraits(.isHeader)
                 ScrollView(.horizontal) {
-                    LazyHStack(spacing: 36) {
+                    // Welle F-i: eigener Kachelstil (Anheben 1,06 ≈ 8 pt je Seite) statt `.card`; Abstand ≥ Wachsen,
+                    // Rand oben/unten `Focus.tileRowPadding`, damit Kachel und Schatten nicht in „Ähnliche Titel“ ragen.
+                    LazyHStack(spacing: Theme.Space.l) {
                         ForEach(info.cast) { c in
                             Button { navigate(.person(id: c.id, name: c.name)) } label: {
                                 VStack(spacing: 10) {
@@ -1016,12 +1021,12 @@ struct DetailExtras: View {
                                     Text(c.name).font(.caption.weight(.semibold)).lineLimit(1)
                                     if let r = c.role { Text(r).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
                                 }
-                                .frame(width: 220).padding(.vertical, 14)
+                                .frame(width: 220).padding(.vertical, Theme.Space.xs)
                             }
-                            .buttonStyle(.card)
+                            .buttonStyle(ThemeTileButtonStyle())
                         }
                     }
-                    .padding(.vertical, 30)
+                    .padding(.vertical, Theme.Focus.tileRowPadding)
                 }
                 .scrollClipDisabled()
             }
@@ -1033,7 +1038,7 @@ struct DetailExtras: View {
                             NavigationLinkish(route: .detail(m), onActivate: { $0 }, label: PosterCard(item: m))
                         }
                     }
-                    .padding(.vertical, 30)
+                    .padding(.vertical, Theme.Focus.tileRowPadding)
                 }
                 .scrollClipDisabled()
             }

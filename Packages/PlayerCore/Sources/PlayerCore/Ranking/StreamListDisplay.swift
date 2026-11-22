@@ -134,8 +134,8 @@ public enum StreamListBadges {
     public static func cacheBadge(_ s: StreamItem, settings: BadgeSettings) -> QualityBadge? {
         guard settings.shows(.cacheStatus) else { return nil }
         switch StreamTraits.parse(s).cached {
-        case true?: return QualityBadge(type: .cacheStatus, text: "⚡ Sofort bereit", tone: .ready)
-        case false?: return QualityBadge(type: .cacheStatus, text: "Nicht gecacht", tone: .pending)
+        case true?: return QualityBadge(type: .cacheStatus, text: QualityBadges.cachedText, tone: .ready)
+        case false?: return QualityBadge(type: .cacheStatus, text: QualityBadges.uncachedText, tone: .pending)
         case nil: return nil
         }
     }
@@ -150,13 +150,6 @@ public enum StreamListBadges {
             out.append(QualityBadge(type: .size, text: QualityBadges.formatSize(b)))
         }
         return out
-    }
-
-    /// Addon-Text nennt den Cache-Status schon (⚡, [RD+], „Cached“, „Instant“; „Uncached“ zählt nicht).
-    public static func showsCached(_ text: String) -> Bool {
-        let up = text.uppercased()
-        return text.contains("⚡") || up.contains("+]") || StreamTraits.containsToken(up, "CACHED")
-            || StreamTraits.containsToken(up, "INSTANT") || StreamTraits.containsToken(up, "SOFORT")
     }
 
     /// Addon-Text nennt eine Größe („5.93 GB“, „1,4 GiB“, „850MB“).

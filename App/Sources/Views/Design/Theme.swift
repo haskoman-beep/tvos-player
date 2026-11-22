@@ -95,6 +95,14 @@ enum Theme {
     enum Focus {
         /// Anheben bei Fokus bzw. Eindrücken beim Klick.
         static let scale: CGFloat = 1.02
+        /// Anheben von Aktionsknöpfen und Kacheln (`ThemeActionButtonStyle`, `ThemeTileButtonStyle`), Welle F-i.
+        static let tileScale: CGFloat = 1.06
+        /// Höchstes Wachsen hoher Zeilen je Seite beim Fokus (Quellenliste, `ThemeRowButtonStyle.maxFocusGrowth`):
+        /// greift ab etwa 200 pt Zeilenhöhe, darunter bleibt `scale`.
+        static let rowMaxGrowth: CGFloat = 2
+        /// Senkrechter Rand um Kachelreihen (Besetzung, Ähnliche Titel): Wachsen beim Fokus (bis etwa 10 pt bei
+        /// 300 pt Kachelhöhe) plus Schatten (Radius 14, y 8), damit nichts in Nachbarreihe oder Überschrift ragt.
+        static let tileRowPadding: CGFloat = 44
         static let pressedScale: CGFloat = 0.98
         /// Schatten der fokussierten Zeile.
         static let shadowOpacity: Double = 0.35
@@ -310,6 +318,63 @@ struct ThemeRowButtonStyle: ButtonStyle {
                             in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { if maxFocusGrowth != nil { height = $0 } }
                 .scaleEffect(configuration.isPressed ? Theme.Focus.pressedScale : (focused ? focusScale : 1))
+                .shadow(color: .black.opacity(focused ? Theme.Focus.shadowOpacity : 0),
+                        radius: focused ? Theme.Focus.shadowRadius : 0, y: focused ? Theme.Focus.shadowY : 0)
+                .animation(.easeOut(duration: Theme.Focus.duration), value: focused)
+                .animation(.easeOut(duration: Theme.Focus.pressDuration), value: configuration.isPressed)
+        }
+    }
+}
+
+/// Welle F-i: Aktionsknopf (Detailseite: Sofort abspielen, Abspielen, Trailer, Staffeln; Startseite: Hero-Knöpfe,
+/// Reihen-Verwalter). Ersetzt den Systemknopf, der die App-Akzentfarbe bzw. das System-Blau ins Label zog
+/// (`.tint(Color?.none)` half nicht mehr): Farben nur aus den Tokens, ruhend Weiß auf `bg.row`, im Fokus Schwarz
+/// auf Weiß. `selected` (z. B. gewählte Staffel): Fläche `badgeFill` statt `bg.row`.
+struct ThemeActionButtonStyle: ButtonStyle {
+    var selected = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        ActionBody(configuration: configuration, selected: selected)
+    }
+
+    private struct ActionBody: View {
+        let configuration: Configuration
+        let selected: Bool
+        @Environment(\.isFocused) private var focused
+
+        var body: some View {
+            configuration.label
+                .foregroundStyle(focused ? Theme.Palette.primaryOnFocus : Theme.Palette.primary)
+                .padding(.horizontal, Theme.Space.l)
+                .padding(.vertical, Theme.Space.s)
+                .frame(minHeight: Theme.Layout.rowMinHeight)
+                .background(focused ? Theme.Palette.rowFocused : (selected ? Theme.Palette.badgeFill : Theme.Palette.row),
+                            in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
+                .scaleEffect(configuration.isPressed ? Theme.Focus.pressedScale : (focused ? Theme.Focus.tileScale : 1))
+                .shadow(color: .black.opacity(focused ? Theme.Focus.shadowOpacity : 0),
+                        radius: focused ? Theme.Focus.shadowRadius : 0, y: focused ? Theme.Focus.shadowY : 0)
+                .animation(.easeOut(duration: Theme.Focus.duration), value: focused)
+                .animation(.easeOut(duration: Theme.Focus.pressDuration), value: configuration.isPressed)
+        }
+    }
+}
+
+/// Welle F-i: Kachel einer Reihe (Besetzung) mit festem Fokus-Anheben `Focus.tileScale` statt `.card`, damit
+/// Abstand (`LazyHStack`-spacing ≥ Wachsen) und Rand (`Focus.tileRowPadding`) sicher reichen.
+struct ThemeTileButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { TileBody(configuration: configuration) }
+
+    private struct TileBody: View {
+        let configuration: Configuration
+        @Environment(\.isFocused) private var focused
+
+        var body: some View {
+            configuration.label
+                .foregroundStyle(focused ? Theme.Palette.primaryOnFocus : Theme.Palette.primary)
+                .padding(Theme.Space.s)
+                .background(focused ? Theme.Palette.rowFocused : Theme.Palette.row,
+                            in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
+                .scaleEffect(configuration.isPressed ? Theme.Focus.pressedScale : (focused ? Theme.Focus.tileScale : 1))
                 .shadow(color: .black.opacity(focused ? Theme.Focus.shadowOpacity : 0),
                         radius: focused ? Theme.Focus.shadowRadius : 0, y: focused ? Theme.Focus.shadowY : 0)
                 .animation(.easeOut(duration: Theme.Focus.duration), value: focused)

@@ -76,7 +76,7 @@ struct BadgeDetailPage: View {
     static let types: [(String, WritableKeyPath<BadgeSettings, Bool>)] = [
         ("Auflösung", \.resolution), ("HDR / Dolby Vision", \.hdr), ("Quelle (REMUX, BluRay, WEB)", \.source),
         ("Videocodec", \.videoCodec), ("Tonformat", \.audio), ("Kanäle", \.channels), ("Sprachen", \.languages),
-        ("Größe", \.size), ("Cache-Status (sofort / lädt erst)", \.cacheStatus),
+        ("Größe", \.size), ("Cache-Status (Sofort bereit / Nicht gecacht)", \.cacheStatus),
     ]
 
     static func shownCount(_ b: BadgeSettings) -> Int { types.filter { b[keyPath: $0.1] }.count }

@@ -25,7 +25,7 @@ import Testing
     let s = StreamItem(name: "[TB⚡] 2160p", description: "Film.2160p.REMUX.DV.HDR10.TrueHD.Atmos.DTS-HD.MA.7.1.HEVC 🇩🇪 💾 45.2 GB", url: "https://x")
     let t = StreamTraits.parse(s)
     let all = QualityBadges.forStream(t, settings: BadgeSettings(videoCodec: true))
-    #expect(all.map(\.text) == ["4K", "DV", "HDR10", "REMUX", "HEVC", "Atmos", "TrueHD", "DTS-HD MA", "7.1", "DE", "45,20 GB", "⚡ sofort"])
+    #expect(all.map(\.text) == ["4K", "DV", "HDR10", "REMUX", "HEVC", "Atmos", "TrueHD", "DTS-HD MA", "7.1", "DE", "45,20 GB", "⚡ Sofort bereit"])
     #expect(all.compactMap(\.logo) == [.uhd4K, .dolbyVision, .hdr10, .remux, .dolbyAtmos, .dtsHDMA])
     #expect(all.last?.tone == .ready)
     #expect(all.dropLast().allSatisfy { $0.tone == .neutral })
@@ -41,7 +41,7 @@ import Testing
     #expect(QualityBadges.forStream(t, settings: off).isEmpty)
     off.set(.cacheStatus, true)
     let pending = StreamTraits.parse(StreamItem(name: "[TB⏳] 1080p"))
-    #expect(QualityBadges.forStream(pending, settings: off) == [QualityBadge(type: .cacheStatus, text: "lädt erst", tone: .pending)])
+    #expect(QualityBadges.forStream(pending, settings: off) == [QualityBadge(type: .cacheStatus, text: "Nicht gecacht", tone: .pending)])
 }
 
 @Test func bestQualityOverCachedStreams() {

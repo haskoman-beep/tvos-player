@@ -113,13 +113,13 @@ struct HomeView: View {
                     .textRole(.rowDetail)
                     .multilineTextAlignment(.leading)
                 Button("Reihen hinzufügen") { manager = ManagerTarget(openBrowser: true) }
-                    .tint(Color?.none)
+                    .buttonStyle(ThemeActionButtonStyle())
             }
             .padding(.leading, Theme.Space.edge)
         } else {
             Button("Reihen & Collections") { manager = ManagerTarget() }
-                // Keine Akzentfarbe (RootView .tint) auf der Startseite: normaler tvOS-Knopf wie Abspielen/Details.
-                .tint(Color?.none)
+                // Keine Akzentfarbe (RootView .tint) auf der Startseite; Welle F-i: Token-Knopf wie Abspielen/Details.
+                .buttonStyle(ThemeActionButtonStyle())
                 .padding(.top, 20)
                 .padding(.leading, Theme.Space.edge)
         }

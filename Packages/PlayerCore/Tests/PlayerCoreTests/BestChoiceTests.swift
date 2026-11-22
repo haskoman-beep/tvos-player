@@ -99,7 +99,7 @@ private func entries(_ s: [StreamItem], addon: String = "A") -> [(addon: String,
     let bare = StreamItem(name: "Quelle X\nZeile 2", url: "https://x/1")
     #expect(BestChoice.detail(bare, primaryLanguage: "de") == "Quelle X")
     let cachedNoService = st("1080p", "⚡")
-    #expect(BestChoice.detail(cachedNoService, primaryLanguage: nil) == "1080p · ⚡ sofort")
+    #expect(BestChoice.detail(cachedNoService, primaryLanguage: nil) == "1080p · ⚡ Sofort bereit")
 }
 
 @Test func bestChoiceTitle() {
@@ -221,4 +221,14 @@ private func entries(_ s: [StreamItem], addon: String = "A") -> [(addon: String,
     let unknown = st("🚀 FHD", "🎬 Film German\n📦 4.9 GB")
     let q = BestChoice.pick(entries([notReady, unknown]), context: de, last: nil, isFailed: { _ in false })
     #expect(q?.stream == unknown)
+}
+
+/// Gerätefoto Build 41: Karte zeigte „Sofort abspielen · Deutsch · 1,8 GB“ für eine „❌ Not Ready (TB) ✤ Meteor“-Quelle.
+/// Deutsch schlägt sonst die Technik, ungecacht muss aber hinter gecachte englische Quellen.
+@Test func bestChoicePutsGermanNotReadyBehindCachedEnglish() {
+    let notReady = st("❓ Unknown", "🎬 The Immigrant (2013)\n🗣️ 🇩🇪\n💾 1.8 GB 🌱 2\n❌ Not Ready (TB) ✤ Meteor")
+    let ready = st("🎫 1080p", "🎬 The Immigrant (2013)\n💿 BluRay ⚙️ AVC\n🗣️ 🇬🇧\n💾 10.5 GB\n⚡Ready (TB) ✤ Meteor")
+    let p = BestChoice.pick(entries([notReady, ready]), context: de, last: nil, isFailed: { _ in false })
+    #expect(p?.stream == ready)
+    #expect(BestChoice.detail(ready, primaryLanguage: "de").contains("Sofort bereit"))
 }

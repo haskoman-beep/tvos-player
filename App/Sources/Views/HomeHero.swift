@@ -273,10 +273,12 @@ struct HeroButtons: View {
                 Label(starting ? "Wird geladen …" : "Abspielen", systemImage: "play.fill")
             }
             .focused($field, equals: .play)
+            .buttonStyle(ThemeActionButtonStyle())
             Button { if let m = slides.current { navigate(.detail(m)) } } label: {
                 Label("Details", systemImage: "info.circle")
             }
             .focused($field, equals: .details)
+            .buttonStyle(ThemeActionButtonStyle())
             Spacer(minLength: Theme.Space.xl)
             if slides.items.count > 1 {
                 HStack(spacing: Theme.Space.s) {
@@ -293,7 +295,7 @@ struct HeroButtons: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .focusSection()
         .defaultFocus($field, .play, priority: .userInitiated)
-        // Die App-Akzentfarbe (RootView .tint) färbte beide Knöpfe blau: wie auf der Detailseite normale tvOS-Knöpfe.
+        // Die App-Akzentfarbe (RootView .tint) färbte beide Knöpfe blau; Welle F-i: Token-Knöpfe (ThemeActionButtonStyle).
         .tint(Color?.none)
         .onChange(of: field) { _, f in
             if f != nil { focus.leaveRows() }

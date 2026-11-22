@@ -123,9 +123,6 @@ private let de = SourceRankContext(primaryLanguage: "de", av1Hardware: false)
 }
 
 @Test func addonTextDetection() {
-    #expect(StreamListBadges.showsCached("[RD+] Torrentio"))
-    #expect(StreamListBadges.showsCached("Instant ✓"))
-    #expect(!StreamListBadges.showsCached("Uncached"))
     #expect(StreamListBadges.showsSize("💾 1,4 GiB"))
     #expect(StreamListBadges.showsSize("850MB"))
     #expect(!StreamListBadges.showsSize("1080p HEVC 7.1"))
