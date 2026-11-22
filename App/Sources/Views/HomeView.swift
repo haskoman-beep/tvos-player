@@ -105,18 +105,32 @@ struct HomeView: View {
                 }
                 .modifier(TopEdgeScroll(watch: topWatch, proxy: proxy))
                 .environment(\.heroBackdropShared, true)
+                // Wave F-k: focus scrolling keeps only the card's frame inside the list, the lift (tag at the poster's
+                // top edge) reaches above it. The list draws past its top edge into a band as high as that lift
+                // (`Theme.Focus.listEdgeBand`, clear of the hero info); only the band's top fades.
+                .scrollClipDisabled()
                 // Weicher Rand oben, damit hochgescrollte Reihen nicht hart an der Info abreißen.
-                .mask {
+                .mask(alignment: .top) {
                     VStack(spacing: 0) {
-                        LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: 24)
+                        LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                            .frame(height: Theme.Focus.listFade)
                         Color.black
                     }
+                    .padding(.top, -listEdgeBand(rows))
                 }
                 .padding(.top, HeroMetrics.listTop)
                 .ignoresSafeArea(edges: .bottom)
             }
         }
         .environment(focus)
+    }
+
+    /// Wave F-k: band above the hero list for the lift of its tallest tile (card size, quality strip below posters).
+    private func listEdgeBand(_ rows: [HomeRow]) -> CGFloat {
+        let a = model.profile.appearance
+        let strip = a.titles.posterBadges == .bottom ? PosterQualityBadges.bandHeight : 0
+        let kinds = rows.map { PosterSize.kind(for: $0.style) }
+        return Theme.Focus.listEdgeBand(height: FocusHeadroom.tallest(kinds, cardScale: a.cardSize.scale, posterExtra: strip))
     }
 
     @ViewBuilder private func rowList(_ rows: [HomeRow]) -> some View {

@@ -39,6 +39,20 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 - Error, statistics and library-sync entries from aggregator addons are no longer listed or played as
   sources, and „Sofort abspielen“ (play now) never picks them. They only appear in the log.
 - Error entries no longer appear as home screen tiles or as subtitle tracks.
+- Home screen and „Ähnliche Titel“ (similar titles): a focused poster is no longer cut off, including its tag
+  at the top edge and its shadow, at every poster size. Poster rows get a little more room above and below
+  for this; a row keeps its height while its entries load.
+- Poster tiles: when a poster image cannot be loaded, the tile tries the next one (the metadata addon's
+  poster, then the TMDB poster). The title lies under the picture from the start, so a tile whose picture
+  loads slowly or not at all shows its title instead of an empty grey card. A picture service that stops
+  answering is given up after 15 seconds instead of 60.
+- Quality badges on posters (when „Qualität auf Postern“ is on): every poster on screen now gets its
+  badge, not only the ones that were focused. When scrolling stops, the app quietly looks up the sources
+  of the visible titles (at most a few at a time and a few per minute, never while a video plays or a
+  detail page loads its own sources, each title only once while its sources are cached) and fades the
+  badge in. These lookups never push out the sources of titles you focused or opened, so those still
+  open at once. Series without a started episode use their first
+  episode.
 
 ### Changed
 - Subtitles are never requested from AIOMetadata, because a subtitle request there marks the title as

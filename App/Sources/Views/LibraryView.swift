@@ -46,7 +46,7 @@ private struct HistoryRow: View {
             VStack(alignment: .leading, spacing: Theme.Space.s) {
                 Text("Verlauf").textRole(.sectionTitle).padding(.leading, Theme.Space.edge)
                     .accessibilityAddTraits(.isHeader)
-                Strip {
+                Strip(kind: .poster) {
                     ForEach(items) { m in
                         NavigationLinkish(route: .detail(m), onActivate: { $0 }, label: PosterCard(item: m))
                     }

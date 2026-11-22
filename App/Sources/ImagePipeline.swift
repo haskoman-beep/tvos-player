@@ -50,6 +50,9 @@ actor ImagePipeline {
         cfg.urlCache = cache
         cfg.requestCachePolicy = .returnCacheDataElseLoad
         cfg.httpMaximumConnectionsPerHost = 6
+        // Wave F-k R1: a picture service that stops answering gives up after 15 s without data (default 60 s); a slow
+        // download that keeps receiving is not cut. The tile then tries its next picture (TilePosterImage).
+        cfg.timeoutIntervalForRequest = 15
         session = URLSession(configuration: cfg)
         urlCache = cache
         memory.totalCostLimit = ImageCacheBudget.maximum
@@ -392,6 +395,8 @@ struct RemoteImage: View {
     var fixedTarget: ImageTarget? = nil
     /// Welle F-l: eigene Fläche, solange kein Bild da ist (Paket-Kachel: Farbverlauf), statt der grauen.
     var placeholder: AnyView? = nil
+    /// Wave F-k: called with the address when it cannot be loaded (not on cancel); poster tiles then try the next one.
+    var onFailure: (@MainActor (String) -> Void)? = nil
     @Environment(\.displayScale) private var displayScale
     @State private var image: UIImage?
     @State private var loadedURL: String?
@@ -438,7 +443,11 @@ struct RemoteImage: View {
             if t != target { target = t }
         }
         .task(id: LoadKey(url: url, target: fixedTarget ?? target, blur: blur)) {
-            guard let s = url, let u = URL(string: s) else { image = nil; return }
+            guard let s = url, let u = URL(string: s) else {
+                image = nil
+                if let url { onFailure?(url) }
+                return
+            }
             guard let target = fixedTarget ?? target else { return }   // Größe noch unbekannt: nicht winzig dekodieren
             let blurPx = Int((blur * displayScale).rounded())
             // Speichercache-Treffer (auch nach dem Freigeben beim Zurückkehren): sofort, ohne Überblendung.
@@ -450,6 +459,7 @@ struct RemoteImage: View {
             let img = await ImagePipeline.shared.image(u, target: target, blur: blurPx)
             guard !Task.isCancelled else { return }
             withAnimation(.easeOut(duration: 0.2)) { image = img; loadedURL = s; loadedBlur = blur }
+            if img == nil { onFailure?(s) }
         }
         .onDisappear {
             guard let image, ImagePipeline.cost(image) >= Self.releaseBytes else { return }

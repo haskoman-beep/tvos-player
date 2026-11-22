@@ -38,7 +38,7 @@ struct CalendarView: View {
                         VStack(alignment: .leading, spacing: Theme.Space.s) {
                             Text(day.label).textRole(.sectionTitle).padding(.leading, Theme.Space.edge)
                                 .accessibilityAddTraits(.isHeader)
-                            Strip {
+                            Strip(kind: .landscape) {
                                 ForEach(day.items) { e in
                                     NavigationLinkish(route: .detail(e.seriesPreview), onActivate: { $0 },
                                                       label: CalendarTile(episode: e))

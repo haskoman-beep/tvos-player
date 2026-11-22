@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import PlayerCore
 
 /// Eine Startseiten-Reihe im gewählten Stil.
@@ -106,7 +107,7 @@ struct HomeRowView: View {
                 let line = CollectionArtStats(folders: folders, logoStyle: row.style == .logoTiles).logLine(title: title)
                 // Welle F-l: Paket-Reihen melden zusätzlich, wie viele Paket-Kacheln ein Bild bzw. GIF haben.
                 let packLine = PackageArtStats(folders: folders)?.logLine(row: title)
-                Strip {
+                Strip(kind: tileKind) {
                     ForEach(folders) { f in
                         card(.folder(f)) { FolderTile(folder: f, logoStyle: row.style == .logoTiles) }
                     }
@@ -117,7 +118,7 @@ struct HomeRowView: View {
                 }
             case .failed(let key):
                 // Welle F-g: Kit-Datei schlug fehl: erreichbare Statuskachel statt ewiger Platzhalter; OK lädt neu.
-                Strip {
+                Strip(kind: tileKind) {
                     statusTile(p.statusText ?? "", retry: true) {
                         focusedPlaceholder = 0
                         Task { await FusionKitStore.shared.retry(sourceKey: key) }
@@ -125,7 +126,7 @@ struct HomeRowView: View {
                 }
                 .task(id: "failed|\(key)") { CollectionRowLog.note(row: row.id.uuidString, line: "Collection \(title): Laden fehlgeschlagen") }
             case .empty:
-                Strip { statusTile(p.statusText ?? "Keine Einträge", retry: false) }
+                Strip(kind: tileKind) { statusTile(p.statusText ?? "Keine Einträge", retry: false) }
             case .loading:
                 // Fusion-Kit lädt die Collection noch nach: fokussierbare Platzhalter statt leerer Reihe.
                 placeholders
@@ -135,9 +136,9 @@ struct HomeRowView: View {
             case .loading:
                 placeholders
             case .empty, .failed:
-                Strip { statusTile(phase.statusText(empty: emptyText) ?? emptyText, retry: phase == .failed) }
+                Strip(kind: tileKind) { statusTile(phase.statusText(empty: emptyText) ?? emptyText, retry: phase == .failed) }
             case .items:
-                Strip(expands: row.style == .poster) {
+                Strip(expands: row.style == .poster, kind: tileKind) {
                     ForEach(Array(displayed.enumerated()), id: \.element.id) { i, m in
                         card(route(for: m)) {
                             if row.content == .list(.upcoming) {
@@ -153,7 +154,27 @@ struct HomeRowView: View {
                         }
                     }
                 }
+                // Wave F-k R1: row of these tiles for the visible-tile prefetch (order, log line).
+                .environment(\.prefetchRow, PrefetchRow(key: "home|\(row.id.uuidString)", title: title))
+                // Wave F-k: how many tiles know their quality (source cache only), again when a prefetch lands here.
+                .task(id: displayed.map(\.id)) { noteBadges() }
+                .onReceive(QualityBadgeCache.shared.stored) { id in
+                    guard tileKind == .poster, displayed.contains(where: { model.streamCacheKey(for: $0) == id }) else { return }
+                    noteBadges()
+                }
             }
+        }
+    }
+
+    /// Wave F-k: log line „Plaketten: <row> n/m mit Qualität“ for poster rows (only these carry quality badges);
+    /// logged only when the count changes and has rested 2 s (prefetch results arrive one by one).
+    private func noteBadges() {
+        guard tileKind == .poster, !displayed.isEmpty else { return }
+        let m = model, items = displayed, name = title
+        CollectionRowLog.noteLater(row: "badges|\(row.id.uuidString)") {
+            let a = m.profile.appearance
+            let n = items.filter { PosterBadgeStats.hasBadges(QualityBadgeCache.shared.best(for: $0, model: m), settings: a.badges) }.count
+            return PosterBadgeStats.logLine(row: name, withQuality: n, total: items.count, placement: a.titles.posterBadges)
         }
     }
 
@@ -167,7 +188,7 @@ struct HomeRowView: View {
     /// Das Kontextmenü gilt auch hier (eine hängende Reihe lässt sich ausblenden oder löschen).
     private var placeholders: some View {
         let n = PosterSize.placeholderCount(for: model.profile.appearance.cardSize, style: row.style)
-        return Strip(expands: row.style == .poster) {
+        return Strip(expands: row.style == .poster, kind: tileKind) {
             ForEach(0..<n, id: \.self) { i in
                 Button {} label: { TilePlaceholder(kind: tileKind, rank: row.style == .top10 ? i + 1 : nil) }
                     .buttonStyle(.card)
@@ -226,6 +247,7 @@ struct HomeRowView: View {
 
 /// Welle F-g: eine Logzeile je Collection-Reihe („Collection <titel>: <n> Kacheln, Bilder <n>, GIF <n>“), erneut nur,
 /// wenn sich der Stand ändert (LazyVStack baut Reihen beim Scrollen ab und wieder auf).
+/// Wave F-k: also the badge line of poster rows (own key per row, same rule).
 @MainActor
 enum CollectionRowLog {
     private static var last: [String: String] = [:]
@@ -234,6 +256,19 @@ enum CollectionRowLog {
         guard last[row] != line else { return }
         last[row] = line
         RemoteLog.info("home", line)
+    }
+
+    private static var pending: [String: Task<Void, Never>] = [:]
+
+    /// Wave F-k R1: like `note`, but only after the line has rested 2 s (a newer call replaces a waiting one).
+    static func noteLater(row: String, line: @escaping @MainActor () -> String) {
+        pending[row]?.cancel()
+        pending[row] = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            CollectionRowLog.pending[row] = nil
+            CollectionRowLog.note(row: row, line: line())
+        }
     }
 }
 
@@ -268,6 +303,9 @@ struct Strip<C: View>: View {
     @EnvironmentObject var model: AppModel
     /// Nur Posterreihen klappen auf (und bekommen den Platz am Reihenende).
     var expands = false
+    /// Wave F-k: tile form of the row; sets the room for the focus lift (same for placeholders, status tile and
+    /// cards of one row, so the row does not jump when its entries arrive). No default (R1 M4): every row names it.
+    let kind: TileKind
     @ViewBuilder let content: C
     /// Aufklappende Poster ändern die Reihenbreite: die Reihe bleibt am fokussierten Element verankert.
     @State private var anchorID: String?
@@ -275,11 +313,19 @@ struct Strip<C: View>: View {
         let a = model.profile.appearance
         let s = a.cardSize.scale
         let expand = a.expandPosters && expands
+        // Wave F-k: room above and below for the system card lift + shadow (`Theme.Focus.cardRowPadding`), at least
+        // the former 32·s; the quality strip below a poster is part of the lifted card.
+        let band = kind == .poster && a.titles.posterBadges == .bottom ? PosterQualityBadges.bandHeight : 0
+        let pad = Theme.Focus.cardRowPadding(height: FocusHeadroom.tallest([kind], cardScale: s, posterExtra: band),
+                                             minimum: Theme.Space.l * s)
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(spacing: Theme.Space.m * s) { content }
                 .scrollTargetLayout()
-                .padding(.vertical, Theme.Space.l * s)
+                .padding(.vertical, pad)
         }
+        // Wave F-k: the lifted card (tag at the poster's top edge) and its shadow may reach past the row; the row
+        // spans the full width, so nothing else becomes visible.
+        .scrollClipDisabled()
         // Rand 80 (§4.3): Reihentitel, Hero-Info und erste Kachel starten auf einer Linie.
         .contentMargins(.leading, Theme.Space.edge, for: .scrollContent)
         // Platz rechts, damit auch die letzten Karten aufgeklappt (640·s) an den linken Rand rücken können.
@@ -311,14 +357,12 @@ struct PosterCard: View {
         // Welle E-a: Plaketten nie unten auf dem Bild; bei „Unten“ sitzen sie im Streifen darunter (PosterBadgeBand).
         VStack(spacing: 0) {
             ZStack(alignment: .leading) {
-                TilePosterImage(item: item)
+                // Wave F-k: without any loadable picture the tile shows its title (TilePosterImage), never an empty card.
+                TilePosterImage(item: item, showsTitle: !expanded)
                     .frame(width: w, height: h).clipped()
                 if expanded { ExpandedPoster(item: item).transition(.opacity) }
             }
             .frame(width: (expanded ? h * 16 / 9 : w), height: h, alignment: .leading).clipped()
-            .overlay(alignment: .bottomLeading) {
-                if item.poster == nil && !expanded { Text(item.name).font(.caption).padding(10) }
-            }
             .overlay { CardStateOverlay(itemID: item.id) }
             PosterBadgeBand(width: expanded ? h * 16 / 9 : w)
         }
