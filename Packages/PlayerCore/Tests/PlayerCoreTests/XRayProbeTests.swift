@@ -118,3 +118,31 @@ import Testing
             == "Leiter: [StillLadder] rung idx=12 t=480.0s")
     #expect(XRayProbe.forwardedLine(engineLine: "[HLSVideoEngine] segment 4 ready") == nil)
 }
+
+@Test func xrayProfile5PlanProbesOnlyUnknownFilesWithXRayOn() throws {
+    let mkv = try #require(URL(string: "https://cdn.example.com/a/film.mkv"))
+    let hls = try #require(URL(string: "https://cdn.example.com/a/master.m3u8"))
+    let dash = try #require(URL(string: "https://cdn.example.com/a/manifest.mpd"))
+    let rtsp = try #require(URL(string: "rtsp://cam.example.com/live"))
+    let plan = { (on: Bool, known: Bool?, url: URL, native: Bool) in
+        XRayProbe.profile5Plan(xrayEnabled: on, known: known, url: url, nativeHLS: native)
+    }
+    #expect(plan(true, nil, mkv, false) == .probe)
+    #expect(plan(false, nil, mkv, false) == .asBefore)      // switch off: exactly as before
+    #expect(plan(true, false, mkv, false) == .asBefore)     // checked, not P5: once per run
+    #expect(plan(true, true, mkv, false) == .ladderOff)
+    #expect(plan(false, true, mkv, false) == .ladderOff)    // known P5: no check, no cost
+    #expect(plan(true, nil, hls, false) == .asBefore)
+    #expect(plan(true, nil, dash, false) == .asBefore)
+    #expect(plan(true, nil, mkv, true) == .asBefore)        // native HLS
+    #expect(plan(true, nil, rtsp, false) == .asBefore)
+}
+
+@Test func xrayProfile5ProbeLineNamesTimeAndResult() {
+    #expect(XRayProbe.profile5ProbeLine(isProfile5: true, ms: 312, viaCache: true)
+            == "P5-Vorprüfung 312 ms (über Plattencache): P5 → Hintergrund-Standbilder aus, Quelle gemerkt")
+    #expect(XRayProbe.profile5ProbeLine(isProfile5: false, ms: 40, viaCache: false)
+            == "P5-Vorprüfung 40 ms (direkt): kein P5 → wie bisher, Quelle gemerkt")
+    #expect(XRayProbe.profile5ProbeLine(isProfile5: nil, ms: 1500, viaCache: false)
+            == "P5-Vorprüfung 1500 ms (direkt): ohne Ergebnis → wie bisher")
+}

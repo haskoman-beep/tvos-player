@@ -44,6 +44,36 @@ public enum XRayProbe {
         return "Leiter: " + line[r.lowerBound...].prefix(200)
     }
 
+    /// What `AetherBackend.load` does about the Profile 5 still ladder before a load (X0 review R2).
+    public enum Profile5Plan: Equatable, Sendable {
+        /// Known Profile 5 source: load with `generatesBackgroundScrubPreviews` off, no check.
+        case ladderOff
+        /// Load as before (switch off, known non-P5, HLS/DASH, or a scheme the probe cannot open).
+        case asBefore
+        /// Unknown source with X-Ray on: probe it (after the disk cache routing) before the load.
+        case probe
+    }
+
+    /// `known`: true = remembered as Profile 5, false = checked and not Profile 5 (this app run), nil = unknown.
+    /// The check only runs with X-Ray on; with it off playback is exactly as before (no probe, no extra open).
+    public static func profile5Plan(xrayEnabled: Bool, known: Bool?, url: URL, nativeHLS: Bool) -> Profile5Plan {
+        if known == true { return .ladderOff }
+        guard xrayEnabled, known == nil, !nativeHLS else { return .asBefore }
+        guard let scheme = url.scheme?.lowercased(), ["http", "https", "file"].contains(scheme) else { return .asBefore }
+        if DiskCacheSource.streamingExtensions.contains(url.pathExtension.lowercased()) { return .asBefore }
+        return .probe
+    }
+
+    /// One `xray:` line for the pre-check: result and time.
+    public static func profile5ProbeLine(isProfile5: Bool?, ms: Int, viaCache: Bool) -> String {
+        let via = viaCache ? "über Plattencache" : "direkt"
+        switch isProfile5 {
+        case true?: return "P5-Vorprüfung \(ms) ms (\(via)): P5 → Hintergrund-Standbilder aus, Quelle gemerkt"
+        case false?: return "P5-Vorprüfung \(ms) ms (\(via)): kein P5 → wie bisher, Quelle gemerkt"
+        case nil: return "P5-Vorprüfung \(ms) ms (\(via)): ohne Ergebnis → wie bisher"
+        }
+    }
+
     /// Key for the memory of sources known to be Profile 5: scheme, host, port and path. The query is dropped
     /// (tokens and expiry stamps change between resolves of the same file).
     public static func sourceKey(_ url: URL) -> String {

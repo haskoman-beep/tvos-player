@@ -26,10 +26,11 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 ### Changed
 - Dolby Vision Profile 5: the engine is now built with its still reshaping part, so the face test above can take
   the paused frame of a Profile 5 source. Profile 5 otherwise keeps its earlier behaviour: no scrub previews and
-  no background still pictures (no second connection to the source). To know this before playback starts, the
-  player checks a source it has not seen before while it prepares the stream (at most 1.5 s, in parallel with the
-  disk cache) and remembers Profile 5 sources. If that check gives no answer in time, the source plays normally
-  and is only remembered for the next time. There is no restart during playback.
+  no background still pictures (no second connection to the source) once the player knows the source is
+  Profile 5. It learns this from the first play and remembers it. Only while the face test is on, a source not
+  checked yet is examined before it loads (at most 1.5 s, after the disk cache, through the cache when it is used;
+  not for HLS/DASH), and the result is remembered (for sources that are not Profile 5, until the app restarts).
+  With the face test off, playback starts exactly as before. There is no restart during playback.
 - Accepted trade-off for Dolby Vision Profile 5: the picture held during an audio switch or reload is now decoded
   and converted on the processor (shown in SDR, up to 3 s) instead of through the system. The event log notes its
   time as `xray: P5 gehaltenes Bild per CPU (… ms)`.
