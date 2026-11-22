@@ -17,7 +17,25 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 
 ## [Unreleased]
 
-<!-- Nothing user-facing is merged yet. In progress: a more compact audio and subtitle panel in the player, and a fix for the top menu bar that could not be reached after scrolling on the home screen. -->
+## [Build 187] – 2026-11-22 (integ)
+
+### Changed
+- Player: the audio and subtitle panel is now a slim bar docked at the top (at most a third of the screen),
+  so the video stays visible. „Ton“ (audio), „Untertitel“ (subtitles) and „Versatz“ (subtitle offset) are
+  columns side by side; left/right switches column, up/down picks a track, a click applies it at once.
+- Player: one line per track, for example „Englisch · Dolby Atmos 5.1“, with a small „Standard“ tag. Similar
+  tracks always get distinct labels. White text on dark, black on white when focused, no system blue.
+- Player: Menu closes only the panel; a swipe up from the top row closes it too.
+- GitHub page: release notes, changelog, CI output and design documents are in English.
+
+### Fixed
+- Home screen: the top menu bar could become unreachable after scrolling and returning from playback. When a
+  source list starts playback automatically, it now waits until the page transition has finished, and the
+  bar stays visible while it has focus.
+- Player: while a new audio track is loading, subtitles and offset are briefly locked („lädt…“, loading), so a
+  subtitle choice is no longer silently undone. Switching back to the original audio track during the reload
+  now works.
+- Player: leaving the player after using the panel no longer keeps the player in memory.
 
 ## [Build 174] – 2026-11-22 (integ)
 
