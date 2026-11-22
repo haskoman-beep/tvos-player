@@ -21,6 +21,7 @@ Usage: python3 tools/xray_model/convert_sface.py --out App/Resources/SFace.mlpac
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import sys
@@ -87,10 +88,14 @@ def download(work):
                 if not ONNX_SHA256:
                     fail(f"no pinned SHA-256: set ONNX_SHA256 = \"{digest}\" in convert_sface.py after checking it")
                 if digest != ONNX_SHA256 or size != ONNX_SIZE:
-                    fail(f"hash/size mismatch: got {digest} / {size}, expected {ONNX_SHA256} / {ONNX_SIZE}")
+                    # For example an LFS pointer or an error page with status 200: try the next source.
+                    last_err = f"hash/size mismatch: got {digest} / {size}, expected {ONNX_SHA256} / {ONNX_SIZE}"
+                    log(last_err)
+                    os.remove(dest)
+                    break
                 log("sha256 verified")
                 return dest
-            except (OSError, urllib.error.URLError) as e:
+            except (OSError, urllib.error.URLError, http.client.HTTPException) as e:
                 last_err = e
                 log(f"download failed: {e}")
                 time.sleep(5)

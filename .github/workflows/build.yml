@@ -38,8 +38,9 @@ jobs:
         id: sface
         run: |
           sha=$(sed -n 's/^ONNX_SHA256 = "\([0-9a-f]*\)"$/\1/p' tools/xray_model/convert_sface.py)
-          echo "ONNX SHA-256: ${sha:-none}"
-          echo "onnx_sha=${sha:-unpinned}" >> "$GITHUB_OUTPUT"
+          [ -n "$sha" ] || { echo "::error title=SFace::ONNX_SHA256 not found in convert_sface.py"; exit 1; }
+          echo "ONNX SHA-256: $sha"
+          echo "onnx_sha=$sha" >> "$GITHUB_OUTPUT"
       - name: Face model cache
         id: sface-cache
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
@@ -57,8 +58,9 @@ jobs:
           set -o pipefail
           python -m venv "$RUNNER_TEMP/sface-venv"
           . "$RUNNER_TEMP/sface-venv/bin/activate"
-          python -m pip install --quiet --upgrade pip==24.3.1
-          python -m pip install --quiet --only-binary=:all: -r tools/xray_model/requirements.txt
+          # Full lock with hashes (every package, no resolution): see tools/xray_model/requirements.lock.
+          python -m pip install --quiet --require-hashes --no-deps --only-binary=:all: -r tools/xray_model/requirements.lock
+          python -m pip check
           python -m pip freeze
           python -I tools/xray_model/convert_sface.py --out App/Resources/SFace.mlpackage --work "$RUNNER_TEMP/sface"
       - name: Face model present
@@ -115,11 +117,14 @@ jobs:
           done
           [ -d "$app/AetherEngine_AetherEngine.bundle" ] || { echo "::error::Resource bundle AetherEngine_AetherEngine.bundle missing in $app"; missing=1; }
           # Compiled face model (from App/Resources/SFace.mlpackage), checked inside the zipped IPA.
-          if unzip -l Player.ipa | grep -E 'Payload/Player.app/SFace.mlmodelc/'; then
-            du -sh "$app/SFace.mlmodelc"
-          else
-            echo "::error::SFace.mlmodelc missing in Player.ipa"; missing=1
-          fi
+          unzip -l Player.ipa | grep -E 'Payload/Player\.app/SFace\.mlmodelc/' || true
+          for f in coremldata.bin model.mil weights/weight.bin; do
+            unzip -l Player.ipa | awk -v p="Payload/Player.app/SFace.mlmodelc/$f" '$4 == p {ok=1} END {exit !ok}' \
+              || { echo "::error::SFace.mlmodelc/$f missing in Player.ipa"; missing=1; }
+          done
+          wsize=$(unzip -l Player.ipa | awk '$4 == "Payload/Player.app/SFace.mlmodelc/weights/weight.bin" {print $1}')
+          echo "SFace weight.bin: ${wsize:-0} bytes"
+          [ "${wsize:-0}" -ge 15000000 ] || { echo "::error::SFace weight.bin too small (${wsize:-0} bytes)"; missing=1; }
           exit $missing
       - name: Upload build log
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

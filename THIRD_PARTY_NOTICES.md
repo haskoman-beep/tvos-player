@@ -72,7 +72,7 @@ that an integrator who enables it is responsible for its own licensing. No other
   (https://github.com/zhongyy/SFace, paper https://arxiv.org/abs/2205.12010). The model is a MobileFaceNet
   trained with the SFace loss; the ONNX conversion is by Chengrui Wang for the OpenCV Zoo.
 - Licence: Apache License 2.0 (full text below), as stated by the `LICENSE` file in the model's folder of
-  the OpenCV Zoo.
+  the OpenCV Zoo. Upstream gives no copyright notice beyond the licence text, and there is no NOTICE file.
 - Source of the exact file used: https://github.com/opencv/opencv_zoo/tree/48b10fa505aeb51fbd127fc60a5c660040e823b7/models/face_recognition_sface
   (`face_recognition_sface_2021dec.onnx`, SHA-256 pinned in `tools/xray_model/convert_sface.py`).
 - Modification: the app does not ship the ONNX file. CI converts it with `tools/xray_model/convert_sface.py`

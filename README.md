@@ -170,7 +170,7 @@ licenses, including LGPL. Details and the full license texts are in
 ### Credits
 
 The face recognition model is SFace by Yaoyao Zhong, in the ONNX version from the
-[OpenCV Zoo](https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface) (Apache-2.0).
+[OpenCV Zoo](https://github.com/opencv/opencv_zoo/tree/48b10fa505aeb51fbd127fc60a5c660040e823b7/models/face_recognition_sface) (Apache-2.0).
 CI converts it to Core ML (`tools/xray_model/convert_sface.py`); the model file is not stored in this
 repository. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
