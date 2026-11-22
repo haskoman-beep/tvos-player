@@ -172,8 +172,12 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
                 if tracks.isEmpty { Text("Keine Tonspuren").foregroundStyle(.secondary).padding(16) }
                 ForEach(Array(tracks.enumerated()), id: \.element.id) { i, t in
                     row(TrackPanelLogic.audioRow(t, number: i + 1), active: t.id == engine.activeAudioID) {
-                        RemoteLog.info("player", "Tonspur gewählt: \(t.id)\(audioLocked ? " · gesperrt bis Play" : "")")
-                        if !audioLocked { engine.selectAudio(t.id); onRemember?(.audio(t)) }
+                        // Engine: sitzungserhaltendes Neuladen an derselben Stelle (AetherEngine selectAudioTrack).
+                        switch TrackChoice.audioAction(selected: t.id, active: engine.activeAudioID, locked: audioLocked) {
+                        case .apply: engine.selectAudio(t.id); onRemember?(.audio(t)); logChoice(audio: t)
+                        case .keep: onRemember?(.audio(t)); logChoice(audio: t)
+                        case .locked: RemoteLog.info("player", "Tonspur gewählt: \(t.id) · gesperrt bis Play")
+                        }
                         dismiss()
                     }
                     .focused($focus, equals: .audio(t.id))
@@ -193,8 +197,7 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
             VStack(alignment: .leading, spacing: 4) {
                 offsetRow
                 row(TrackRowLabel(title: "Aus", detail: nil, name: nil, badges: []), active: engine.activeSubtitleID == nil) {
-                    RemoteLog.info("player", "Untertitel aus")
-                    engine.selectSubtitle(nil); onRemember?(.subtitle(nil)); dismiss()
+                    engine.selectSubtitle(nil); onRemember?(.subtitle(nil)); logChoice(subtitle: .some(nil)); dismiss()
                 }
                 .focused($focus, equals: .subtitleOff)
                 ForEach(groups, id: \.code) { g in
@@ -203,8 +206,7 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
                         .padding(.horizontal, 16).padding(.top, 18)
                     ForEach(Array(g.tracks.enumerated()), id: \.element.id) { i, t in
                         row(TrackPanelLogic.subtitleRow(t, number: i + 1), active: t.id == engine.activeSubtitleID) {
-                            RemoteLog.info("player", "Untertitel gewählt: \(t.id)")
-                            engine.selectSubtitle(t.id); onRemember?(.subtitle(t)); dismiss()
+                            engine.selectSubtitle(t.id); onRemember?(.subtitle(t)); logChoice(subtitle: .some(t)); dismiss()
                         }
                         .focused($focus, equals: .subtitle(t.id))
                     }
@@ -255,6 +257,17 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
         RemoteLog.info("player", "UT-Versatz: \(SubtitleOffset.label(n))"
                        + (n < 0 && embedded ? " · Vorauslesen der Engine aktiv (Fernquelle wird teils doppelt geladen)" : ""))
         onRemember?(.offset(n))
+    }
+
+    // MARK: Log
+
+    /// „Spurwahl: Ton <x> / UT <y>“ mit der neuen Wahl; der andere Teil ist die laufende Spur.
+    /// `subtitle`: nil = unverändert, .some(nil) = Aus.
+    private func logChoice(audio: AudioTrackInfo? = nil, subtitle: AudioTrackInfo?? = nil) {
+        let a = audio ?? TrackChoice.active(engine.audioTracks, id: engine.activeAudioID)
+        let u = subtitle ?? TrackChoice.active(engine.subtitleTracks, id: engine.activeSubtitleID)
+        let ids = "Ton-ID \(a.map { String($0.id) } ?? "-") · UT-ID \(u.map { String($0.id) } ?? "aus")"
+        RemoteLog.info("player", "Spurwahl: \(TrackChoice.summary(audio: a, subtitle: u)) (\(ids))")
     }
 
     // MARK: Zeile

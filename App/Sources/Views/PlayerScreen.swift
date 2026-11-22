@@ -256,7 +256,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             switch dir {
             case .left: queueSeek(-10)
             case .right: queueSeek(10)
-            case .down: showTracks = true
+            case .down: openTracks("▼ Klick")
             default: break
             }
             poke()
@@ -300,7 +300,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
                          edges: { SkipSegments.snapEdges(skip.segments) + engine.chapterMarks.map(\.start) },
                          holdAllowed: { !leaving },
                          holdOrigin: { fastSeekOrigin(forward: $0) },
-                         holdLimit: { FastSeek.upperLimit(duration: engine.duration, creditsStart: skip.upNextAt, origin: $0) })
+                         holdLimit: { FastSeek.upperLimit(duration: engine.duration, creditsStart: skip.upNextAt, origin: $0) },
+                         swipeDown: { openTracks("Wisch nach unten") })
             idleTick(failed: failureNotice != nil || loadError != nil)
             NowPlayingBridge.route(engine, handlers: .init(context: { RemoteTransportContext(isPlaying: engine.isPlaying, isBusy: engine.isLoading, position: pendingSeek ?? engine.currentTime, inputBlocked: leaving || scrub.isActive || showTracks || failureNotice != nil, upNextShowing: upNext != nil, sinceLastPress: Date().timeIntervalSince(lastToggle)) }, toggle: { onUserInput(); togglePlay() }, seekBy: { onUserInput(); queueSeek($0); poke() }))
             guard loadTask == nil else { return }
@@ -452,10 +453,37 @@ struct PlayerControls<E: PlaybackEngine>: View {
                 Text("-" + fmt(d - pos))
             }
             .font(.caption.monospacedDigit())
-            Text("◀▶ 10 s · ◀▶ halten: Schnellsuchlauf · Wischen/Rand drehen: spulen · ▼ Ton/Untertitel · ⏯ Pause · Zurück beenden").font(.caption2).foregroundStyle(.secondary)
+            // Welle F-h: aktuelle Spurwahl und der Weg ins Panel stehen sichtbar in der Leiste.
+            if !engine.audioTracks.isEmpty || !engine.subtitleTracks.isEmpty {
+                Text(TrackChoice.overlayLine(audio: TrackChoice.active(engine.audioTracks, id: engine.activeAudioID),
+                                             subtitle: TrackChoice.active(engine.subtitleTracks, id: engine.activeSubtitleID)))
+                    .font(.caption).lineLimit(1)
+            }
+            Text("◀▶ 10 s · ◀▶ halten: Schnellsuchlauf · waagerecht wischen/Rand drehen: spulen · nach unten wischen: Ton & Untertitel · ⏯ Pause · Zurück beenden").font(.caption2).foregroundStyle(.secondary)
         }
         .padding(60)
         .background(LinearGradient(colors: [.black.opacity(0.8), .clear], startPoint: .bottom, endPoint: .top))
+    }
+
+    /// Welle F-h: Spur-Panel öffnen, per Wisch nach unten (Pan-Recognizer der Spul-Steuerung) oder Klick auf den
+    /// unteren Rand (`onMoveCommand(.down)`); tvOS meldet einen Wisch nicht als Move-Befehl.
+    private func openTracks(_ via: String) {
+        switch TrackPanelEntry.decide(leaving: leaving, scrubbing: scrub.isActive, upNextShowing: upNext != nil,
+                                      failureShowing: failureNotice != nil, alreadyOpen: showTracks) {
+        case .open:
+            onUserInput()
+            RemoteLog.info("player", "Spur-Panel öffnen (\(via)) · " + TrackChoice.summary(
+                audio: TrackChoice.active(engine.audioTracks, id: engine.activeAudioID),
+                subtitle: TrackChoice.active(engine.subtitleTracks, id: engine.activeSubtitleID))
+                + " · \(engine.audioTracks.count) Ton, \(engine.subtitleTracks.count) UT")
+            showTracks = true
+        case .cancelUpNext:
+            onUserInput()
+            withAnimation { upNext = nil }; upNextCancelled = true
+            RemoteLog.info("player", "Up-next abgebrochen")
+        case .ignore:
+            break
+        }
     }
 
     private func togglePlay() {
