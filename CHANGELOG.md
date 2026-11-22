@@ -17,6 +17,18 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 
 ## [Unreleased]
 
+### Added
+- Home: package tiles play a short focus video. The streaming tiles (Netflix, Prime Video, Disney+, Apple TV+,
+  Paramount+) and the new "Studios" package load it at runtime from a public collection export; imported
+  collections use their own `focusVideoUrl`. Order: video, then GIF, then still. Starts 400 ms after focus, stops
+  on focus loss, never runs while the player is open; videos are cached on disk (at most 50 MB).
+- Home: new ready-made package "Studios" (Marvel Studios, Pixar, Disney Animation, Lucasfilm, Warner Bros., DC,
+  A24, Studio Ghibli and more), filtered by TMDB company, with the studio pictures of the same export.
+- Settings › Startseite: "Ton bei Kachel-Animation" (default off) plays a tile video's sound once per focus,
+  faded in at reduced volume. The videos of the ready-made packages have no sound track, so it only applies to
+  imported videos that carry sound.
+- Collection import also reads `focusVideoUrl` and `heroVideoUrl` (WebM addresses are ignored).
+
 ## [Build 198] – 2026-11-22 (integ)
 
 ### Added

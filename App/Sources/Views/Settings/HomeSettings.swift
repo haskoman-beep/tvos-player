@@ -23,5 +23,9 @@ struct HomeSettings: View {
         }
         .buttonStyle(ThemeRowButtonStyle())
         .settingsRowAccessibility(title: "Collections importieren", detail: "Am Handy", accessory: .chevron)
+        // Wave F-o: sound of the focus video on package tiles (once per focus), default off.
+        SettingsToggleRow(symbol: "speaker.wave.2", tint: Theme.CategoryTint.home.color, title: "Ton bei Kachel-Animation",
+                          detail: "Spielt den Ton eines Kachel-Videos einmal pro Fokus – nur bei Videos mit Tonspur, z. B. aus einem Collection-Import. Die Videos der fertigen Pakete sind stumm.",
+                          reserveDetailSpace: false, isOn: model.binding(\.appearance.tileAnimationSound))
     }
 }

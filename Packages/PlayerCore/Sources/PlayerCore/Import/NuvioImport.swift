@@ -31,9 +31,14 @@ public enum NuvioImport {
                     sources.append(s)
                 }
                 let ftitle = rf.title ?? "?"
+                // Wave F-o: `focusGifEnabled == false` also switches the focus video off (exports set both together).
+                // The WebM variant is never taken (tvOS cannot play it); unplayable addresses fall back to the GIF.
+                let motionOn = rf.focusGifEnabled != false
                 folders.append(Folder(id: rf.id ?? "nuvio.folder." + stableHash(ctitle + "|" + ftitle), title: ftitle,
                                       coverImage: rf.coverImageUrl, logo: rf.titleLogoUrl, backdrop: rf.heroBackdropUrl,
-                                      sources: sources, focusGif: rf.focusGifEnabled == false ? nil : rf.focusGifUrl))
+                                      sources: sources, focusGif: motionOn ? rf.focusGifUrl : nil,
+                                      focusVideo: motionOn ? FocusVideoURL.playable(rf.focusVideoUrl) : nil,
+                                      heroVideo: FocusVideoURL.playable(rf.heroVideoUrl)))
             }
             let title = ctitle
             if var existing = byTitle[title] {
@@ -61,6 +66,8 @@ public enum NuvioImport {
                 out[i].logo = out[i].logo ?? f.logo
                 out[i].backdrop = out[i].backdrop ?? f.backdrop
                 out[i].focusGif = out[i].focusGif ?? f.focusGif
+                out[i].focusVideo = out[i].focusVideo ?? f.focusVideo
+                out[i].heroVideo = out[i].heroVideo ?? f.heroVideo
             } else {
                 var f = f
                 var seen = Set<String>()
@@ -191,6 +198,8 @@ public enum NuvioImport {
         var heroBackdropUrl: String?; var sources: [RawSource]?; var catalogSources: [RawSource]?
         /// Bewegtes Fokusbild (Welle F-g); `focusGifEnabled == false` schaltet es ab.
         var focusGifUrl: String?; var focusGifEnabled: Bool?
+        /// Wave F-o: focus video (mp4) and hero video; `focusVideoWebmUrl` is read but never used (no WebM on tvOS).
+        var focusVideoUrl: String?; var focusVideoWebmUrl: String?; var heroVideoUrl: String?
     }
     struct RawSource: Decodable {
         var id: String?; var name: String?; var title: String?; var provider: String?

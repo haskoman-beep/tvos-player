@@ -85,12 +85,15 @@ final class StreamPrefetcher {
         passTask?.cancel()
         for t in visibleJobs.values { t.cancel() }
         notifyImages()
+        // Wave F-o: the main player wins; the focus-video player is released completely.
+        FocusVideoPlayer.shared.setMainPlayback(true)
     }
 
     func playerDisappeared(_ token: UUID) {
         players.remove(token)
         lastPlayerAppeared = Date()   // auch nach dem Schließen 2 s Ruhe
         notifyImages()
+        FocusVideoPlayer.shared.setMainPlayback(playerActive)
         if let m = visibleModel { scheduleVisiblePass(m, after: Self.playerGrace + 0.1) }
     }
 

@@ -34,19 +34,24 @@ public struct Appearance: Codable, Sendable, Hashable {
     public var badges: BadgeSettings
     /// Welle E-a: Plaketten auf Postern, Bewertungsauswahl, Bilder vom Metadaten-Addon.
     public var titles: TitleDisplaySettings
+    /// Wave F-o: "Ton bei Kachel-Animation" – a focus video with a sound track plays its sound once per focus.
+    /// Default off.
+    public var tileAnimationSound: Bool
 
     public init(navigation: NavigationStyle = .sidebar, accent: AccentChoice = .blue, cardSize: CardSize = .medium,
                 heroEnabled: Bool = true, heroRowID: UUID? = nil, expandPosters: Bool = true, prefetchStreams: Bool = true,
-                badges: BadgeSettings = BadgeSettings(), titles: TitleDisplaySettings = TitleDisplaySettings()) {
+                badges: BadgeSettings = BadgeSettings(), titles: TitleDisplaySettings = TitleDisplaySettings(),
+                tileAnimationSound: Bool = false) {
         self.navigation = navigation; self.accent = accent; self.cardSize = cardSize
         self.heroEnabled = heroEnabled; self.heroRowID = heroRowID; self.expandPosters = expandPosters
         self.prefetchStreams = prefetchStreams
         self.badges = badges
         self.titles = titles
+        self.tileAnimationSound = tileAnimationSound
     }
 
     enum CodingKeys: String, CodingKey {
-        case navigation, accent, cardSize, heroEnabled, heroRowID, expandPosters, prefetchStreams, badges, titles
+        case navigation, accent, cardSize, heroEnabled, heroRowID, expandPosters, prefetchStreams, badges, titles, tileAnimationSound
     }
 
     /// Fehlende Felder bekommen Standardwerte.
@@ -62,6 +67,7 @@ public struct Appearance: Codable, Sendable, Hashable {
         prefetchStreams = try c.decodeIfPresent(Bool.self, forKey: .prefetchStreams) ?? d.prefetchStreams
         badges = try c.decodeIfPresent(BadgeSettings.self, forKey: .badges) ?? d.badges
         titles = try c.decodeIfPresent(TitleDisplaySettings.self, forKey: .titles) ?? d.titles
+        tileAnimationSound = try c.decodeIfPresent(Bool.self, forKey: .tileAnimationSound) ?? d.tileAnimationSound
     }
 }
 

@@ -60,7 +60,8 @@ private func catalog(layout: HomeLayout = HomeLayout(), traktID: Bool = false, t
     #expect(c.group("special")?.entries.map(\.title) == ["Weiterschauen", "Merkliste", "Heute neu"])
     // Ein Paket, das schon eigene Collection ist, steht nur unter „Meine Collections“.
     #expect(c.group("collections")?.entries.map(\.title) == ["Studios", "Streaming-Dienste"])
-    #expect(c.group("packages")?.entries.map(\.id) == ["collection:" + ReadyPackages.genreCollection.id])
+    #expect(c.group("packages")?.entries.map(\.id) == ["collection:" + ReadyPackages.genreCollection.id,
+                                                         "collection:" + ReadyPackages.studioCollection.id])
 }
 
 @Test func addonWithoutCatalogsHasNoGroup() {
