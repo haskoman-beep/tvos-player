@@ -661,8 +661,8 @@ struct StreamListView: View {
     @State private var filter: Set<SourceFilterChip> = []
     /// Parsed traits, keyed by `traitKey` (id plus the hints the id leaves out, review Q M3).
     @State private var traitsByID: [String: StreamTraits] = [:]
-    /// Review Q I3: the focus is on the chip bar, or the user chose a filter: the entry focus leaves it there.
-    @State private var chipBarFocused = false
+    /// Review Q I3/N1: the user chose on the chip bar (pressed a chip or moved between chips): the entry focus
+    /// leaves them there. Focus that tvOS puts on "Alle" by itself (loading line gone) does not count.
     @State private var filterTouched = false
 
     private static func traitKey(_ s: StreamItem) -> String {
@@ -684,6 +684,7 @@ struct StreamListView: View {
         let showAddon = Set(streams.map(\.addon)).count > 1
         let options = filterOptions
         let shown = visibleStreams(options)
+        let shownIDs = shown.map(\.stream.id)
         // Titel als Listenkopf (scrollt mit weg) statt navigationTitle: der große tvOS-Titel lag über den Zeilen.
         ScrollViewReader { proxy in
             List {
@@ -701,7 +702,7 @@ struct StreamListView: View {
                         SourceFilterBar(options: options, selected: SourceFilter.effective(filter, options: options),
                                         total: streams.count, onAll: { setFilter([]) },
                                         onToggle: { setFilter(SourceFilter.toggle($0, in: SourceFilter.effective(filter, options: options))) },
-                                        onFocusChange: { chipBarFocused = $0 })
+                                        onUserMove: { filterTouched = true })
                             .listRowBackground(Color.clear)
                         if shown.isEmpty {
                             Text("Keine Quelle passt zum Filter.").foregroundStyle(.secondary)
@@ -750,6 +751,11 @@ struct StreamListView: View {
                     proxy.scrollTo(r.id)
                     try? await Task.sleep(for: .milliseconds(100))
                     guard !Task.isCancelled else { return }
+                    // Review Q N2: a keep move gives way to a key press (focus now on a third row).
+                    if r.keep, let f = focusedStream, f != r.id, f != r.from {
+                        RemoteLog.info("fokus", "Quellenliste \(r.reason): Zeile \(r.index + 1) abgebrochen (Taste)")
+                        return
+                    }
                     focusedStream = r.id
                     try? await Task.sleep(for: .milliseconds(150))
                     if focusedStream == r.id {
@@ -830,16 +836,16 @@ struct StreamListView: View {
                 }
             }
         }
-        .onChange(of: streams.map(\.stream.id)) { _, ids in
-            // Wave Q: parse each source once (body runs on every focus move); drop gone ones.
-            let keys = streams.map { Self.traitKey($0.stream) }
+        .onChange(of: streams.map { Self.traitKey($0.stream) }) { _, keys in
+            // Wave Q: parse each source once (body runs on every focus move); drop gone ones. Keyed with the hints,
+            // so a hints-only change re-parses and re-checks the chips too (review Q M3/N3).
             let keep = Set(keys)
             var t = traitsByID.filter { keep.contains($0.key) }
             for (k, e) in zip(keys, streams) where t[k] == nil { t[k] = StreamTraits.parse(e.stream) }
             traitsByID = t
             dropMissingChips()
         }
-        .onChange(of: visibleIDs) { old, new in keepFocusPosition(old: old, new: new) }
+        .onChange(of: shownIDs) { old, new in keepFocusPosition(old: old, new: new) }
         .onChange(of: playing) { old, s in
             if s == nil, let old { closedPlayer = old }
             guard let s else { return }
@@ -890,7 +896,7 @@ extension StreamListView {
         let ids = visibleIDs
         guard focusedStream == nil || focusedStream == ids.first else { return }
         // Review Q I3: nil also means "on the chip bar"; a chosen filter counts as the user's choice too.
-        if chipBarFocused || filterTouched {
+        if filterTouched {
             RemoteLog.info("fokus", "Quellenliste Eintritt: Fokus bleibt bei den Filtern")
             return
         }
@@ -932,12 +938,14 @@ extension StreamListView {
     /// batch replaces a pending keep request and measures from its target; other requests are never replaced.
     private func keepFocusPosition(old: [String], new: [String]) {
         guard playing == nil, closedPlayer == nil else { return }
-        let pendingKeep = focusRequest?.keep == true
-        guard focusRequest == nil || pendingKeep else { return }
-        let focused = pendingKeep ? focusRequest?.id : focusedStream
+        let pending = focusRequest?.keep == true ? focusRequest : nil
+        guard focusRequest == nil || pending != nil else { return }
+        // Pending keep move: measure from its target, unless the user has moved on (review Q N2).
+        let focused = pending.flatMap { p in focusedStream == nil || focusedStream == p.from ? p.id : nil } ?? focusedStream
         guard let id = SourceFocus.keepPosition(focused: focused, old: old, new: new) else { return }
         focusRequest = SourceFocusRequest(id: id, index: new.firstIndex(of: id) ?? 0, reason: "Platz gehalten",
-                                          delayMs: 0, keep: true)
+                                          delayMs: 0, keep: true,
+                                          from: pending != nil && focused == pending?.id ? pending?.from : focused)
     }
 
     private func setFilter(_ chips: Set<SourceFilterChip>) {
@@ -1062,6 +1070,8 @@ struct SourceFocusRequest: Equatable {
     let delayMs: Int
     /// Wave Q: keep-position move while sources arrive (a newer batch may replace it).
     var keep = false
+    /// Keep move: the source the focus was on when the move began (a different focus means a key press).
+    var from: String? = nil
     let token = UUID()
 }
 

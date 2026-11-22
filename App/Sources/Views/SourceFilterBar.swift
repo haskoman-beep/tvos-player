@@ -9,8 +9,8 @@ struct SourceFilterBar: View {
     let total: Int
     let onAll: () -> Void
     let onToggle: (SourceFilterChip) -> Void
-    /// True while a chip has the focus (the list's entry focus then leaves the user here).
-    let onFocusChange: (Bool) -> Void
+    /// The user moved the focus from one chip to another (a real choice; tvOS landing on "Alle" is not one).
+    let onUserMove: () -> Void
     @FocusState private var focusedChip: String?
 
     var body: some View {
@@ -27,8 +27,9 @@ struct SourceFilterBar: View {
         }
         .scrollClipDisabled()
         .focusSection()
-        .onChange(of: focusedChip != nil) { _, on in onFocusChange(on) }
-        .onDisappear { onFocusChange(false) }
+        .onChange(of: focusedChip) { old, new in
+            if let old, let new, old != new { onUserMove() }
+        }
     }
 
     private func chip(_ label: String, id: String, count: Int, on: Bool, action: @escaping () -> Void) -> some View {
