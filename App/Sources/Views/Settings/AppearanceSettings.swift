@@ -14,7 +14,7 @@ struct AppearanceSettings: View {
 
     var body: some View {
         let a = model.profile.appearance
-        CategoryPage(.appearance, summary: SettingsSummary.appearance(navigation: a.navigation, accent: a.accent)) {
+        CategoryPage(.appearance, summary: SettingsSummary.appearance(navigation: a.navigation, accent: a.accent, cardSize: a.cardSize)) {
             SettingsSection {
                 SettingsChoiceRow(symbol: "sidebar.left", tint: tint, title: "Navigation",
                                   detail: "Bereiche als Seitenleiste links oder als Leiste oben.",
@@ -31,7 +31,8 @@ struct AppearanceSettings: View {
                                   alwaysList: true, label: SettingsSummary.languageName)
             }
             SettingsSection("Karten") {
-                // Welle F-f: „Kartengröße“ heißt jetzt „Postergröße“ und steht unter Startseite › Kacheln.
+                // Welle F-f: dieselbe Zeile wie unter Startseite › Kacheln (gleicher Wert, gleicher Text).
+                PosterSizeSettingRow(tint: tint)
                 SettingsToggleRow(symbol: "rectangle.expand.vertical", tint: tint, title: "Poster aufklappen",
                                   detail: "Die fokussierte Kachel klappt zum breiten Bild mit Titel auf.",
                                   reserveDetailSpace: false, isOn: model.binding(\.appearance.expandPosters))

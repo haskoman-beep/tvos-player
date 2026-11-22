@@ -20,13 +20,9 @@ struct HomeCategorySettings: View {
                 // Reihen & Collections ›, Fusion-Kit, Collections importieren › (Inhalt gehört Welle F-b2).
                 HomeSettings()
             }
-            // Welle F-f: Postergröße für alle Reihen (Startseite, Bibliothek, Ordner). Feld bleibt `appearance.cardSize`
-            // (bisher „Kartengröße“ unter Aussehen); Mittel = bisherige Größe. Plaketten und Schrift skalieren nicht mit.
+            // Welle F-f: Postergröße auch hier, damit man sie findet (gleiche Zeile wie unter Aussehen › Karten).
             SettingsSection("Kacheln") {
-                SettingsChoiceRow(symbol: "rectangle.portrait", tint: tint, title: "Postergröße",
-                                  detail: "Größe der Poster und Kacheln in allen Reihen.",
-                                  options: CardSize.allCases, selection: model.binding(\.appearance.cardSize),
-                                  label: SettingsSummary.cardSizeName)
+                PosterSizeSettingRow(tint: tint)
             }
             SettingsSection("Titelbild") {
                 SettingsToggleRow(symbol: "photo.artframe", tint: tint, title: "Titelbild oben",
@@ -67,5 +63,21 @@ struct HomeCategorySettings: View {
     private func heroName(_ id: UUID?) -> String {
         guard let id, let r = listRows.first(where: { $0.id == id }), case .list(let s) = r.content else { return "Automatisch" }
         return s.title
+    }
+}
+
+/// Welle F-f: „Postergröße“ (`appearance.cardSize`, bisher „Kartengröße“ unter Aussehen). Steht unter Aussehen › Karten
+/// und unter Startseite › Kacheln, beide Male genau diese Zeile. Mittel = bisherige Größe; Plaketten und Schrift
+/// skalieren nicht mit.
+struct PosterSizeSettingRow: View {
+    @EnvironmentObject var model: AppModel
+    /// Farbe der Kategorie, in der die Zeile steht.
+    var tint: Color
+
+    var body: some View {
+        SettingsChoiceRow(symbol: "rectangle.grid.2x2", tint: tint, title: "Postergröße",
+                          detail: "Größe der Poster und Kacheln in allen Reihen.",
+                          options: CardSize.allCases, selection: model.binding(\.appearance.cardSize),
+                          label: SettingsSummary.cardSizeName)
     }
 }
