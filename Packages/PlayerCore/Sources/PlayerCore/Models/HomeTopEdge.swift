@@ -115,6 +115,73 @@ public enum HomeTopRules {
     }
 }
 
+/// Wave F-m: the top tab bar can stay stuck where an earlier page left it. Device log build 198: after the player
+/// the source list scrolls back to the chosen row (row 11, about 2300 pt down), the bar follows that list off the
+/// screen (y −2250…−2182), and after Menu back to the home page it stays there: home offsets 429 → 207 → 7 → 2 pt
+/// never move it, so the home scroll view no longer drives the bar and neither the SwiftUI request nor the focus
+/// engine can bring it back ("kein Ziel"). The app repairs the binding in UIKit, one step at a time.
+public enum TabBarRepair: Int, Hashable, Sendable, CaseIterable {
+    /// Make the home scroll view the content scroll view (top edge) of its view controller again.
+    case rebind = 1
+    /// Hide and show the bar through the tab bar controller (only with the page at its top position).
+    case reshow = 2
+
+    /// Wait after a step before the bar is read again (layout and the start of the bar animation).
+    public static let checkMilliseconds = 350
+    /// Wait after the home page appeared (pop transition finished) before the first check.
+    public static let appearMilliseconds = 600
+
+    /// Next step after `done` (nil = none yet). `reshow` shows the bar, so it only runs at the top position.
+    public static func next(after done: TabBarRepair?, atRest: Bool) -> TabBarRepair? {
+        switch done {
+        case nil: .rebind
+        case .rebind: atRest ? .reshow : nil
+        case .reshow: nil
+        }
+    }
+
+    public var logName: String {
+        switch self {
+        case .rebind: "an die Startseite gebunden"
+        case .reshow: "über den Controller neu eingeblendet"
+        }
+    }
+
+    /// What started the check.
+    public enum Trigger: Hashable, Sendable {
+        case appeared, arrivedAtTop, upFailed
+
+        public var logName: String {
+            switch self {
+            case .appeared: "nach dem Erscheinen"
+            case .arrivedAtTop: "am oberen Rand"
+            case .upFailed: "nach gescheitertem Hoch"
+            }
+        }
+    }
+}
+
+extension HomeTopRules {
+    /// Top of the bar in window coordinates while it is shown (device logs: y 46…114).
+    public static let barRestTop: Double = 46
+    /// A bar further up than the home offset can explain by more than this is stuck (points).
+    public static let strandTolerance: Double = 200
+
+    /// Whether the page sits at its top position (or its top edge holds focus): the bar belongs on screen.
+    public static func atRest(atTop: Bool, offset: Double) -> Bool { atTop || offset <= restOffset }
+
+    /// Top navigation only: the bar is stuck off screen above.
+    /// - At the top position it must be on screen, so any bar above the screen is stuck.
+    /// - Scrolled down it may be hidden, but it moves at most as far as the page (one to one): a bar further up
+    ///   than `barRestTop − offset − strandTolerance` follows something else (build 198: −2250 at offset 207).
+    /// A bar hidden on purpose (`isHidden`, controller) is left alone.
+    public static func barStranded(_ bar: TabBarState, atTop: Bool, offset: Double, navigation: NavigationStyle) -> Bool {
+        guard navigation == .top, bar.found, !bar.hidden, !bar.controllerHidden, bar.maxY <= 1 else { return false }
+        if atRest(atTop: atTop, offset: offset) { return true }
+        return bar.minY < barRestTop - max(0, offset) - strandTolerance
+    }
+}
+
 /// Snapshot of the system tab bar, read from UIKit in the app (for the log).
 public struct TabBarState: Hashable, Sendable {
     public var found: Bool
@@ -194,6 +261,22 @@ public enum TabBarReachLog {
         s += " · Leiste \(bar.summary)"
         if request == .visible { s += " · Leiste angefordert" }
         return s + " · \(styleName(navigation))"
+    }
+
+    /// Wave F-m: one repair step of a stuck tab bar with the state before and after it.
+    /// `applied` is false when the step could not run (no home scroll view or no tab bar controller found);
+    /// `observed` names the content scroll view the tab bar controller reports before the step.
+    public static func repaired(_ step: TabBarRepair, trigger: TabBarRepair.Trigger, applied: Bool, before: TabBarState,
+                                after: TabBarState, offset: Double, observed: String, navigation: NavigationStyle) -> String {
+        let what = applied ? step.logName : "\(step.logName) nicht möglich"
+        return "Leiste hing fest (\(trigger.logName)): \(before.summary) · Versatz \(pt(offset)) · beobachtet \(observed)"
+            + " → \(what) · danach Leiste \(after.summary) · \(styleName(navigation))"
+    }
+
+    /// Wave F-m: all steps ran and the bar is still stuck.
+    public static func repairExhausted(bar: TabBarState, offset: Double, navigation: NavigationStyle) -> String {
+        "Leiste hängt weiter, keine Reparatur mehr in diesem Besuch · Leiste \(bar.summary) · Versatz \(pt(offset))"
+            + " · \(styleName(navigation))"
     }
 
     /// An up move while the home page is visible. `atTop`: focus was on the top edge (or just left it).

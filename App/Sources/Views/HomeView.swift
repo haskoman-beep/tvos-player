@@ -36,8 +36,14 @@ struct HomeView: View {
                         LazyVStack(alignment: .leading, spacing: Theme.Space.xl) { rowList(rows) }
                             .padding(.vertical, 40)
                             .id(HomeTopEdgeWatch.topID)
+                            .background(alignment: .topLeading) { HomeScrollViewProbe(watch: topWatch) }
                     }
                     .modifier(TopEdgeScroll(watch: topWatch, proxy: proxy))
+                    // Wave F-m: the list ends above the screen edge by the lift of its tallest tile and draws into
+                    // that room, so a focused card in the lowest visible row is never cut by the screen edge.
+                    .scrollClipDisabled()
+                    .padding(.bottom, listBottomRoom(rows))
+                    .ignoresSafeArea(edges: .bottom)
                 }
             }
         }
@@ -102,6 +108,7 @@ struct HomeView: View {
                     .padding(.top, 24)
                     .padding(.bottom, 60)
                     .id(HomeTopEdgeWatch.topID)
+                    .background(alignment: .topLeading) { HomeScrollViewProbe(watch: topWatch) }
                 }
                 .modifier(TopEdgeScroll(watch: topWatch, proxy: proxy))
                 .environment(\.heroBackdropShared, true)
@@ -117,8 +124,13 @@ struct HomeView: View {
                         Color.black
                     }
                     .padding(.top, -listEdgeBand(rows))
+                    // Wave F-m: the mask reaches into the room below the list too (lifted card stays opaque).
+                    .padding(.bottom, -listBottomRoom(rows))
                 }
                 .padding(.top, HeroMetrics.listTop)
+                // Wave F-m: build 198 photo: the list reached the screen edge, focus scrolling stopped the card's frame
+                // there and its lift was cut. The list now ends above the edge by that lift and draws into the room.
+                .padding(.bottom, listBottomRoom(rows))
                 .ignoresSafeArea(edges: .bottom)
             }
         }
@@ -131,6 +143,14 @@ struct HomeView: View {
         let strip = a.titles.posterBadges == .bottom ? PosterQualityBadges.bandHeight : 0
         let kinds = rows.map { PosterSize.kind(for: $0.style) }
         return Theme.Focus.listEdgeBand(height: FocusHeadroom.tallest(kinds, cardScale: a.cardSize.scale, posterExtra: strip))
+    }
+
+    /// Wave F-m: room below the home list for the lift of its tallest tile (same tile heights as `listEdgeBand`).
+    private func listBottomRoom(_ rows: [HomeRow]) -> CGFloat {
+        let a = model.profile.appearance
+        let strip = a.titles.posterBadges == .bottom ? PosterQualityBadges.bandHeight : 0
+        let kinds = rows.map { PosterSize.kind(for: $0.style) }
+        return Theme.Focus.listBottomRoom(height: FocusHeadroom.tallest(kinds, cardScale: a.cardSize.scale, posterExtra: strip))
     }
 
     @ViewBuilder private func rowList(_ rows: [HomeRow]) -> some View {

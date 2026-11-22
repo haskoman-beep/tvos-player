@@ -17,6 +17,13 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 
 ## [Unreleased]
 
+### Fixed
+- Home: the top menu bar can be reached again after leaving the player. The bar stayed where the source list
+  had scrolled it (far above the screen) and no longer followed the home page; the app now binds the bar to the
+  home page again when it finds it stuck, and logs each repair step (`nav: Leiste hing fest …`).
+- Home: a focused poster in the lowest visible row is no longer cut at the bottom. The home list now ends above
+  the screen edge by the height of the focus lift and draws into that room.
+
 ## [Build 198] – 2026-11-22 (integ)
 
 ### Added

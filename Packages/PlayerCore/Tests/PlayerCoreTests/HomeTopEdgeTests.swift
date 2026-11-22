@@ -181,3 +181,69 @@ import Testing
     }
     #expect(results == [true, false, true, true, false])
 }
+
+// MARK: Stuck tab bar (wave F-m)
+
+/// Bar position from the build 198 device log after the player: it followed the source list (row 11) off screen.
+private let stuckBar = TabBarState(found: true, minY: -2250, maxY: -2182)
+
+@Test func barStuckAfterThePlayerIsDetectedWithTheLoggedValues() {
+    // 8F2D5F48: button row focused, offset 7 → 2 pt, bar at −2250: stuck.
+    #expect(HomeTopRules.barStranded(stuckBar, atTop: true, offset: 7, navigation: .top))
+    #expect(HomeTopRules.barStranded(stuckBar, atTop: true, offset: 2, navigation: .top))
+    // 55679472: focus in the rows, offsets 429 / 207 pt: still far beyond what the page offset explains.
+    #expect(HomeTopRules.barStranded(stuckBar, atTop: false, offset: 429, navigation: .top))
+    #expect(HomeTopRules.barStranded(stuckBar, atTop: false, offset: 207, navigation: .top))
+    // Sidebar: the tab bar is not the menu, nothing to repair.
+    #expect(!HomeTopRules.barStranded(stuckBar, atTop: true, offset: 0, navigation: .sidebar))
+}
+
+@Test func barHiddenByScrollingIsNotStuck() {
+    // Healthy bar on screen at the top position.
+    let shown = TabBarState(found: true, minY: 46, maxY: 114)
+    #expect(!HomeTopRules.barStranded(shown, atTop: true, offset: 0, navigation: .top))
+    // Scrolled down 900 pt, the bar slid off with the page (at most one to one): normal.
+    #expect(!HomeTopRules.barStranded(TabBarState(found: true, minY: -114, maxY: -46), atTop: false, offset: 900,
+                                      navigation: .top))
+    #expect(!HomeTopRules.barStranded(TabBarState(found: true, minY: -854, maxY: -786), atTop: false, offset: 900,
+                                      navigation: .top))
+    // Hidden on purpose (isHidden / controller): left alone.
+    #expect(!HomeTopRules.barStranded(TabBarState(found: true, hidden: true, minY: -2250, maxY: -2182), atTop: true,
+                                      offset: 0, navigation: .top))
+    #expect(!HomeTopRules.barStranded(TabBarState(found: true, controllerHidden: true, minY: -2250, maxY: -2182),
+                                      atTop: true, offset: 0, navigation: .top))
+    #expect(!HomeTopRules.barStranded(.notFound, atTop: true, offset: 0, navigation: .top))
+}
+
+@Test func barOffScreenAtTheTopPositionIsStuck() {
+    // At the top position (focus on the top edge or offset within the rest offset) the bar belongs on screen.
+    let justAbove = TabBarState(found: true, minY: -140, maxY: 0)
+    #expect(HomeTopRules.barStranded(justAbove, atTop: true, offset: 300, navigation: .top))
+    #expect(HomeTopRules.barStranded(justAbove, atTop: false, offset: HomeTopRules.restOffset, navigation: .top))
+    #expect(!HomeTopRules.barStranded(justAbove, atTop: false, offset: HomeTopRules.restOffset + 1, navigation: .top))
+}
+
+@Test func repairStepsRunOnceEachAndReshowOnlyAtRest() {
+    #expect(TabBarRepair.next(after: nil, atRest: false) == .rebind)
+    #expect(TabBarRepair.next(after: nil, atRest: true) == .rebind)
+    // Showing the bar while scrolled down would cover the rows: the second step waits for the top position.
+    #expect(TabBarRepair.next(after: .rebind, atRest: false) == nil)
+    #expect(TabBarRepair.next(after: .rebind, atRest: true) == .reshow)
+    #expect(TabBarRepair.next(after: .reshow, atRest: true) == nil)
+    // Checks start after the pop transition and before a hurried second press up.
+    #expect(TabBarRepair.appearMilliseconds >= 500 && TabBarRepair.appearMilliseconds <= 1000)
+    #expect(TabBarRepair.checkMilliseconds >= 200 && TabBarRepair.checkMilliseconds <= 500)
+}
+
+@Test func repairLines() {
+    let fixed = TabBarState(found: true, minY: 46, maxY: 114)
+    #expect(TabBarReachLog.repaired(.rebind, trigger: .appeared, applied: true, before: stuckBar, after: fixed, offset: 7,
+                                    observed: "keine", navigation: .top)
+            == "Leiste hing fest (nach dem Erscheinen): außerhalb des Bildes (y -2250…-2182) · Versatz 7 pt · beobachtet keine → an die Startseite gebunden · danach Leiste sichtbar (y 46…114) · Menü oben")
+    #expect(TabBarReachLog.repaired(.reshow, trigger: .upFailed, applied: false, before: stuckBar, after: stuckBar,
+                                    offset: 0, observed: "Startseite", navigation: .top)
+            == "Leiste hing fest (nach gescheitertem Hoch): außerhalb des Bildes (y -2250…-2182) · Versatz 0 pt · beobachtet Startseite → über den Controller neu eingeblendet nicht möglich · danach Leiste außerhalb des Bildes (y -2250…-2182) · Menü oben")
+    #expect(TabBarReachLog.repairExhausted(bar: stuckBar, offset: 0, navigation: .top)
+            == "Leiste hängt weiter, keine Reparatur mehr in diesem Besuch · Leiste außerhalb des Bildes (y -2250…-2182) · Versatz 0 pt · Menü oben")
+    #expect(TabBarRepair.Trigger.arrivedAtTop.logName == "am oberen Rand")
+}

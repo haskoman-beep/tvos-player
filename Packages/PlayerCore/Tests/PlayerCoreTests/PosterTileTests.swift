@@ -103,3 +103,44 @@ private let shadow: CGFloat = 12
     #expect(!PosterBadgeStats.hasBadges(BestQuality(resolution: "720p"), settings: s))
     #expect(!PosterBadgeStats.hasBadges(nil, settings: s))
 }
+
+// MARK: Lift inside the home list (wave F-m)
+
+@Test func focusHeadroomListBottomRoomEqualsTheLiftBelowTheCard() {
+    // Build 198 photo: list down to the screen edge, card frame stopped there, lift cut. The room is the lift.
+    #expect(FocusHeadroom.listBottomRoom(height: 360, scale: lift, shadow: shadow) == 39)
+    #expect(FocusHeadroom.listBottomRoom(height: 432, scale: lift, shadow: shadow) == 45)
+    #expect(FocusHeadroom.listBottomRoom(height: 620, scale: lift, shadow: shadow) == 59)
+    // Empty list: only the shadow.
+    #expect(FocusHeadroom.listBottomRoom(height: 0, scale: lift, shadow: shadow) == 12)
+}
+
+@Test func liftedCardFitsTheHomeListEdgesForEverySizeStyleAndBadgePlacement() {
+    let screen: CGFloat = 1080, listTop: CGFloat = 470, fade: CGFloat = 24, strip: CGFloat = 34
+    let styles: [[TileKind]] = [[.poster], [.landscape], [.logo], [.hero], [.poster, .landscape, .logo], [.poster, .hero]]
+    for size in CardSize.allCases {
+        for kinds in styles {
+            for extra in [CGFloat(0), strip] {          // quality badges on the picture (top) or in a strip below
+                let tallest = FocusHeadroom.tallest(kinds, cardScale: size.scale, posterExtra: extra)
+                let room = FocusHeadroom.listBottomRoom(height: tallest, scale: lift, shadow: shadow)
+                let band = FocusHeadroom.edgeBand(height: tallest, scale: lift, shadow: shadow, fade: fade)
+                for kind in kinds {
+                    let h = PosterSize.tileSize(kind, scale: size.scale).height + (kind == .poster ? extra : 0)
+                    // Lowest visible row: focus scrolling stops the frame at the list's bottom edge.
+                    let low = FocusHeadroom.liftedExtent(minY: screen - room - h, maxY: screen - room, scale: lift, shadow: shadow)
+                    #expect(low.upperBound <= screen, "bottom \(size) \(kind) extra \(extra)")
+                    // Top row under the hero info: frame at the list's top edge, lift inside the opaque band part.
+                    let high = FocusHeadroom.liftedExtent(minY: listTop, maxY: listTop + h, scale: lift, shadow: shadow)
+                    #expect(high.lowerBound >= listTop - (band - fade), "top \(size) \(kind) extra \(extra)")
+                }
+            }
+        }
+    }
+}
+
+@Test func liftedExtentGrowsAroundTheCentre() {
+    let r = FocusHeadroom.liftedExtent(minY: 100, maxY: 460, scale: lift, shadow: shadow)
+    #expect(abs(r.lowerBound - 61) < 0.001)     // 27 lift + 12 shadow
+    #expect(abs(r.upperBound - 499) < 0.001)
+    #expect(FocusHeadroom.liftedExtent(minY: 0, maxY: 10, scale: 1, shadow: 0) == 0...10)
+}
