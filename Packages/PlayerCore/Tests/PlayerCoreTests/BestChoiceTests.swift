@@ -209,3 +209,16 @@ private func entries(_ s: [StreamItem], addon: String = "A") -> [(addon: String,
     #expect(!touched)
     #expect(p.target == 100)
 }
+
+// MARK: Welle F-i: Prism-Formatter („⚡Ready“ / „❌ Not Ready“)
+
+@Test func bestChoiceSkipsNotReadyFromPrismFormatter() {
+    let notReady = st("🔥4K UHD", "🎬 Film German DV\n📦 12.1 GB 🌱 1\n❌ Not Ready (TB) 🔍AIOStreams")
+    let ready = st("🚀 FHD", "🎬 Film German\n📦 4.9 GB\n⚡Ready (TB) 🔍AIOStreams")
+    let p = BestChoice.pick(entries([notReady, ready]), context: de, last: nil, isFailed: { _ in false })
+    #expect(p?.stream == ready)
+    // Kein gecachter Kandidat: unbekannt vor sicher ungecacht, auch bei schlechterer Technik.
+    let unknown = st("🚀 FHD", "🎬 Film German\n📦 4.9 GB")
+    let q = BestChoice.pick(entries([notReady, unknown]), context: de, last: nil, isFailed: { _ in false })
+    #expect(q?.stream == unknown)
+}

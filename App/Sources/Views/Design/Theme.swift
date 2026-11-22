@@ -279,16 +279,27 @@ private struct TextRoleModifier: ViewModifier {
 struct ThemeRowButtonStyle: ButtonStyle {
     var minHeight: CGFloat = Theme.Layout.rowMinHeight
     var maxWidth: CGFloat = Theme.Layout.contentMaxWidth
+    /// Höchstes Wachsen beim Fokus je Seite (Punkte); nil = immer `Theme.Focus.scale`. Für hohe Zeilen, die sonst
+    /// beim Anheben die Nachbarzeile überdecken (Quellenliste, Welle F-i).
+    var maxFocusGrowth: CGFloat? = nil
 
     func makeBody(configuration: Configuration) -> some View {
-        RowBody(configuration: configuration, minHeight: minHeight, maxWidth: maxWidth)
+        RowBody(configuration: configuration, minHeight: minHeight, maxWidth: maxWidth, maxFocusGrowth: maxFocusGrowth)
     }
 
     private struct RowBody: View {
         let configuration: Configuration
         let minHeight: CGFloat
         let maxWidth: CGFloat
+        let maxFocusGrowth: CGFloat?
         @Environment(\.isFocused) private var focused
+        @State private var height: CGFloat = 0
+
+        /// Fokus-Anheben, bei `maxFocusGrowth` so begrenzt, dass die Zeile oben und unten höchstens so viel wächst.
+        private var focusScale: CGFloat {
+            guard let g = maxFocusGrowth, height > 0 else { return Theme.Focus.scale }
+            return min(Theme.Focus.scale, 1 + 2 * g / height)
+        }
 
         var body: some View {
             configuration.label
@@ -297,7 +308,8 @@ struct ThemeRowButtonStyle: ButtonStyle {
                 .frame(maxWidth: maxWidth, minHeight: minHeight, alignment: .leading)
                 .background(focused ? Theme.Palette.rowFocused : Theme.Palette.row,
                             in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
-                .scaleEffect(configuration.isPressed ? Theme.Focus.pressedScale : (focused ? Theme.Focus.scale : 1))
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { if maxFocusGrowth != nil { height = $0 } }
+                .scaleEffect(configuration.isPressed ? Theme.Focus.pressedScale : (focused ? focusScale : 1))
                 .shadow(color: .black.opacity(focused ? Theme.Focus.shadowOpacity : 0),
                         radius: focused ? Theme.Focus.shadowRadius : 0, y: focused ? Theme.Focus.shadowY : 0)
                 .animation(.easeOut(duration: Theme.Focus.duration), value: focused)

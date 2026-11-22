@@ -71,10 +71,24 @@ public struct StreamTraits: Equatable, Sendable {
         t.seeders = s.behaviorHints?.seeders
 
         // Strukturiertes Feld vor der Text-Erkennung (AIOStreams `behaviorHints.cached`).
-        if let c = s.behaviorHints?.cached { t.cached = c }
-        else if text.contains("⚡") || up.contains("[TB+]") || up.contains("[RD+]") || up.contains("CACHED") { t.cached = true }
-        else if text.contains("⏳") || text.contains("🎫") || up.contains("DOWNLOAD") || up.contains("UNCACHED") { t.cached = false }
+        t.cached = s.behaviorHints?.cached ?? cacheStatus(text)
         return t
+    }
+
+    /// Cache-Zustand aus dem Text des Addon-Formatters; nil = Text sagt nichts dazu (unbekannt bleibt unbekannt).
+    /// Reihenfolge (Welle F-i):
+    /// 1. eindeutig ungecacht: „⏳“, „Uncached“, „Not cached“, „Not Ready“ (Prism: „❌ Not Ready“), „nicht gecacht“;
+    ///    vor den positiven Merkmalen, weil „UNCACHED“ „CACHED“ enthält.
+    /// 2. gecacht: „⚡“ (auch „⚡Ready“), „[TB+]“/„[RD+]“ (Torrentio-Stil), Wort „Cached“, „(Instant TB)“ (TorBox-Stil).
+    /// 3. schwach ungecacht: „[TB download]“ (Wort „Download“), „🎫“ (Gerätetest Nov. 2026: Platzhalter).
+    public static func cacheStatus(_ text: String) -> Bool? {
+        let up = text.uppercased()
+        let notCached = ["NOT CACHED", "NOT READY", "NICHT GECACHT", "NICHT BEREIT"]
+        if text.contains("⏳") || containsToken(up, "UNCACHED") || notCached.contains(where: { up.contains($0) }) { return false }
+        if text.contains("⚡") || containsToken(up, "CACHED") || up.contains("(INSTANT ")
+            || up.range(of: #"\[(TB|RD|AD|PM|DL|ED|OC|PKP)\+\]"#, options: .regularExpression) != nil { return true }
+        if text.contains("🎫") || containsToken(up, "DOWNLOAD") { return false }
+        return nil
     }
 
     /// Token = nicht von Buchstaben/Ziffern umschlossen (damit "DV" nicht in "DVD..." greift usw.).

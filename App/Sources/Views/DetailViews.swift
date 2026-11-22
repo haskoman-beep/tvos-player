@@ -592,7 +592,9 @@ struct StreamListView: View {
                                 .recentlyFailedMark(entry.stream, title: (current ?? request).id)
                         }
                         // Welle F-d: Zeilenform aus den Tokens (bg.row, radius.row, weiße Fokusfläche) über die volle Breite.
-                        .buttonStyle(ThemeRowButtonStyle(maxWidth: .infinity))
+                        // Welle F-i: hohe Zeilen (ganzer Formatter-Text) wachsen beim Fokus höchstens um `Space.xs / 2`
+                        // je Seite, damit sie die Nachbarzeile nicht überdecken.
+                        .buttonStyle(ThemeRowButtonStyle(maxWidth: .infinity, maxFocusGrowth: Theme.Space.xs / 2))
                         .listRowBackground(Color.clear)
                         .focused($focusedStream, equals: entry.stream.id)
                         .id(entry.stream.id)
@@ -847,8 +849,9 @@ struct SourceFocusRequest: Equatable {
 }
 
 /// Welle E-b: Zeile wie vom Formatter des Addons gebaut: links `name`, rechts `description`/`title`, Umbrüche und
-/// Emoji bleiben, je höchstens 4 Zeilen (StreamRowText). App-Plaketten nur kompakt („sofort“, Größe) und nur, wenn
-/// der Addon-Text sie nicht schon zeigt (StreamListBadges). Addon-Name nur bei gemischter Liste (`addon` nicht nil).
+/// Emoji bleiben. Welle F-i: ganzer Text (StreamRowText, Kürzung erst ab 12 Zeilen, Cache-Zeilen dann zuerst), die
+/// Zeile wächst mit; links unter dem Namen der Cache-Zustand als Plakette („Sofort bereit“ / „Nicht gecacht“,
+/// unbekannt: keine). Rechts kompakt nur die Größe (StreamListBadges). Addon-Name nur bei gemischter Liste.
 struct StreamRow: View {
     @EnvironmentObject var model: AppModel
     let addon: String?
@@ -858,13 +861,22 @@ struct StreamRow: View {
     var body: some View {
         let text = StreamRowText(stream)
         let badges = StreamListBadges.badges(stream, mode: model.profile.sources.appBadges, settings: model.profile.appearance.badges)
+        let cache = StreamListBadges.cacheBadge(stream, settings: model.profile.appearance.badges)
         HStack(alignment: .top, spacing: Theme.Space.m) {
-            if !text.name.isEmpty {
-                Text(text.name).textRoleInRow(.rowTitleEmphasis)
-                    .lineLimit(StreamRowText.maxLines).frame(width: 330, alignment: .leading)
+            if !text.name.isEmpty || cache != nil {
+                VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                    if !text.name.isEmpty {
+                        Text(text.name).textRoleInRow(.rowTitleEmphasis)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let cache { ThemeBadge(cache, size: .sources, surface: focused ? .focusedRow : .plain) }
+                }
+                .frame(width: 330, alignment: .leading)
             }
+            // Keine Zeilengrenze: StreamRowText kürzt selbst (Cache-Zeilen zuerst); die Zeile wächst mit dem Text.
             Text(text.body).textRoleInRow(.rowDetail)
-                .lineLimit(StreamRowText.maxLines).frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
             if !badges.isEmpty || addon != nil {
                 VStack(alignment: .trailing, spacing: Theme.Space.xs) {
                     if !badges.isEmpty {

@@ -109,3 +109,32 @@ import Testing
 @Test func ticketMeansUncached() {
     #expect(StreamTraits.parse(StreamItem(name: "🎫 1080p", title: "Film", url: "https://x")).cached == false)
 }
+
+// MARK: Welle F-i: Cache-Zustand aus echten AIOStreams-Formattern
+
+@Test func cacheStatusFromAIOStreamsFormatters() {
+    func c(_ name: String, _ desc: String = "") -> Bool? { StreamTraits.parse(StreamItem(name: name, description: desc, url: "https://u")).cached }
+    // Prism: Zeile „⚡Ready (TB)“ bzw. „❌ Not Ready (TB)“ unten in der Beschreibung.
+    #expect(c("🔥4K UHD", "🎬 Pixels (2015)\n📦 4.91 GB\n⚡Ready (TB) 🔍AIOStreams") == true)
+    #expect(c("🔥4K UHD", "🎬 Pixels (2015)\n📦 4.91 GB 🌱 1\n❌ Not Ready (TB) 🔍AIOStreams") == false)
+    // Torrentio-Stil: „[TB+]“ / „[TB download]“, auch andere Dienste.
+    #expect(c("[TB+] AIOStreams 2160p") == true)
+    #expect(c("[AD+] AIOStreams 1080p") == true)
+    #expect(c("[TB download] AIOStreams 2160p") == false)
+    #expect(c("[RD download] AIOStreams 2160p") == false)
+    // GDrive-Stil: „[TB⚡]“ / „[TB⏳]“.
+    #expect(c("[TB⚡] AIOStreams 2160p") == true)
+    #expect(c("[TB⏳] AIOStreams 2160p") == false)
+    // TorBox-Stil: „(Instant TB)“; ohne „Instant“ unbekannt.
+    #expect(c("AIOStreams (Instant TB) (2160p)") == true)
+    #expect(c("AIOStreams (TB) (2160p)") == nil)
+    // Wörter: „Uncached“ enthält „Cached“ und ist trotzdem ungecacht.
+    #expect(c("AIO 1080p", "Uncached") == false)
+    #expect(c("AIO 1080p", "Not cached") == false)
+    #expect(c("AIO 1080p", "TB Cached") == true)
+    // Ohne Merkmal: unbekannt.
+    #expect(c("🍿 4K • 🌈 DV", "🎬 Pixels (2015)\n💿 WEB-DL ⚙️ HEVC\n💾 12.1 GB") == nil)
+    // Strukturiertes Feld geht vor dem Text.
+    let hinted = StreamItem(name: "❌ Not Ready", url: "https://u", behaviorHints: StreamBehaviorHints(cached: true))
+    #expect(StreamTraits.parse(hinted).cached == true)
+}
