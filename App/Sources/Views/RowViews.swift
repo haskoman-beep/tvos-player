@@ -9,6 +9,8 @@ struct HomeRowView: View {
     let onActivate: (Route) -> Route?
     /// Welle F-b2: Kontextmenü der Startseite (langer Druck auf eine Kachel), nil = keins.
     var menu: HomeRowMenu? = nil
+    /// Wave F-j: focus enters (true) or leaves (false) this row; set only for the first row of the home page.
+    var onFocusInside: ((Bool) -> Void)? = nil
     @State private var items: [MetaPreview] = []
     @State private var loaded = false
     /// Welle F-f: letzte Ladung schlug fehl (Statuskachel „erneut versuchen“).
@@ -57,6 +59,9 @@ struct HomeRowView: View {
                 }
             }
         }
+        .onChange(of: focusedRoute != nil || focusedPlaceholder != nil) { _, f in onFocusInside?(f) }
+        .onAppear { if focusedRoute != nil || focusedPlaceholder != nil { onFocusInside?(true) } }
+        .onDisappear { onFocusInside?(false) }
         .onChange(of: focusedRoute) { _, r in
             guard let r, focusMemory?.state.covered != true else { return }   // verdeckte Startseite: nichts merken
             focusMemory?.state.record(row: row.id.uuidString, item: r.heroPreview.id)

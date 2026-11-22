@@ -652,6 +652,8 @@ struct StreamListView: View {
         .settingsSurface()
         .streamSearchPartials(id: request.id, loading: loading && current == nil) { streams = model.orderedStreams($0) }
         .task {
+            // Start of the push transition (the list appears as the push begins); see `autostartAfterPush`.
+            let appeared = ProcessInfo.processInfo.systemUptime
             let autostart = (request.resumeLastSource || request.bestChoice != nil) && playing == nil && !autostartDone
             streams = model.orderedStreams(autostart
                 ? await model.streamsForAutoplay(type: request.type, id: request.id)
@@ -671,8 +673,10 @@ struct StreamListView: View {
                 let pick = Self.resumeCandidate(last, in: model.autoOrderedStreams(untried), title: request.id)
                 if let s = pick.stream {
                     RemoteLog.info("player", "Weiterschauen mit letzter Quelle: \(s.name ?? "") \(s.label.prefix(60))")
-                    entryFocusDone = true   // Review F-c M3: Rückkehr regelt focusAfterPlayer, nicht der Eintritt
-                    playing = s
+                    if await autostartAfterPush(since: appeared) {
+                        entryFocusDone = true   // Review F-c M3: Rückkehr regelt focusAfterPlayer, nicht der Eintritt
+                        playing = s
+                    }
                 } else {
                     nextNote = pick.note
                     RemoteLog.info("player", "Letzte Quelle nicht gefunden (\(last.fingerprint.prefix(60)))")
@@ -685,8 +689,10 @@ struct StreamListView: View {
                 let same = wanted.match(in: PlaybackStability.shared.autoCandidates(auto, title: request.id))
                 if let s = same ?? model.bestChoice(untried, title: request.id)?.stream {
                     RemoteLog.info("play", "Beste Wahl startet\(same == nil ? " (neu gewählt)" : ""): \(s.name ?? "") \(s.label.prefix(60))")
-                    entryFocusDone = true
-                    playing = s
+                    if await autostartAfterPush(since: appeared) {
+                        entryFocusDone = true
+                        playing = s
+                    }
                 } else {
                     nextNote = "Keine abspielbare Quelle gefunden – bitte wählen."
                     RemoteLog.info("play", "Beste Wahl: keine abspielbare Quelle mehr → Liste")
@@ -730,6 +736,21 @@ struct StreamListView: View {
 }
 
 extension StreamListView {
+    /// Wave F-j round 1 (hypothesis D): with a cache hit the autostart wanted the full-screen player about 140 ms
+    /// after the push, while the push transition was still running; presenting during a push can leave the tab bar
+    /// in a stale state. Waits until `AutostartAfterPush.settleMs` after the list appeared (no wait if the search
+    /// took longer). A fixed delay rather than a transition callback: SwiftUI offers no reliable "push finished"
+    /// event, and a missed callback would block the autostart for good. False if the list disappeared (task
+    /// cancelled) or a row was chosen by hand meanwhile.
+    private func autostartAfterPush(since appeared: Double) async -> Bool {
+        let elapsed = Int((ProcessInfo.processInfo.systemUptime - appeared) * 1000)
+        let wait = AutostartAfterPush.remainingWait(elapsedMs: elapsed)
+        if wait > 0 { try? await Task.sleep(for: .milliseconds(wait)) }
+        guard !Task.isCancelled, playing == nil else { return false }
+        RemoteLog.info("nav", "Autostart nach Push (\(Int((ProcessInfo.processInfo.systemUptime - appeared) * 1000)) ms)")
+        return true
+    }
+
     /// In dieser Liste startbar: Adresse da, hier nicht gescheitert, nicht im 8-h-Gedächtnis.
     private func focusPlayable(_ id: String) -> Bool {
         guard let s = streams.first(where: { $0.stream.id == id })?.stream else { return false }

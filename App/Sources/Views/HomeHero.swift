@@ -262,6 +262,8 @@ struct HeroButtons: View {
     @Environment(\.navigate) private var navigate
     @Environment(HomeFocus.self) private var focus
     let slides: HeroSlides
+    /// Wave F-j: the button row gains (true) or loses (false) focus; it is the top edge of the home page.
+    var onFocusChange: ((Bool) -> Void)? = nil
     @FocusState private var field: Field?
     @State private var starting = false
 
@@ -300,6 +302,10 @@ struct HeroButtons: View {
         .onChange(of: field) { _, f in
             if f != nil { focus.leaveRows() }
         }
+        .onChange(of: field != nil) { _, f in onFocusChange?(f) }
+        // Back from a pushed page with the focus state unchanged: report it again.
+        .onAppear { if field != nil { onFocusChange?(true) } }
+        .onDisappear { onFocusChange?(false) }
         .task { await claimLaunchFocus() }
     }
 
