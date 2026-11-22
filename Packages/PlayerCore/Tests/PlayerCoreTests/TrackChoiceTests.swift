@@ -144,4 +144,8 @@ private func entry(leaving: Bool = false, scrubbing: Bool = false, upNext: Bool 
     #expect(TrackChoice.audioAction(selected: 2, active: 2, locked: false) == .keep)
     #expect(TrackChoice.audioAction(selected: 1, active: nil, locked: false) == .apply)
     #expect(TrackChoice.audioAction(selected: 1, active: 2, locked: true) == .locked)
+    // R2 N1: während des Neuladens geht auch die Rückkehr zur (noch gemeldeten) Ausgangsspur an die Engine
+    #expect(TrackChoice.audioAction(selected: 2, active: 2, locked: false, switching: true) == .apply)
+    #expect(TrackChoice.audioAction(selected: 1, active: 2, locked: false, switching: true) == .apply)
+    #expect(TrackChoice.audioAction(selected: 2, active: 2, locked: true, switching: true) == .locked)
 }

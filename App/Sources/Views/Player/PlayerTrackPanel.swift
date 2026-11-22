@@ -1,8 +1,9 @@
 import SwiftUI
+import UIKit
 import AetherFEL
 import PlayerCore
 
-/// Backends, die Technik-Rohwerte für den Info-Reiter liefern (Auflösung, Dynamik, Tonkette).
+/// Backends, die Technik-Rohwerte für die Info-Spalte liefern (Auflösung, Dynamik, Tonkette).
 @MainActor
 protocol PlaybackTechInfoSource {
     var trackPanelTech: PlaybackTechSnapshot { get }
@@ -22,238 +23,190 @@ extension AetherBackend: PlaybackTechInfoSource {
     }
 }
 
-/// Reiter des Spur-Panels.
-enum PlayerTrackTab: Hashable, CaseIterable {
-    case info, audio, subtitles
-    var title: String {
-        switch self {
-        case .info: "Info"
-        case .audio: "Ton"
-        case .subtitles: "Untertitel"
-        }
-    }
-}
-
-/// Panel unten über dem laufenden Video (Wisch nach unten): Reiter Info · Ton · Untertitel.
-/// Wird als eigene Präsentation gezeigt, damit Fokus und Menü-Taste im Panel bleiben:
-/// Menü schließt nur das Panel, die Wiedergabe läuft weiter.
+/// Welle F-h2: schmales Panel oben über dem laufenden Video (Wisch nach unten), höchstens ein Drittel hoch.
+/// Spalten nebeneinander: Ton · Untertitel · Versatz, darunter Info als eine Fußzeile. ◀/▶ wechselt die Spalte,
+/// ▲/▼ die Zeile, Auswahl wirkt sofort (Häkchen). Menü oder Wisch nach oben aus der obersten Zeile schließt nur das
+/// Panel, die Wiedergabe läuft weiter. Eigene Präsentation, damit Fokus und Menü-Taste im Panel bleiben.
+/// Breiten und Zeichenbudget: `TrackPanelMetrics` (PlayerCore).
 struct PlayerTrackPanel<E: PlaybackEngine>: View {
     @ObservedObject var engine: E
     let profile: Profile
-    /// Adresse der Quelle (für den Dateinamen im Info-Reiter).
+    /// Adresse der Quelle (für den Dateinamen in der Info-Zeile).
     var sourceURL: URL? = nil
     /// Tonspur-Wechsel gesperrt (nach dem Hintergrund bis Play neu aufgebaut hat).
     var audioLocked = false
-    /// Welle F-h R1: Spurwahl ganz gesperrt (Neuaufbau, Fehlerleiter, Start); nil = frei. Wird beim Wählen neu gelesen.
+    /// Sperre zum Anzeigen (gesperrte Spalten, „lädt…“); als Wert, damit das Panel bei jeder Änderung neu zeichnet.
+    var shownLock: TrackLock? = nil
+    /// Welle F-h R1: Sperre beim Wählen frisch lesen; nil = frei.
     var lock: () -> TrackLock? = { nil }
+    /// Welle F-h2 R1: Ton-Neuladen begonnen (Zielspur); der Player sperrt Untertitel/Versatz bis es fertig ist.
+    var onAudioSwitch: (Int) -> Void = { _ in }
     /// Welle D-a: Nutzerwahl merken (Spur-Gedächtnis je Serie); nil = aus.
     var onRemember: ((TrackMemoryChange) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
-    @State private var tab: PlayerTrackTab = .audio
-    @FocusState private var focus: Focus?
+    @FocusState private var focus: TrackPanelSpot?
     /// Nutzer hat den Fokus bewegt (dann den Startfokus nicht mehr nachziehen).
     @State private var userMoved = false
+    /// Einmal je Panel (StateObject); hält keine Closures, also keinen Verweis zurück aufs Panel (R1 I1).
+    @StateObject private var swipeUp = PanelSwipeUp()
 
-    private enum Focus: Hashable {
-        case tab(PlayerTrackTab)
-        case audio(Int)
-        case subtitleOff
-        case subtitle(Int)
-        /// Versatz-Knopf (Index in `SubtitleOffset.steps`) bzw. Zurücksetzen.
-        case offsetStep(Int)
-        case offsetReset
-    }
-
-    /// Startfokus: Reiter Ton auf der aktiven Spur (ohne Tonspuren: der Reiter selbst).
-    private var initialFocus: Focus {
-        if let id = engine.activeAudioID, engine.audioTracks.contains(where: { $0.id == id }) { return .audio(id) }
-        if let first = engine.audioTracks.first { return .audio(first.id) }
-        return .tab(.audio)
-    }
-
-    /// Aktive Untertitelzeile ("Aus", wenn keiner läuft oder die Spur fehlt).
-    private var activeSubtitleFocus: Focus {
-        if let id = engine.activeSubtitleID, engine.subtitleTracks.contains(where: { $0.id == id }) { return .subtitle(id) }
-        return .subtitleOff
+    private var columns: [TrackPanelColumnModel] {
+        let activeSub = engine.subtitleTracks.first { $0.id == engine.activeSubtitleID }
+        return TrackPanelLayout.applying(shownLock, to: [
+            TrackPanelLayout.audioColumn(engine.audioTracks, activeID: engine.activeAudioID, priority: profile.audioPriority,
+                                         audioLocked: audioLocked),
+            TrackPanelLayout.subtitleColumn(engine.subtitleTracks, activeID: engine.activeSubtitleID,
+                                            preferredLanguage: profile.subtitleLanguage),
+            TrackPanelLayout.offsetColumn(offset: engine.subtitleOffset, nativeTrack: activeSub?.isNativelyRendered == true)])
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            if let l = lock() { Text(l.text).font(.callout).foregroundStyle(.secondary) }
-            tabBar.focusSection()
-            content.focusSection()
+        GeometryReader { geo in
+            // Höhe ⅓ des ganzen Bildschirms; der Inhalt bleibt im Sicherheitsrand (oben 60 bei 1080), nur der Grund reicht bis zur Kante.
+            let screen = geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom
+            let height = max(0, CGFloat(TrackPanelLayout.panelHeight(screenHeight: Double(screen))) - geo.safeAreaInsets.top)
+            panel
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .frame(height: height, alignment: .top)
+                .clipped()
+                .background {
+                    ZStack { Rectangle().fill(.ultraThinMaterial); Theme.Palette.scrim }
+                        .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: Theme.Radius.overlayCard,
+                                                          bottomTrailingRadius: Theme.Radius.overlayCard, style: .continuous))
+                        .ignoresSafeArea(edges: [.top, .horizontal])
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .padding(.horizontal, 40).padding(.top, 30).padding(.bottom, 20)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .frame(height: 600, alignment: .top)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28))
-        .padding(.horizontal, 60).padding(.bottom, 40)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-        .defaultFocus($focus, initialFocus)
+        .environment(\.colorScheme, .dark)
+        .defaultFocus($focus, TrackPanelLayout.initialSpot(columns))
         .onChange(of: focus) { old, new in
-            // Erster Fokus beim Öffnen (old == nil) ist kein Nutzerschritt: nichts umschalten.
+            swipeUp.spot = new
+            // Erster Fokus beim Öffnen (old == nil) ist kein Nutzerschritt.
             guard let old, let new else { return }
             userMoved = true
-            if case .tab(let t) = new {
-                guard t != tab else { return }
-                // Von einer Zeile nach oben: zurück auf den offenen Reiter, nicht den nächstgelegenen.
-                if !isTab(old) { focus = .tab(tab) } else { tab = t }
-                return
-            }
-            // Vom Reiter in die Untertitel-Liste: auf die aktive Zeile.
-            if isTab(old), tab == .subtitles, new != activeSubtitleFocus { focus = activeSubtitleFocus }
+            if let target = TrackPanelLayout.redirect(from: old, to: new, columns: columns) { focus = target }
+        }
+        .onChange(of: swipeUp.swipe) { _, e in
+            guard let e, TrackPanelLayout.closesOnSwipeUp(startSpot: e.from, columns: columns) else { return }
+            RemoteLog.info("player", "Panel zu (Wisch nach oben)")
+            dismiss()
         }
         .task {
             try? await Task.sleep(for: .milliseconds(80))
-            if !userMoved, focus != initialFocus { tab = .audio; focus = initialFocus }
+            let start = TrackPanelLayout.initialSpot(columns)
+            if !userMoved, focus != start { focus = start }
         }
-        .onAppear { RemoteLog.info("player", "Panel auf") }
-        .onDisappear { RemoteLog.info("player", "Panel zu") }
+        .onAppear { RemoteLog.info("player", "Panel auf"); swipeUp.start() }
+        .onDisappear { swipeUp.stop(); RemoteLog.info("player", "Panel zu") }
         .onExitCommand { dismiss() }
         .presentationBackground(.clear)
     }
 
-    private func isTab(_ f: Focus) -> Bool { if case .tab = f { return true }; return false }
+    private var panel: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            if let l = shownLock, l != .audioSwitching { Text(l.text).font(.caption).foregroundStyle(Theme.Palette.secondary) }
+            HStack(alignment: .top, spacing: CGFloat(TrackPanelMetrics.columnSpacing)) {
+                let cols = columns
+                column(cols[0], width: TrackPanelMetrics.audioColumnWidth, empty: "Keine Tonspuren")
+                column(cols[1], width: TrackPanelMetrics.subtitleColumnWidth, empty: nil)
+                column(cols[2], width: TrackPanelMetrics.offsetColumnWidth, empty: nil)
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+            // R2 N3: bei Sperrzeile oben fällt die Info-Fußzeile weg, die Liste behält ≈ 3,5 Zeilen.
+            if shownLock == nil || shownLock == .audioSwitching { infoLine }
+        }
+        .padding(.top, Theme.Space.s)
+        .padding(.bottom, Theme.Space.s)
+    }
 
-    // MARK: Reiter
+    // MARK: Spalte
 
-    private var tabBar: some View {
-        HStack(spacing: 20) {
-            ForEach(PlayerTrackTab.allCases, id: \.self) { t in
-                Button { tab = t } label: {
-                    FocusHighlight {
-                        Text(t.title)
-                            .font(.headline)
-                            .foregroundStyle(t == tab ? Color.white : Color.secondary)
-                            .padding(.bottom, 4)
-                            .overlay(alignment: .bottom) {
-                                if t == tab { Capsule().fill(Color.white).frame(height: 4) }
-                            }
+    private func column(_ c: TrackPanelColumnModel, width: Double, empty: String?) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            heading(c.title, note: c.note)
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 2) {
+                    if c.rows.isEmpty, let empty {
+                        Text(empty).font(.callout).foregroundStyle(Theme.Palette.secondary)
+                    }
+                    ForEach(c.rows) { r in
+                        Button { choose(TrackPanelSpot(c.column, r.id)) } label: { TrackPanelRowLabel(row: r, mark: c.column != .offset) }
+                            .buttonStyle(ThemeRowButtonStyle(minHeight: 0, maxWidth: .infinity, maxFocusGrowth: Theme.Focus.rowMaxGrowth,
+                                                             restFill: .clear, verticalPadding: Theme.Space.xs))
+                            .focused($focus, equals: TrackPanelSpot(c.column, r.id))
+                            .disabled(c.isLocked)
                     }
                 }
-                .buttonStyle(.plain)
-                .focused($focus, equals: .tab(t))
+                // Platz fürs Anheben der fokussierten Zeile (TrackPanelMetrics.listInset).
+                .padding(.horizontal, Theme.Space.xs)
+                .padding(.vertical, 4)
             }
-            Spacer()
+        }
+        .frame(width: CGFloat(width), alignment: .leading)
+        .focusSection()
+    }
+
+    private func heading(_ title: String, note: String?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: Theme.Space.xs) {
+            Text(title).font(.callout.weight(.semibold)).foregroundStyle(Theme.Palette.primary)
+            if let note { Text(note).font(.caption).foregroundStyle(Theme.Palette.secondary).lineLimit(1) }
+        }
+        .padding(.leading, Theme.Space.xs)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    // MARK: Info (ohne Fokus, eine Zeile)
+
+    @ViewBuilder private var infoLine: some View {
+        let snap: PlaybackTechSnapshot = {
+            var s = (engine as? any PlaybackTechInfoSource)?.trackPanelTech ?? PlaybackTechSnapshot()
+            s.fileName = TrackPanelLogic.sourceFileName(sourceURL)
+            return s
+        }()
+        if let line = TrackPanelLayout.infoLine(TrackPanelLogic.infoRows(snap)) {
+            Text(line).font(.caption).foregroundStyle(Theme.Palette.secondary).lineLimit(1).truncationMode(.middle)
+                .padding(.leading, Theme.Space.xs)
         }
     }
 
-    @ViewBuilder private var content: some View {
-        switch tab {
-        case .info: infoTab
-        case .audio: audioTab
-        case .subtitles: subtitleTab
+    // MARK: Wählen
+
+    private func choose(_ spot: TrackPanelSpot) {
+        guard !blocked(spot.column) else { return }
+        switch (spot.column, spot.row) {
+        case (.audio, .track(let id)): chooseAudio(id)
+        case (.subtitles, .off): chooseSubtitle(nil)
+        case (.subtitles, .track(let id)): chooseSubtitle(id)
+        case (.offset, .step(let i)) where SubtitleOffset.steps.indices.contains(i):
+            changeOffset(SubtitleOffset.adjusted(engine.subtitleOffset, by: SubtitleOffset.steps[i]))
+        case (.offset, .reset): changeOffset(0)
+        default: break
         }
     }
 
-    // MARK: Info
-
-    private var infoTab: some View {
-        var snap = (engine as? any PlaybackTechInfoSource)?.trackPanelTech ?? PlaybackTechSnapshot()
-        snap.fileName = TrackPanelLogic.sourceFileName(sourceURL)
-        let rows = TrackPanelLogic.infoRows(snap)
-        return VStack(alignment: .leading, spacing: 14) {
-            if rows.isEmpty { Text("Noch keine Angaben").foregroundStyle(.secondary) }
-            ForEach(rows) { r in
-                HStack(alignment: .firstTextBaseline, spacing: 24) {
-                    Text(r.label).foregroundStyle(.secondary).frame(width: 260, alignment: .leading)
-                    Text(r.value).lineLimit(1).truncationMode(.middle)
-                }
-                .font(.callout)
-            }
-        }
-        .padding(.horizontal, 16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    // MARK: Ton
-
-    private var audioTab: some View {
-        let tracks = TrackPanelLogic.sortedAudio(engine.audioTracks, priority: profile.audioPriority)
-        return ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 4) {
-                if tracks.isEmpty { Text("Keine Tonspuren").foregroundStyle(.secondary).padding(16) }
-                ForEach(Array(tracks.enumerated()), id: \.element.id) { i, t in
-                    row(TrackPanelLogic.audioRow(t, number: i + 1), active: t.id == engine.activeAudioID) {
-                        guard !blocked() else { return }
-                        // Engine: sitzungserhaltendes Neuladen an derselben Stelle (AetherEngine selectAudioTrack).
-                        switch TrackChoice.audioAction(selected: t.id, active: engine.activeAudioID, locked: audioLocked) {
-                        case .apply: engine.selectAudio(t.id); onRemember?(.audio(t)); logChoice(audio: t)
-                        case .keep: onRemember?(.audio(t)); logChoice(audio: t)
-                        case .locked: RemoteLog.info("player", "Tonspur gewählt: \(t.id) · gesperrt bis Play")
-                        }
-                        dismiss()
-                    }
-                    .focused($focus, equals: .audio(t.id))
-                }
-            }
+    /// Ton: sofort wirksam, Panel bleibt offen (Häkchen wandert, sobald die Engine die Spur meldet).
+    /// Engine: sitzungserhaltendes Neuladen an derselben Stelle; bis es fertig ist, sperrt der Player Untertitel/Versatz.
+    private func chooseAudio(_ id: Int) {
+        guard let t = engine.audioTracks.first(where: { $0.id == id }) else { return }
+        switch TrackChoice.audioAction(selected: t.id, active: engine.activeAudioID, locked: audioLocked,
+                                       switching: lock() == .audioSwitching) {
+        case .apply: engine.selectAudio(t.id); onAudioSwitch(t.id); onRemember?(.audio(t)); logChoice(audio: t)
+        case .keep: onRemember?(.audio(t)); logChoice(audio: t)
+        case .locked: RemoteLog.info("player", "Tonspur gewählt: \(t.id) · gesperrt bis Play")
         }
     }
 
-    // MARK: Untertitel
-
-    private var subtitleTab: some View {
-        // Liste kommt live aus der Engine: nachgeladene (externe/Addon-)Spuren erscheinen von selbst.
-        let groups = TrackPanelLogic.subtitleGroups(engine.subtitleTracks, preferredLanguage: profile.subtitleLanguage)
-        // selectSubtitle ist die Nutzerwahl (auch „Aus“): setzt subtitleChosenByUser, danach wählt keine Automatik
-        // mehr, auch der Addon-Loader nicht (der fügt dann nur noch Spuren hinzu).
-        return ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 4) {
-                offsetRow
-                row(TrackRowLabel(title: "Aus", detail: nil, name: nil, badges: []), active: engine.activeSubtitleID == nil) {
-                    guard !blocked() else { return }
-                    engine.selectSubtitle(nil); onRemember?(.subtitle(nil)); logChoice(subtitle: .some(nil)); dismiss()
-                }
-                .focused($focus, equals: .subtitleOff)
-                ForEach(groups, id: \.code) { g in
-                    Text(g.header)
-                        .font(.callout.bold()).foregroundStyle(.secondary)
-                        .padding(.horizontal, 16).padding(.top, 18)
-                    ForEach(Array(g.tracks.enumerated()), id: \.element.id) { i, t in
-                        row(TrackPanelLogic.subtitleRow(t, number: i + 1), active: t.id == engine.activeSubtitleID) {
-                            guard !blocked() else { return }
-                            engine.selectSubtitle(t.id); onRemember?(.subtitle(t)); logChoice(subtitle: .some(t)); dismiss()
-                        }
-                        .focused($focus, equals: .subtitle(t.id))
-                    }
-                }
-            }
-        }
+    /// Untertitel (auch „Aus“): Nutzerwahl, setzt subtitleChosenByUser; danach wählt keine Automatik mehr.
+    private func chooseSubtitle(_ id: Int?) {
+        let t = id.flatMap { id in engine.subtitleTracks.first { $0.id == id } }
+        guard id == nil || t != nil else { return }
+        engine.selectSubtitle(t?.id)
+        onRemember?(.subtitle(t))
+        logChoice(subtitle: .some(t))
     }
 
     // MARK: Untertitel-Versatz (Welle D-a)
-
-    /// Versatz für eingebettete und Addon-Untertitel; Knöpfe schließen das Panel nicht.
-    private var offsetRow: some View {
-        let value = engine.subtitleOffset
-        let active = engine.subtitleTracks.first { $0.id == engine.activeSubtitleID }
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 16) {
-                Text("Versatz").font(.callout.bold()).foregroundStyle(.secondary).frame(width: 140, alignment: .leading)
-                ForEach(Array(SubtitleOffset.steps.enumerated()), id: \.offset) { i, step in
-                    if i == SubtitleOffset.steps.count / 2 {
-                        Text(SubtitleOffset.label(value)).font(.body.monospacedDigit().weight(.semibold))
-                            .frame(width: 150)
-                    }
-                    Button { changeOffset(SubtitleOffset.adjusted(engine.subtitleOffset, by: step)) } label: {
-                        FocusHighlight { Text(SubtitleOffset.stepLabel(step)).font(.body.monospacedDigit()) }
-                    }
-                    .buttonStyle(.plain)
-                    .focused($focus, equals: .offsetStep(i))
-                }
-                Button { changeOffset(0) } label: { FocusHighlight { Text("Zurücksetzen").font(.body) } }
-                    .buttonStyle(.plain)
-                    .focused($focus, equals: .offsetReset)
-                Spacer(minLength: 0)
-            }
-            Text(active?.isNativelyRendered == true
-                 ? "Diese Spur zeichnet das System: der Versatz wirkt hier nicht."
-                 : SubtitleOffset.hint(value) + (value < 0 && active?.isExternal != true
-                                                  ? " · Früher anzeigen lädt den Film teils doppelt" : ""))
-                .font(.caption).foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 16).padding(.bottom, 12)
-    }
 
     private func changeOffset(_ v: Double) {
         let n = SubtitleOffset.normalized(v)
@@ -267,9 +220,14 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
 
     // MARK: Sperre (R1)
 
-    /// Sperre beim Wählen: Hinweis loggen, Panel schließen, nichts umschalten. true = gesperrt.
-    private func blocked() -> Bool {
-        guard let l = lock() else { return false }
+    /// Sperre beim Wählen (frisch gelesen). Tonwechsel: Wahl ignorieren, Panel bleibt offen (nichts vormerken).
+    /// Andere Sperren: Hinweis loggen, Panel schließen. true = gesperrt.
+    private func blocked(_ column: TrackPanelColumn) -> Bool {
+        guard let l = lock(), l.blocks(column) else { return false }
+        if l == .audioSwitching {
+            RemoteLog.info("player", "Spurwahl gesperrt (Tonwechsel lädt)")
+            return true
+        }
         RemoteLog.info("player", "Spurwahl gesperrt: \(l.logText)")
         dismiss()
         return true
@@ -285,27 +243,96 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
         let ids = "Ton-ID \(a.map { String($0.id) } ?? "-") · UT-ID \(u.map { String($0.id) } ?? "aus")"
         RemoteLog.info("player", "Spurwahl: \(TrackChoice.summary(audio: a, subtitle: u)) (\(ids))")
     }
+}
 
-    // MARK: Zeile
+/// Einzeilige Spurzeile: Häkchen, Text, kleine Marke. Farben aus den Tokens (liest den Fokus des Knopfs);
+/// gesperrt (deaktiviert) gedimmt.
+private struct TrackPanelRowLabel: View {
+    let row: TrackPanelRow
+    /// Häkchen-Platz (nicht in der Versatz-Spalte).
+    let mark: Bool
+    @Environment(\.isFocused) private var focused
+    @Environment(\.isEnabled) private var enabled
 
-    private func row(_ l: TrackRowLabel, active: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            FocusHighlight {
-                HStack(alignment: .center, spacing: 18) {
-                    Image(systemName: "checkmark").font(.callout.bold()).opacity(active ? 1 : 0).frame(width: 36)
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 14) {
-                            Text(l.title).font(.body.weight(active ? .semibold : .regular))
-                            if let n = l.name { Text(n).font(.body).foregroundStyle(.secondary).lineLimit(1) }
-                            ForEach(l.badges, id: \.self) { b in Badge(b, .gray) }
-                        }
-                        if let d = l.detail { Text(d).font(.caption).foregroundStyle(.secondary) }
-                    }
-                    Spacer(minLength: 0)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+    var body: some View {
+        HStack(spacing: CGFloat(TrackPanelMetrics.spacing)) {
+            if mark {
+                Image(systemName: "checkmark").font(.caption.bold()).opacity(row.isActive ? 1 : 0)
+                    .frame(width: CGFloat(TrackPanelMetrics.markWidth))
             }
+            Text(row.line).font(.callout.weight(row.isActive ? .semibold : .regular)).lineLimit(1).truncationMode(.tail)
+            if let tag = row.tag {
+                ThemeBadge(kind: .tech(.poster), text: tag, surface: focused ? .focusedRow : .plain)
+            }
+            Spacer(minLength: 0)
         }
-        .buttonStyle(.plain)
+        .foregroundStyle(focused ? Theme.Palette.primaryOnFocus : (enabled ? Theme.Palette.primary : Theme.Palette.secondary))
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(row.isActive ? .isSelected : [])
     }
+}
+
+/// Welle F-h2: Wisch nach oben im Panel. Eigener Pan-Recognizer am Fenster, der Berührungen nicht schluckt
+/// (die Fokussteuerung bewegt weiter die Zeilen). Merkt die Fokusstelle beim Wischbeginn (`spot`, vom Panel
+/// gesetzt) und meldet den Wisch als veröffentlichtes Ereignis. R1 I1: keine gespeicherten Closures, also kein
+/// Verweis zurück aufs Panel (und damit auf Backend und Engine); `stop()` löst den Recognizer.
+@MainActor
+final class PanelSwipeUp: NSObject, ObservableObject, UIGestureRecognizerDelegate {
+    struct Swipe: Equatable {
+        let serial: Int
+        let from: TrackPanelSpot?
+    }
+
+    /// Letzter Wisch nach oben (Fokus beim Beginn); das Panel entscheidet über `closesOnSwipeUp`.
+    @Published private(set) var swipe: Swipe?
+    /// Aktuelle Fokusstelle (vom Panel nachgeführt).
+    var spot: TrackPanelSpot?
+    private var startSpot: TrackPanelSpot?
+    private var serial = 0
+    private var recognizer: UIPanGestureRecognizer?
+
+    func start() {
+        stop()
+        guard let window = PlayerWindow.key else {
+            RemoteLog.info("player", "Panel: kein Fenster für Wisch nach oben")
+            return
+        }
+        let g = UIPanGestureRecognizer(target: self, action: #selector(handle(_:)))
+        g.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirect.rawValue)]
+        g.cancelsTouchesInView = false
+        g.delaysTouchesBegan = false
+        g.delaysTouchesEnded = false
+        g.delegate = self
+        window.addGestureRecognizer(g)
+        recognizer = g
+    }
+
+    func stop() {
+        if let g = recognizer { g.view?.removeGestureRecognizer(g) }
+        recognizer = nil
+        startSpot = nil
+    }
+
+    deinit {
+        Task { @MainActor in RemoteLog.info("player", "Panel freigegeben") }
+    }
+
+    @objc private func handle(_ g: UIPanGestureRecognizer) {
+        switch g.state {
+        case .began: startSpot = spot
+        case .ended:
+            let tr = g.translation(in: g.view)
+            let vy = Double(g.velocity(in: g.view).y)
+            if TrackPanelEntry.isSwipeUp(translationX: Double(tr.x), translationY: Double(tr.y), velocityY: vy) {
+                serial += 1
+                swipe = Swipe(serial: serial, from: startSpot)
+            }
+            startSpot = nil
+        case .cancelled, .failed: startSpot = nil
+        default: break
+        }
+    }
+
+    func gestureRecognizer(_ g: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 }

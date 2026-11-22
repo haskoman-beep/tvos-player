@@ -304,9 +304,14 @@ struct ThemeRowButtonStyle: ButtonStyle {
     /// Höchstes Wachsen beim Fokus je Seite (Punkte); nil = immer `Theme.Focus.scale`. Für hohe Zeilen, die sonst
     /// beim Anheben die Nachbarzeile überdecken (Quellenliste, Welle F-i).
     var maxFocusGrowth: CGFloat? = nil
+    /// Fläche in Ruhe (Standard `bg.row`); Listen auf dunklem Grund (Spur-Panel, Welle F-h2) nehmen `.clear`.
+    var restFill: Color = Theme.Palette.row
+    /// Innenrand oben/unten (Standard `Space.s`); einzeilige Listenzeilen nehmen `Space.xs`.
+    var verticalPadding: CGFloat = Theme.Space.s
 
     func makeBody(configuration: Configuration) -> some View {
-        RowBody(configuration: configuration, minHeight: minHeight, maxWidth: maxWidth, maxFocusGrowth: maxFocusGrowth)
+        RowBody(configuration: configuration, minHeight: minHeight, maxWidth: maxWidth, maxFocusGrowth: maxFocusGrowth,
+                restFill: restFill, verticalPadding: verticalPadding)
     }
 
     private struct RowBody: View {
@@ -314,6 +319,8 @@ struct ThemeRowButtonStyle: ButtonStyle {
         let minHeight: CGFloat
         let maxWidth: CGFloat
         let maxFocusGrowth: CGFloat?
+        let restFill: Color
+        let verticalPadding: CGFloat
         @Environment(\.isFocused) private var focused
         @State private var height: CGFloat = 0
 
@@ -326,9 +333,9 @@ struct ThemeRowButtonStyle: ButtonStyle {
         var body: some View {
             configuration.label
                 .padding(.horizontal, Theme.Space.m)
-                .padding(.vertical, Theme.Space.s)
+                .padding(.vertical, verticalPadding)
                 .frame(maxWidth: maxWidth, minHeight: minHeight, alignment: .leading)
-                .background(focused ? Theme.Palette.rowFocused : Theme.Palette.row,
+                .background(focused ? Theme.Palette.rowFocused : restFill,
                             in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { if maxFocusGrowth != nil { height = $0 } }
                 .scaleEffect(configuration.isPressed ? Theme.Focus.pressedScale : (focused ? focusScale : 1))

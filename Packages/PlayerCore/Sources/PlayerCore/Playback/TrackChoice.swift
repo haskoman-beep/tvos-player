@@ -43,7 +43,7 @@ public enum TrackPanelEntry {
         if scrubbing { return .ignore(.scrubbing) }
         if upNextShowing { return .cancelUpNext }
         if skipPromptShowing { return .ignore(.skipPrompt) }
-        if let lock { return .ignore(.busy(lock)) }
+        if let lock, lock.blocksOpening { return .ignore(.busy(lock)) }
         return .open
     }
 
@@ -59,6 +59,11 @@ public enum TrackPanelEntry {
         guard translationY > 0, translationY > abs(translationX) * 1.5 else { return false }
         if translationY >= swipeMinDistance { return true }
         return translationY >= swipeFastDistance && velocityY >= swipeFastVelocity
+    }
+
+    /// Welle F-h2: Wisch nach oben (schließt das Panel aus der obersten Zeile). Spiegel von `isSwipeDown`.
+    public static func isSwipeUp(translationX: Double, translationY: Double, velocityY: Double) -> Bool {
+        isSwipeDown(translationX: translationX, translationY: -translationY, velocityY: -velocityY)
     }
 }
 
@@ -78,22 +83,43 @@ public enum TrackLock: Equatable, Sendable {
     case waitingForNetwork
     /// Engine meldet einen Fehler, die Leiter hat noch nicht entschieden.
     case engineError
+    /// Welle F-h2 R1: Ton-Neuladen aus dem Panel läuft (`AudioSwitchWatch`). Die Engine merkt sich den Untertitel
+    /// zu Beginn und schaltet ihn am Ende wieder ein: eine UT-Wahl dazwischen würde still zurückgedreht.
+    /// Sperrt nur Untertitel und Versatz; Ton bleibt wählbar (die Engine ersetzt eine wartende Tonwahl selbst),
+    /// das Panel bleibt offen und darf auch wieder öffnen.
+    case audioSwitching
 
     /// Reihenfolge: was gerade läuft, vor dem, was nur angesetzt ist.
     public static func current(restoring: Bool, recovering: Bool, loadInFlight: Bool, startPending: Bool,
-                               waitingForNetwork: Bool, engineError: Bool) -> TrackLock? {
+                               waitingForNetwork: Bool, engineError: Bool, audioSwitching: Bool = false) -> TrackLock? {
         if restoring { return .restoring }
         if recovering { return .recovering }
         if loadInFlight { return .loading }
         if startPending { return .startPending }
         if waitingForNetwork { return .waitingForNetwork }
         if engineError { return .engineError }
+        if audioSwitching { return .audioSwitching }
         return nil
     }
 
     /// Hinweis für den Nutzer.
     public var text: String {
-        self == .waitingForNetwork ? "Gerade nicht möglich – warte auf das Netz" : "Gerade nicht möglich – Quelle wird geladen"
+        switch self {
+        case .waitingForNetwork: "Gerade nicht möglich – warte auf das Netz"
+        case .audioSwitching: "Tonwechsel lädt…"
+        default: "Gerade nicht möglich – Quelle wird geladen"
+        }
+    }
+
+    /// Öffnen des Panels verhindern (alle außer dem Tonwechsel).
+    public var blocksOpening: Bool { self != .audioSwitching }
+
+    /// Sperrt diese Spalte? Tonwechsel: Untertitel und Versatz. Sonst: Ton und Untertitel (Versatz wie bisher frei).
+    public func blocks(_ column: TrackPanelColumn) -> Bool {
+        switch self {
+        case .audioSwitching: column != .audio
+        default: column != .offset
+        }
     }
 
     public var logText: String {
@@ -104,6 +130,7 @@ public enum TrackLock: Equatable, Sendable {
         case .startPending: "Start angesetzt"
         case .waitingForNetwork: "warte auf Netz"
         case .engineError: "Engine-Fehler offen"
+        case .audioSwitching: "Tonwechsel lädt"
         }
     }
 }
@@ -180,8 +207,11 @@ public enum TrackChoice {
         case locked
     }
 
-    public static func audioAction(selected: Int, active: Int?, locked: Bool) -> AudioAction {
+    /// `switching`: ein Ton-Neuladen läuft (F-h2 R2 N1). `active` meldet dann noch die alte Spur, also geht jede Wahl
+    /// an die Engine (sie ersetzt die wartende Wahl), auch die Rückkehr zur Ausgangsspur.
+    public static func audioAction(selected: Int, active: Int?, locked: Bool, switching: Bool = false) -> AudioAction {
         if locked { return .locked }
+        if switching { return .apply }
         return selected == active ? .keep : .apply
     }
 
