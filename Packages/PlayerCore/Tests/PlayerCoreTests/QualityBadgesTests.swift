@@ -47,7 +47,7 @@ import Testing
 @Test func bestQualityOverCachedStreams() {
     let s = [StreamItem(name: "⚡ 1080p", title: "Film.1080p.HDR10.DDP.5.1", url: "https://a"),
              StreamItem(name: "⚡ 2160p", title: "Film.2160p.DV.TrueHD.Atmos.7.1", url: "https://b"),
-             StreamItem(name: "🎫 2160p", title: "Film.2160p.HDR10+.DTS-X", url: "https://c")]
+             StreamItem(name: "⏳ 2160p", title: "Film.2160p.HDR10+.DTS-X", url: "https://c")]
     let b = BestQuality.from(s)
     #expect(b == BestQuality(resolution: "2160p", dolbyVision: true, hdr: "HDR10", atmos: true, dtsX: false, channels: "7.1"))
     // REMUX und DTS-HD MA aus gecachten Quellen.

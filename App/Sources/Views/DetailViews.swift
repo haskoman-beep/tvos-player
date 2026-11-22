@@ -453,14 +453,24 @@ struct DetailView: View {
             Text("Keine Folgen gefunden.").textRole(.rowDetail)
             if overview.isEmpty && extra?.trailerYouTube == nil { FocusAnchor(kind: .back) }   // N6
         } else {
+            // Fokus-Anheben (tileScale) plus Schatten (Radius + Versatz ≈ 25 pt) passt in Space.l; nichts wird abgeschnitten.
             ScrollView(.horizontal) {
-                HStack {
+                HStack(spacing: Theme.Space.m) {
                     ForEach(seasons, id: \.self) { s in
-                        Button("Staffel \(s)") { season = s }
-                            .buttonStyle(ThemeActionButtonStyle(selected: s == season))
+                        Button { season = s } label: {
+                            HStack(spacing: Theme.Space.xs) {
+                                // Gewählte Staffel: Haken, erbt die Vordergrundfarbe und bleibt so auch im Fokus sichtbar.
+                                if s == season { Image(systemName: "checkmark") }
+                                Text("Staffel \(s)")
+                            }
+                        }
+                        .buttonStyle(ThemeActionButtonStyle(selected: s == season))
+                        .accessibilityAddTraits(s == season ? .isSelected : [])
                     }
                 }
+                .padding(.vertical, Theme.Space.l)
             }
+            .scrollClipDisabled()
             let eps = (meta?.videos ?? []).filter { $0.season == season }.sorted { ($0.episode ?? 0) < ($1.episode ?? 0) }
             LazyVStack(alignment: .leading, spacing: Theme.Space.m) {
                 ForEach(eps) { v in

@@ -82,9 +82,10 @@ public struct StreamTraits: Equatable, Sendable {
     /// 2. Symbol-/Klammer-Merkmal ungecacht: „⏳“, „[TB download]“, „❌ Not Ready“ (Prism).
     /// 3. Wörter nur als Statuszeile oder in Klammern, nie in der Titelzeile (🎬): eine Zeile, die nach Symbolen mit
     ///    „Uncached“, „Not cached“, „Not Ready“, „nicht gecacht“, „nicht bereit“ (ungecacht) bzw. „Cached“ beginnt, oder
-    ///    ein solches Wort in […]/(…). Filmtitel wie „I'm Not Ready for Christmas“ oder „Download“ lösen nichts aus.
-    /// 4. „🎫“ ungecacht (Gerätetest 21.11.: Platzhalter). Risiko: die AIOStreams-Vorlage „minimalistic gdrive“ nutzt
-    ///    🎫 für gecacht (🎟️ für ungecacht); dort gälte ein gecachter Text ohne ⚡ hier fälschlich als ungecacht.
+    ///    ein solches Wort in […]/(…). Der Zeilenanfang zählt nur, wenn die Zeile ein Statussymbol (⚡ ❌ ✖ ⏳ ✅) trägt
+    ///    oder keinen Release-Namen enthält (kein „Wort.Wort“, keine Jahreszahl). Filmtitel wie „I'm Not Ready for
+    ///    Christmas“, „Not Ready to Make Nice.2023.1080p…“ (Torrentio-Beschreibung) oder „Download“ lösen nichts aus.
+    /// „🎫“ sagt nichts über den Cache: im Prism-Formatter ist es das Auflösungssymbol für 1080p.
     public static func cacheStatus(_ text: String) -> Bool? {
         let up = text.uppercased()
         if text.contains("⚡") || up.contains("(INSTANT ") || matches(cachedTag, up) { return true }
@@ -93,20 +94,24 @@ public struct StreamTraits: Equatable, Sendable {
         for line in up.components(separatedBy: "\n") where !line.trimmingCharacters(in: .whitespaces).hasPrefix("🎬") {
             let core = String(line.drop { !($0.isLetter || $0.isNumber) })
             let bracketed = bracketContents(line)
-            let says: (String) -> Bool = { w in core.hasPrefix(w) || bracketed.contains { containsToken($0, w) } }
+            let startCounts = line.unicodeScalars.contains(where: statusSymbols.contains) || !matches(releaseName, line)
+            let says: (String) -> Bool = { w in (startCounts && core.hasPrefix(w)) || bracketed.contains { containsToken($0, w) } }
             if notCachedWords.contains(where: says) { return false }
             if word == nil, says("CACHED") { word = true }
         }
-        if let word { return word }
-        if text.contains("🎫") { return false }
-        return nil
+        return word
     }
 
     private static let notCachedWords = ["UNCACHED", "NOT CACHED", "NOT READY", "NICHT GECACHT", "NICHT BEREIT"]
-    /// „[TB+]“, „[RD+]“, „[EN+]“ … (zwei, drei Großbuchstaben; „[HDR10+]“ zählt nicht).
-    nonisolated(unsafe) private static let cachedTag = try! NSRegularExpression(pattern: #"\[[A-Z]{2,3}\+\]"#)
+    private static let statusSymbols: Set<Unicode.Scalar> = ["⚡", "❌", "✖", "⏳", "✅"]
+    /// Debrid-/Usenet-Kürzel der Formatter; „[DD+]“ (Ton) oder „[DV+]“ (Bild) sind keine Dienste.
+    private static let serviceCodes = "TB|RD|AD|PM|DL|ED|OC|PKP|EN|SR|NX"
+    /// „[TB+]“, „[RD+]“, „[EN+]“ … (nur Dienst-Kürzel; „[HDR10+]“, „[DD+]“ zählen nicht).
+    nonisolated(unsafe) private static let cachedTag = try! NSRegularExpression(pattern: #"\[("# + serviceCodes + #")\+\]"#)
     /// „[TB download]“ (Torrentio-Stil); das Wort „Download“ allein zählt nicht.
-    nonisolated(unsafe) private static let downloadTag = try! NSRegularExpression(pattern: #"\[[A-Z]{2,3} DOWNLOAD\]"#)
+    nonisolated(unsafe) private static let downloadTag = try! NSRegularExpression(pattern: #"\[("# + serviceCodes + #") DOWNLOAD\]"#)
+    /// Release-Name: „Wort.Wort“ (Punkt neben einem Buchstaben, „5.1“/„12.3 GB“ zählen nicht) oder Jahreszahl.
+    nonisolated(unsafe) private static let releaseName = try! NSRegularExpression(pattern: #"[A-Z]\.[A-Z0-9]|[A-Z0-9]\.[A-Z]|(?<![0-9])(19|20)[0-9]{2}(?![0-9])"#)
     nonisolated(unsafe) private static let bracket = try! NSRegularExpression(pattern: #"[\[(]([^\[\]()]*)[\])]"#)
 
     private static func matches(_ re: NSRegularExpression, _ s: String) -> Bool {

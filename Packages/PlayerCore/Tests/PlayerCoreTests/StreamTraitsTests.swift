@@ -106,8 +106,10 @@ import Testing
     #expect(b2.lastSource(for: "tt1")?.contentID == "tt1:1:2")
 }
 
-@Test func ticketMeansUncached() {
-    #expect(StreamTraits.parse(StreamItem(name: "🎫 1080p", title: "Film", url: "https://x")).cached == false)
+/// Re-Review R1-I1: 🎫 ist im Prism-Formatter das 1080p-Symbol und sagt nichts über den Cache.
+@Test func ticketSaysNothingAboutCache() {
+    #expect(StreamTraits.parse(StreamItem(name: "🎫 1080p", title: "Film", url: "https://x")).cached == nil)
+    #expect(StreamTraits.parse(StreamItem(name: "🎫 1080p", url: "https://x")).cached == nil)
 }
 
 // MARK: Welle F-i: Cache-Zustand aus echten AIOStreams-Formattern
@@ -137,6 +139,10 @@ import Testing
     // Allgemeine Dienstkürzel, aber nicht „[HDR10+]“.
     #expect(c("[EN+] AIOStreams 1080p") == true)
     #expect(c("AIO 2160p [HDR10+]") == nil)
+    // Ton und Bild in Klammern sind keine Dienste (R1-M1).
+    #expect(c("AIO 1080p [DD+]") == nil)
+    #expect(c("AIO 2160p [DV+]") == nil)
+    #expect(c("[DD+] AIO 1080p", "[DV+] HEVC") == nil)
     // Ohne Merkmal: unbekannt.
     #expect(c("🍿 4K • 🌈 DV", "🎬 Pixels (2015)\n💿 WEB-DL ⚙️ HEVC\n💾 12.1 GB") == nil)
     // Strukturiertes Feld geht vor dem Text.
@@ -157,6 +163,12 @@ import Testing
     // „Download“ als Titel oder Dateiname: unbekannt, nur „[TB download]“ zählt.
     #expect(c("🚀 FHD", "🎬 The Download (2019)\n💾 2.1 GB", file: "The.Download.2019.1080p.mkv") == nil)
     #expect(c("AIO 1080p", "Download (2019)") == nil)
+    // Torrentio-Beschreibung: Release-Name am Zeilenanfang ist keine Statuszeile (R1-M2).
+    #expect(c("Torrentio\n4k", "Not Ready to Make Nice.2023.1080p.WEB-DL.x264\n👤 12 💾 2.1 GB") == nil)
+    #expect(c("AIO 1080p", "Not Ready to Make Nice 2023 1080p") == nil)
+    // Statuszeile ohne Release-Namen oder mit Statussymbol zählt weiter.
+    #expect(c("AIO 1080p", "Not Ready 2.1 GB") == false)
+    #expect(c("AIO 1080p", "✖ Not Ready Film.2023.1080p") == false)
     // Dateiname mit Status-Wort zählt nicht.
     #expect(c("AIO 1080p", "💾 2 GB", file: "Not Ready (2020) [Uncached].mkv") == nil)
     // ⚡ geht vor ⏳ (⏳ in anderer Bedeutung).
