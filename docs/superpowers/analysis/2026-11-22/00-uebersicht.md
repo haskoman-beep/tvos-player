@@ -107,6 +107,7 @@ Entscheidungen, die ich selbst getroffen habe, jeweils mit Begründung in einem 
 | [06-security-review.md](06-security-review.md) | Threat-Model, 17 Befunde im Code, 5 in der Git-Historie, Gegenmaßnahmen |
 | [07-design-analyse.md](07-design-analyse.md) | Ist-Zustand je Bereich, Design-System, tvOS-Regeln, JSON-Schema, vollständiges Inventar |
 | [08-roadmap-und-ideen.md](08-roadmap-und-ideen.md) | Roadmap Jetzt / Danach / Später, Prozessverbesserungen, 18 bewertete Ideen |
+| [historie-bereinigen.sh](historie-bereinigen.sh) | Skript, das Namen und E-Mail-Adresse aus den sechs Merge-Commits entfernt (GIT-1); lokal auszuführen |
 | [Umsetzungsplan](../../plans/2026-11-22-verbesserungen.md) | sechs Builds mit Tasks, Tests, Deploy-Checklisten und Geräteprotokollen |
 | [Konfigurator (Datei)](../../../design/konfigurator/index.html) | eigenständige HTML-Seite, im Browser öffnen |
 | [Konfigurator (veröffentlicht, privat)](https://claude.ai/artifact/MhQGZEjKmV9HQQng21oAmX) | dieselbe Seite als private Artifact-Seite |

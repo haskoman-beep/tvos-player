@@ -31,6 +31,13 @@ Gegenmaßnahmen im [Plan](../../plans/2026-11-22-verbesserungen.md): Build 1 (Ta
 (Tasks 2.2, 2.3). **[C]** Die Bereinigung der Git-Historie (GIT-1) ist nicht Teil des Plans, weil sie alle Hashes,
 Tags und Releases ändert; sie ist eine eigene Entscheidung des Nutzers (Vorgehen unter GIT-1).
 
+**Nachtrag:** Der Nutzer hat die Bereinigung von GIT-1 beauftragt. Das Umschreiben wurde in einer Kopie durchgeführt
+und geprüft (40 Refs: 31 Branches und 9 Tags; Dateibäume, Nachrichten und Zeitstempel unverändert; keine
+Fremd-Adresse mehr). Der Force-Push ließ sich aus der Analyse-Sitzung nicht ausführen, weil sie nur auf ihren eigenen
+Branch schreiben darf. Das geprüfte Vorgehen liegt als Skript bei: [historie-bereinigen.sh](historie-bereinigen.sh).
+Nach dem Lauf ändern sich die Commit-Hashes von `integ`; die Zeilenangaben dieser Analyse bleiben gültig, weil sich
+kein Dateiinhalt ändert.
+
 ---
 
 # Teil A: Code
