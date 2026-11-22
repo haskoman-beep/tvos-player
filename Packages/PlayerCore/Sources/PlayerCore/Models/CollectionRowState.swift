@@ -62,8 +62,8 @@ public enum GIFFramePlan {
     public static let maxFrames = 48
     /// Längste Kante der dekodierten Einzelbilder in Pixeln.
     public static let maxPixels = 520
-    /// Browser-Regel: Verzögerungen unter 20 ms gelten als 100 ms.
-    public static let minDelay = 0.02
+    /// Browser-Regel: Verzögerungen bis einschließlich 10 ms gelten als 100 ms.
+    public static let minDelay = 0.01
     public static let fallbackDelay = 0.1
 
     /// Indizes der zu dekodierenden Bilder (aufsteigend, das erste immer dabei).
@@ -73,13 +73,15 @@ public enum GIFFramePlan {
         return (0..<maxFrames).map { $0 * frameCount / maxFrames }
     }
 
-    /// Dauer eines Einzelbilds aus der GIF-Angabe (nil oder zu klein → 0,1 s).
+    /// Dauer eines Einzelbilds aus der GIF-Angabe (nil oder ≤ 10 ms → 0,1 s).
     public static func delay(_ raw: Double?) -> Double {
-        guard let raw, raw >= minDelay else { return fallbackDelay }
+        guard let raw, raw > minDelay else { return fallbackDelay }
         return raw
     }
 
     /// Gesamtdauer aller Bilder (für `UIImage.animatedImage`), auch beim Ausdünnen unverändert.
+    /// `UIImage.animatedImage` zeigt jedes Einzelbild gleich lang: unterschiedliche Verzögerungen je Bild gehen verloren
+    /// (bei gleichmäßigen GIFs ohne sichtbaren Unterschied).
     public static func duration(delays: [Double?]) -> Double {
         delays.reduce(0) { $0 + delay($1) }
     }

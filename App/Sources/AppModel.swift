@@ -284,9 +284,12 @@ final class AppModel: ObservableObject {
         update { p in if !p.collections.contains(where: { $0.id == c.id }) { p.collections.append(c) } }
     }
 
-    /// Welle F-g: Paket-Kacheln bekommen ihre Bilder auch in Profil-Kopien von vor F-g (ReadyPackages.withArtwork).
+    /// Welle F-g: Paket-Kacheln zeigen Bilder nur aus einem eigenen Import des Nutzers (Nuvio/Fusion) mit demselben
+    /// Anbieter bzw. Genre; ohne Treffer bleibt die Symbol-Kachel. Keine Bilder aus dem Repo.
     func collection(_ id: String) -> MediaCollection? {
-        profile.collections.first { $0.id == id }.map { ReadyPackages.withArtwork($0) } ?? FusionKitStore.shared.collection(id)
+        guard let c = profile.collections.first(where: { $0.id == id }) else { return FusionKitStore.shared.collection(id) }
+        guard id.hasPrefix("pkg.") else { return c }
+        return ReadyPackages.withImportedArt(c, imported: profile.collections + FusionKitStore.shared.visibleCollections)
     }
 
     // MARK: Kataloge

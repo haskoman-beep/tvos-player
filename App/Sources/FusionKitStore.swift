@@ -52,6 +52,8 @@ final class FusionKitStore: ObservableObject {
     // MARK: Lesen (Startseite)
 
     func collection(_ id: String) -> MediaCollection? { visible[id] }
+    /// Alle sichtbaren Kit-Collections (Bildquelle für Paket-Kacheln, Welle F-g).
+    var visibleCollections: [MediaCollection] { Array(visible.values) }
 
     /// Katalog-Dateien plus gewählte/eingetragene Quellen außerhalb des Katalogs.
     var sources: [FusionKitSource] {

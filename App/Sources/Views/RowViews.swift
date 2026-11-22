@@ -410,7 +410,27 @@ struct FolderTile: View {
     /// Fokus der umgebenden Karte (Fokus-GIF, Welle F-g).
     @Environment(\.isFocused) private var focused
     var body: some View {
-        if logoStyle {
+        content
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(folder.title)
+    }
+
+    @ViewBuilder private var content: some View {
+        if folder.coverImage == nil && folder.backdrop == nil && folder.logo == nil,
+           let style = ReadyPackages.tileStyle(forFolderID: folder.id) {
+            // Welle F-g: eigene Paket-Kachel ohne Bild aus dem Netz (Farbverlauf + SF Symbol + deutscher Titel).
+            let kind: TileKind = logoStyle ? .logo : .landscape
+            ZStack {
+                Theme.Tile.packageGradient(style.tone)
+                VStack(spacing: 14 * scale) {
+                    Image(systemName: style.symbol).font(.system(size: 64 * scale, weight: .semibold))
+                    Text(folder.title).font(.headline).lineLimit(1).minimumScaleFactor(0.7)
+                }
+                .foregroundStyle(Theme.Palette.primary)
+                .padding(.horizontal, 20 * scale)
+            }
+            .frame(width: Theme.Tile.width(kind, scale), height: Theme.Tile.height(kind, scale))
+        } else if logoStyle {
             ZStack {
                 Color.white.opacity(0.08)
                 if let l = folder.logo { RemoteImage(url: l, maxPixels: 800, fit: true).padding(30 * scale) } else { Text(folder.title).font(.headline) }
@@ -423,7 +443,8 @@ struct FolderTile: View {
                 .overlay { if let g = folder.focusGif { FocusGIF(url: g, focused: focused) } }
                 .clipped()
                 .overlay(alignment: .bottomLeading) {
-                    if folder.coverImage == nil || folder.showsTitleOverImage { Text(folder.title).font(.headline).shadow(radius: 4).padding(14) }
+                    // Paket-Kacheln zeigen immer den deutschen Titel, auch mit importiertem Bild.
+                    if folder.coverImage == nil || folder.showsTitleOverImage || ReadyPackages.isPackageFolder(folder.id) { Text(folder.title).font(.headline).shadow(radius: 4).padding(14) }
                 }
         }
     }

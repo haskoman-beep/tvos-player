@@ -45,37 +45,56 @@ private func src(_ id: String) -> CatalogSource {
     #expect(logos.images == 1 && logos.gifs == 0)
 }
 
-@Test func readyPackagesCarryArtwork() {
-    let netflix = ReadyPackages.streamingDE.folders.first { $0.title == "Netflix" }
-    #expect(netflix?.coverImage?.hasSuffix("streaming_services.netflix.webp?v=7") == true)
-    #expect(netflix?.focusGif?.hasSuffix("streaming_services.netflix.focus.gif?v=7") == true)
-    #expect(netflix?.logo != nil)
-    #expect(netflix?.hideTitle == true)
-    // Ohne Bild beim Server: Titel bleibt sichtbar, kein GIF.
-    let joyn = ReadyPackages.streamingDE.folders.first { $0.title == "Joyn" }
-    #expect(joyn?.coverImage == nil && joyn?.focusGif == nil)
-    // Alle Genres haben ein Standbild, keins ein GIF.
-    let genres = ReadyPackages.genreCollection.folders
-    #expect(genres.count == ReadyPackages.genres.count)
-    #expect(genres.allSatisfy { $0.coverImage != nil && $0.focusGif == nil })
-    #expect(genres.first { $0.title == "Komödie" }?.coverImage?.contains("genres.comedy.") == true)
+@Test func readyPackagesShipNoRemoteImages() {
+    let all = ReadyPackages.all.flatMap(\.folders)
+    #expect(all.allSatisfy { $0.coverImage == nil && $0.logo == nil && $0.focusGif == nil && $0.backdrop == nil })
+    // Jede Paket-Kachel hat eine eigene Gestaltung (Symbol + Farbverlauf).
+    for f in all {
+        let style = ReadyPackages.tileStyle(forFolderID: f.id)
+        #expect(style != nil, "\(f.id)")
+        #expect((0..<ReadyPackages.toneCount).contains(style?.tone ?? -1))
+    }
+    #expect(ReadyPackages.tileStyle(forFolderID: "pkg.genres.Drama")?.symbol == "theatermasks")
+    #expect(ReadyPackages.tileStyle(forFolderID: "pkg.streaming-de.8")?.symbol == "play.tv")
+    #expect(ReadyPackages.tileStyle(forFolderID: "pkg.genres.Unbekannt") == nil)
+    #expect(ReadyPackages.tileStyle(forFolderID: "own.1") == nil)
 }
 
-@Test func storedPackageCopyGetsArtworkOnRead() {
-    // Profil-Kopie aus der Zeit vor F-g: Kacheln ohne Bilder.
-    var old = ReadyPackages.streamingDE
-    old.folders = old.folders.map { var f = $0; f.coverImage = nil; f.logo = nil; f.focusGif = nil; f.hideTitle = nil; return f }
-    let filled = ReadyPackages.withArtwork(old)
-    #expect(filled == ReadyPackages.streamingDE)
-    // Eigenes Bild des Nutzers bleibt.
-    var own = old
-    own.folders[0].coverImage = "https://example.invalid/own.png"
-    let kept = ReadyPackages.withArtwork(own)
-    #expect(kept.folders[0].coverImage == "https://example.invalid/own.png")
-    #expect(kept.folders[0].focusGif != nil)
+private func discover(_ id: String, _ filters: [String: String]) -> CatalogSource {
+    CatalogSource(id: id, title: id, kind: .tmdbDiscover(filters: filters), mediaType: .movie)
+}
+
+@Test func packageTilesTakeArtFromUserImportOnly() {
+    let imported = MediaCollection(id: "nuvio.c", title: "Streaming", folders: [
+        Folder(id: "i1", title: "N", coverImage: "https://example.com/n.webp", logo: "https://example.com/n-logo.webp",
+               sources: [discover("s1", ["with_watch_providers": "8", "watch_region": "DE"])],
+               focusGif: "https://example.com/n.gif"),
+        // Mehrere Anbieter in einem Filter: keine eindeutige Kachel, kein Treffer.
+        Folder(id: "i2", title: "Mix", coverImage: "https://example.com/mix.webp",
+               sources: [discover("s2", ["with_watch_providers": "9|337"])]),
+        Folder(id: "i3", title: "Komödie", coverImage: "https://example.com/comedy.webp",
+               sources: [discover("s3", ["with_genres": "35"])]),
+    ])
+    let streaming = ReadyPackages.withImportedArt(ReadyPackages.streamingDE, imported: [imported])
+    let netflix = streaming.folders.first { $0.id == "pkg.streaming-de.8" }
+    #expect(netflix?.coverImage == "https://example.com/n.webp")
+    #expect(netflix?.logo == "https://example.com/n-logo.webp")
+    #expect(netflix?.focusGif == "https://example.com/n.gif")
+    #expect(streaming.folders.first { $0.id == "pkg.streaming-de.9" }?.coverImage == nil)
+    let genres = ReadyPackages.withImportedArt(ReadyPackages.genreCollection, imported: [imported])
+    #expect(genres.folders.first { $0.title == "Komödie" }?.coverImage == "https://example.com/comedy.webp")
+    #expect(genres.folders.first { $0.title == "Drama" }?.coverImage == nil)
+    // Ohne Import: unverändert.
+    let none = ReadyPackages.withImportedArt(ReadyPackages.streamingDE, imported: [])
+    #expect(none == ReadyPackages.streamingDE)
+    // Eigenes Standbild bleibt, und dann kommen auch Logo und GIF nicht dazu.
+    var own = ReadyPackages.streamingDE
+    own.folders[0].coverImage = "https://example.com/own.png"
+    let kept = ReadyPackages.withImportedArt(own, imported: [imported])
+    #expect(kept.folders[0].coverImage == "https://example.com/own.png")
+    #expect(kept.folders[0].focusGif == nil && kept.folders[0].logo == nil)
     // Fremde Collections bleiben unverändert.
-    let other = MediaCollection(id: "x", title: "X", folders: [Folder(id: "x.1", title: "1", sources: [])])
-    #expect(ReadyPackages.withArtwork(other) == other)
+    #expect(ReadyPackages.withImportedArt(imported, imported: [imported]) == imported)
 }
 
 @Test func oldFolderJSONDecodesWithoutFocusGif() throws {
@@ -93,6 +112,7 @@ private func src(_ id: String) -> CatalogSource {
     #expect(ninety == ninety.sorted() && Set(ninety).count == 48)
     #expect(GIFFramePlan.delay(nil) == 0.1)
     #expect(GIFFramePlan.delay(0.01) == 0.1)
+    #expect(GIFFramePlan.delay(0.02) == 0.02)
     #expect(GIFFramePlan.delay(0.06) == 0.06)
     #expect(abs(GIFFramePlan.duration(delays: [0.05, nil, 0.0]) - 0.25) < 1e-9)
 }
