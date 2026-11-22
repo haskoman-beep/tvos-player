@@ -81,6 +81,16 @@ enum Theme {
         static let statusMark: CGFloat = 72
     }
 
+    /// Welle F-f: Kachelmaße der Reihen. Grundmaße und Rechnung in PlayerCore (`PosterSize`); `scale` ist der Faktor
+    /// der Postergröße (`Appearance.cardSize`, von `Strip` als `cardScale` gesetzt). Hero bleibt fest.
+    enum Tile {
+        static func size(_ kind: TileKind, _ scale: CGFloat) -> CGSize { PosterSize.tileSize(kind, scale: scale) }
+        static func width(_ kind: TileKind, _ scale: CGFloat) -> CGFloat { size(kind, scale).width }
+        static func height(_ kind: TileKind, _ scale: CGFloat) -> CGFloat { size(kind, scale).height }
+        /// Platzhalterfläche einer ladenden Reihe (Weiß 8 %, wie die Logo-Kacheln).
+        static let placeholder = Color.white.opacity(0.08)
+    }
+
     /// Fokuseffekt der Bedienzeilen (`ThemeRowButtonStyle`).
     enum Focus {
         /// Anheben bei Fokus bzw. Eindrücken beim Klick.

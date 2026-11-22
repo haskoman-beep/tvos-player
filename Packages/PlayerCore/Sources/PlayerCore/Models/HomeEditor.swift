@@ -83,6 +83,16 @@ public struct HomeEditor: Sendable {
         return true
     }
 
+    /// Welle F-f: Reihe endgültig löschen. Sie verschwindet von der Startseite und landet **nicht** in `hidden`
+    /// (anders als `hide`). nil = Reihe unbekannt, dann ändert sich nichts.
+    @discardableResult
+    public mutating func delete(_ id: UUID) -> (row: HomeRow, at: Int)? {
+        guard let at = layout.index(of: id) else { return nil }
+        let row = layout.rows[at]
+        remove(id)
+        return (row, at)
+    }
+
     /// Welle F-b2: Reihe ausblenden. Sie verschwindet von der Startseite und wird vollständig (ID, Stil) in `hidden`
     /// (`Profile.hiddenRows`) gemerkt, gleiche Regel wie auf der Handy-Seite. nil = Reihe unbekannt.
     @discardableResult

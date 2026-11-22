@@ -2,7 +2,7 @@ import SwiftUI
 import PlayerCore
 
 /// Kategorie 3 „Startseite“ (§2.2): Status, Reihen & Collections › / Fusion-Kit / Import (HomeSettings, Welle F-b2,
-/// hier nur eingehängt), Titelbild, Kalender.
+/// hier nur eingehängt), Postergröße (Welle F-f), Titelbild, Kalender.
 struct HomeCategorySettings: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var kit = FusionKitStore.shared
@@ -19,6 +19,14 @@ struct HomeCategorySettings: View {
             SettingsSection("Reihen") {
                 // Reihen & Collections ›, Fusion-Kit, Collections importieren › (Inhalt gehört Welle F-b2).
                 HomeSettings()
+            }
+            // Welle F-f: Postergröße für alle Reihen (Startseite, Bibliothek, Ordner). Feld bleibt `appearance.cardSize`
+            // (bisher „Kartengröße“ unter Aussehen); Mittel = bisherige Größe. Plaketten und Schrift skalieren nicht mit.
+            SettingsSection("Kacheln") {
+                SettingsChoiceRow(symbol: "rectangle.portrait", tint: tint, title: "Postergröße",
+                                  detail: "Größe der Poster und Kacheln in allen Reihen.",
+                                  options: CardSize.allCases, selection: model.binding(\.appearance.cardSize),
+                                  label: SettingsSummary.cardSizeName)
             }
             SettingsSection("Titelbild") {
                 SettingsToggleRow(symbol: "photo.artframe", tint: tint, title: "Titelbild oben",

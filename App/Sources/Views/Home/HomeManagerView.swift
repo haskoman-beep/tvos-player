@@ -4,8 +4,9 @@ import PlayerCore
 /// Welle F-b2: Verwalter „Reihen & Collections“ (Plan §2.5, Ebene 1). Ersetzt den Vollbild-Editor.
 /// - Oben „Reihe hinzufügen“ (öffnet den Browser, Ebene 2), darunter eine kompakte Zeile je Reihe.
 /// - OK auf einer Reihe klappt die Aktionsleiste auf (zwei Zeilen): Ganz nach oben · Ganz nach unten · Verschieben,
-///   darunter An Position … · Stil · Ausblenden …
+///   darunter An Position … · Stil, darunter Ausblenden … · Löschen … (Welle F-f)
 /// - „Verschieben“: ▲▼ verschiebt, OK legt ab, Menu stellt die alte Stelle wieder her.
+/// - Löschen fragt erst nach und nimmt die Reihe für immer weg (nicht unter „Ausgeblendet“).
 /// - Ausblenden fragt erst nach; ausgeblendete Reihen stehen unten unter „Ausgeblendet“ (`Profile.hiddenRows`,
 ///   dieselbe Liste wie auf der Handy-Seite).
 /// Alle Änderungen laufen über `HomeManager`/`HomeEditor` (PlayerCore) und werden sofort gespeichert.
@@ -34,12 +35,13 @@ private struct HomeManagerContent: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
 
-    enum BarAction: CaseIterable, Hashable { case top, bottom, move, position, style, hide }
+    enum BarAction: CaseIterable, Hashable { case top, bottom, move, position, style, hide, delete }
     enum Field: Hashable { case add, row(UUID), action(UUID, BarAction), hidden(UUID) }
 
     @FocusState private var focus: Field?
     @State private var expanded: UUID?
     @State private var hideCandidate: HomeRow?
+    @State private var deleteCandidate: HomeRow?
     @State private var positionRow: HomeRow?
     @State private var showBrowser = false
     @State private var beforeBrowser: HomeManager.Focus = .add
@@ -113,6 +115,13 @@ private struct HomeManagerContent: View {
             expanded = nil
             set(session.hide(row.id))
         }
+        // Welle F-f: Löschen, gleiche Rückfrage („Behalten“ mit Standardfokus), Fokus danach auf die Nachbarreihe.
+        .settingsConfirmation(item: $deleteCandidate, title: { "„\(session.title($0))“ löschen?" },
+                              message: { HomeView.deleteMessage($0) }, verb: "Löschen", symbol: "trash",
+                              onKeep: { row in set(.row(row.id)) }) { row in
+            expanded = nil
+            set(session.delete(row.id))
+        }
         .sheet(item: $positionRow) { row in
             PositionPicker(title: session.title(row), current: manager.position(of: row.id) ?? 1,
                            positions: manager.positions) { p in
@@ -178,7 +187,8 @@ private struct HomeManagerContent: View {
         .accessibilityHint(isMoving ? "Nach oben oder unten wischen verschiebt, auswählen legt ab." : "Auswählen zeigt die Aktionen.")
     }
 
-    /// Zwei Zeilen zu je drei Knöpfen (Skizze §2.5), damit keine Beschriftung abgeschnitten wird (Review M10).
+    /// Drei Zeilen (3 · 2 · 2 Knöpfe, Skizze §2.5), damit keine Beschriftung abgeschnitten wird (Review M10);
+    /// die beiden entfernenden Aktionen stehen zusammen in der letzten Zeile.
     private func actionBar(_ row: HomeRow) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.xs) {
             HStack(spacing: Theme.Space.xs) {
@@ -194,7 +204,10 @@ private struct HomeManagerContent: View {
                 barButton(row, .style, "Stil: \(row.style.displayName)", "rectangle.grid.1x2") {
                     set(session.cycleStyle(row.id)); focus = .action(row.id, .style)
                 }
+            }
+            HStack(spacing: Theme.Space.xs) {
                 barButton(row, .hide, "Ausblenden …", "eye.slash") { hideCandidate = row }
+                barButton(row, .delete, "Löschen …", "trash") { deleteCandidate = row }
             }
         }
         .padding(.leading, Theme.Space.l)

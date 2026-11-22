@@ -228,3 +228,41 @@ private func rows(_ n: Int) -> HomeLayout {
     var off = FusionKitSettings(enabled: false, selected: ["fusion.s.a"], sources: [src])
     #expect(off.choose("fusion.s.a", source: src).isEmpty && off.selected == ["fusion.s.a"])
 }
+
+// Welle F-f: Löschen nimmt die Reihe für immer weg (nicht unter „Ausgeblendet“), Fokus auf die Nachbarreihe,
+// zuletzt auf „Reihe hinzufügen“.
+@Test func managerDeleteRemovesForGoodAndMovesFocus() {
+    let l = rows(3)
+    var m = HomeManager(layout: l)
+    let o = m.delete(l.rows[1].id)
+    #expect(o.event == .deleted(l.rows[1], at: 1))
+    #expect(o.event?.logText(title: "Genres") == "Reihe gelöscht: Genres")
+    #expect(o.focus == .row(l.rows[2].id))                 // die nachrückende Reihe
+    #expect(m.rows.map(\.id) == [l.rows[0].id, l.rows[2].id])
+    #expect(m.hidden.isEmpty && m.restorable.isEmpty)      // anders als Ausblenden
+    #expect(m.delete(l.rows[2].id).focus == .row(l.rows[0].id))   // letzte Reihe → die davor
+    #expect(m.delete(l.rows[0].id).focus == .add)                 // keine Reihe mehr
+    #expect(m.rows.isEmpty)
+}
+
+@Test func managerDeleteUnknownRowDoesNothing() {
+    let l = rows(2)
+    var hidden = [HomeRow(content: .collection(id: "h"))]
+    var m = HomeManager(layout: l, hidden: hidden)
+    let o = m.delete(UUID())
+    #expect(o.event == nil && o.focus == .add)
+    #expect(m.layout == l && m.hidden == hidden)
+    // Auch der Editor allein ändert nichts.
+    var e = HomeEditor(layout: l)
+    #expect(e.delete(UUID()) == nil && e.layout == l)
+    hidden.removeAll()
+    #expect(hidden.isEmpty)
+}
+
+@Test func managerDeleteEndsMoveModeOfThatRow() {
+    let l = rows(3)
+    var m = HomeManager(layout: l)
+    m.beginMove(l.rows[0].id)
+    _ = m.delete(l.rows[0].id)
+    #expect(m.moving == nil && m.count == 2)
+}

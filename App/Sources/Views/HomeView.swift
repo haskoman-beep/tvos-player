@@ -12,6 +12,8 @@ struct HomeView: View {
     @State private var manager: ManagerTarget?
     /// Rückfrage „Ausblenden“ aus dem Kontextmenü.
     @State private var hideCandidate: HomeRow?
+    /// Welle F-f: Rückfrage „Löschen“ aus dem Kontextmenü.
+    @State private var deleteCandidate: HomeRow?
     @State private var slides = HeroSlides()
     /// Welle C-b (#19): Fokus-Gedächtnis je Reihe; verdeckt, solange eine andere Seite darüber liegt.
     @State private var rowFocus = HomeRowFocusMemory()
@@ -43,6 +45,9 @@ struct HomeView: View {
             slides.set(items)
             RemoteLog.info("hero", "\(slides.items.count) Folien")
         }
+        // Welle F-f: alle Listen vorladen (oben zuerst, begrenzt); sichtbare Reihen laden zusätzlich sofort selbst.
+        // Neue Reihen ändern den Schlüssel und laden damit gleich.
+        .task(id: rows.map(\.content.key)) { await model.preloadHomeRows(rows) }
         .navigationDestination(item: $manager) { t in HomeManagerView(focusRow: t.row, openBrowser: t.openBrowser) }
         // Eigene Rückfrage (F-a SettingsConfirmationView): „Behalten“ oben mit sicherem Standardfokus (§2.4).
         .settingsConfirmation(item: $hideCandidate, title: { "„\(model.homeRowTitle($0.content))“ ausblenden?" },
@@ -50,6 +55,20 @@ struct HomeView: View {
                               verb: "Ausblenden", symbol: "eye.slash") { row in
             quick { $0.hide(row.id) }
         }
+        .settingsConfirmation(item: $deleteCandidate, title: { "„\(model.homeRowTitle($0.content))“ löschen?" },
+                              message: { HomeView.deleteMessage($0) }, verb: "Löschen", symbol: "trash") { row in
+            quick { $0.delete(row.id) }
+        }
+    }
+
+    /// Folge des Löschens (Startseite und Verwalter gleich).
+    static func deleteMessage(_ row: HomeRow) -> String {
+        if case .collection = row.content {
+            return "Die Reihe verschwindet für immer von der Startseite und steht nicht unter „Ausgeblendet“. "
+                + "Die Collection selbst bleibt und lässt sich über „Reihe hinzufügen“ wieder anlegen."
+        }
+        return "Die Reihe verschwindet für immer von der Startseite und steht nicht unter „Ausgeblendet“. "
+            + "Über „Reihe hinzufügen“ lässt sie sich neu anlegen."
     }
 
     /// Hintergrund- und Info-Ebene hinter dem ScrollView; der Hero ist kein eigener Scroll-Abschnitt.
@@ -85,7 +104,8 @@ struct HomeView: View {
                 canMoveUp: (layout.index(of: row.id) ?? 0) > 0,
                 edit: { manager = ManagerTarget(row: row.id) },
                 moveToTop: { quick { $0.moveToTop(row.id) } },
-                hide: { hideCandidate = row }))
+                hide: { hideCandidate = row },
+                delete: { deleteCandidate = row }))
         }
         if layout.rows.isEmpty {
             VStack(alignment: .leading, spacing: Theme.Space.m) {

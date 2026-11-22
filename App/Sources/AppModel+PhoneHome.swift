@@ -44,6 +44,7 @@ extension AppModel {
             switch edit {
             case let .moved(row, from, to): RemoteLog.info("home", "Reihe verschoben \(from + 1)→\(to + 1) (Handy): \(homeRowTitle(row.content))")
             case let .removed(row, at): RemoteLog.info("home", "Reihe ausgeblendet an \(at + 1) (Handy): \(homeRowTitle(row.content))")
+            case let .deleted(row, _): RemoteLog.info("home", "Reihe gelöscht: \(homeRowTitle(row.content)) (Handy)")
             case let .restored(row, at):
                 RemoteLog.info("home", "Reihe wieder eingeblendet an \(at + 1) (Handy): \(homeRowTitle(row.content))")
                 reselectKitRow(row)

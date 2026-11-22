@@ -21,6 +21,8 @@ final class AppModel: ObservableObject {
     @Published var catalogWake = 0
     /// Welle C-b: Plattenstand der Kataloge (AppModel+CatalogDisk).
     let catalogDisk = CatalogDiskStore()
+    /// Welle F-f: laufende Reihen-Ladungen je Profil und Quelle (AppModel+HomeRows); Reihe und Vorladen teilen sie.
+    var homeRowLoads: [String: Task<CatalogLoad, Never>] = [:]
 
     /// Cinemeta liefert Metadaten/Folgenlisten für IMDb-IDs (kostenlos, ohne Key).
     static let cinemeta = InstalledAddon(
@@ -293,36 +295,42 @@ final class AppModel: ObservableObject {
 
     /// `refresh`: Cache überspringen (Hintergrund-Erneuerung, AppModel+CatalogCache).
     func items(_ source: CatalogSource, refresh: Bool = false) async -> [MetaPreview] {
-        if case .continueWatching = source.kind { return progress.continueWatching().map(\.item) }
-        if case .upcoming = source.kind { return await upcomingToday() }   // eigener 6-h-Cache (AppModel+Upcoming)
+        await loadItems(source, refresh: refresh).items
+    }
+
+    /// Wie `items`, sagt aber zusätzlich, ob die Abfrage fehlschlug und ob der Stand aus dem Cache kam
+    /// (Welle F-f: Reihe zeigt „Laden fehlgeschlagen – erneut versuchen“, Log je Reihe).
+    func loadItems(_ source: CatalogSource, refresh: Bool = false) async -> CatalogLoad {
+        if case .continueWatching = source.kind { return CatalogLoad(items: progress.continueWatching().map(\.item), fromCache: true) }
+        if case .upcoming = source.kind { return CatalogLoad(items: await upcomingToday()) }   // eigener 6-h-Cache (AppModel+Upcoming)
         if !refresh { await awaitCatalogSnapshot() }   // Welle C-b: Plattenstand zuerst
-        if !refresh, let c = cache[source.id] { refreshCatalogIfStale(source); return c }
+        if !refresh, let c = cache[source.id] { refreshCatalogIfStale(source); return CatalogLoad(items: c, fromCache: true) }
         let generation = cache.generation
         var out: [MetaPreview] = []
         do {
             switch source.kind {
             case .tmdbDiscover, .tmdbList, .tmdbCompany, .tmdbCollection:
-                guard let tmdb else { return [] }
+                guard let tmdb else { return CatalogLoad(items: []) }
                 out = try await tmdb.items(for: source)
             case .addon(let addonId, let catalogId, let type):
-                guard let a = profile.addons.first(where: { $0.manifest.id == addonId }) else { return [] }
+                guard let a = profile.addons.first(where: { $0.manifest.id == addonId }) else { return CatalogLoad(items: []) }
                 out = try await addons.catalog(a, type: type, id: catalogId)
             case .trakt(let user, let list):
-                guard let trakt = trakt ?? traktPublic else { return [] }   // öffentliche Listen: Client ID reicht
+                guard let trakt = trakt ?? traktPublic else { return CatalogLoad(items: []) }   // öffentliche Listen: Client ID reicht
                 out = try await trakt.list(user: user, slug: list, token: await token("trakt"), limit: source.limit)
             case .watchlist:
                 out = try await watchlistItems()
             case .continueWatching, .upcoming:
                 out = []
             }
-        } catch { RemoteLog.error("katalog", "\(source.title): \(error)"); return [] }
+        } catch { RemoteLog.error("katalog", "\(source.title): \(error)"); return CatalogLoad(items: [], failed: true) }
         out = source.applyingLimit(out)
         RemoteLog.info("katalog", "\(source.title): \(out.count) Einträge")
         // Nach Profilwechsel/Leeren nicht mehr ablegen; leere Erneuerung überschreibt keine gefüllte Liste.
         if refresh { cache.storeRefreshed(out, for: source.id, generation: generation) }
         else { cache.store(out, for: source.id, generation: generation) }
         scheduleCatalogSave()
-        return out
+        return CatalogLoad(items: out)
     }
 
     /// Streams brauchen IMDb-IDs; TMDB-Einträge werden übersetzt.
@@ -464,7 +472,7 @@ final class AppModel: ObservableObject {
             case .addTMDBLink(let l): return "link \(l)"
             case .importBackup: return "backup"
             case .importFusionURL: return "kit-url"
-            case .moveRow, .removeRow, .restoreRow, .addRow: return "startseite"
+            case .moveRow, .removeRow, .deleteRow, .restoreRow, .addRow: return "startseite"
             case .setRatingIconSet: return "icon-satz"   // Welle F-a
             }
         }.joined(separator: ", "))
@@ -488,7 +496,7 @@ final class AppModel: ObservableObject {
                     progress = progressStore.load(profile: profile.id)
                 } catch { lastError = "Sicherung ungültig: \(error)" }
             case .importFusionURL(let u): await importFusionKit(from: u)
-            case .moveRow, .removeRow, .restoreRow, .addRow: applyHome([c])   // Welle F-e; PhoneServer übernimmt sie sonst schon vorab
+            case .moveRow, .removeRow, .deleteRow, .restoreRow, .addRow: applyHome([c])   // Welle F-e; PhoneServer übernimmt sie sonst schon vorab
             case .setRatingIconSet(let u): setRatingIconSet(u)   // Welle F-a (Views/Settings/SourceSettingsRows.swift)
             }
         }
@@ -502,7 +510,7 @@ extension AppModel {
     /// Folien des Hero: Einträge der Hero-Quellreihe über den Reihen-Loader (gleicher Cache), höchstens 8.
     func heroItems(for row: HomeRow) async -> [MetaPreview] {
         guard case .list(let s) = row.content else { return [] }
-        return Array(await items(s).prefix(8))
+        return Array(await homeRowItems(s).items.prefix(8))   // Welle F-f: dieselbe Ladung wie die Reihe
     }
 
     /// Eintrag mit IMDb-ID, damit Weiterschauen direkt Cinemeta/Streams nutzen kann.

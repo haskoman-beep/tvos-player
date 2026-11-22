@@ -40,6 +40,8 @@ final class HomeRowsSession {
     func move(_ id: UUID, toPosition p: Int) -> HomeManager.Focus { adoptProfile(); return apply(manager.move(id, toPosition: p)) }
     func cycleStyle(_ id: UUID) -> HomeManager.Focus { adoptProfile(); return apply(manager.cycleStyle(id)) }
     func hide(_ id: UUID) -> HomeManager.Focus { adoptProfile(); return apply(manager.hide(id)) }
+    /// Welle F-f: endgültig löschen (nicht unter „Ausgeblendet“). Kit-Reihen wählt der Kit-Abgleich danach ab.
+    func delete(_ id: UUID) -> HomeManager.Focus { adoptProfile(); return apply(manager.delete(id)) }
 
     func restore(_ id: UUID) -> HomeManager.Focus {
         adoptProfile()

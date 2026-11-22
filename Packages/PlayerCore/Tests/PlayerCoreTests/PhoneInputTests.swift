@@ -187,3 +187,24 @@ private func state() -> PhoneHomeState {
     #expect(system != nil && field != nil && field! > system!)
     #expect(!PhoneCommand.setRatingIconSet("https://x").isHomeEdit)
 }
+
+// Welle F-f: Löschen vom Handy – Knopf mit Rückfrage, eigener Befehl, Reihe landet nicht unter „Ausgeblendet“.
+@Test func phoneDeleteRowAsksAndDeletesForGood() {
+    let page = PhoneInputPage(token: "tok")
+    let (resp, _) = page.handle(req("GET /?t=tok HTTP/1.1\r\n\r\n"), profileName: "Ich", home: state()) { Data() }
+    let html = String(data: resp.body, encoding: .utf8)!
+    #expect(html.contains("value=\"delete:\(b.uuidString)\" aria-label=\"Löschen\"") && html.contains("data-confirm="))
+    #expect(html.contains("window.confirm(b.dataset.confirm)"))
+    func run(_ op: String) -> [PhoneCommand] {
+        page.handle(post("/home?t=tok", "op=" + op.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!), profileName: "Ich", home: state()) { Data() }.1
+    }
+    #expect(run("delete:\(b.uuidString)") == [.deleteRow(b)])
+    #expect(run("delete:\(d.uuidString)").isEmpty && run("delete:\(UUID().uuidString)").isEmpty && run("delete:kaputt").isEmpty)
+    #expect(PhoneCommand.deleteRow(a).isHomeEdit)
+    var l = layout()
+    var hidden: [HomeRow] = []
+    let rowB = l.rows[1]
+    #expect(l.applyPhone(.deleteRow(b), hidden: &hidden, options: options) == .deleted(rowB, at: 1))
+    #expect(l.rows.map(\.id) == [a, c] && hidden.isEmpty)
+    #expect(l.applyPhone(.deleteRow(b), hidden: &hidden, options: options) == nil)
+}

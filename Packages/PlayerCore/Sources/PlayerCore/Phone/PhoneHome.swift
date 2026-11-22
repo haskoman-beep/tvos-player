@@ -71,6 +71,9 @@ public struct PhoneHomeState: Equatable, Sendable {
         case "hide":
             guard let id = UUID(uuidString: rest), shown.contains(where: { $0.id == id.uuidString }) else { return nil }
             return .removeRow(id)
+        case "delete":
+            guard let id = UUID(uuidString: rest), shown.contains(where: { $0.id == id.uuidString }) else { return nil }
+            return .deleteRow(id)
         case "to":
             guard let c2 = rest.lastIndex(of: ":"), let n = Int(rest[rest.index(after: c2)...]),
                   let id = UUID(uuidString: String(rest[..<c2])),
@@ -87,7 +90,7 @@ extension PhoneCommand {
     /// Befehle aus „Startseite ordnen“: werden sofort (synchron) übernommen, damit die Antwortseite den neuen Stand zeigt.
     public var isHomeEdit: Bool {
         switch self {
-        case .moveRow, .removeRow, .restoreRow, .addRow: true
+        case .moveRow, .removeRow, .deleteRow, .restoreRow, .addRow: true
         default: false
         }
     }
@@ -101,6 +104,8 @@ extension HomeLayout {
     public enum PhoneEdit: Equatable, Sendable {
         case moved(HomeRow, from: Int, to: Int)
         case removed(HomeRow, at: Int)
+        /// Welle F-f: gelöscht (nicht unter „Ausgeblendet“).
+        case deleted(HomeRow, at: Int)
         case restored(HomeRow, at: Int)
         case added(HomeRow, at: Int)
     }
@@ -120,6 +125,9 @@ extension HomeLayout {
         case .removeRow(let id):
             guard let h = editor.hide(id, into: &hidden) else { return nil }
             return .removed(h.row, at: h.at)
+        case .deleteRow(let id):
+            guard let d = editor.delete(id) else { return nil }
+            return .deleted(d.row, at: d.at)
         case .restoreRow(let id):
             guard case .restored(let row, let at)? = editor.restore(id, from: &hidden) else { return nil }
             return .restored(row, at: at)

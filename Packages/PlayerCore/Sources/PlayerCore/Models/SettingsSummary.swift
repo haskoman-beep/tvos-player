@@ -79,9 +79,9 @@ public enum SettingsSummary {
         DesignText.metaLine([rows(r), "Fusion-Kit " + (fusionKit ? "an" : "aus")])
     }
 
-    /// „Seitenleiste · Blau · Mittel“.
-    public static func appearance(navigation: NavigationStyle, accent: AccentChoice, cardSize: CardSize) -> String {
-        DesignText.metaLine([navigationName(navigation), accentName(accent), cardSizeName(cardSize)])
+    /// „Seitenleiste · Blau“ (Welle F-f: die Postergröße steht jetzt unter Startseite).
+    public static func appearance(navigation: NavigationStyle, accent: AccentChoice) -> String {
+        DesignText.metaLine([navigationName(navigation), accentName(accent)])
     }
 
     /// „Nächste Folge automatisch · Cache aus“, „Nächste Folge von Hand · Cache 8 GB“.

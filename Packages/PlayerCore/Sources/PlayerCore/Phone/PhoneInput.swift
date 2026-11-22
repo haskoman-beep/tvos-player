@@ -81,6 +81,8 @@ public enum PhoneCommand: Equatable, Sendable {
     case moveRow(id: UUID, to: Int)
     /// Reihe ausblenden: von der Startseite nehmen und vollständig unter „Ausgeblendet“ merken.
     case removeRow(UUID)
+    /// Welle F-f: Reihe endgültig löschen (nicht unter „Ausgeblendet“); die Seite fragt vorher nach.
+    case deleteRow(UUID)
     /// Ausgeblendete Reihe unverändert wieder einblenden (gleiche ID und Stil), kommt ans Ende.
     case restoreRow(UUID)
     /// Weitere Reihe aus den Angeboten (`RowContent.key`) hinzufügen, kommt ans Ende.
@@ -200,8 +202,9 @@ public struct PhoneInputPage: Sendable {
         default: break
         }
         out += "<p class=hint>Am Griff ≡ ziehen oder die Pfeile tippen. Änderungen gelten sofort.</p>"
-        func button(_ op: String, _ sym: String, _ label: String, disabled: Bool = false) -> String {
-            "<button form=homeform name=op value=\"\(Self.escape(op))\" aria-label=\"\(label)\" title=\"\(label)\"\(disabled ? " disabled" : "")>\(sym)</button>"
+        func button(_ op: String, _ sym: String, _ label: String, disabled: Bool = false, confirm: String? = nil) -> String {
+            "<button form=homeform name=op value=\"\(Self.escape(op))\" aria-label=\"\(label)\" title=\"\(label)\"\(disabled ? " disabled" : "")"
+                + (confirm.map { " data-confirm=\"\(Self.escape($0))\"" } ?? "") + ">\(sym)</button>"
         }
         func text(_ r: PhoneHomeRow) -> String {
             "<span class=t>\(Self.escape(r.title))" + (r.detail.isEmpty ? "" : "<small>\(Self.escape(r.detail))</small>") + "</span>"
@@ -220,6 +223,8 @@ public struct PhoneInputPage: Sendable {
                 out += button("to:\(r.id):\(min(i + 1, last))", "↓", "Nach unten", disabled: i == last)
                 out += button("to:\(r.id):\(last)", "⤓", "Ganz nach unten", disabled: i == last)
                 out += button("hide:\(r.id)", "✕", "Ausblenden")
+                out += button("delete:\(r.id)", "🗑", "Löschen",
+                              confirm: "„\(r.title)“ löschen? Die Reihe steht danach nicht unter „Ausgeblendet“.")
                 out += "</span></li>"
             }
             out += "</ol>"
@@ -253,7 +258,7 @@ public struct PhoneInputPage: Sendable {
     if(!n||!o)throw 0;var d=o.querySelector('details'),open=d&&d.open;o.replaceWith(n);var d2=n.querySelector('details');if(d2&&open)d2.open=true;busy=false;bind();})
     .catch(function(){reload();});}
     function bind(){var o=document.getElementById('order');if(!o)return;
-    o.querySelectorAll('button[name=op]').forEach(function(b){b.addEventListener('click',function(e){e.preventDefault();send(b.value);});});
+    o.querySelectorAll('button[name=op]').forEach(function(b){b.addEventListener('click',function(e){e.preventDefault();if(b.dataset.confirm&&!window.confirm(b.dataset.confirm))return;send(b.value);});});
     var list=document.getElementById('rowlist');if(!list)return;
     list.querySelectorAll('.grip').forEach(function(g){g.addEventListener('pointerdown',function(e){if(busy)return;var li=g.parentNode,kids=function(){return[].slice.call(list.children);},from=kids().indexOf(li),next=li.nextSibling;
     e.preventDefault();try{g.setPointerCapture(e.pointerId);}catch(x){}li.classList.add('drag');

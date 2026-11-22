@@ -22,6 +22,8 @@ public struct HomeManager: Sendable {
         /// Im Browser zurückgenommen (in dieser Sitzung hinzugefügt, deshalb ohne Rückfrage und ohne „Ausgeblendet“).
         case removed(HomeRow, at: Int)
         case styled(HomeRow)
+        /// Welle F-f: endgültig gelöscht (nicht unter „Ausgeblendet“).
+        case deleted(HomeRow, at: Int)
 
         /// Log-Text, Positionen 1-basiert wie in der Liste: „Reihe verschoben 20→1: Genres“.
         public func logText(title: String) -> String {
@@ -32,12 +34,14 @@ public struct HomeManager: Sendable {
             case let .added(_, at): "Reihe hinzugefügt an \(at + 1): \(title)"
             case let .removed(_, at): "Reihe entfernt an \(at + 1): \(title)"
             case let .styled(row): "Stil \(row.style.displayName): \(title)"
+            case .deleted: "Reihe gelöscht: \(title)"
             }
         }
 
         public var row: HomeRow {
             switch self {
-            case let .moved(r, _), let .hidden(r, _), let .restored(r, _), let .added(r, _), let .removed(r, _), let .styled(r): r
+            case let .moved(r, _), let .hidden(r, _), let .restored(r, _), let .added(r, _), let .removed(r, _), let .styled(r),
+                 let .deleted(r, _): r
             }
         }
     }
@@ -153,6 +157,15 @@ public struct HomeManager: Sendable {
         guard let h = editor.hide(id, into: &hidden) else { return Outcome(event: nil, focus: entryFocus(row: nil)) }
         if moving?.id == id { moving = nil }
         return Outcome(event: .hidden(h.row, at: h.at), focus: focusNear(h.at))
+    }
+
+    /// Welle F-f: Löschen (nach Rückfrage in der Oberfläche). Die Reihe kommt nicht unter „Ausgeblendet“.
+    /// Fokus wie beim Ausblenden: die Reihe, die nachrückt, am Ende die davor, ohne Reihen „Reihe hinzufügen“.
+    /// Unbekannte Reihe: nichts passiert (kein Ereignis).
+    public mutating func delete(_ id: UUID) -> Outcome {
+        guard let d = editor.delete(id) else { return Outcome(event: nil, focus: entryFocus(row: nil)) }
+        if moving?.id == id { moving = nil }
+        return Outcome(event: .deleted(d.row, at: d.at), focus: focusNear(d.at))
     }
 
     /// „Wieder einblenden“: unten anhängen, Fokus auf die Reihe. Lag der Inhalt schon auf der Startseite,

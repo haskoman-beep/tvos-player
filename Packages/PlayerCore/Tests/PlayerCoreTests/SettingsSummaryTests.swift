@@ -105,8 +105,8 @@ import Testing
 }
 
 @Test func summaryAppearanceAllValues() {
-    #expect(SettingsSummary.appearance(navigation: .sidebar, accent: .blue, cardSize: .medium) == "Seitenleiste · Blau · Mittel")
-    #expect(SettingsSummary.appearance(navigation: .top, accent: .white, cardSize: .large) == "Obere Leiste · Weiß · Groß")
+    #expect(SettingsSummary.appearance(navigation: .sidebar, accent: .blue) == "Seitenleiste · Blau")
+    #expect(SettingsSummary.appearance(navigation: .top, accent: .white) == "Obere Leiste · Weiß")
     #expect(AccentChoice.allCases.map(SettingsSummary.accentName) == ["Blau", "Lila", "Pink", "Orange", "Grün", "Weiß"])
     #expect(CardSize.allCases.map(SettingsSummary.cardSizeName).sorted() == ["Groß", "Klein", "Mittel"])
     #expect(SettingsSummary.languageName(.de) == "Deutsch")

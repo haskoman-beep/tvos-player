@@ -11,6 +11,12 @@ struct HomeRowView: View {
     var menu: HomeRowMenu? = nil
     @State private var items: [MetaPreview] = []
     @State private var loaded = false
+    /// Welle F-f: letzte Ladung schlug fehl (Statuskachel „erneut versuchen“).
+    @State private var failed = false
+    /// Erhöht durch „erneut versuchen“: startet die Ladung neu.
+    @State private var retry = 0
+    /// Welle F-f: fokussierter Platzhalter bzw. Statuskachel (0); nach dem Laden geht der Fokus an dieselbe Stelle.
+    @FocusState private var focusedPlaceholder: Int?
     /// Startseite mit Hero: fokussierte Kachel meldet sich (nil außerhalb der Startseite).
     @Environment(HomeFocus.self) private var homeFocus: HomeFocus?
     @FocusState private var focusedRoute: Route?
@@ -30,9 +36,24 @@ struct HomeRowView: View {
                 .defaultFocus($focusedRoute, rememberedRoute, priority: .userInitiated)
         }
         .task(id: row.content.key + (row.content == .list(.continueWatching) ? "\(model.progress.entries.count)-\(model.progress.continueWatching().first?.updated.timeIntervalSince1970 ?? 0)" : "") + model.catalogStamp(row.content)
-               + (row.content == .list(.upcoming) ? "|r\(upcomingRevision.value)" : "")) {
+               + (row.content == .list(.upcoming) ? "|r\(upcomingRevision.value)" : "") + "|t\(retry)") {
             guard case .list(let s) = row.content else { return }
-            items = await model.items(s); loaded = true
+            // Welle F-f: geteilte Ladung (AppModel+HomeRows), läuft beim Wegscrollen weiter.
+            let r = await model.homeRowItems(s)
+            guard !Task.isCancelled else { return }   // abgebrochen (neue Ladung folgt): kein „Keine Einträge“-Flackern
+            let placeholder = focusedPlaceholder
+            items = r.items; failed = r.failed; loaded = true
+            // Fokus lag auf einem Platzhalter: an dieselbe Stelle der fertigen Reihe (bzw. auf die Statuskachel).
+            // Erst im nächsten Durchlauf: dann gibt es die Karten schon.
+            if let placeholder {
+                let p = phase
+                var found: Route?
+                if case .items = p { found = route(for: displayed[p.focusAfterLoad(placeholder: placeholder)]) }
+                let target = found, slot = p.focusAfterLoad(placeholder: placeholder)
+                DispatchQueue.main.async {
+                    if let target { focusedRoute = target } else { focusedPlaceholder = slot }
+                }
+            }
         }
         .onChange(of: focusedRoute) { _, r in
             guard let r, focusMemory?.state.covered != true else { return }   // verdeckte Startseite: nichts merken
@@ -56,22 +77,38 @@ struct HomeRowView: View {
         }
     }
 
+    /// Welle F-f: Phase der Listen-Reihe (jede Phase hat ein Fokusziel, PlayerCore `HomeRowPhase`).
+    private var phase: HomeRowPhase { HomeRowPhase(loaded: loaded, failed: failed, count: displayed.count) }
+
+    /// Gezeigte Einträge (Top 10: höchstens zehn).
+    private var displayed: [MetaPreview] { row.style == .top10 ? Array(items.prefix(10)) : items }
+
     @ViewBuilder private var content: some View {
         switch row.content {
         case .collection(let id):
-            let folders = model.collection(id)?.folders ?? []
-            Strip {
-                ForEach(folders) { f in
-                    card(.folder(f)) { FolderTile(folder: f, logoStyle: row.style == .logoTiles) }
+            if let c = model.collection(id) {
+                if c.folders.isEmpty {
+                    Strip { statusTile("Keine Einträge", retry: false) }
+                } else {
+                    Strip {
+                        ForEach(c.folders) { f in
+                            card(.folder(f)) { FolderTile(folder: f, logoStyle: row.style == .logoTiles) }
+                        }
+                    }
                 }
+            } else {
+                // Fusion-Kit lädt die Collection noch nach: fokussierbare Platzhalter statt leerer Reihe.
+                placeholders
             }
         case .list:
-            if loaded && items.isEmpty {
-                Text(emptyText)
-                    .textRole(.rowDetail).padding(.leading, Theme.Space.edge).frame(height: 120)
-            } else {
+            switch phase {
+            case .loading:
+                placeholders
+            case .empty, .failed:
+                Strip { statusTile(phase.statusText(empty: emptyText) ?? emptyText, retry: phase == .failed) }
+            case .items:
                 Strip(expands: row.style == .poster) {
-                    ForEach(Array((row.style == .top10 ? Array(items.prefix(10)) : items).enumerated()), id: \.element.id) { i, m in
+                    ForEach(Array(displayed.enumerated()), id: \.element.id) { i, m in
                         card(route(for: m)) {
                             if row.content == .list(.upcoming) {
                                 UpcomingTodayCard(item: m, landscape: row.style == .landscape || row.style == .hero)
@@ -88,6 +125,43 @@ struct HomeRowView: View {
                 }
             }
         }
+    }
+
+    /// Kachelform der Reihe; „Heute neu“ im Hero-Stil zeigt Querformat-Karten (UpcomingTodayCard).
+    private var tileKind: TileKind {
+        if row.content == .list(.upcoming), row.style == .hero { return .landscape }
+        return PosterSize.kind(for: row.style)
+    }
+
+    /// Welle F-f: ladende Reihe, fokussierbare Platzhalter in Endgröße (Höhe springt beim Eintreffen nicht).
+    /// Das Kontextmenü gilt auch hier (eine hängende Reihe lässt sich ausblenden oder löschen).
+    private var placeholders: some View {
+        let n = PosterSize.placeholderCount(for: model.profile.appearance.cardSize, style: row.style)
+        return Strip(expands: row.style == .poster) {
+            ForEach(0..<n, id: \.self) { i in
+                Button {} label: { TilePlaceholder(kind: tileKind, rank: row.style == .top10 ? i + 1 : nil) }
+                    .buttonStyle(.card)
+                    .focused($focusedPlaceholder, equals: i)
+                    .homeRowMenu(menu)
+                    .accessibilityLabel("\(title), lädt")
+            }
+        }
+    }
+
+    /// Welle F-f: leere oder fehlgeschlagene Reihe bleibt erreichbar: eine Kachel in Reihenhöhe mit dem Grund;
+    /// bei Fehlschlag lädt OK neu.
+    private func statusTile(_ text: String, retry canRetry: Bool) -> some View {
+        Button {
+            guard canRetry else { return }
+            RemoteLog.info("home", "Reihe erneut laden: \(title)")
+            loaded = false; failed = false; retry += 1
+            focusedPlaceholder = 0
+        } label: {
+            TileStatus(kind: tileKind, text: text, symbol: canRetry ? "arrow.clockwise" : nil)
+        }
+        .buttonStyle(.card)
+        .focused($focusedPlaceholder, equals: 0)
+        .homeRowMenu(menu)
     }
 
     /// Zuletzt fokussierte Kachel dieser Reihe, sofern noch vorhanden (sonst entscheidet die Fokus-Engine).
@@ -188,20 +262,20 @@ struct PosterCard: View {
     @State private var expanded = false
 
     var body: some View {
-        let h = 360 * scale
+        let w = Theme.Tile.width(.poster, scale), h = Theme.Tile.height(.poster, scale)
         // Welle E-a: Plaketten nie unten auf dem Bild; bei „Unten“ sitzen sie im Streifen darunter (PosterBadgeBand).
         VStack(spacing: 0) {
             ZStack(alignment: .leading) {
                 TilePosterImage(item: item)
-                    .frame(width: 240 * scale, height: h).clipped()
+                    .frame(width: w, height: h).clipped()
                 if expanded { ExpandedPoster(item: item).transition(.opacity) }
             }
-            .frame(width: (expanded ? h * 16 / 9 : 240 * scale), height: h, alignment: .leading).clipped()
+            .frame(width: (expanded ? h * 16 / 9 : w), height: h, alignment: .leading).clipped()
             .overlay(alignment: .bottomLeading) {
                 if item.poster == nil && !expanded { Text(item.name).font(.caption).padding(10) }
             }
             .overlay { CardStateOverlay(itemID: item.id) }
-            PosterBadgeBand(width: expanded ? h * 16 / 9 : 240 * scale)
+            PosterBadgeBand(width: expanded ? h * 16 / 9 : w)
         }
         .overlay { PosterQualityBadges(item: item, scale: scale) }
         .task(id: focused && expandable) {
@@ -253,8 +327,9 @@ struct LandscapeCard: View {
     let item: MetaPreview
     @Environment(\.cardScale) private var scale
     var body: some View {
+        let size = Theme.Tile.size(.landscape, scale)
         RemoteImage(url: item.background ?? item.poster, maxPixels: 900)
-            .frame(width: 440 * scale, height: 248 * scale).clipped()
+            .frame(width: size.width, height: size.height).clipped()
             .overlay(alignment: .bottomLeading) {
                 Text(item.name).font(.headline).shadow(radius: 6).padding(.horizontal, 14).padding(.bottom, 24)
             }
@@ -266,7 +341,8 @@ struct HeroCard: View {
     let item: MetaPreview
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            RemoteImage(url: item.background ?? item.poster).frame(width: 1600, height: 620).clipped()
+            RemoteImage(url: item.background ?? item.poster)
+                .frame(width: Theme.Tile.width(.hero, 1), height: Theme.Tile.height(.hero, 1)).clipped()
             LinearGradient(colors: [.black.opacity(0.85), .clear], startPoint: .bottom, endPoint: .center)
             VStack(alignment: .leading, spacing: Theme.Space.s) {
                 Text(item.name).textRole(.display)
@@ -275,7 +351,7 @@ struct HeroCard: View {
             }
             .padding(Theme.Space.xl)
         }
-        .frame(width: 1600, height: 620)
+        .frame(width: Theme.Tile.width(.hero, 1), height: Theme.Tile.height(.hero, 1))
     }
 }
 
@@ -302,14 +378,67 @@ struct FolderTile: View {
                 Color.white.opacity(0.08)
                 if let l = folder.logo { RemoteImage(url: l, maxPixels: 800, fit: true).padding(30 * scale) } else { Text(folder.title).font(.headline) }
             }
-            .frame(width: 320 * scale, height: 180 * scale)
+            .frame(width: Theme.Tile.width(.logo, scale), height: Theme.Tile.height(.logo, scale))
         } else {
             RemoteImage(url: folder.coverImage ?? folder.backdrop)
-                .frame(width: 440 * scale, height: 248 * scale).clipped()
+                .frame(width: Theme.Tile.width(.landscape, scale), height: Theme.Tile.height(.landscape, scale)).clipped()
                 .overlay(alignment: .bottomLeading) {
                     if folder.coverImage == nil || folder.showsTitleOverImage { Text(folder.title).font(.headline).shadow(radius: 4).padding(14) }
                 }
         }
+    }
+}
+
+/// Welle F-f: Platzhalter einer ladenden Reihe in Endgröße (gleiche Maße wie die Karte, Poster mit Plakettenstreifen,
+/// Top 10 mit Rangziffer), damit die Reihe beim Eintreffen der Einträge nicht springt.
+struct TilePlaceholder: View {
+    let kind: TileKind
+    var rank: Int? = nil
+    @Environment(\.cardScale) private var scale
+
+    var body: some View {
+        if let rank {
+            HStack(alignment: .bottom, spacing: -30 * scale) {
+                Text("\(rank)").font(.system(size: 220 * scale, weight: .black)).foregroundStyle(.white.opacity(0.25))
+                tile
+            }
+        } else {
+            tile
+        }
+    }
+
+    private var tile: some View {
+        let size = Theme.Tile.size(kind, scale)
+        return VStack(spacing: 0) {
+            Theme.Tile.placeholder.frame(width: size.width, height: size.height)
+            if kind == .poster { PosterBadgeBand(width: size.width) }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// Welle F-f: Statuskachel einer leeren oder fehlgeschlagenen Reihe (Reihenhöhe wie die Karten, mindestens 440 breit,
+/// damit der Text auch bei kleinen Postern in wenige Zeilen passt).
+struct TileStatus: View {
+    let kind: TileKind
+    let text: String
+    var symbol: String? = nil
+    @EnvironmentObject var model: AppModel
+    @Environment(\.cardScale) private var scale
+
+    var body: some View {
+        let size = Theme.Tile.size(kind, scale)
+        // Poster: Streifen für Plaketten „Unten“ mitzählen (PosterBadgeBand), sonst springt die Reihe.
+        let band = kind == .poster && model.profile.appearance.titles.posterBadges == .bottom ? PosterQualityBadges.bandHeight : 0
+        let height = size.height + band
+        VStack(spacing: Theme.Space.s) {
+            if let symbol { Image(systemName: symbol).font(.title3) }
+            Text(text).textRole(.rowDetail).multilineTextAlignment(.center).lineLimit(3)
+        }
+        .padding(Theme.Space.m)
+        .frame(width: max(size.width, Theme.Tile.width(.landscape, 1)), height: height)
+        .background(Theme.Tile.placeholder)
+        .accessibilityElement(children: .combine)
     }
 }
 
