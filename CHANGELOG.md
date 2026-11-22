@@ -47,6 +47,12 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   other chips combine. The filter only narrows the view; autostart, fallback and the next episode still use
   the full list.
 - Source list: the full file name as its own wrapped line when the addon text cuts it or leaves it out.
+- Settings › Audio & subtitles: a new page „Untertitel-Aussehen“ (subtitle look) with size, position, outline,
+  background (none, box, shadow) and a separate text brightness while the TV shows HDR or Dolby Vision (100 %
+  down to 40 %), so white subtitles no longer blind at HDR peak. A live preview shows two sample lines over a dark and a
+  bright picture; with the HDR row focused it shows the HDR brightness. The style is stored in the profile and
+  the defaults are the previous look. It applies to text subtitles (SRT, WebVTT, ASS as text); image
+  subtitles (PGS) only move up with a higher position.
 
 ### Changed
 - Source list: while sources are still arriving, the focus keeps its row position instead of following its

@@ -33,6 +33,7 @@ struct AudioSettings: View {
                                                      set: { v in model.update { $0.subtitleLanguage = SubtitleLanguageChoice.apply(v, to: $0.subtitleLanguage) } }),
                                   label: SubtitleLanguageChoice.name)
             }
+            SubtitleStyleSettingsRows()
             AudioShapingSettingsRows()
             SettingsFootnote("Ton-Einstellungen gelten ab dem nächsten Start der Wiedergabe.")
         }
