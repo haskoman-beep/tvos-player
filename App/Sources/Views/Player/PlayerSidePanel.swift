@@ -15,17 +15,18 @@ struct PlayerSideLinks {
     var sources: @MainActor () -> [(addon: String, stream: StreamItem)]
     /// Sources that failed in this list (shown dimmed).
     var failed: @MainActor () -> Set<String>
-    /// The player saved its position and closed: start this source (it resumes at the saved position).
-    var switchSource: @MainActor (StreamItem) -> Void
+    /// The player closed without recording anything: start this source at the given held position (seconds).
+    var switchSource: @MainActor (StreamItem, Double) -> Void
     /// The player closed: look up this episode (same release first) and play it.
     var playEpisode: @MainActor (PlayRequest) -> Void
 
-    /// Runs `before` ahead of each exit (PlayerScreen: an exit with the panel open is a real disappear).
-    func closing(_ before: @escaping @MainActor () -> Void) -> PlayerSideLinks {
+    /// Runs `before` ahead of each exit (PlayerScreen: an exit with the panel open is a real disappear, and a
+    /// source switch pauses the scrobble instead of stopping it).
+    func closing(_ before: @escaping @MainActor (SidePanelExit) -> Void) -> PlayerSideLinks {
         var l = self
         let s = switchSource, p = playEpisode
-        l.switchSource = { before(); s($0) }
-        l.playEpisode = { before(); p($0) }
+        l.switchSource = { before(.sourceSwitch); s($0, $1) }
+        l.playEpisode = { before(.episodeSwitch); p($0) }
         return l
     }
 }
@@ -77,6 +78,7 @@ final class PlayerExtras: ObservableObject {
         }
     }
 
+    /// Player left for good: stop loading (results only fill caches, but no work after the player is gone).
     func cancel() { task?.cancel() }
 
     /// Episodes: from the request (source list), else from the meta.
@@ -135,7 +137,7 @@ extension PlayerControls {
     /// Content of the player's cover when the side panel is open. Actions that leave the player run only after the
     /// cover is gone (`runSideAfterClose`), so two presentations never close at the same time.
     @ViewBuilder func sidePanel(_ extras: PlayerExtras) -> some View {
-        PlayerSidePanel(engine: engine, extras: extras, sourceURL: url,
+        PlayerSidePanel(engine: engine, extras: extras, sourceURL: url, scrubbing: { scrub.isActive },
                         onSeek: { t in sideAfterClose = { sidePanelSeek(t) } },
                         onEpisode: { r in
                             guard let links = extras.links else { return }
@@ -183,14 +185,17 @@ extension PlayerControls {
         leave { links.playEpisode(r) }
     }
 
-    /// Other source chosen: save the position; the new player resumes there.
+    /// Other source chosen: the new player starts exactly at the held position. Nothing is recorded on the way out
+    /// (`SidePanelExit.sourceSwitch`: a switch in the credits must not mark the title watched), and the display
+    /// mode is kept because the same title starts again right away.
     func sidePanelSwitchSource(_ s: StreamItem, links: PlayerSideLinks) {
         guard !leaving else { return }
         onUserInput()
-        saveProgress()
-        RemoteLog.info("player", "Seitenpanel: andere Quelle ab \(Int(engine.currentTime))s: \(s.name ?? "") \(LogRedact.text(s.title ?? "").prefix(60))")
-        stopBeforeNext(true)
-        leave { links.switchSource(s) }
+        let held = pendingSeek ?? engine.currentTime
+        sideHoldsProgress = true
+        RemoteLog.info("player", "Seitenpanel: andere Quelle ab \(Int(held))s (ohne Fortschritt zu speichern): \(s.name ?? "") \(LogRedact.text(s.title ?? "").prefix(60))")
+        engine.stopKeepingDisplayMode()
+        leave { links.switchSource(s, held) }
     }
 }
 
@@ -228,6 +233,8 @@ struct PlayerSidePanel<E: PlaybackEngine>: View {
     @ObservedObject var engine: E
     @ObservedObject var extras: PlayerExtras
     var sourceURL: URL?
+    /// The user is scrubbing (then the preview session is theirs; the chapter stills do not end it).
+    var scrubbing: () -> Bool = { false }
     var gesture: String = ""
     let onSeek: (Double) -> Void
     let onEpisode: (PlayRequest) -> Void
@@ -368,7 +375,7 @@ struct PlayerSidePanel<E: PlaybackEngine>: View {
             }
             ScrollViewReader { proxy in
                 ScrollView(.vertical) {
-                    VStack(alignment: .leading, spacing: 2) {
+                    LazyVStack(alignment: .leading, spacing: 2) {
                         ForEach(rows) { row in
                             Button {
                                 guard !row.isCurrent else { dismiss(); return }
@@ -434,7 +441,7 @@ struct PlayerSidePanel<E: PlaybackEngine>: View {
                 stills[row.index] = UIImage(cgImage: s.image); got += 1
             }
         }
-        await engine.endScrubPreview()
+        if !scrubbing() { await engine.endScrubPreview() }
         RemoteLog.info("player", "Seitenpanel: Kapitelbilder \(got)/\(rows.count)")
     }
 
@@ -446,7 +453,7 @@ struct PlayerSidePanel<E: PlaybackEngine>: View {
         let current = extras.links?.stream.id
         return ScrollViewReader { proxy in
             ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 2) {
+                LazyVStack(alignment: .leading, spacing: 2) {
                     ForEach(list, id: \.stream.id) { entry in
                         let text = StreamRowText(entry.stream)
                         let isCurrent = entry.stream.id == current

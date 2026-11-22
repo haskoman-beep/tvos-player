@@ -657,6 +657,8 @@ struct StreamListView: View {
     @State private var autoSwitchScheduled = false
     /// Wave F-m: player that just closed; its focus move waits for the end of the cover dismissal (`playerDismissed`).
     @State private var closedPlayer: StreamItem?
+    /// Wave P-b: source chosen in the player's side panel and the held position it starts at (cleared on close).
+    @State private var sideStart: (id: String, at: Double)?
 
     var body: some View {
         // Welle E-b: Addon-Name nur, wenn die Liste mehrere Addons mischt (sonst steht er schon im Text des Addons).
@@ -795,7 +797,7 @@ struct StreamListView: View {
             }
         }
         .onChange(of: playing) { old, s in
-            if s == nil, let old { closedPlayer = old }
+            if s == nil, let old { closedPlayer = old; sideStart = nil }
             guard let s else { return }
             // Addon aus der Liste, sonst das bei der nächsten Folge gemerkte (sonst „Addon nicht installiert“ beim Neuauflösen).
             model.rememberSource(current ?? request, stream: s,
@@ -809,7 +811,8 @@ struct StreamListView: View {
                                                                              holdsUpNext: autoNext.promptDue(model.profile),
                                                                              onSourceVerdict: { [id = (current ?? request).id] in PlaybackStability.shared.apply($0, stream: s, title: id) },
                                                                              releaseName: s.behaviorHints?.filename,
-                                                                             sideLinks: sidePanelLinks(for: s)).environmentObject(model) }   // Wave P-b
+                                                                             sideLinks: sidePanelLinks(for: s),
+                                                                             startOverride: sideStart?.id == s.id ? sideStart?.at : nil).environmentObject(model) }   // Wave P-b
         }
         .modifier(StillWatchingAlert(state: $autoNext, note: $nextNote) { startNext($0.next, after: $0.stream, auto: false) })
     }
@@ -890,13 +893,14 @@ extension StreamListView {
     func sidePanelLinks(for s: StreamItem) -> PlayerSideLinks {
         PlayerSideLinks(stream: s, addon: streams.first { $0.stream.id == s.id }?.addon ?? autoNext.addons[s.id],
                         sources: { streams }, failed: { failed },
-                        switchSource: { next in
+                        switchSource: { next, held in
                             fallbacks = 0; AutoNextState.userInput($autoNext); autoNext.ask = nil
                             playing = nil
                             Task {
                                 try? await Task.sleep(for: .milliseconds(900))
                                 guard playing == nil else { return }
                                 PlaybackStability.shared.timing.markTap()
+                                sideStart = (next.id, held)
                                 playing = next
                             }
                         },

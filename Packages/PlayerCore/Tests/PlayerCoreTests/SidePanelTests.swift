@@ -205,3 +205,36 @@ import Testing
     #expect(PauseCardContent.shortened(sentence, maxChars: 50) == String(repeating: "a", count: 40) + ".")
     #expect(PauseCardContent.shortened("kurz", maxChars: 50) == "kurz")
 }
+
+@Test func startChoiceHeldPositionWinsOverThresholds() {
+    // Source switch at 30 s (below the 60 s resume minimum), at 50 % and at 95 % (finished): exact held position.
+    for held in [30.0, 1800.0, 3420.0] {
+        let c = PlayerStartChoice.choose(held: held, resume: nil, fraction: 0.4)
+        #expect(c.start == held)
+        #expect(c.fraction == nil)
+    }
+    #expect(PlayerStartChoice.choose(held: 1800, resume: 1200, fraction: nil).start == 1800)
+    // Without a held position (episode switch, normal start): saved progress as before.
+    #expect(PlayerStartChoice.choose(held: nil, resume: 1200, fraction: 0.3).start == 1200)
+    let f = PlayerStartChoice.choose(held: nil, resume: nil, fraction: 0.3)
+    #expect(f.start == nil && f.fraction == 0.3)
+    #expect(PlayerStartChoice.choose(held: 0, resume: nil, fraction: nil).start == nil)
+    #expect(PlayerStartChoice.choose(held: .nan, resume: 90, fraction: nil).start == 90)
+}
+
+@Test func sourceSwitchRecordsNothingEpisodeSwitchDoes() {
+    #expect(!SidePanelExit.sourceSwitch.recordsProgress)
+    #expect(!SidePanelExit.sourceSwitch.stopsScrobble)
+    #expect(SidePanelExit.episodeSwitch.recordsProgress)
+    #expect(SidePanelExit.episodeSwitch.stopsScrobble)
+}
+
+@Test func sidePanelHoldsBackUntilBarShownAndAfterClose() {
+    #expect(SidePanelGesture.holdBack(controlsVisible: false, sincePanelClosed: nil) != nil)
+    #expect(SidePanelGesture.holdBack(controlsVisible: true, sincePanelClosed: nil) == nil)
+    #expect(SidePanelGesture.holdBack(controlsVisible: true, sincePanelClosed: 0.3) == "Panel gerade geschlossen")
+    #expect(SidePanelGesture.holdBack(controlsVisible: true, sincePanelClosed: 0.8) == nil)
+    #expect(SidePanelGesture.trackHint(trackStyle: .topBar).hasPrefix("nach unten"))
+    #expect(SidePanelGesture.trackHint(trackStyle: .bottomBar).hasPrefix("nach oben"))
+    #expect(SidePanelGesture.trackHint(trackStyle: .menu).hasPrefix("nach oben"))
+}

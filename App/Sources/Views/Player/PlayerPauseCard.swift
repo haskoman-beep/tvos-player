@@ -4,8 +4,10 @@ import PlayerCore
 // Wave P-b: pause card. Rule and texts in PlayerCore `PauseCard.swift`.
 
 /// Slot for a later accessory on the pause card (X-Ray, waves X4/X5). Set it with
-/// `.environment(\.pauseCardAccessory, PauseCardAccessory { ctx in AnyView(...) })` above the player; nil = the cast
-/// line is shown instead.
+/// `.environment(\.pauseCardAccessory, PauseCardAccessory { ctx in AnyView(...) })` inside the cover content at each
+/// PlayerScreen call site (the player is shown in several full-screen covers, which do not inherit it reliably);
+/// nil = the cast line is shown instead. Note: any input hides the card and still acts (▲/▼, ◀▶); only Menu is
+/// used up by the card.
 struct PauseCardAccessory: Sendable {
     var make: @MainActor @Sendable (PauseCardAccessoryContext) -> AnyView
 }

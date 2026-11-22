@@ -30,7 +30,10 @@ struct PlayerScreen: View {
     var ownProgress: OwnProgress? = nil
     /// Wave P-b: what the side panel may do (other source, other episode); nil = only Kapitel and Infos.
     var sideLinks: PlayerSideLinks? = nil
+    /// Wave P-b: held position of a source switch; wins over the saved progress and its thresholds.
+    var startOverride: Double? = nil
     @StateObject private var extras = PlayerExtras()   // Wave P-b: side panel and pause card data
+    @State private var sideExit: SidePanelExit?
     @State private var backend: AetherBackend?
     @State private var initError: String?
     /// Kennzeichen beim Vorladen: solange ein Player offen ist, keine Vorlade-Abfragen.
@@ -41,8 +44,8 @@ struct PlayerScreen: View {
     var body: some View {
         Group {
             if let backend { PlayerControls(engine: backend, url: url, title: request.title, profile: model.profile,
-                                                       start: ownProgress != nil ? ownProgress?.start : (isTrailer ? nil : model.progress.resumePosition(for: request.id)),
-                                                       startFraction: isTrailer || ownProgress != nil ? nil : model.progress.resumeFraction(for: request.id),
+                                                       start: ownProgress != nil ? ownProgress?.start : (isTrailer ? nil : PlayerStartChoice.choose(held: startOverride, resume: model.progress.resumePosition(for: request.id), fraction: nil).start),
+                                                       startFraction: isTrailer || ownProgress != nil || startOverride != nil ? nil : model.progress.resumeFraction(for: request.id),
                                                        runtimeMinutes: request.runtimeMinutes,
                                                        heading: PlayerHeading(request),
                                                        checksPlaceholder: !isTrailer,
@@ -92,12 +95,14 @@ struct PlayerScreen: View {
             // kein Wiedergabe-Ende melden.
             guard !tracksOpen else { return }
             StreamPrefetcher.shared.playerDisappeared(prefetchToken)
-            if !isTrailer { model.endPlayback(request) }
+            extras.cancel()   // Wave P-b
+            // Wave P-b: a source switch pauses the scrobble (the new player continues it), it never stops it.
+            if !isTrailer { if sideExit?.stopsScrobble == false { model.scrobblePause(request) } else { model.endPlayback(request) } }
         }
         .onAppear {
             // Beim Vorlader immer anmelden (onDisappear meldet ab), das Backend aber nur einmal anlegen.
             StreamPrefetcher.shared.playerAppeared(prefetchToken)
-            if !isTrailer { extras.attach(model: model, request: request, links: sideLinks?.closing { tracksOpen = false }) }   // Wave P-b
+            if !isTrailer { extras.attach(model: model, request: request, links: sideLinks?.closing { tracksOpen = false; sideExit = $0 }) }   // Wave P-b
             guard backend == nil else { return }
             do { let b = try AetherBackend(); NowPlayingBridge.stage(b, request: request, skipSeconds: model.profile.player.remoteSkipSeconds); backend = b } catch { initError = "Player-Start fehlgeschlagen: \(error)"; RemoteLog.error("player", initError ?? "") }
         }
@@ -171,6 +176,10 @@ struct PlayerControls<E: PlaybackEngine>: View {
     var sideExtras: PlayerExtras? = nil
     @State var sideOpen = false
     @State var sideAfterClose: (@MainActor () -> Void)?
+    /// Source switch from the side panel: record no progress on the way out (`SidePanelExit.sourceSwitch`).
+    @State var sideHoldsProgress = false
+    /// When a panel last closed (uptime), for the side panel's quiet time.
+    @State var lastPanelClose: Double?
     @StateObject var pauseCard = PauseCardState()
     @State var subtitleMemoryPending = false
     /// Bildschirmschoner-Regel (PlayerPictureSound.swift).
@@ -366,7 +375,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             if engine.duration > 0 { report(engine.duration, engine.duration) }
             finishAtEnd(autoplay: !upNextCancelled)   // HDMI-Modus halten oder geordneter Ausstieg (PlayerExit.swift)
         }
-        .onChange(of: showTracks) { _, open in if !open { coverBottom = 0 }; onTracksShown(open) }
+        .onChange(of: showTracks) { _, open in if !open { coverBottom = 0; lastPanelClose = ProcessInfo.processInfo.systemUptime }; onTracksShown(open) }
         .onChange(of: scrub.isActive) { _, a in if a { onUserInput() }; poke() }
         .onChange(of: scrub.holdSpeed != nil) { _, h in if h { onUserInput() } }   // G-a R1: Halten zählt als Eingabe
         .onChange(of: scrub.target) { _, _ in poke() }
@@ -508,7 +517,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                     .font(.caption).lineLimit(1)
             }
             if let x = sideExtras { SidePanelHint(trackStyle: trackStyle, pages: x.pages(chapters: engine.chapterMarks.count)) }   // Wave P-b
-            Text("◀▶ 10 s · ◀▶ halten: Schnellsuchlauf · waagerecht wischen/Rand drehen: spulen · nach unten wischen: Ton & Untertitel · ⏯ Pause · Zurück beenden").font(.caption2).foregroundStyle(.secondary)
+            Text("◀▶ 10 s · ◀▶ halten: Schnellsuchlauf · waagerecht wischen/Rand drehen: spulen · \(SidePanelGesture.trackHint(trackStyle: trackStyle)) · ⏯ Pause · Zurück beenden").font(.caption2).foregroundStyle(.secondary)
         }
         .padding(60)
         .background(LinearGradient(colors: [.black.opacity(0.8), .clear], startPoint: .bottom, endPoint: .top))
@@ -533,6 +542,12 @@ struct PlayerControls<E: PlaybackEngine>: View {
     private func openTracks(_ gesture: TrackPanelGesture) {
         // Wave P-b: the vertical direction the track style leaves free opens the side panel.
         let side = sideExtras != nil && SidePanelGesture.opens(trackStyle: trackStyle, gesture: gesture)
+        if side, !showTracks, let why = SidePanelGesture.holdBack(controlsVisible: showOverlay && !pauseCard.isVisible,
+                                                                 sincePanelClosed: lastPanelClose.map { ProcessInfo.processInfo.systemUptime - $0 }) {
+            RemoteLog.info("player", "Seitenpanel nicht geöffnet (\(gesture.logText)): \(why)")
+            poke()   // the press shows the control bar (a swipe does not reach onMoveCommand's poke)
+            return
+        }
         let via = "\(gesture.logText), \(side ? "Seitenpanel" : trackStyle.title)"
         switch TrackPanelEntry.decide(style: side ? SidePanelGesture.guardStyle(for: gesture) : trackStyle, gesture: gesture,
                                       leaving: leaving, scrubbing: scrub.isActive, upNextShowing: upNext != nil,
@@ -794,7 +809,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
     }
 
     func saveProgress() {
-        guard engine.duration > 0, engine.currentTime > 0 else { return }
+        guard engine.duration > 0, engine.currentTime > 0, !sideHoldsProgress else { return }
         report(engine.currentTime, engine.duration)
     }
 

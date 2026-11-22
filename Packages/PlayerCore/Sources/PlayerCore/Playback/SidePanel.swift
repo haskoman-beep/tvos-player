@@ -115,6 +115,45 @@ public enum SidePanelGesture {
         case .swipeUp, .clickUp: .bottomBar
         }
     }
+
+    /// Quiet time after any panel closed: one swipe too many while closing must not open the side panel.
+    public static let quietAfterClose: Double = 0.8
+
+    /// Why the free direction does not open the side panel now (nil = open). Hidden control bar: the first press
+    /// only shows the bar, as in build 198 (a look at the remaining time stays free of side effects).
+    public static func holdBack(controlsVisible: Bool, sincePanelClosed: Double?) -> String? {
+        if let t = sincePanelClosed, t < quietAfterClose { return "Panel gerade geschlossen" }
+        if !controlsVisible { return "Steuerleiste erst zeigen" }
+        return nil
+    }
+
+    /// The fixed help line of the control bar: which swipe opens "Ton & Untertitel" in this style.
+    public static func trackHint(trackStyle: TrackPanelStyle) -> String {
+        TrackPanelEntry.opens(style: trackStyle, gesture: .swipeDown)
+            ? "nach unten wischen: Ton & Untertitel" : "nach oben wischen: Ton & Untertitel"
+    }
+}
+
+/// How the player is left from the side panel, and what that means for progress and Trakt/Simkl.
+public enum SidePanelExit: Equatable, Sendable {
+    /// Other source of the same title: the new player starts at the held position. Nothing is recorded on the way
+    /// out (a switch must never mark the title watched); the scrobble is paused, not stopped.
+    case sourceSwitch
+    /// Other episode: the old one is left normally (progress saved, scrobble stopped).
+    case episodeSwitch
+
+    public var recordsProgress: Bool { self == .episodeSwitch }
+    public var stopsScrobble: Bool { self == .episodeSwitch }
+}
+
+/// Start of a new player. An explicit held position (source switch) wins over the saved progress and its
+/// thresholds (below 60 s, finished); otherwise saved position, else saved fraction.
+public enum PlayerStartChoice {
+    public static func choose(held: Double?, resume: Double?, fraction: Double?) -> (start: Double?, fraction: Double?) {
+        if let h = held, h.isFinite, h > 0 { return (h, nil) }
+        if let r = resume { return (r, nil) }
+        return (nil, fraction)
+    }
 }
 
 /// Navigation of the side panel: start list or one page.
