@@ -120,7 +120,7 @@ public enum NuvioImport {
     }
 
     /// Reproduzierbarer Kurzschlüssel (FNV-1a 64), damit ein zweiter Import keine Dubletten erzeugt.
-    static func stableHash(_ s: String) -> String {
+    public static func stableHash(_ s: String) -> String {
         var h: UInt64 = 0xcbf29ce484222325
         for b in s.utf8 { h ^= UInt64(b); h = h &* 0x100000001b3 }
         return String(h, radix: 16)

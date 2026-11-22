@@ -218,8 +218,11 @@ public enum FusionImport {
                 if let c = source(s, id: "\(fid).\(k)", title: s.payload?.listName ?? ftitle, ctx: ctx) { sources.append(c) }
             }
             guard !sources.isEmpty else { ctx.warn("Kachel ohne Quellen"); continue }
+            // Wave F-o round 2: animated tiles of a widget export (video before GIF, see TileMotion).
+            let gif = imageURL(it.focusGifURL ?? it.focusGifUrl ?? it.gifURL)
+            let video = [it.focusVideoURL, it.focusVideoUrl, it.videoURL].lazy.compactMap { FocusVideoURL.playable($0) }.first
             out.append(Folder(id: fid, title: ftitle, coverImage: imageURL(it.imageURL ?? it.backgroundImageURL), sources: sources,
-                              hideTitle: it.hideTitle))
+                              hideTitle: it.hideTitle, focusGif: gif, focusVideo: video))
         }
         return out
     }
@@ -340,6 +343,9 @@ public enum FusionImport {
         var imageURL: String?; var backgroundImageURL: String?; var imageAspect: String?; var layout: String?
         var hideTitle: Bool?
         var dataSources: LossyList<RawSource>?; var dataSource: RawSource?
+        // Wave F-o round 2: optional motion fields (spellings seen in widget and collection exports).
+        var focusVideoURL: String?; var focusVideoUrl: String?; var videoURL: String?
+        var focusGifURL: String?; var focusGifUrl: String?; var gifURL: String?
     }
 }
 

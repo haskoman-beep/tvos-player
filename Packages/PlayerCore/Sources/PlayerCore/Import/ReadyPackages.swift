@@ -19,69 +19,7 @@ public enum ReadyPackages {
         ("Animation", 16, 16), ("Dokumentation", 99, 99), ("Familie", 10751, 10751),
     ]
 
-    /// Wave F-o: film studios (TMDB company filter). `companies`: TMDB company IDs, several joined with `|` (OR);
-    /// `series`: the studio also makes series worth a list; `motion`: name of its picture and focus video in the
-    /// public collection export (`PackageFixedArt`).
-    public struct Studio: Sendable {
-        public let name: String
-        public let companies: String
-        public let series: Bool
-        let motion: String
-    }
-
-    /// Every studio the public collection export has a focus video for and that has a TMDB company.
-    /// (Its network tiles HBO, FX, AMC, Starz and Canal+ have no company and are left out.)
-    public static let studios: [Studio] = [
-        .init(name: "Disney Animation", companies: "6125", series: false, motion: "disney_animated"),
-        .init(name: "Pixar", companies: "3", series: false, motion: "pixar"),
-        .init(name: "Marvel Studios", companies: "420", series: true, motion: "marvel"),
-        .init(name: "Lucasfilm", companies: "1", series: true, motion: "lucasfilm"),
-        .init(name: "Paramount", companies: "4", series: false, motion: "paramount"),
-        .init(name: "Warner Bros.", companies: "174", series: false, motion: "warner_bros"),
-        .init(name: "Universal", companies: "33", series: false, motion: "universal"),
-        .init(name: "Sony Pictures", companies: "34|5", series: false, motion: "sony"),
-        .init(name: "20th Century", companies: "127928|25", series: false, motion: "twentieth_century"),
-        .init(name: "DC", companies: "429|9993", series: true, motion: "dc"),
-        .init(name: "DreamWorks", companies: "521|7", series: false, motion: "dreamworks"),
-        .init(name: "Illumination", companies: "6704", series: false, motion: "illumination"),
-        .init(name: "Studio Ghibli", companies: "10342", series: false, motion: "ghibli"),
-        .init(name: "Lionsgate", companies: "1632", series: false, motion: "lionsgate"),
-        .init(name: "New Line Cinema", companies: "12", series: false, motion: "new_line"),
-        .init(name: "Legendary", companies: "923", series: false, motion: "legendary"),
-        .init(name: "A24", companies: "41077", series: true, motion: "a24"),
-        .init(name: "Blumhouse", companies: "3172", series: false, motion: "blumhouse"),
-    ]
-
-    public static var all: [MediaCollection] { [streamingDE, genreCollection, studioCollection] }
-
-    /// Wave F-o: ready-made "Studios" package; tile ID `pkg.studios.<first company ID>`.
-    public static var studioCollection: MediaCollection {
-        MediaCollection(id: "pkg.studios", title: "Studios", folders: studios.map { st in
-            let key = studioKey(st)
-            func src(_ suffix: String, _ title: String, _ t: MediaType, _ extra: [String: String]) -> CatalogSource {
-                CatalogSource(id: "pkg.studios.\(key).\(suffix)", title: "\(st.name) · \(title)",
-                              kind: .tmdbDiscover(filters: ["with_companies": st.companies].merging(extra) { $1 }), mediaType: t)
-            }
-            var sources = [
-                src("popular-movies", "Beliebte Filme", .movie, ["sort_by": "popularity.desc"]),
-                src("new-movies", "Neue Filme", .movie, ["sort_by": "primary_release_date.desc", "vote_count.gte": "20"]),
-                src("top-movies", "Am besten bewertet", .movie, ["sort_by": "vote_average.desc", "vote_count.gte": "300"]),
-            ]
-            if st.series { sources.insert(src("popular-series", "Beliebte Serien", .series, ["sort_by": "popularity.desc"]), at: 1) }
-            return Folder(id: "pkg.studios.\(key)", title: st.name, sources: sources)
-        })
-    }
-
-    /// First company ID of a studio: stable key of its tile.
-    static func studioKey(_ st: Studio) -> String { String(st.companies.split(separator: "|").first ?? "") }
-
-    /// Studio of a tile ID (`pkg.studios.<id>`), else nil.
-    static func studio(forFolderID id: String) -> Studio? {
-        let prefix = "pkg.studios."
-        guard id.hasPrefix(prefix) else { return nil }
-        let key = String(id.dropFirst(prefix.count))
-        return studios.first { studioKey($0) == key }
-    }
+    public static var all: [MediaCollection] { [streamingDE, genreCollection] }
 
     public static var streamingDE: MediaCollection {
         MediaCollection(id: "pkg.streaming-de", title: "Streaming-Dienste", folders: providersDE.map { p in
@@ -150,14 +88,9 @@ extension ReadyPackages {
             guard let i = self.genres.firstIndex(where: { $0.name == name }), let sym = genreSymbols[name] else { return nil }
             return PackageTileStyle(symbol: sym, tone: i % toneCount)
         }
-        if let st = studio(forFolderID: id), let i = studios.firstIndex(where: { $0.name == st.name }) {
-            return PackageTileStyle(symbol: "film", tone: i % toneCount)
-        }
         return nil
     }
 
     /// Ist das eine Kachel eines fertigen Pakets?
-    public static func isPackageFolder(_ id: String) -> Bool {
-        id.hasPrefix("pkg.streaming-de.") || id.hasPrefix("pkg.genres.") || id.hasPrefix("pkg.studios.")
-    }
+    public static func isPackageFolder(_ id: String) -> Bool { id.hasPrefix("pkg.streaming-de.") || id.hasPrefix("pkg.genres.") }
 }

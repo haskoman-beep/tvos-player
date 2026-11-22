@@ -3,12 +3,12 @@ import SwiftUI
 import UIKit
 import PlayerCore
 
-// Wave F-o: focus video on package tiles (field `focusVideoUrl` of the collection export, or the fixed public
-// collection export for the ready-made packages). One player for the whole app, so at most one video runs; it is
-// released completely while the main player is open. Pure rules (priority, sound, cache limits) live in PlayerCore
-// `TileMotion.swift`.
+// Wave F-o: focus video on tiles (from imports only: `focusVideoUrl` of a collection export, `videoURL` of a preview
+// pack). One player for the whole app, so at most one video runs; it is released completely while the main player
+// is open. Pure rules (priority, sound, cache limits) live in PlayerCore `TileMotion.swift`.
 
-/// Disk cache of focus videos in Caches/FocusVideos (at most 50 MB and 7 days, least recently used goes first).
+/// Disk cache of focus videos in Caches/FocusVideos, in two pots: `silent` (50 MB, 20 MiB per file) and `sound`
+/// (videos with a sound track, 150 MB, 30 MiB per file); 7 days, least recently used goes first, per pot.
 /// One download at a time: a new address cancels the running one. Only a real video body is stored
 /// (`FocusVideoCachePlan.check`). Load failures rest 5 min; a stored file that did not play is deleted and its
 /// address rests 30 min.
@@ -34,17 +34,37 @@ actor FocusVideoCache {
     init() {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
         dir = caches.appendingPathComponent("FocusVideos", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let fm = FileManager.default
+        // Round 2: files sit in pot folders; loose files of round 1 are dropped.
+        for u in (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.isRegularFileKey])) ?? []
+        where (try? u.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true {
+            try? fm.removeItem(at: u)
+        }
+        for pot in FocusVideoCachePlan.Pot.allCases {
+            try? fm.createDirectory(at: dir.appendingPathComponent(pot.folder, isDirectory: true), withIntermediateDirectories: true)
+        }
         let cfg = URLSessionConfiguration.ephemeral
         cfg.urlCache = nil
         cfg.timeoutIntervalForRequest = 15
         session = URLSession(configuration: cfg)
     }
 
+    private func path(_ key: String, _ pot: FocusVideoCachePlan.Pot) -> URL {
+        dir.appendingPathComponent(pot.folder, isDirectory: true).appendingPathComponent(FocusVideoCachePlan.fileName(for: key))
+    }
+
+    /// Stored file of an address in either pot.
+    private func stored(_ key: String) -> URL? {
+        for pot in FocusVideoCachePlan.Pot.allCases {
+            let u = path(key, pot)
+            if FileManager.default.fileExists(atPath: u.path) { return u }
+        }
+        return nil
+    }
+
     func file(for url: URL) async -> Outcome {
         let key = url.absoluteString
-        let local = dir.appendingPathComponent(FocusVideoCachePlan.fileName(for: key))
-        if FileManager.default.fileExists(atPath: local.path) {
+        if let local = stored(key) {
             // Mark as used (LRU order).
             try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: local.path)
             return .file(local)
@@ -58,7 +78,7 @@ actor FocusVideoCache {
             task = r.task
         } else {
             running?.task.cancel()
-            task = Task { try await self.download(url, to: local) }
+            task = Task { try await self.download(url, key: key) }
             running = (key, task)
         }
         do {
@@ -68,6 +88,7 @@ actor FocusVideoCache {
                 task.cancel()
             }
             if running?.key == key { running = nil }
+            guard let local = stored(key) else { return .failed("Datei fehlt") }
             return .file(local)
         } catch {
             if running?.key == key { running = nil }
@@ -84,43 +105,52 @@ actor FocusVideoCache {
         }
     }
 
-    private func download(_ url: URL, to local: URL) async throws {
+    private func download(_ url: URL, key: String) async throws {
         let (tmp, resp) = try await session.download(from: url)
         defer { try? FileManager.default.removeItem(at: tmp) }
         try Task.checkCancellation()
         if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) { throw LoadError.status(http.statusCode) }
         let size = Int64((try? tmp.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
-        // Error pages served with 200 (captive portal, CDN) and empty bodies never reach the cache.
-        var head: [UInt8] = []
+        if size > FocusVideoCachePlan.maxDownloadBytes { throw LoadError.body(.tooLarge) }
+        // Error pages served with 200 (captive portal, CDN) and empty bodies never reach the cache. Head and tail
+        // tell whether the file has a sound track (the moov box sits at either end), which picks the pot.
+        var head: [UInt8] = [], tail: [UInt8] = []
         if let h = try? FileHandle(forReadingFrom: tmp) {
-            head = [UInt8]((try? h.read(upToCount: 16)) ?? Data())
+            head = [UInt8]((try? h.read(upToCount: Mp4Probe.headBytes)) ?? Data())
+            if size > Int64(Mp4Probe.headBytes) {
+                try? h.seek(toOffset: UInt64(max(Int64(Mp4Probe.headBytes), size - Int64(Mp4Probe.tailBytes))))
+                tail = [UInt8]((try? h.readToEnd()) ?? Data())
+            }
             try? h.close()
         }
         let check = FocusVideoCachePlan.check(contentType: (resp as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type"),
-                                              head: head, bytes: size)
-        guard check == .ok else { throw LoadError.body(check) }
+                                              head: head, bytes: size,
+                                              hasSound: Mp4Probe.hasSoundTrack(head) || Mp4Probe.hasSoundTrack(tail))
+        guard case .ok(let pot) = check else { throw LoadError.body(check) }
+        let local = path(key, pot)
         try? FileManager.default.removeItem(at: local)
         try FileManager.default.moveItem(at: tmp, to: local)
-        evict()
+        evict(pot)
     }
 
     /// The stored file of `url` did not play: delete it and let the address rest 30 min (no retry on every focus).
     func markBroken(_ url: URL) {
         let key = url.absoluteString
-        try? FileManager.default.removeItem(at: dir.appendingPathComponent(FocusVideoCachePlan.fileName(for: key)))
+        for pot in FocusVideoCachePlan.Pot.allCases { try? FileManager.default.removeItem(at: path(key, pot)) }
         failed[key] = Date().addingTimeInterval(FocusVideoCachePlan.retryAfterPlaybackFailure)
     }
 
-    private func evict() {
+    private func evict(_ pot: FocusVideoCachePlan.Pot) {
         let keys: [URLResourceKey] = [.fileSizeKey, .contentModificationDateKey]
-        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys) else { return }
+        let folder = dir.appendingPathComponent(pot.folder, isDirectory: true)
+        guard let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: keys) else { return }
         let entries = files.compactMap { u -> FocusVideoCachePlan.Entry? in
             guard let v = try? u.resourceValues(forKeys: Set(keys)) else { return nil }
             return FocusVideoCachePlan.Entry(name: u.lastPathComponent, bytes: Int64(v.fileSize ?? 0),
                                              used: v.contentModificationDate ?? .distantPast)
         }
-        for name in FocusVideoCachePlan.evict(entries, now: Date()) {
-            try? FileManager.default.removeItem(at: dir.appendingPathComponent(name))
+        for name in FocusVideoCachePlan.evict(entries, now: Date(), maxBytes: pot.maxBytes) {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))
         }
     }
 }
@@ -204,10 +234,10 @@ final class FocusVideoPlayer {
             hasAudio = !(((try? await asset.loadTracks(withMediaType: .audio)) ?? []).isEmpty)
             guard gen == generation, self.owner == owner, !mainPlayback, !Task.isCancelled else { return false }
         }
-        var fadeOutAt: Double?
+        var fadeOutPlan: FocusVideoAudio.FadeOutPlan?
         if hasAudio {
             let d = (try? await asset.load(.duration)).map(CMTimeGetSeconds) ?? .nan
-            fadeOutAt = FocusVideoAudio.fadeOutStart(duration: d)
+            fadeOutPlan = FocusVideoAudio.fadeOutPlan(duration: d)
             guard gen == generation, self.owner == owner, !mainPlayback, !Task.isCancelled else { return false }
         }
         audible = FocusVideoAudio.audible(setting: sound, hasAudioTrack: hasAudio, mainPlayback: mainPlayback, loopsDone: 0)
@@ -229,11 +259,11 @@ final class FocusVideoPlayer {
             Task { @MainActor in FocusVideoPlayer.shared.failed(why, generation: gen) }
         }
         if audible {
-            // Sound exactly once: fade out before the first pass ends ...
-            if let t = fadeOutAt {
-                let at = NSValue(time: CMTime(seconds: t, preferredTimescale: 600))
+            // Sound exactly once: fade out after about 12 s or before the first pass ends, whichever comes first ...
+            if let plan = fadeOutPlan {
+                let at = NSValue(time: CMTime(seconds: plan.start, preferredTimescale: 600))
                 boundaryObserver = p.addBoundaryTimeObserver(forTimes: [at], queue: .main) {
-                    Task { @MainActor in FocusVideoPlayer.shared.endOfFirstPass(generation: gen) }
+                    Task { @MainActor in FocusVideoPlayer.shared.endOfFirstPass(generation: gen, fade: plan.length) }
                 }
             }
             // ... and, as a hard stop, mute right on the switch to the looper's second replica (also for clips too
@@ -340,13 +370,14 @@ final class FocusVideoPlayer {
         audible = false
     }
 
-    /// Shortly before the first pass ends: fade the sound out, then mute; the picture loops on silently.
-    fileprivate func endOfFirstPass(generation gen: Int) {
+    /// Sound cap reached or the first pass is about to end: fade the sound out, then mute; the picture loops on
+    /// silently.
+    fileprivate func endOfFirstPass(generation gen: Int, fade: Double) {
         guard gen == generation, audible, let p = player else { return }
         audible = false
         fadeTask?.cancel()
         fadeTask = Task { @MainActor in
-            await self.fade(p, to: 0, seconds: FocusVideoAudio.fadeOut, generation: gen)
+            await self.fade(p, to: 0, seconds: fade, generation: gen)
             if gen == self.generation { p.isMuted = true }
         }
     }

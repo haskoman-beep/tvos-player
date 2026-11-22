@@ -96,21 +96,6 @@ extension ReadyPackages {
         "Animation": ["animated", "zeichentrick"],
         "Dokumentation": ["dokumentationen", "doku", "dokus", "documentary", "documentaries"],
         "Familie": ["family", "familymovienight", "kids"],
-        // Wave F-o: studios (English names of imports).
-        "Disney Animation": ["disneyanimated", "disneyanimation", "waltdisneyanimationstudios", "waltdisneyanimation"],
-        "Marvel Studios": ["marvel"],
-        "Lucasfilm": ["lucasfilmltd"],
-        "Paramount": ["paramountpictures"],
-        "Warner Bros.": ["warnerbros", "warnerbrospictures", "warnerbrothers"],
-        "Universal": ["universalpictures"],
-        "Sony Pictures": ["sony", "columbiapictures"],
-        "20th Century": ["20thcenturystudios", "20thcenturyfox", "twentiethcentury"],
-        "DC": ["dcstudios", "dccomics", "dcentertainment"],
-        "DreamWorks": ["dreamworksanimation", "dreamworkspictures"],
-        "Studio Ghibli": ["ghibli"],
-        "New Line Cinema": ["newline"],
-        "Legendary": ["legendarypictures"],
-        "Blumhouse": ["blumhouseproductions"],
     ]
 
     /// Name des Pakets einer Kachel-ID (`pkg.streaming-de.<tmdb>` → „Netflix“, `pkg.genres.<name>` → Name), sonst nil.
@@ -123,7 +108,7 @@ extension ReadyPackages {
             let name = String(id.dropFirst(genres.count))
             return self.genres.first { $0.name == name }?.name
         }
-        return studio(forFolderID: id)?.name
+        return nil
     }
 
     /// Erkennungsnamen einer Paket-Kachel (vereinheitlicht, eigener Name zuerst), sonst nil.
@@ -141,9 +126,6 @@ extension ReadyPackages {
         if id.hasPrefix(genres), let g = self.genres.first(where: { $0.name == String(id.dropFirst(genres.count)) }) {
             return ("with_genres", Set([g.movie, g.tv].compactMap { $0.map(String.init) }))
         }
-        if let st = studio(forFolderID: id) {
-            return ("with_companies", Set(st.companies.split(separator: "|").map(String.init)))
-        }
         return nil
     }
 
@@ -154,16 +136,7 @@ extension ReadyPackages {
                         keys: (filter: String, values: Set<String>)?) -> Int? {
         guard let cover = f.coverImage, !cover.isEmpty else { return nil }
         if let keys, f.sources.contains(where: { s in
-            let v: String
-            switch s.kind {
-            case .tmdbDiscover(let filters):
-                guard let x = filters[keys.filter] else { return false }
-                v = x
-            case .tmdbCompany(let id) where keys.filter == "with_companies":
-                v = id
-            default:
-                return false
-            }
+            guard case .tmdbDiscover(let filters) = s.kind, let v = filters[keys.filter] else { return false }
             let parts = v.split(whereSeparator: { $0 == "," || $0 == "|" }).map(String.init)
             return parts.count == 1 && keys.values.contains(parts[0])
         }) { return 0 }
@@ -303,8 +276,7 @@ public struct PackageArtMemo {
     public mutating func collection(_ c: MediaCollection, stamp: Stamp, sources: () -> [PackageArtSource]) -> MediaCollection {
         if stamp != self.stamp { cache.removeAll(); self.stamp = stamp }
         if let hit = cache[c.id] { return hit }
-        // Wave F-o: imports and kit first; the fixed public source only fills what is still missing.
-        let out = PackageFixedArt.apply(ReadyPackages.withArt(c, sources: sources()))
+        let out = ReadyPackages.withArt(c, sources: sources())
         cache[c.id] = out
         return out
     }

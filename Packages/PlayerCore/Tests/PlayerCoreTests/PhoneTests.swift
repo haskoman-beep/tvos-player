@@ -37,7 +37,7 @@ private func req(_ s: String) -> HTTPRequest {
     let (resp, cmds) = page.handle(req("POST /submit?t=tok HTTP/1.1\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)"), profileName: "Ich") { Data() }
     #expect(resp.status == 303 && resp.extraHeaders["Location"] == "/?t=tok&ok=4")
     #expect(cmds == [.addAddon("https://a/manifest.json"), .setKey(service: "tmdb", value: "K1"),
-                     .importNuvioJSON(Data("{}".utf8)), .addTMDBLink("list:5")])
+                     .importCollectionCode(Data("{}".utf8)), .addTMDBLink("list:5")])
 }
 
 @Test func exportServesBackup() {
@@ -53,10 +53,15 @@ private func req(_ s: String) -> HTTPRequest {
     #expect(PhoneImportDetect.detect(" https://a.example/x/manifest.json ") == .command(.addAddon("https://a.example/x/manifest.json")))
     #expect(PhoneImportDetect.detect("stremio://a.example/manifest.json") == .command(.addAddon("https://a.example/manifest.json")))
     #expect(PhoneImportDetect.detect("https://www.themoviedb.org/list/5") == .command(.addTMDBLink("https://www.themoviedb.org/list/5")))
-    #expect(PhoneImportDetect.detect("https://raw.githubusercontent.com/u/fusion-kit/main/json/a.json") == .command(.importFusionURL("https://raw.githubusercontent.com/u/fusion-kit/main/json/a.json")))
-    #expect(PhoneImportDetect.detect("https://x.example/nuvio-collections.json") == .command(.importNuvioURL("https://x.example/nuvio-collections.json")))
+    // Wave F-o round 2: JSON links and pasted collection code are detected on the TV (content decides).
+    #expect(PhoneImportDetect.detect("https://raw.githubusercontent.com/u/fusion-kit/main/json/a.json") == .command(.importCollectionLink("https://raw.githubusercontent.com/u/fusion-kit/main/json/a.json")))
+    #expect(PhoneImportDetect.detect("https://x.example/nuvio-collections.json") == .command(.importCollectionLink("https://x.example/nuvio-collections.json")))
     let nuvio = #"[{"title":"A","folders":[]}]"#
-    #expect(PhoneImportDetect.detect(nuvio) == .command(.importNuvioJSON(Data(nuvio.utf8))))
+    #expect(PhoneImportDetect.detect(nuvio) == .command(.importCollectionCode(Data(nuvio.utf8))))
+    let pack = #"[{"id":"1","title":"Netflix","videoURL":"https://example.invalid/n.mp4"}]"#
+    #expect(PhoneImportDetect.detect(pack) == .command(.importCollectionCode(Data(pack.utf8))))
+    let widgets = #"{"exportType":"fusionWidgets","widgets":[]}"#
+    #expect(PhoneImportDetect.detect(widgets) == .command(.importCollectionCode(Data(widgets.utf8))))
     #expect(PhoneImportDetect.detect(#"{"profiles":[]}"#) == .refused(.backup))
     #expect(PhoneImportDetect.detect("stremio://a.example/catalog") == .unknown)
     #expect(PhoneImportDetect.detect("hallo") == .unknown)

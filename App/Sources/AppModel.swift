@@ -294,7 +294,8 @@ final class AppModel: ObservableObject {
     /// (`ReadyPackages.withArt`). Ohne Treffer bleibt die Symbol-Kachel. Keine Bilder aus dem Repo.
     func collection(_ id: String) -> MediaCollection? {
         guard let c = profile.collections.first(where: { $0.id == id }) else { return FusionKitStore.shared.collection(id) }
-        guard id.hasPrefix("pkg.") else { return c }
+        // Wave F-o round 2: imported preview packs fill video and still of imported tiles with the same title.
+        guard id.hasPrefix("pkg.") else { return CollectionLinkStore.shared.enriched(c, profileRevision: profileRevision) }
         let kit = FusionKitStore.shared
         let stamp = PackageArtMemo.Stamp(profile: profileRevision, kit: kit.revision)
         return packageArt.collection(c, stamp: stamp) { PackageArtSource.userImports(profile.collections) + kit.artSources }
@@ -505,8 +506,11 @@ final class AppModel: ObservableObject {
             case .importFusionURL: return "kit-url"
             case .moveRow, .removeRow, .deleteRow, .restoreRow, .addRow: return "startseite"
             case .setRatingIconSet: return "icon-satz"   // Welle F-a
+            case .importCollectionLink(let u): return "collection-link \(URL(string: u)?.host ?? "?")"   // wave F-o round 2
+            case .importCollectionCode: return "collection-code"
             }
         }.joined(separator: ", "))
+        let noticeBefore = notice
         for c in commands {
             switch c {
             case .addAddon(let u): await installAddon(u)
@@ -529,9 +533,12 @@ final class AppModel: ObservableObject {
             case .importFusionURL(let u): await importFusionKit(from: u)
             case .moveRow, .removeRow, .deleteRow, .restoreRow, .addRow: applyHome([c])   // Welle F-e; PhoneServer übernimmt sie sonst schon vorab
             case .setRatingIconSet(let u): setRatingIconSet(u)   // Welle F-a (Views/Settings/SourceSettingsRows.swift)
+            case .importCollectionLink(let u): await CollectionLinkStore.shared.importLink(u, model: self)   // wave F-o round 2
+            case .importCollectionCode(let d): await CollectionLinkStore.shared.importCode(d, model: self)
             }
         }
-        if lastError == nil { notice = "\(commands.count) Eingabe(n) vom Handy übernommen." }
+        // An import's own result line ("Import: 3 Reihen, …") stays.
+        if lastError == nil, notice == noticeBefore { notice = "\(commands.count) Eingabe(n) vom Handy übernommen." }
     }
 }
 

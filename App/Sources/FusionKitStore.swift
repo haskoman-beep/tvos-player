@@ -39,6 +39,7 @@ final class FusionKitStore: ObservableObject {
     /// Beim App-Start: Zwischenspeicher lesen, abgleichen, veraltete gewählte Dateien im Hintergrund neu holen.
     func attach(_ model: AppModel) {
         self.model = model
+        CollectionLinkStore.shared.ensure(model)   // wave F-o round 2: preview packs before the first sync
         // Profiländerung (Schlüssel, Layout, Profilwechsel) → abgleichen; erst danach, denn @Published meldet vor dem Setzen.
         watch = model.$stored.dropFirst().sink { [weak self] _ in
             guard let self else { return }
@@ -54,6 +55,8 @@ final class FusionKitStore: ObservableObject {
     // MARK: Lesen (Startseite)
 
     func collection(_ id: String) -> MediaCollection? { visible[id] }
+    /// Wave F-o round 2: all visible kit collections (preview pack matching count).
+    var importedCollections: [MediaCollection] { Array(visible.values) }
     /// Welle F-l: Bildquellen der Paket-Kacheln aus allen geladenen Kit-Dateien, ungefiltert (auch Kacheln, deren
     /// Listen ohne Trakt ausgeblendet sind). Vom Nutzer gewählte Dateien zuerst, übrige nach Titel – so ist der
     /// Treffer bei Gleichstand immer derselbe. Beim Abgleich berechnet.
@@ -128,6 +131,27 @@ final class FusionKitStore: ObservableObject {
         return nil
     }
 
+    /// Wave F-o round 2: widget export already fetched (collection link) or pasted as code: keep it like a kit
+    /// file and place all its rows. A pasted text gets a `paste:` source that is never fetched again.
+    func importData(_ data: Data, link: String?) throws -> FusionKitContent {
+        let src = link.map { FusionKitCatalog.source(forURL: $0) }
+            ?? FusionKitSource(id: NuvioImport.stableHash("paste:" + String(decoding: data, as: UTF8.self)),
+                               title: "Eingefügter Widget-Export", url: Self.pastePrefix, custom: true)
+        let c = try FusionImport.parse(data, sourceKey: src.id, title: src.title)
+        contents[src.id] = c
+        errors[src.id] = nil
+        try? disk.write(contentFile(src.id), data)
+        change { $0.addAll(c, source: src) }
+        sync()
+        RemoteLog.info("kit", "Import \(src.title): \(c.rows.count) Reihen gewählt")
+        return c
+    }
+
+    static let pastePrefix = "paste:"
+
+    /// Wave F-o round 2: preview packs changed; tiles are enriched again on the next sync.
+    func packChanged() { sync() }
+
     private func change(_ f: (inout FusionKitSettings) -> Void) {
         ensureSettings()
         var s = settings
@@ -147,7 +171,8 @@ final class FusionKitStore: ObservableObject {
 
     /// Einstellungen des aktiven Profils (nach Profilwechsel neu) samt Zwischenspeicher seiner Quellen.
     private func ensureSettings() {
-        guard let id = model?.stored.active?.id, id != settingsProfile else { return }
+        guard let model, let id = model.stored.active?.id, id != settingsProfile else { return }
+        CollectionLinkStore.shared.ensure(model)
         let first = settingsProfile == nil
         settingsProfile = id
         settings = UserDefaults.standard.data(forKey: settingsKey(id))
@@ -180,6 +205,11 @@ final class FusionKitStore: ObservableObject {
         if !force, isFresh(contentFile(src.id)) {
             if contents[src.id] != nil { return }
             if let c = cached(src) { contents[src.id] = c; return }
+        }
+        // Pasted code has no address: only the stored copy.
+        if src.url.hasPrefix(Self.pastePrefix) {
+            if contents[src.id] == nil, let c = cached(src) { contents[src.id] = c }
+            return
         }
         if let running = inflight[src.id] { await running.value; return }
         guard let url = URL(string: src.url) else { errors[src.id] = "URL ungültig"; return }
@@ -302,11 +332,13 @@ final class FusionKitStore: ObservableObject {
 
         var vis: [String: MediaCollection] = [:]
         var hiddenTiles = 0
+        // Wave F-o round 2: imported preview packs fill video and still of tiles with the same title.
+        let pack = CollectionLinkStore.shared.packIndex
         for (_, c) in contents {
             for row in c.rows {
                 guard case .collection(let full) = row.body else { continue }
                 if let a = row.available(traktID: traktID, traktLogin: traktLogin), case .collection(let v) = a.body {
-                    vis[row.id] = v
+                    vis[row.id] = PreviewPack.apply(pack, to: v)
                     if s.placed.contains(row.id) { hiddenTiles += full.folders.count - v.folders.count }
                 }
             }
