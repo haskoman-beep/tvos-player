@@ -7,6 +7,10 @@ Sections are ordered by stage. "Build" is the CI run number, which the app shows
 A section marked **integ** is on the `integ` testing branch and only moves to `main` after device
 testing.
 
+Each build from `integ` (prerelease) and `main` (release) is also published as a GitHub release
+`build-<number>` with its commit list and the IPA to download:
+[Releases / version history](https://github.com/haskoman-beep/tvos-player/releases).
+
 ## [Unreleased]
 
 Work in progress, not yet on `integ`.

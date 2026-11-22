@@ -79,7 +79,8 @@ xcodebuild -project Player.xcodeproj -scheme Player -configuration Release \
 
 CI (`.github/workflows/build.yml`, GitHub Actions on macOS) builds on changes under `App/`,
 `Packages/` or `.github/workflows/`. A run builds the IPA, checks the app contents and the Dolby Vision FEL trait,
-and publishes the IPA for `main` as the `app-main` release. The app's build number is the CI run number.
+and publishes the IPA for `main` as the `app-main` release and for `integ`/`main` as a `build-<number>` release (see
+[Releases / Version history](#releases--version-history)). The app's build number is the CI run number.
 
 The platform-independent logic lives in the `PlayerCore` package and can be tested without a Mac, for example on
 Linux with Swift 6:
@@ -108,6 +109,32 @@ cd Packages/PlayerCore && swift test
 `main` currently contains version 0.4.0. The stages from Wave A onwards (including TorBox, Fusion kits,
 Dolby Vision FEL, the `Packages/AetherFEL` package and the `app-main` release) are still on `integ`. The
 history is described in [CHANGELOG.md](CHANGELOG.md).
+
+## Releases / Version history
+
+Every build that reaches `integ` or `main` is published on the
+[Releases page](https://github.com/haskoman-beep/tvos-player/releases), so you can see which build came
+from which commit and branch, and download each one.
+
+- **Build numbers:** the build number is the CI run number (`github.run_number`). CI writes it into the app as
+  `CFBundleVersion`, and the app shows it under Einstellungen › System ("Build 162 · integ · 6600880").
+  The numbers count every CI run, feature branches included, so released builds have gaps. The marketing
+  version (`CFBundleShortVersionString`, currently 0.4.0) is set by hand in `App/project.yml`.
+- **Tags:** each release is tagged `build-<number>` on the commit it was built from.
+- **Prerelease:** a build from `integ`. CI built and checked it, but it has not been approved on the device yet.
+- **Release:** a build from `main`, i.e. tested on the device. The newest one is marked "Latest".
+- **Release notes:** build number, version, branch, commit, how it was pushed, CI run link, date, and the
+  commits since the previous release (commit subjects are in German).
+- **Download:** open a release and download `Player.ipa` under "Assets". It is unsigned and has to be signed
+  with a sideloading tool before installing (see Installation). A few early builds were added afterwards; if
+  their CI artifact had already expired, they have no IPA attached.
+- Feature branches do not create releases. The rolling `app-main` release (always the newest `main` build) stays,
+  because the app's „App aktualisieren“ uses it.
+
+The human-readable summary per stage is in [CHANGELOG.md](CHANGELOG.md). CI job `history` in
+`.github/workflows/build.yml` creates the releases (`tools/release_notes.sh` writes the notes,
+`tools/check_ipa.sh` checks the IPA for keys and addresses first). `tools/backfill_releases.sh` adds builds
+afterwards.
 
 ## License
 
