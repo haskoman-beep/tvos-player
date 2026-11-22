@@ -20,9 +20,10 @@ struct HomeRowView: View {
     @ObservedObject private var upcomingRevision = UpcomingRevision.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
             if row.style != .hero {
-                Text(title).font(.title3.bold()).padding(.leading, 60)
+                Text(title).textRole(.sectionTitle).padding(.leading, Theme.Space.edge)
+                    .accessibilityAddTraits(.isHeader)
             }
             content
                 .focusSection()
@@ -67,7 +68,7 @@ struct HomeRowView: View {
         case .list:
             if loaded && items.isEmpty {
                 Text(emptyText)
-                    .foregroundStyle(.secondary).padding(.leading, 60).frame(height: 120)
+                    .textRole(.rowDetail).padding(.leading, Theme.Space.edge).frame(height: 120)
             } else {
                 Strip(expands: row.style == .poster) {
                     ForEach(Array((row.style == .top10 ? Array(items.prefix(10)) : items).enumerated()), id: \.element.id) { i, m in
@@ -156,13 +157,15 @@ struct Strip<C: View>: View {
         let s = a.cardSize.scale
         let expand = a.expandPosters && expands
         ScrollView(.horizontal, showsIndicators: false) {
-            LazyHStack(spacing: 40 * s) { content }
+            LazyHStack(spacing: Theme.Space.m * s) { content }
                 .scrollTargetLayout()
-                .padding(.vertical, 30 * s)
+                .padding(.vertical, Theme.Space.l * s)
         }
-        .contentMargins(.leading, 60, for: .scrollContent)
+        // Rand 80 (§4.3): Reihentitel, Hero-Info und erste Kachel starten auf einer Linie.
+        .contentMargins(.leading, Theme.Space.edge, for: .scrollContent)
         // Platz rechts, damit auch die letzten Karten aufgeklappt (640·s) an den linken Rand rücken können.
-        .contentMargins(.trailing, expand ? max(60, 1920 - 60 - 640 * s) : 60, for: .scrollContent)
+        .contentMargins(.trailing, expand ? max(Theme.Space.edge, 1920 - Theme.Space.edge - 640 * s) : Theme.Space.edge,
+                        for: .scrollContent)
         .scrollPosition(id: $anchorID, anchor: .leading)
         .environment(\.cardScale, s)
         .environment(\.expandPosters, expand)
@@ -198,7 +201,7 @@ struct PosterCard: View {
                 if item.poster == nil && !expanded { Text(item.name).font(.caption).padding(10) }
             }
             .overlay { CardStateOverlay(itemID: item.id) }
-            PosterBadgeBand(width: expanded ? h * 16 / 9 : 240 * scale, scale: scale)
+            PosterBadgeBand(width: expanded ? h * 16 / 9 : 240 * scale)
         }
         .overlay { PosterQualityBadges(item: item, scale: scale) }
         .task(id: focused && expandable) {
@@ -265,13 +268,12 @@ struct HeroCard: View {
         ZStack(alignment: .bottomLeading) {
             RemoteImage(url: item.background ?? item.poster).frame(width: 1600, height: 620).clipped()
             LinearGradient(colors: [.black.opacity(0.85), .clear], startPoint: .bottom, endPoint: .center)
-            VStack(alignment: .leading, spacing: 12) {
-                Text(item.name).font(.system(size: 64, weight: .heavy))
+            VStack(alignment: .leading, spacing: Theme.Space.s) {
+                Text(item.name).textRole(.display)
                 if let d = item.description { Text(d).lineLimit(2).frame(maxWidth: 1000, alignment: .leading) }
-                Text([item.releaseInfo, item.imdbRating.map { "★ \($0)" }].compactMap { $0 }.joined(separator: " · "))
-                    .foregroundStyle(.secondary)
+                MetaLine(parts: [item.releaseInfo, DesignText.decimal(parsing: item.imdbRating).map { "★ \($0)" }])
             }
-            .padding(50)
+            .padding(Theme.Space.xl)
         }
         .frame(width: 1600, height: 620)
     }
@@ -327,11 +329,9 @@ struct CardStateOverlay: View {
                         .shadow(radius: 4).padding(10)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                 }
-                let top = [st.episode, st.remainingSeconds.map { "noch \(max(1, Int($0 / 60))) min" }].compactMap { $0 }.joined(separator: " · ")
+                let top = DesignText.metaLine([st.episode, st.remainingSeconds.map { "noch \(max(1, Int($0 / 60))) min" }])
                 if !top.isEmpty && !hidesTopLabel {
-                    Text(top).font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(.black.opacity(0.65), in: Capsule()).padding(8)
+                    ThemeBadge(kind: .status(nil, onImage: true), text: top).padding(Theme.Space.xs)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
                 if let f = st.fraction, f > 0 {

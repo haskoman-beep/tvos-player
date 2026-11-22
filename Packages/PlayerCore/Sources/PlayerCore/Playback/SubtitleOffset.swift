@@ -25,7 +25,7 @@ public enum SubtitleOffset {
     /// „+0,3 s“, „−1,5 s“, „0,0 s“ (deutsches Komma, echtes Minuszeichen).
     public static func label(_ seconds: Double) -> String {
         let v = normalized(seconds)
-        let body = String(format: "%.1f", abs(v)).replacingOccurrences(of: ".", with: ",")
+        let body = DesignText.decimal(abs(v))
         if v > 0 { return "+\(body) s" }
         if v < 0 { return "\u{2212}\(body) s" }
         return "\(body) s"
@@ -33,7 +33,7 @@ public enum SubtitleOffset {
 
     /// Beschriftung eines Schritt-Knopfs: „−0,5“, „+0,1“.
     public static func stepLabel(_ step: Double) -> String {
-        let body = String(format: "%.1f", abs(step)).replacingOccurrences(of: ".", with: ",")
+        let body = DesignText.decimal(abs(step))
         return (step < 0 ? "\u{2212}" : "+") + body
     }
 

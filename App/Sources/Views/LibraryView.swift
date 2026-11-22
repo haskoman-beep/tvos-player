@@ -15,7 +15,7 @@ struct LibraryView: View {
         // dann ist der Merklisten-Hinweis das Fokusziel.
         let nothingToFocus = !watchlist && model.progress.continueWatching().isEmpty && model.progress.history().isEmpty
         ScrollView(.vertical) {
-            LazyVStack(alignment: .leading, spacing: 56) {
+            LazyVStack(alignment: .leading, spacing: Theme.Space.xl) {
                 HomeRowView(row: continueRow, onActivate: { $0 })
                 if watchlist {
                     HomeRowView(row: watchlistRow, onActivate: { $0 })
@@ -26,8 +26,10 @@ struct LibraryView: View {
                 HistoryRow()
                 TorBoxFilesRow()
             }
-            .padding(.vertical, 40)
+            .padding(.vertical, Theme.Space.edgeVertical)
         }
+        // A1: dunkler, ruhiger Grund wie die Bedienseiten.
+        .settingsSurface()
         .environment(focus)
     }
 }
@@ -41,8 +43,9 @@ private struct HistoryRow: View {
         if items.isEmpty {
             LibraryHint(title: "Verlauf", text: "Noch nichts zu Ende gesehen.")
         } else {
-            VStack(alignment: .leading, spacing: 18) {
-                Text("Verlauf").font(.title3.bold()).padding(.leading, 60)
+            VStack(alignment: .leading, spacing: Theme.Space.s) {
+                Text("Verlauf").textRole(.sectionTitle).padding(.leading, Theme.Space.edge)
+                    .accessibilityAddTraits(.isHeader)
                 Strip {
                     ForEach(items) { m in
                         NavigationLinkish(route: .detail(m), onActivate: { $0 }, label: PosterCard(item: m))
@@ -58,10 +61,10 @@ private struct LibraryHint: View {
     let text: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text(title).font(.title3.bold())
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
+            Text(title).textRole(.sectionTitle).accessibilityAddTraits(.isHeader)
             Text(text).quietHintStyle().frame(height: 120)
         }
-        .padding(.leading, 60)
+        .padding(.leading, Theme.Space.edge)
     }
 }

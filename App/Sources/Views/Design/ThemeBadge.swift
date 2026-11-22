@@ -1,15 +1,16 @@
 import SwiftUI
 import PlayerCore
 
-/// Plaketten nach der Formregel §4.5: eine Information, eine Form.
-/// - Technik: gefüllt neutral (Weiß 18 %), weißer Text, `radius.badge`, Höhe je Einsatzort.
+/// Plaketten nach der Formregel §4.5: eine Information, eine Form. Einziger Plakettentyp der App (Welle F-d:
+/// ersetzt `QualityBadgeView`, `QualityLogo` und `BadgeSurface`; `Badge` ist nur noch ein Altname darauf).
+/// - Technik: gefüllt neutral (Weiß 18 %), weißer Text bzw. einfarbige Wortmarke, `radius.badge`, Höhe je Einsatzort.
 /// - Bewertung: ohne Rahmen, Markenname in Markenfarbe + Zahl in Weiß („IMDb 7,1“).
 /// - Status: Kapsel, auf Bildern Schwarz 65 %, auf Flächen in Zustandsfarbe.
 /// - Meta ist keine Plakette, sondern Text (`MetaLine`).
 /// Plakettenreihen brechen nie um; was nicht passt, fällt nach Priorität weg (Welle E).
-/// Name `ThemeBadge`, weil `Badge` in DetailViews.swift schon vergeben ist.
+/// Jede Plakette spricht einen eigenen Text (A7): `spokenText`, sonst der sichtbare.
 struct ThemeBadge: View {
-    /// Höhe einer Technik-Plakette je Einsatzort.
+    /// Höhe und Schrift einer Technik-Plakette je Einsatzort.
     enum TechSize {
         case detail, sources, poster
 
@@ -20,6 +21,24 @@ struct ThemeBadge: View {
             case .poster: 26
             }
         }
+
+        /// Plakettenschrift (`badge`); auf Postern eine Stufe kleiner, damit sie in die 26er-Höhe passt.
+        var font: Font {
+            switch self {
+            case .detail, .sources: Theme.TextRole.badge.font
+            case .poster: .caption2.bold()
+            }
+        }
+    }
+
+    /// Untergrund der Plakette: bestimmt Fläche und Schrift (Technik und Status).
+    enum Surface {
+        /// Dunkle Fläche (Detailseite, Quellenliste, Panels).
+        case plain
+        /// Fokussierte, weiße Zeile: dunkle Schrift auf dunkler Tönung.
+        case focusedRow
+        /// Auf einem Bild (Poster): Schwarz 65 %, damit helle Bildstellen nicht durchscheinen.
+        case image
     }
 
     enum Kind {
@@ -37,6 +56,14 @@ struct ThemeBadge: View {
     var symbol: String? = nil
     /// Gesprochener Text, wenn der sichtbare abgekürzt ist („DV“ → „Dolby Vision“).
     var spokenText: String? = nil
+    /// Bewertung: gesprochener Markenname, wenn der sichtbare ein Zeichen ist („🍅“ → „Rotten Tomatoes“).
+    var spokenBrand: String? = nil
+    /// Untergrund (Technik und Status).
+    var surface: Surface = .plain
+    /// Technik als Wortmarke (Plakettenstil „Logo“): fetter, Großbuchstaben, gleiche Fläche.
+    var wordmark = false
+    /// Bewertung: Quelle für das Icon aus dem gewählten Icon-Satz (`RatingIconLabel`); ohne Icon der Markenname.
+    var iconSource: String? = nil
 
     var body: some View {
         content
@@ -50,21 +77,26 @@ struct ThemeBadge: View {
         switch kind {
         case .tech(let size):
             label
-                .font(Theme.TextRole.badge.font)
-                .foregroundStyle(Theme.Palette.primary)
+                .font(size.font)
+                .fontWeight(wordmark ? .heavy : nil)
+                .foregroundStyle(surface == .focusedRow ? Theme.Palette.primaryOnFocus : Theme.Palette.primary)
                 .padding(.horizontal, Theme.Space.s)
                 .frame(height: size.height)
-                .background(Theme.Palette.badgeFill, in: RoundedRectangle(cornerRadius: Theme.Radius.badge, style: .continuous))
+                .background(techFill, in: RoundedRectangle(cornerRadius: Theme.Radius.badge, style: .continuous))
         case .rating(let brand, let brandColor):
             HStack(spacing: Theme.Space.xs) {
-                Text(brand).foregroundStyle(brandColor)
+                if let iconSource {
+                    RatingIconLabel(source: iconSource) { Text(brand).foregroundStyle(brandColor) }
+                } else {
+                    Text(brand).foregroundStyle(brandColor)
+                }
                 Text(text).foregroundStyle(Theme.Palette.primary).monospacedDigit()
             }
             .font(Theme.TextRole.badge.font)
         case .status(let tone, let onImage):
             label
-                .font(Theme.TextRole.badge.font)
-                .foregroundStyle(onImage ? Theme.Palette.primary : (tone?.textColor ?? Theme.Palette.primary))
+                .font(onImage ? TechSize.poster.font : Theme.TextRole.badge.font)
+                .foregroundStyle(statusForeground(tone: tone, onImage: onImage))
                 .padding(.horizontal, Theme.Space.s)
                 .padding(.vertical, Theme.Space.xs / 2)
                 .background(statusFill(tone: tone, onImage: onImage), in: Capsule())
@@ -82,17 +114,65 @@ struct ThemeBadge: View {
         }
     }
 
+    private var techFill: Color {
+        switch surface {
+        case .plain: Theme.Palette.badgeFill
+        case .focusedRow: Theme.Palette.badgeFillOnFocus
+        case .image: Theme.Palette.badgeOnImage
+        }
+    }
+
+    private func statusForeground(tone: Theme.Tone?, onImage: Bool) -> Color {
+        if onImage { return Theme.Palette.primary }
+        if surface == .focusedRow { return Theme.Palette.primaryOnFocus }
+        return tone?.textColor ?? Theme.Palette.primary
+    }
+
     private func statusFill(tone: Theme.Tone?, onImage: Bool) -> Color {
         if onImage { return Theme.Palette.badgeOnImage }
+        // Auf der weißen Fokuszeile deckend in Zustandsfarbe mit dunkler Schrift (Tönung wäre dort kaum sichtbar).
+        if surface == .focusedRow { return tone?.color ?? Theme.Palette.badgeFillOnFocus }
         return tone.map { $0.color.opacity(0.22) } ?? Theme.Palette.badgeFill
     }
 
     private var accessibilityText: String {
         switch kind {
-        case .rating(let brand, _): DesignText.accessibilityLabel([brand, spokenText ?? text])
+        case .rating(let brand, _): DesignText.accessibilityLabel([spokenBrand ?? brand, spokenText ?? text])
         default: spokenText ?? text
         }
     }
+}
+
+extension ThemeBadge {
+    /// Plakette aus dem PlayerCore-Modell: Cache-Zustand als Status-Kapsel, alles andere als Technik.
+    init(_ badge: QualityBadge, size: TechSize, surface: Surface = .plain) {
+        switch badge.tone {
+        case .neutral:
+            self.init(kind: .tech(size), text: badge.logo?.wordmark ?? badge.text, spokenText: badge.spokenText,
+                      surface: surface, wordmark: badge.logo != nil)
+        case .ready:
+            self.init(kind: .status(.ok, onImage: surface == .image), text: badge.displayText, symbol: "bolt.fill",
+                      spokenText: badge.spokenText, surface: surface)
+        case .pending:
+            self.init(kind: .status(.warn, onImage: surface == .image), text: badge.displayText,
+                      spokenText: badge.spokenText, surface: surface)
+        }
+    }
+
+    /// Bewertung aus dem PlayerCore-Modell (Wert mit Komma, VoiceOver „IMDb 7,1“).
+    init(rating: RatingBadge, brandColor: Color) {
+        self.init(kind: .rating(brand: rating.label, brandColor: brandColor), text: rating.displayValue,
+                  spokenText: rating.displayValue.replacingOccurrences(of: "\u{00A0}", with: " "),
+                  spokenBrand: rating.spokenSource, iconSource: rating.source)
+    }
+}
+
+/// Altname für die Kurz-Plaketten der Spurliste im Player („Forced“, „SDH“). Zeichnet eine Technik-Plakette;
+/// die Farbe wird nicht mehr genutzt (Formregel §4.5). Bleibt, damit die Player-Dateien unberührt bleiben.
+struct Badge: View {
+    let text: String
+    init(_ text: String, _ color: Color) { self.text = text }
+    var body: some View { ThemeBadge(kind: .tech(.sources), text: text) }
 }
 
 /// Meta-Zeile als reiner Text in `rowDetail` mit „ · “ („2018 · 97 min · FSK 0 · Animation“).

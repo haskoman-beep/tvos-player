@@ -99,7 +99,7 @@ struct HeroLayer: View {
             HeroBackdrop(url: shown.flatMap { $0.background ?? $0.poster })
             if let shown {
                 HeroInfo(item: shown)
-                    .padding(.leading, 60).padding(.top, 10)
+                    .padding(.leading, Theme.Space.edge).padding(.top, Theme.Space.s)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -201,24 +201,24 @@ struct HeroInfo: View {
 
     var body: some View {
         let d = current
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: Theme.Space.m) {
             Group {
                 if let logo = d?.logo ?? item.logo {
                     RemoteImage(url: logo, maxPixels: 1200, fit: true)
                         .frame(maxWidth: 640, maxHeight: HeroMetrics.logoHeight, alignment: .bottomLeading)
                 } else if d != nil || !item.id.hasPrefix("tt") && !item.id.hasPrefix("tmdb:") {
-                    Text(item.name).font(.system(size: 60, weight: .heavy)).lineLimit(2).minimumScaleFactor(0.6)
-                        .frame(maxWidth: 1100, alignment: .bottomLeading)
+                    Text(item.name).textRole(.display).lineLimit(2).minimumScaleFactor(0.6)
+                        .frame(maxWidth: Theme.Layout.contentMaxWidth, alignment: .bottomLeading)
                 }
             }
             .frame(height: HeroMetrics.logoHeight, alignment: .bottomLeading)
-            let line = [item.releaseInfo, d?.runtime, d?.certification].compactMap { $0 }.filter { !$0.isEmpty }
-            Text(line.joined(separator: " · ")).font(.headline).foregroundStyle(.secondary)
+            // Meta ist Text, keine Plakette (§4.5): „2018 · 1 h 37 min · FSK 0“.
+            MetaLine(parts: [item.releaseInfo, d?.runtime, d?.certification])
                 .frame(height: 30, alignment: .leading)
             InfoBadges(ratings: d.map { model.ratingBadges(imdbRating: $0.imdbRating, mdblist: $0.ratings) } ?? [], tech: [])
                 .frame(height: InfoBadges.height, alignment: .leading)
             Text(d?.overview ?? item.description ?? "").font(.callout).lineLimit(2)
-                .frame(maxWidth: 1100, alignment: .leading)
+                .frame(maxWidth: Theme.Layout.contentMaxWidth, alignment: .leading)
         }
         .shadow(color: .black.opacity(0.6), radius: 8)
         .animation(.easeInOut(duration: 0.3), value: item.id)
@@ -268,7 +268,7 @@ struct HeroButtons: View {
     enum Field: Hashable { case play, details }
 
     var body: some View {
-        HStack(spacing: 30) {
+        HStack(spacing: Theme.Space.l) {
             Button { play() } label: {
                 Label(starting ? "Wird geladen …" : "Abspielen", systemImage: "play.fill")
             }
@@ -277,9 +277,9 @@ struct HeroButtons: View {
                 Label("Details", systemImage: "info.circle")
             }
             .focused($field, equals: .details)
-            Spacer(minLength: 40)
+            Spacer(minLength: Theme.Space.xl)
             if slides.items.count > 1 {
-                HStack(spacing: 12) {
+                HStack(spacing: Theme.Space.s) {
                     ForEach(slides.items.indices, id: \.self) { i in
                         Circle().fill(.white.opacity(i == slides.index ? 1 : 0.35))
                             .frame(width: 12, height: 12)
@@ -288,8 +288,8 @@ struct HeroButtons: View {
                 .animation(.easeInOut(duration: 0.3), value: slides.index)
             }
         }
-        .padding(.horizontal, 60)
-        .padding(.vertical, 10)
+        .padding(.horizontal, Theme.Space.edge)
+        .padding(.vertical, Theme.Space.s)
         .frame(maxWidth: .infinity, alignment: .leading)
         .focusSection()
         .defaultFocus($field, .play, priority: .userInitiated)

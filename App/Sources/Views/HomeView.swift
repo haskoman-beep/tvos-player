@@ -26,7 +26,7 @@ struct HomeView: View {
                 heroHome(rows)
             } else {
                 ScrollView(.vertical) {
-                    LazyVStack(alignment: .leading, spacing: 56) { rowList(rows) }
+                    LazyVStack(alignment: .leading, spacing: Theme.Space.xl) { rowList(rows) }
                         .padding(.vertical, 40)
                 }
             }
@@ -57,7 +57,7 @@ struct HomeView: View {
         ZStack(alignment: .topLeading) {
             HeroLayer(slides: slides)
             ScrollView(.vertical) {
-                LazyVStack(alignment: .leading, spacing: 56) {
+                LazyVStack(alignment: .leading, spacing: Theme.Space.xl) {
                     HeroButtons(slides: slides)
                     rowList(rows)
                 }

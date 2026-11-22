@@ -6,14 +6,15 @@ struct FolderView: View {
     let folder: Folder
     var body: some View {
         ScrollView(.vertical) {
-            LazyVStack(alignment: .leading, spacing: 50) {
-                Text(folder.title).font(.largeTitle.bold()).padding(.leading, 60)
-                if folder.sources.isEmpty { FocusAnchor(kind: .back).padding(.leading, 60) }   // N6 (Welle F-c)
+            LazyVStack(alignment: .leading, spacing: Theme.Space.xl) {
+                Text(folder.title).textRole(.display).padding(.leading, Theme.Space.edge)
+                    .accessibilityAddTraits(.isHeader)
+                if folder.sources.isEmpty { FocusAnchor(kind: .back).padding(.leading, Theme.Space.edge) }   // N6 (Welle F-c)
                 ForEach(folder.sources) { s in
                     HomeRowView(row: HomeRow(content: .list(s), style: .poster), onActivate: { $0 })
                 }
             }
-            .padding(.vertical, 40)
+            .padding(.vertical, Theme.Space.edgeVertical)
         }
     }
 }
@@ -29,7 +30,7 @@ struct CollectionView: View {
             HomeRowView(row: HomeRow(content: .collection(id: collectionID)), onActivate: { $0 })
             // N6 (Welle F-c): leere Collection sofort, fehlende erst nach der Ladezeit.
             if c?.folders.isEmpty == true || (c == nil && missingSettled) {
-                FocusAnchor(kind: .back).padding(.leading, 60)
+                FocusAnchor(kind: .back).padding(.leading, Theme.Space.edge)
             }
         }
         .task {
@@ -95,24 +96,23 @@ struct DetailView: View {
             RemoteImage(url: meta?.background ?? item.background).ignoresSafeArea().overlay(Color.black.opacity(0.55))
             ScrollViewReader { proxy in
                 ScrollView(.vertical) {
-                    VStack(alignment: .leading, spacing: 28) {
+                    VStack(alignment: .leading, spacing: Theme.Space.l) {
                         if let logo = meta?.logo {
                             RemoteImage(url: logo, maxPixels: 1400, fit: true).frame(maxWidth: 700, maxHeight: 200, alignment: .leading)
                         } else {
-                            Text(item.name).font(.system(size: 70, weight: .heavy))
+                            Text(item.name).textRole(.display).accessibilityAddTraits(.isHeader)
                         }
                         // Welle E-a: FSK steht in der Textzeile („2018 · 97 min · FSK 0 · Genre“), nicht als Plakette.
-                        Text([meta?.releaseInfo ?? item.releaseInfo, meta?.runtime, certification ?? ratings?.certification,
-                              meta?.genres?.prefix(3).joined(separator: ", ")]
-                            .compactMap { $0 }.joined(separator: " · ")).foregroundStyle(.secondary)
+                        MetaLine(parts: [meta?.releaseInfo ?? item.releaseInfo, meta?.runtime, certification ?? ratings?.certification,
+                                         meta?.genres?.prefix(3).joined(separator: ", ")])
                         InfoBadges(ratings: model.ratingBadges(imdbRating: meta?.imdbRating, mdblist: ratings), tech: techBadges)
-                        if let t = extra?.tagline { Text(t).italic().foregroundStyle(.secondary) }
+                        if let t = extra?.tagline { Text(t).italic().textRole(.rowDetail) }
                         if !overview.isEmpty {
                             // Kurz halten; Klick zeigt den ganzen Text.
                             Button { showFullText = true } label: { FocusHighlight { Text(overview).font(.callout).foregroundStyle(.white).lineLimit(3).multilineTextAlignment(.leading) } }
                                 .buttonStyle(.plain)
                                 .focused($focus, equals: .overview)
-                                .frame(maxWidth: 1100, alignment: .leading)
+                                .frame(maxWidth: Theme.Layout.contentMaxWidth, alignment: .leading)
                         }
 
                         if loading {
@@ -124,7 +124,7 @@ struct DetailView: View {
                                 episodes(imdb)
                             } else {
                                 let resume = model.progress.resumePosition(for: imdb)
-                                HStack(spacing: 30) {
+                                HStack(spacing: Theme.Space.l) {
                                     Button(resume.map { "▶ Fortsetzen ab \(timeText($0))" } ?? "▶ Abspielen") {
                                         markOpenedPlayback()
                                         navigate(.streams(model.moviePlayRequest(item, imdb: imdb, meta: meta, resumeLastSource: resume != nil)))
@@ -133,14 +133,15 @@ struct DetailView: View {
                                     if let k = extra?.trailerYouTube { trailerButton(k) }
                                 }
                             }
-                            if let trailerNote { Text(trailerNote).foregroundStyle(.secondary) }
+                            if let trailerNote { Text(trailerNote).textRole(.rowDetail) }
                             if let x = extra { DetailExtras(info: x, isSeries: isSeries) }
                         } else {
-                            Text("Keine IMDb-ID gefunden – Streams nicht abrufbar.").foregroundStyle(.secondary)
+                            Text("Keine IMDb-ID gefunden – Streams nicht abrufbar.").textRole(.rowDetail)
                             if overview.isEmpty { FocusAnchor(kind: .back) }   // N6
                         }
                     }
-                    .padding(80)
+                    .padding(.horizontal, Theme.Space.edge)
+                    .padding(.vertical, Theme.Space.edgeVertical)
                 }
                 .onChange(of: scrollRequest) {
                     guard let id = scrollTarget else { return }
@@ -379,7 +380,7 @@ struct DetailView: View {
 
     @ViewBuilder private func episodes(_ imdb: String) -> some View {
         if seasons.isEmpty {
-            Text("Keine Folgen gefunden.").foregroundStyle(.secondary)
+            Text("Keine Folgen gefunden.").textRole(.rowDetail)
             if overview.isEmpty && extra?.trailerYouTube == nil { FocusAnchor(kind: .back) }   // N6
         } else {
             ScrollView(.horizontal) {
@@ -391,7 +392,7 @@ struct DetailView: View {
                 }
             }
             let eps = (meta?.videos ?? []).filter { $0.season == season }.sorted { ($0.episode ?? 0) < ($1.episode ?? 0) }
-            LazyVStack(alignment: .leading, spacing: 16) {
+            LazyVStack(alignment: .leading, spacing: Theme.Space.m) {
                 ForEach(eps) { v in
                     let isFirst = v.id == eps.first?.id
                     Button {
@@ -401,21 +402,22 @@ struct DetailView: View {
                                                       item: progressItem(imdb), season: season, episode: e,
                                                       episodes: EpisodeRef.list(from: meta?.videos ?? []))))
                     } label: {
-                        HStack(spacing: 24) {
+                        HStack(spacing: Theme.Space.m) {
                             let spoiler = model.profile.sources.blurUnwatchedStills && !model.progress.isWatched("\(imdb):\(season):\(v.episode ?? 0)")
                             RemoteImage(url: v.thumbnail, maxPixels: 560, blur: spoiler ? SpoilerStill.blurRadius : 0)
                                 .frame(width: 280, height: 158).clipped()
                                 .spoilerMark(spoiler)
-                            VStack(alignment: .leading, spacing: 6) {
+                            // Nur Schriftrollen: Farben regelt der Systemknopf (dunkel auf der weißen Fokusfläche).
+                            VStack(alignment: .leading, spacing: Theme.Space.xs) {
                                 HStack {
-                                    Text("\(v.episode ?? 0). \(v.name ?? v.title ?? "Folge")").font(.headline)
+                                    Text("\(v.episode ?? 0). \(v.name ?? v.title ?? "Folge")").font(Theme.TextRole.rowTitleEmphasis.font)
                                     let key = "\(imdb):\(season):\(v.episode ?? 0)"
                                     if model.progress.isWatched(key) { Image(systemName: "checkmark.circle.fill").foregroundStyle(.green) }
                                     else if let p = model.progress.entries[key], p.position >= 60 {
                                         ProgressView(value: p.fraction).frame(width: 120)
                                     }
                                 }
-                                if let o = v.overview { Text(o).font(.caption).lineLimit(2).foregroundStyle(.secondary) }
+                                if let o = v.overview { Text(o).font(Theme.TextRole.rowDetail.font).lineLimit(2).foregroundStyle(.secondary) }
                             }
                             Spacer()
                         }
@@ -454,8 +456,8 @@ struct FullTextSheet: View {
     var body: some View {
         // tvOS scrollt nur von Fokus zu Fokus: Text in Absätze/Stücke teilen, jedes Stück fokussierbar.
         ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 24) {
-                Text(title).font(.title2.bold())
+            VStack(alignment: .leading, spacing: Theme.Space.m) {
+                Text(title).textRole(.pageTitle).accessibilityAddTraits(.isHeader)
                 ForEach(Array(TextChunks.split(text).enumerated()), id: \.offset) { _, chunk in
                     Text(chunk).font(.body).focusable()
                 }
@@ -518,12 +520,22 @@ struct StreamListView: View {
                             StreamRow(addon: showAddon ? entry.addon : nil, stream: entry.stream).opacity(failed.contains(entry.stream.id) ? 0.4 : 1)
                                 .recentlyFailedMark(entry.stream, title: (current ?? request).id)
                         }
+                        // Welle F-d: Zeilenform aus den Tokens (bg.row, radius.row, weiße Fokusfläche) über die volle Breite.
+                        .buttonStyle(ThemeRowButtonStyle(maxWidth: .infinity))
+                        .listRowBackground(Color.clear)
                         .focused($focusedStream, equals: entry.stream.id)
                         .id(entry.stream.id)
                     }
                 } header: {
-                    Text(current?.title ?? request.title).font(.title2.bold()).foregroundStyle(.primary)
-                        .textCase(nil).lineLimit(2).padding(.bottom, 10)
+                    VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                        Text(current?.title ?? request.title).textRole(.pageTitle).lineLimit(2)
+                            .accessibilityAddTraits(.isHeader)
+                        // X3: „161 Quellen · 8,4 s“, sobald die Suche fertig ist.
+                        if !loading && !streams.isEmpty {
+                            StreamListSummaryLine(id: (current ?? request).id, count: streams.count)
+                        }
+                    }
+                    .textCase(nil).padding(.bottom, Theme.Space.s)
                 }
             }
             .task(id: focusRequest) {
@@ -551,7 +563,7 @@ struct StreamListView: View {
         // Gerätefoto Build 28: farbiger Schimmer hinter der Liste (App-Akzent als Tönung der Zeilen/Glasflächen,
         // durchscheinender Hintergrund). Neutral: keine Akzent-Tönung, eigener dunkler, deckender Hintergrund.
         .tint(Color?.none)
-        .background(Color(white: 0.07).ignoresSafeArea())
+        .settingsSurface()
         .streamSearchPartials(id: request.id, loading: loading && current == nil) { streams = model.orderedStreams($0) }
         .task {
             streams = model.orderedStreams(request.resumeLastSource && playing == nil
@@ -751,41 +763,44 @@ struct StreamRow: View {
     @EnvironmentObject var model: AppModel
     let addon: String?
     let stream: StreamItem
-    /// Fokussierte Zeile ist weiß: dann dunkle Schrift und dunkles Glas, sonst weiß auf hellem Glas.
+    /// Fokussierte Zeile ist weiß: Texte über `textRoleInRow` dunkel, Plaketten auf der Fokus-Tönung.
     @Environment(\.isFocused) private var focused
     var body: some View {
         let text = StreamRowText(stream)
         let badges = StreamListBadges.badges(stream, mode: model.profile.sources.appBadges, settings: model.profile.appearance.badges)
-        let primary = focused ? Color.black : Color.white
-        let secondary = focused ? Color.black.opacity(0.65) : Color.white.opacity(0.65)
-        HStack(alignment: .top, spacing: 28) {
+        HStack(alignment: .top, spacing: Theme.Space.m) {
             if !text.name.isEmpty {
-                Text(text.name).font(.caption.bold()).foregroundStyle(primary)
+                Text(text.name).textRoleInRow(.rowTitleEmphasis)
                     .lineLimit(StreamRowText.maxLines).frame(width: 330, alignment: .leading)
             }
-            Text(text.body).font(.caption).foregroundStyle(secondary)
+            Text(text.body).textRoleInRow(.rowDetail)
                 .lineLimit(StreamRowText.maxLines).frame(maxWidth: .infinity, alignment: .leading)
             if !badges.isEmpty || addon != nil {
-                VStack(alignment: .trailing, spacing: 8) {
+                VStack(alignment: .trailing, spacing: Theme.Space.xs) {
                     if !badges.isEmpty {
-                        HStack(spacing: 10) {
-                            ForEach(badges) { QualityBadgeView(badge: $0, height: 38, surface: focused ? .light : .dark) }
+                        HStack(spacing: Theme.Space.xs) {
+                            ForEach(badges) { ThemeBadge($0, size: .sources, surface: focused ? .focusedRow : .plain) }
                         }
                     }
-                    if let addon { Text(addon).font(.caption2).foregroundStyle(secondary).lineLimit(1) }
+                    if let addon { Text(addon).textRoleInRow(.rowDetail).lineLimit(1) }
                 }
                 .fixedSize()
             }
         }
+        .multilineTextAlignment(.leading)
     }
 }
 
-struct Badge: View {
-    let text: String
-    let color: Color
-    init(_ text: String, _ color: Color) { self.text = text; self.color = color }
+/// X3: Kopfzeile der Quellenliste „161 Quellen · 8,4 s“ (Dauer = längste Addon-Antwort der laufenden Suche).
+/// Eigene View, damit nur sie dem Suchstand folgt, nicht die ganze Liste.
+struct StreamListSummaryLine: View {
+    @ObservedObject private var status = StreamSearchStatus.shared
+    let id: String
+    let count: Int
+
     var body: some View {
-        Text(text).font(.caption.bold()).padding(.horizontal, 12).padding(.vertical, 4).background(color.opacity(0.7), in: Capsule())
+        Text(StreamListSummary.text(count: count, milliseconds: status.progress[id]?.elapsedMilliseconds))
+            .textRole(.rowDetail)
     }
 }
 
@@ -832,64 +847,49 @@ struct SearchView: View {
     }
 }
 
-/// Infozeile der Detailseite: Technik als Glas-Plaketten, Bewertungen mit Rahmen (Zwei-Stil-Regel).
-/// Alle Plaketten einzeilig, gleich hoch; passt die Zeile nicht, bricht sie um (FlowLayout), statt abzuschneiden.
+/// Infozeile der Detailseite (§4.5): Technik gefüllt neutral, Bewertungen ohne Rahmen („IMDb 7,1“).
+/// Einzeilig: passt die Zeile nicht, entfallen Bewertungen von hinten (Technik bleibt), nie Umbruch.
 struct InfoBadges: View {
     /// Welle E-a: schon nach der Bewertungsauswahl gefiltert (`AppModel.ratingBadges`).
     let ratings: [RatingBadge]
     /// Höchstens 5 (`QualityBadges.detailRow`); die Altersfreigabe steht in der Textzeile darüber.
     let tech: [QualityBadge]
-    static let height: CGFloat = 44
+    static let height: CGFloat = ThemeBadge.TechSize.detail.height
 
     var body: some View {
-        let rated = ratings
         // Immer vorhandener Platzhalter hält die Zeilenhöhe, auch bevor die erste Plakette kommt.
         ZStack(alignment: .leading) {
-          Color.clear.frame(height: Self.height)
-          if !rated.isEmpty || !tech.isEmpty {
-            FlowLayout(spacing: 14, lineSpacing: 14) {
-                // Neutrales Glas wie in der Quellenliste (Task 8); Bewertungen behalten ihre Markenfarben.
-                // Technik zuerst: sie passt immer in die erste Zeile, nur gewählte Bewertungen können umbrechen.
-                ForEach(tech) { QualityBadgeView(badge: $0, height: Self.height, surface: .dark) }
-                ForEach(rated) { b in
-                    HStack(spacing: 6) {
-                        RatingIconLabel(source: b.source) { Text(b.label).foregroundStyle(labelColor(b.source)) }
-                        Text(b.text)
-                    }
-                    .modifier(BadgeShape())
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(scoreColor(b.score).opacity(0.8), lineWidth: 2))
+            Color.clear.frame(height: Self.height)
+            if !ratings.isEmpty || !tech.isEmpty {
+                ViewThatFits(in: .horizontal) {
+                    ForEach(Array((0...ratings.count).reversed()), id: \.self) { n in row(ratings: Array(ratings.prefix(n))) }
+                }
+                .frame(maxWidth: 1400, alignment: .leading)
+                .transition(.opacity)
+            }
+        }
+    }
+
+    private func row(ratings shown: [RatingBadge]) -> some View {
+        HStack(spacing: Theme.Space.m) {
+            if !tech.isEmpty {
+                HStack(spacing: Theme.Space.xs) {
+                    ForEach(tech) { ThemeBadge($0, size: .detail) }
                 }
             }
-            .frame(maxWidth: 1400, alignment: .leading)
-            .transition(.opacity)
-          }
+            ForEach(shown) { ThemeBadge(rating: $0, brandColor: Self.brandColor($0.source)) }
         }
     }
 
-    /// Einheitliche Schrift, Höhe und Innenabstand; nie umbrechen.
-    struct BadgeShape: ViewModifier {
-        func body(content: Content) -> some View {
-            content
-                .font(.caption.weight(.semibold))
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-                .padding(.horizontal, 12)
-                .frame(height: InfoBadges.height)
-        }
-    }
-
-    private func labelColor(_ source: String) -> Color {
+    /// Markenfarbe des Quellennamens (nur Schrift, keine fremden Logos).
+    static func brandColor(_ source: String) -> Color {
         switch source {
         case "imdb": Color(red: 0.96, green: 0.77, blue: 0.09)
         case "letterboxd": Color(red: 0.0, green: 0.88, blue: 0.33)
         case "trakt": Color(red: 0.93, green: 0.11, blue: 0.14)
         case "tmdb": Color(red: 0.0, green: 0.82, blue: 0.85)
-        default: .white
+        default: Theme.Palette.primary
         }
-    }
-
-    private func scoreColor(_ s: Double) -> Color {
-        s >= 70 ? .green : s >= 50 ? .yellow : .red
     }
 }
 
@@ -900,9 +900,9 @@ struct DetailExtras: View {
     let isSeries: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 40) {
+        VStack(alignment: .leading, spacing: Theme.Space.l) {
             if !info.cast.isEmpty {
-                Text("Besetzung").font(.title3.bold())
+                Text("Besetzung").textRole(.sectionTitle).accessibilityAddTraits(.isHeader)
                 ScrollView(.horizontal) {
                     LazyHStack(spacing: 36) {
                         ForEach(info.cast) { c in
@@ -924,7 +924,7 @@ struct DetailExtras: View {
                 .scrollClipDisabled()
             }
             if !info.recommendations.isEmpty {
-                Text("Ähnliche Titel").font(.title3.bold())
+                Text("Ähnliche Titel").textRole(.sectionTitle).accessibilityAddTraits(.isHeader)
                 ScrollView(.horizontal) {
                     LazyHStack(spacing: 40) {
                         ForEach(info.recommendations) { m in
@@ -937,7 +937,7 @@ struct DetailExtras: View {
             }
             let rows = aboutRows
             if !rows.isEmpty {
-                Text("Über").font(.title3.bold())
+                Text("Über").textRole(.sectionTitle).accessibilityAddTraits(.isHeader)
                 Button {} label: {
                     Grid(alignment: .leading, horizontalSpacing: 40, verticalSpacing: 14) {
                         ForEach(rows, id: \.0) { r in
@@ -992,42 +992,3 @@ struct DetailExtras: View {
     }
 }
 
-/// Zeilen-Umbruch-Layout: Kinder in ihrer Idealgröße nebeneinander, bei Platzmangel in die nächste Zeile.
-struct FlowLayout: Layout {
-    var spacing: CGFloat = 14
-    var lineSpacing: CGFloat = 14
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let rows = arrange(width: proposal.width ?? .infinity, subviews: subviews)
-        let width = rows.map { r in r.map(\.size.width).reduce(0, +) + spacing * CGFloat(max(0, r.count - 1)) }.max() ?? 0
-        let height = rows.map { r in r.map(\.size.height).max() ?? 0 }.reduce(0, +) + lineSpacing * CGFloat(max(0, rows.count - 1))
-        return CGSize(width: width, height: height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var y = bounds.minY
-        for row in arrange(width: bounds.width, subviews: subviews) {
-            let h = row.map(\.size.height).max() ?? 0
-            var x = bounds.minX
-            for e in row {
-                subviews[e.index].place(at: CGPoint(x: x, y: y + (h - e.size.height) / 2), proposal: ProposedViewSize(e.size))
-                x += e.size.width + spacing
-            }
-            y += h + lineSpacing
-        }
-    }
-
-    private func arrange(width: CGFloat, subviews: Subviews) -> [[(index: Int, size: CGSize)]] {
-        var rows: [[(index: Int, size: CGSize)]] = [[]]
-        var x: CGFloat = 0
-        for i in subviews.indices {
-            let size = subviews[i].sizeThatFits(.unspecified)
-            if !rows[rows.count - 1].isEmpty, x + spacing + size.width > width {
-                rows.append([]); x = 0
-            }
-            x += (rows[rows.count - 1].isEmpty ? 0 : spacing) + size.width
-            rows[rows.count - 1].append((i, size))
-        }
-        return rows.filter { !$0.isEmpty }
-    }
-}

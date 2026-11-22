@@ -21,7 +21,7 @@ public struct TorBoxFile: Sendable, Hashable, Identifiable {
 
     public var id: String { "\(kind.rawValue):\(itemID):\(fileID)" }
     /// "12,3 GB".
-    public var sizeLabel: String { String(format: "%.1f GB", Double(size) / 1_000_000_000).replacingOccurrences(of: ".", with: ",") }
+    public var sizeLabel: String { DesignText.decimal(Double(size) / 1_000_000_000) + " GB" }
 }
 
 /// TorBox-API (`https://api.torbox.app`): eigene Dateien (`mylist`) und Abspiel-Link (`requestdl`).

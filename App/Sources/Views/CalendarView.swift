@@ -17,15 +17,16 @@ struct CalendarView: View {
         let showTiles = model.tmdb != nil && loaded && !days.isEmpty
         let firstTile = showTiles ? days.first?.items.first?.id : nil
         ScrollView(.vertical) {
-            LazyVStack(alignment: .leading, spacing: 50) {
+            LazyVStack(alignment: .leading, spacing: Theme.Space.xl) {
                 // Kopfzeile mit Titel und Lade-/Hinweiszeile = festes Fokusziel der Seite (bleibt in allen Zuständen
                 // dasselbe). Ohne Fokussierbares im Inhalt (Laden, Hinweis) schlösse Zurück sonst die App.
-                VStack(alignment: .leading, spacing: 50) {
-                    Text("Kalender").font(.title2.bold()).foregroundStyle(.primary).padding(.leading, 60)
+                VStack(alignment: .leading, spacing: Theme.Space.l) {
+                    Text("Kalender").textRole(.pageTitle).padding(.leading, Theme.Space.edge)
+                        .accessibilityAddTraits(.isHeader)
                     if model.tmdb == nil {
                         CalendarHint(text: "TMDB-Key fehlt (Einstellungen → Dienste & Schlüssel).")
                     } else if !loaded {
-                        ProgressView().padding(.leading, 60)
+                        ProgressView().padding(.leading, Theme.Space.edge)
                     } else if days.isEmpty {
                         CalendarHint(text: "Keine neuen Folgen in den nächsten 14 Tagen")
                     }
@@ -34,8 +35,9 @@ struct CalendarView: View {
                 .focused($headerFocused)
                 if showTiles {
                     ForEach(days, id: \.label) { day in
-                        VStack(alignment: .leading, spacing: 18) {
-                            Text(day.label).font(.title3.bold()).padding(.leading, 60)
+                        VStack(alignment: .leading, spacing: Theme.Space.s) {
+                            Text(day.label).textRole(.sectionTitle).padding(.leading, Theme.Space.edge)
+                                .accessibilityAddTraits(.isHeader)
                             Strip {
                                 ForEach(day.items) { e in
                                     NavigationLinkish(route: .detail(e.seriesPreview), onActivate: { $0 },
@@ -47,8 +49,10 @@ struct CalendarView: View {
                     }
                 }
             }
-            .padding(.vertical, 40)
+            .padding(.vertical, Theme.Space.edgeVertical)
         }
+        // A1: dunkler, ruhiger Grund wie die Bedienseiten.
+        .settingsSurface()
         // Mit Kacheln führt der Weg aus der Seitenleiste auf die erste Kachel, nicht auf die Kopfzeile.
         .defaultFocus($tile, firstTile, priority: .userInitiated)
         // Fokus lag beim Laden auf der Kopfzeile: beim ersten Erscheinen der Kacheln einmal auf die erste Kachel.
@@ -74,7 +78,7 @@ struct CalendarView: View {
 private struct CalendarHint: View {
     let text: String
     var body: some View {
-        Text(text).quietHintStyle().frame(height: 120).padding(.leading, 60)
+        Text(text).quietHintStyle().frame(height: 120).padding(.leading, Theme.Space.edge)
     }
 }
 
@@ -87,11 +91,11 @@ struct CalendarTile: View {
             RemoteImage(url: episode.still ?? episode.background ?? episode.poster, maxPixels: 900)
                 .frame(width: 440, height: 248).clipped()
             LinearGradient(colors: [.black.opacity(0.85), .clear], startPoint: .bottom, endPoint: .center)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(episode.seriesName).font(.headline).lineLimit(1)
-                Text(episode.label).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            VStack(alignment: .leading, spacing: Theme.Space.xs / 2) {
+                Text(episode.seriesName).textRole(.rowTitleEmphasis).lineLimit(1)
+                Text(episode.label).textRole(.rowDetail).lineLimit(1)
             }
-            .shadow(radius: 6).padding(.horizontal, 14).padding(.bottom, 16)
+            .shadow(radius: 6).padding(.horizontal, Theme.Space.s).padding(.bottom, Theme.Space.s)
         }
         .frame(width: 440, height: 248)
     }
@@ -110,7 +114,8 @@ struct UpcomingTodayCard: View {
                 RemoteImage(url: item.background ?? item.poster, maxPixels: 900)
                     .frame(width: 440 * scale, height: 248 * scale).clipped()
                     .overlay(alignment: .bottomLeading) {
-                        Text(item.name).font(.headline).shadow(radius: 6).padding(.horizontal, 14).padding(.bottom, 24)
+                        Text(item.name).textRole(.rowTitleEmphasis).shadow(radius: 6)
+                            .padding(.horizontal, Theme.Space.s).padding(.bottom, Theme.Space.m)
                     }
             } else {
                 // Hochformat wie alle Poster-Reihen: Kartengröße, Aufklappen, Scroll-Anker.
@@ -121,9 +126,7 @@ struct UpcomingTodayCard: View {
         }
         .overlay(alignment: .topLeading) {
             if let label = item.releaseInfo {
-                Text(label).font(.caption2.weight(.semibold))
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(.black.opacity(0.65), in: Capsule()).padding(8)
+                ThemeBadge(kind: .status(nil, onImage: true), text: label).padding(Theme.Space.xs)
             }
         }
     }

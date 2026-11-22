@@ -214,10 +214,8 @@ public enum QualityBadges {
     /// Dateigröße wie zuvor (Dezimal-Einheiten, deutsches Komma): „30,71 GB“, „854 MB“, „1,20 TB“.
     public static func formatSize(_ bytes: Int64) -> String {
         let v = Double(bytes)
-        let s: String
-        if v >= 1e12 { s = String(format: "%.2f TB", v / 1e12) }
-        else if v >= 1e9 { s = String(format: "%.2f GB", v / 1e9) }
-        else { s = String(format: "%.0f MB", v / 1e6) }
-        return s.replacingOccurrences(of: ".", with: ",")
+        if v >= 1e12 { return DesignText.decimal(v / 1e12, fractionDigits: 2) + " TB" }
+        if v >= 1e9 { return DesignText.decimal(v / 1e9, fractionDigits: 2) + " GB" }
+        return DesignText.decimal(v / 1e6, fractionDigits: 0) + " MB"
     }
 }

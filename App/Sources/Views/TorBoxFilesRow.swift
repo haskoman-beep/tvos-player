@@ -29,11 +29,11 @@ struct TorBoxFilesRow: View {
 
     var body: some View {
         if let key {
-            VStack(alignment: .leading, spacing: 18) {
-                Text("Meine TorBox-Dateien").font(.title3.bold()).padding(.leading, 60)
+            VStack(alignment: .leading, spacing: Theme.Space.s) {
+                Text("Meine TorBox-Dateien").textRole(.sectionTitle).padding(.leading, Theme.Space.edge)
                 if let files, !files.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
-                        LazyHStack(spacing: 40) {
+                        LazyHStack(spacing: Theme.Space.m) {
                             ForEach(files.prefix(Self.maxShown)) { f in
                                 let resume = memory.fileResume(profile: model.profile.id, key: Self.progressKey(f))
                                 Button { Task { await play(f, key: key, fromStart: false) } } label: {
@@ -64,11 +64,11 @@ struct TorBoxFilesRow: View {
                             }
                             .buttonStyle(.card)
                         }
-                        .padding(.horizontal, 60).padding(.vertical, 20)
+                        .padding(.horizontal, Theme.Space.edge).padding(.vertical, Theme.Space.m)
                     }
                 } else {
                     Text(files == nil ? (failed ? "TorBox nicht erreichbar." : "Lädt …") : "Keine fertigen Video-Dateien im Konto.")
-                        .quietHintStyle().frame(height: 120).padding(.leading, 60)
+                        .quietHintStyle().frame(height: 120).padding(.leading, Theme.Space.edge)
                 }
             }
             .task(id: key) { await load(key: key, fresh: false) }

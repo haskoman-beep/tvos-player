@@ -135,6 +135,10 @@ enum Theme {
         static let secondaryOnFocus = Color.black.opacity(0.6)
         /// Neutrale Plakettenfläche (Technik): Weiß 18 %.
         static let badgeFill = Color.white.opacity(0.18)
+        /// Technik-Plakette auf fokussierter (weißer) Zeile: Schwarz 10 %, Schrift `primaryOnFocus`.
+        static let badgeFillOnFocus = Color.black.opacity(0.10)
+        /// Streifen unter dem Posterbild für Plaketten „Unten“ (Schwarz 55 %).
+        static let posterBand = Color.black.opacity(0.55)
         /// Status-Kapsel auf Bildern: Schwarz 65 %.
         static let badgeOnImage = Color.black.opacity(0.65)
 
