@@ -808,7 +808,8 @@ struct StreamListView: View {
                                                                              onUserInput: { AutoNextState.userInput($autoNext) },
                                                                              holdsUpNext: autoNext.promptDue(model.profile),
                                                                              onSourceVerdict: { [id = (current ?? request).id] in PlaybackStability.shared.apply($0, stream: s, title: id) },
-                                                                             releaseName: s.behaviorHints?.filename).environmentObject(model) }
+                                                                             releaseName: s.behaviorHints?.filename,
+                                                                             sideLinks: sidePanelLinks(for: s)).environmentObject(model) }   // Wave P-b
         }
         .modifier(StillWatchingAlert(state: $autoNext, note: $nextNote) { startNext($0.next, after: $0.stream, auto: false) })
     }
@@ -883,6 +884,27 @@ extension StreamListView {
         let open = order.filter { !failed.contains($0.id) && $0.url != nil
             && !PlaybackStability.shared.isRecentlyFailed($0, title: (current ?? request).id) }   // Welle C-a: 8-h-Gedächtnis
         return open.first { StreamTraits.parse($0).cached == true } ?? open.first { StreamTraits.parse($0).cached == nil }
+    }
+
+    /// Wave P-b: what the player's side panel may do with this list (other source, other episode).
+    func sidePanelLinks(for s: StreamItem) -> PlayerSideLinks {
+        PlayerSideLinks(stream: s, addon: streams.first { $0.stream.id == s.id }?.addon ?? autoNext.addons[s.id],
+                        sources: { streams }, failed: { failed },
+                        switchSource: { next in
+                            fallbacks = 0; AutoNextState.userInput($autoNext); autoNext.ask = nil
+                            playing = nil
+                            Task {
+                                try? await Task.sleep(for: .milliseconds(900))
+                                guard playing == nil else { return }
+                                PlaybackStability.shared.timing.markTap()
+                                playing = next
+                            }
+                        },
+                        playEpisode: { next in
+                            AutoNextState.userInput($autoNext); autoNext.ask = nil
+                            playing = nil
+                            startNext(next, after: s, auto: false)
+                        })
     }
 
     /// Quelle versagt → nächste noch nicht gescheiterte Quelle darunter, höchstens 3 automatische Wechsel.

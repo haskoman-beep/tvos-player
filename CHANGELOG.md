@@ -23,6 +23,16 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   is on, otherwise the catalog or TMDB poster) and is left out when the block is too short for it.
 - Settings › Playback › Detail page: a new setting „Sofort abspielen anzeigen“ (show instant play), off by
   default.
+- Player: a side panel on the right third of the screen (about 720 pt) while the picture keeps running. It opens
+  with the vertical swipe or click that „Ton & Untertitel“ (audio & subtitles) leaves free (with the panel at the
+  top: swipe or click up; at the bottom or as a menu: down); a pill in the control bar shows the way in. Its list
+  holds „Folgen“ (episodes: season chips and the episode list, choosing one plays it), „Kapitel“ (chapters, with
+  stills from already loaded data where possible, choosing one jumps there), „Andere Quelle“ (other source: the
+  source list of the title, switching resumes at the current position) and „Infos“ (codec, HDR/Dolby Vision
+  profile, audio, data rate, size, addon). Back goes up one level, then closes the panel.
+- Player: a pause card. After about 2 s of pause without input it shows the logo (or the title), season and
+  episode with the episode title, a short description, the cast line and the clock; any key hides it, Menu
+  closes only the card. It leaves a slot for a later accessory (`PauseCardAccessory`).
 
 ### Changed
 - Detail page: „Abspielen“ (play) is the main button again and takes the focus on entry and on return from
