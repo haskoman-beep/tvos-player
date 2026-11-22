@@ -165,11 +165,29 @@ public enum SkipPolicy {
     /// for the scene and the button leads to the scene).
     public static func action(for s: SkipSegment, segments: [SkipSegment], settings: SkipSettings,
                               context: SkipContext) -> SkipAction {
-        let a = settings.action(for: s.kind)
+        var a = settings.action(for: s.kind)
+        // A season estimate is a guess from other episodes: never an automatic jump, only the button.
+        if a == .auto, s.source == .seasonEstimate { a = .button }
         guard s.kind == .credits, a != .off, endCredits(segments, duration: context.duration) == s else { return a }
         if context.postPlayCard { return .off }
         if context.upNextCard, sceneAfterCredits(segments, duration: context.duration) == nil { return .off }
         return a
+    }
+
+    /// Movie IntroDB marks belong to an IMDb ID, not to this release (other cut, other frame rate). Their credits
+    /// only count when they line up with this file: some credits or post-credits mark ends within this many seconds
+    /// of the file end.
+    public static let movieAlignSeconds: Double = 5
+
+    /// IntroDB marks of a movie for this file: credits and post-credits marks are dropped unless one of them ends
+    /// at the file end (± `movieAlignSeconds`). Otherwise the card, the scene hint and the credits button would show
+    /// inside the film. Chapters are not affected (they come from the file itself). Duration 0 = unchanged.
+    public static func alignedMovieIntroDB(_ list: [SkipSegment], duration: Double) -> [SkipSegment] {
+        guard duration > 0 else { return list }
+        let tail: (SkipSegment) -> Bool = { $0.kind == .credits || $0.kind == .postCredits }
+        guard list.contains(where: tail),
+              !list.contains(where: { tail($0) && abs($0.end - duration) <= movieAlignSeconds }) else { return list }
+        return list.filter { !tail($0) }
     }
 
     /// Window of the card after a movie: from the start of the end credits up to the scene after them (the card

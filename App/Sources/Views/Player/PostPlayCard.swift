@@ -99,18 +99,29 @@ struct PostPlayCard: View {
     }
 }
 
-/// Wave P-a: detail page to open once the player is gone (set by the card, run from PlayerScreen.onDisappear).
+/// Wave P-a: detail page to open once the player is gone. Set by the card; run from the stream list's
+/// `playerDismissed` (end of the cover dismissal, before its focus move). PlayerScreen.onDisappear only arms a
+/// late fallback in case no dismissal callback comes.
 @MainActor
 enum PostPlayRoute {
     static var pending: (() -> Void)?
 
-    /// Run the pending route shortly after the player closed (the cover has to be gone before the push).
-    static func flush() {
-        guard let go = pending else { return }
+    /// Run the pending route now. true = there was one (the caller then skips its own focus move).
+    @discardableResult
+    static func flushNow() -> Bool {
+        guard let go = pending else { return false }
         pending = nil
+        RemoteLog.info("skip", "Karte nach dem Film: Detailseite öffnen (Player geschlossen)")
+        go()
+        return true
+    }
+
+    /// Fallback: still pending 1.5 s after the player disappeared (no dismissal callback) → run it then.
+    static func flushLater() {
+        guard pending != nil else { return }
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(350))
-            go()
+            try? await Task.sleep(for: .milliseconds(1500))
+            if pending != nil { RemoteLog.info("skip", "Karte nach dem Film: Ersatzweg nach onDisappear"); flushNow() }
         }
     }
 }

@@ -85,7 +85,7 @@ struct PlayerScreen: View {
             }
         }
         .onDisappear {
-            PostPlayRoute.flush()   // wave P-a: recommendation from the card after a movie → its detail page
+            PostPlayRoute.flushLater()   // wave P-a: fallback; the stream list runs the route in playerDismissed
             // Öffnet das Spur-Panel (fullScreenCover) und löst onDisappear aus: Vorlader bleibt gesperrt,
             // kein Wiedergabe-Ende melden.
             guard !tracksOpen else { return }

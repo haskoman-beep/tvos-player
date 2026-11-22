@@ -221,3 +221,64 @@ private func seg(_ k: SkipSegment.Kind, _ s: Double, _ e: Double, _ src: SkipSeg
     #expect(PostPlayPicks.choose([a, d], excluding: "tmdb:1", imdb: nil, limit: 2).map(\.id) == ["tmdb:4"])
     #expect(PostPlayPicks.choose([], excluding: "x", imdb: nil).isEmpty)
 }
+
+// MARK: Review round 1
+
+@Test func seasonEstimateNeverSkipsAutomatically() {
+    let guess = seg(.intro, 70, 160, .seasonEstimate)
+    var p = SkipPlanner(segments: [guess])
+    let s = SkipSettings(intro: .auto), ctx = SkipContext(duration: 2700)
+    #expect(SkipPolicy.action(for: guess, segments: [guess], settings: s, context: ctx) == .button)
+    let d1 = p.evaluate(at: 71, engineSeeking: false, playing: true, now: 0, settings: s, context: ctx)
+    #expect(d1.prompt == SkipPrompt(segment: guess, countdown: nil))
+    let d2 = p.evaluate(at: 80, engineSeeking: false, playing: true, now: 20, settings: s, context: ctx)
+    #expect(d2.autoSkip == nil && d2.prompt?.segment == guess)
+    // Real marks still count down.
+    let real = seg(.intro, 70, 160)
+    #expect(SkipPolicy.action(for: real, segments: [real], settings: s, context: ctx) == .auto)
+}
+
+@Test func movieIntroDBCreditsOnlyWhenAlignedWithFileEnd() {
+    let d = 9600.0
+    // Theatrical-cut data on an extended file: credits end 20 min before the file end → dropped.
+    let off = [seg(.intro, 0, 30), seg(.credits, 7800, 8400)]
+    let kept = SkipPolicy.alignedMovieIntroDB(off, duration: d)
+    #expect(kept == [seg(.intro, 0, 30)])
+    #expect(SkipPolicy.postPlayWindow(kept, duration: d) == nil)
+    #expect(SkipPolicy.sceneHintWindow(kept, duration: d) == nil)
+    // Credits to the file end: kept.
+    let aligned = [seg(.credits, 9000, 9597)]
+    #expect(SkipPolicy.alignedMovieIntroDB(aligned, duration: d) == aligned)
+    // Credits end early, a post-credits mark runs to the end: kept (a real scene).
+    let scene = [seg(.credits, 9000, 9400), seg(.postCredits, 9400, 9600)]
+    #expect(SkipPolicy.alignedMovieIntroDB(scene, duration: d) == scene)
+    #expect(SkipPolicy.sceneAfterCredits(scene, duration: d) == 9400)
+    // Unknown duration: unchanged (checked again once it is known).
+    #expect(SkipPolicy.alignedMovieIntroDB(off, duration: 0) == off)
+}
+
+@Test func autoSkipRememberedAcrossDurationRebuild() {
+    let intro = seg(.intro, 60, 150)
+    var p = SkipPlanner(segments: [intro])
+    let s = SkipSettings(intro: .auto), ctx = SkipContext(duration: 3000)
+    _ = p.evaluate(at: 61, engineSeeking: false, playing: true, now: 0, settings: s, context: ctx)
+    let d = p.evaluate(at: 67, engineSeeking: false, playing: true, now: 6, settings: s, context: ctx)
+    #expect(d.autoSkip == intro)
+    // Rebuild moves the end (duration corrected): same intro, still no second jump.
+    let moved = seg(.intro, 60, 152)
+    p.setSegments([moved])
+    let again = p.evaluate(at: 70, engineSeeking: false, playing: true, now: 30, settings: s, context: ctx)
+    #expect(again.prompt == SkipPrompt(segment: moved, countdown: nil))
+}
+
+@Test func profileDecodesWithoutOrWithBrokenSkip() throws {
+    let base = #""id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","name":"Alt""#
+    let none = try JSONDecoder().decode(Profile.self, from: Data("{\(base)}".utf8))
+    #expect(none.skip == SkipSettings())
+    let broken = try JSONDecoder().decode(Profile.self, from: Data("{\(base),\"skip\":\"garbage\"}".utf8))
+    #expect(broken.skip == SkipSettings())
+    var p = none
+    p.skip.intro = .auto
+    let back = try JSONDecoder().decode(Profile.self, from: JSONEncoder().encode(p))
+    #expect(back.skip.intro == .auto)
+}

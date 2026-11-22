@@ -24,7 +24,7 @@ extension AppModel {
 final class SkipSegmentController: ObservableObject {
     /// Bereich, für den der Knopf gerade steht (nil = kein Knopf).
     @Published private(set) var prompt: SkipSegment?
-    /// Wave P-a: seconds left before the automatic jump (nil = plain button).
+    /// Wave P-a: ring left before the automatic jump, 1 → 0 (nil = plain button).
     @Published private(set) var countdown: Double?
     /// Wave P-a: the card after a movie is up (it holds the focus like the button).
     @Published private(set) var postPlayVisible = false
@@ -60,6 +60,8 @@ final class SkipSegmentController: ObservableObject {
     /// Andere Folgen der Staffel (für die Schätzung, wenn diese Folge keine Marken hat).
     private var neighbors: [SkipSegmentStore.Entry] = []
     private var durationNoted = false
+    /// Wave P-a: misaligned movie IntroDB credits logged once.
+    private var misalignedNoted = false
     /// Staffel-Schätzung fertig (eigenes Kennzeichen: bricht `.task` dabei ab, läuft sie beim nächsten Mal erneut).
     private var estimateDone = false
     /// Treffer je Abfrage (nur nicht-leere Antworten; Fehler werden nicht gemerkt), auf dem Gerät gespeichert.
@@ -149,7 +151,9 @@ final class SkipSegmentController: ObservableObject {
         updateCards(position: pos, busy: busy)
         let context = SkipContext(upNextCard: upNextCard, postPlayCard: isMovie && settings.postPlayCard, duration: duration)
         // The ring stands still while jumps are blocked (panel open, leaving, after background).
-        let decision = planner.evaluate(at: pos, engineSeeking: busy, playing: engine.isPlaying && canSkip(), now: Self.now,
+        // The card after a movie also stops it: no jump behind the card.
+        let decision = planner.evaluate(at: pos, engineSeeking: busy, playing: engine.isPlaying && canSkip() && !postPlayVisible,
+                                        now: Self.now,
                                         settings: settings, context: context)
         if let s = decision.autoSkip {
             RemoteLog.info("skip", "\(s.kind.rawValue) automatisch übersprungen (Countdown abgelaufen)")
@@ -163,7 +167,7 @@ final class SkipSegmentController: ObservableObject {
             if let p { RemoteLog.info("skip", "Knopf \(p.kind.rawValue) (\(p.source.rawValue)) \(Int(p.start))–\(Int(p.end))s bei \(Int(pos))s\(decision.prompt?.countdown != nil ? " · automatisch in \(Int(SkipPlanner.countdownSeconds)) s" : "")") }
             prompt = p
         }
-        let c = p == nil ? nil : decision.prompt?.countdown
+        let c = p == nil ? nil : decision.prompt?.ringFraction
         if c != countdown { countdown = c }
     }
 
@@ -237,8 +241,14 @@ final class SkipSegmentController: ObservableObject {
         let have = Set(introDB.map(\.kind))
         let estimate = neighbors.isEmpty ? [] : SeasonSkipEstimate.estimate(from: neighbors, duration: duration)
             .filter { !have.contains($0.kind) }
+        // Movie IntroDB credits from another cut or frame rate would put the card inside the film.
+        let marks = query?.isMovie == true ? SkipPolicy.alignedMovieIntroDB(introDB, duration: duration) : introDB
+        if marks.count != introDB.count, !misalignedNoted {
+            misalignedNoted = true
+            RemoteLog.info("skip", "IntroDB-Abspann passt nicht zum Dateiende (andere Fassung?): nicht verwendet")
+        }
         let merged = SkipSegments.merge(chapters: SkipSegments.fromChapters(chapters, duration: duration),
-                                        introDB: introDB + estimate, duration: duration)
+                                        introDB: marks + estimate, duration: duration)
         guard merged != segments else { return }
         segments = merged
         planner.setSegments(merged)
@@ -275,6 +285,8 @@ struct SkipSegmentButton<E: PlaybackEngine>: View {
     var onLeave: () -> Void = {}
     @FocusState private var focused: Bool
 
+    private struct Inputs: Equatable { var settings: SkipSettings; var upNextCard: Bool; var movieID: String? }
+
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             Color.clear
@@ -292,7 +304,7 @@ struct SkipSegmentButton<E: PlaybackEngine>: View {
                 Button { guard onBeforeSkip() else { return }; Task { await controller.skip(engine: engine) } } label: {
                     HStack(spacing: 16) {
                         if let left = controller.countdown {
-                            SkipCountdownRing(fraction: left / SkipPlanner.countdownSeconds)
+                            SkipCountdownRing(fraction: left)
                         } else {
                             Image(systemName: "forward.end.fill")
                         }
@@ -324,7 +336,8 @@ struct SkipSegmentButton<E: PlaybackEngine>: View {
         .animation(.easeInOut(duration: 0.3), value: controller.sceneHint)
         // IntroDB einmal je Wiedergabe; daneben zweimal je Sekunde Kapitel/Position übernehmen.
         .task { await controller.lookup(lookup) }
-        .task {
+        // Restarted when an input changes (a plain `.task` would keep the values of its first run).
+        .task(id: Inputs(settings: settings, upNextCard: upNextCard, movieID: postPlayItem?.id)) {
             while !Task.isCancelled {
                 controller.settings = settings
                 controller.upNextCard = upNextCard

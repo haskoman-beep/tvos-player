@@ -162,7 +162,9 @@ public struct SkipPlanner: Sendable {
     public mutating func setSegments(_ s: [SkipSegment]) {
         segments = s
         dismissed = dismissed.filter { s.contains($0) }
-        autoDone = autoDone.filter { s.contains($0) }
+        // Kept by kind and start (± 5 s): a rebuild after a duration change moves segment ends, and an intro skipped
+        // automatically once must not jump again.
+        autoDone = Set(s.filter { n in autoDone.contains { $0.kind == n.kind && abs($0.start - n.start) < 5 } })
         if let c = countdown, !s.contains(c.segment) { countdown = nil }
     }
 

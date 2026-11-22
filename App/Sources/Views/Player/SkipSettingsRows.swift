@@ -48,7 +48,7 @@ struct SkipSettingsRows: View {
         switch a {
         case .off: return "Kein Knopf, kein Sprung."
         case .button: return "Knopf „\(SkipSettings.title(k)) überspringen“, solange der Abschnitt läuft."
-        case .auto: return "Springt nach 5 s Countdown; einmal je Abschnitt."
+        case .auto: return "Springt nach 5 s Countdown; einmal je Abschnitt. Geschätzte Abschnitte nur mit Knopf."
         }
     }
 }
