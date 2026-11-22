@@ -78,7 +78,8 @@ xcodebuild -project Player.xcodeproj -scheme Player -configuration Release \
 ```
 
 CI (`.github/workflows/build.yml`, GitHub Actions on macOS) builds on changes under `App/`,
-`Packages/` or `.github/workflows/`. A run builds the IPA, checks the app contents and the Dolby Vision FEL trait,
+`Packages/`, `.github/workflows/` or the release tools (`tools/release_notes.sh`, `tools/check_ipa.sh`); tags do
+not start a build. A run builds the IPA, checks the app contents and the Dolby Vision FEL trait,
 and publishes the IPA for `main` as the `app-main` release and for `integ`/`main` as a `build-<number>` release (see
 [Releases / Version history](#releases--version-history)). The app's build number is the CI run number.
 

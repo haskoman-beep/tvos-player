@@ -37,7 +37,12 @@ for id in $sorted; do
   echo "== $tag (run $id, $branch, ${sha:0:7}, $concl)"
   if [ "$concl" != success ]; then echo "   run did not succeed, skipped"; continue; fi
   case "$branch" in integ|main) ;; *) echo "   branch $branch has no releases, skipped"; continue ;; esac
-  if gh release view "$tag" > /dev/null 2>&1; then echo "   $tag exists, skipped"; continue; fi
+  # An existing release is left alone; a leftover draft (aborted upload) counts as missing and is replaced.
+  draft=0
+  if d=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null); then
+    if [ "$d" != true ]; then echo "   $tag exists, skipped"; continue; fi
+    echo "   $tag is a leftover draft: will be deleted and created again"; draft=1
+  fi
 
   git fetch -q --tags origin
   git cat-file -e "$sha^{commit}" 2>/dev/null || git fetch -q origin "$sha"
@@ -59,11 +64,17 @@ for id in $sorted; do
   NO_IPA=$no_ipa EVENT=$event EXTRA_NOTE=$note \
     bash "$here/release_notes.sh" "$num" "$branch" "$sha" "$id" "$created" "$prev" "$label" > "$dir/notes.md"
 
-  if [ "$branch" = main ]; then flags=(--latest); title="Player build $num"
+  if [ "$branch" = main ]; then
+    # "Latest" only if no newer main release (build-N, not prerelease) exists already.
+    newest=$(gh release list -L 200 --json tagName,isPrerelease,isDraft \
+      --jq '[.[] | select((.isDraft | not) and (.isPrerelease | not)) | .tagName | select(test("^build-[0-9]+$")) | ltrimstr("build-") | tonumber] | max // 0')
+    if [ "$num" -gt "$newest" ]; then flags=(--latest); else flags=(--latest=false); fi
+    title="Player build $num"
   else flags=(--prerelease --latest=false); title="Player build $num (integ)"; fi
   assets=(); [ "$no_ipa" = 1 ] || assets=("$dir/Player.ipa")
 
   if [ "$publish" = 1 ]; then
+    [ "$draft" = 0 ] || gh release delete "$tag" --yes
     gh release create "$tag" "${assets[@]}" --target "$sha" --title "$title" --notes-file "$dir/notes.md" "${flags[@]}"
   else
     echo "   dry run, would create: $title ${flags[*]} ${assets:+with Player.ipa}"

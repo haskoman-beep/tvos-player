@@ -31,7 +31,8 @@ version=$(git show "$sha:App/project.yml" 2>/dev/null | sed -n 's/.*CFBundleShor
 find_prev() {
   local want_full=$1 tags t n
   tags=$(gh release list -R "$repo" -L 200 --json tagName,isPrerelease,isDraft \
-           --jq ".[] | select(.isDraft | not) | select(.tagName | test(\"^build-[0-9]+$\")) | select(($want_full | not) or (.isPrerelease | not)) | .tagName" 2>/dev/null || true)
+           --jq ".[] | select(.isDraft | not) | select(.tagName | test(\"^build-[0-9]+$\")) | select(($want_full | not) or (.isPrerelease | not)) | .tagName" 2>/dev/null) \
+    || { echo "release_notes: gh release list failed, no previous release used" >&2; return 0; }
   for t in $(printf '%s\n' $tags | sort -t- -k2,2nr); do
     n=${t#build-}
     [ "$n" -lt "$build" ] || continue
@@ -45,8 +46,13 @@ if [ -z "$prev" ]; then
   [ -n "$prev" ] || prev=$(find_prev false)
   # No release yet: start after the previous successful CI build of the same branch.
   if [ -z "$prev" ]; then
-    read -r pnum psha < <(gh run list -R "$repo" -b "$branch" -w build.yml -s success -L 100 --json number,headSha \
-      --jq "[.[] | select(.number < $build)] | max_by(.number) | \"\(.number) \(.headSha)\"" 2>/dev/null || true)
+    pnum="" psha=""
+    if pr=$(gh run list -R "$repo" -b "$branch" -w build.yml -s success -L 100 --json number,headSha \
+          --jq "[.[] | select(.number < $build)] | max_by(.number) | \"\(.number) \(.headSha)\"" 2>/dev/null); then
+      read -r pnum psha <<< "$pr" || true
+    else
+      echo "release_notes: gh run list failed, commit list falls back to recent commits" >&2
+    fi
     if [ -n "${psha:-}" ] && [ "$psha" != null ] && git rev-parse -q --verify "$psha^{commit}" > /dev/null; then
       prev=$psha prev_label="CI build $pnum (\`$branch\`, no release)"
     fi
