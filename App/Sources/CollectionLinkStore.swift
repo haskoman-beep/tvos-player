@@ -9,10 +9,22 @@ struct CollectionLink: Codable, Hashable, Identifiable {
     var format: String
     var summary: String
     var at: Date
-    /// Entries of a preview pack (matched to tiles by title at display time).
+    /// Entries of a preview pack (matched to tiles by title at display time). Kept in memory; stored as a blob.
     var pack: [PreviewPackEntry]?
-    /// Collection export: media addresses of the last import (a refresh keeps only the user's own changes).
+    /// Only decoded from an entry of round 3 (moved to a file blob once); never encoded.
     var media: [String: FolderMedia]?
+
+    private enum CodingKeys: String, CodingKey { case id, url, format, summary, at, pack, media }
+
+    /// UserDefaults keeps only this small part; pack and media snapshot are blobs in the app storage.
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encodeIfPresent(url, forKey: .url)
+        try c.encode(format, forKey: .format)
+        try c.encode(summary, forKey: .summary)
+        try c.encode(at, forKey: .at)
+    }
 
     init(id: String, url: String?, format: String, summary: String, at: Date, pack: [PreviewPackEntry]? = nil,
          media: [String: FolderMedia]? = nil) {
@@ -33,8 +45,10 @@ struct CollectionLink: Codable, Hashable, Identifiable {
 }
 
 /// Collection imports by link or code: fetches, detects the format (`CollectionImportFormat`), hands widget exports
-/// to `FusionKitStore`, collection exports to `AppModel.importNuvio`, and keeps preview packs itself. Links are
-/// stored per profile in UserDefaults (small; the profile model stays unchanged). Nothing of it is bundled.
+/// to `FusionKitStore`, collection exports to `AppModel.importNuvio`, and keeps preview packs itself. Per profile,
+/// UserDefaults holds only the list of links (address, format, result line, date). The large parts are blobs in
+/// the app storage (`DefaultsStorage`): the media snapshot of a link as a file only, a preview pack within the
+/// size-bounded budget. Nothing of it is bundled.
 @MainActor
 final class CollectionLinkStore: ObservableObject {
     static let shared = CollectionLinkStore()
@@ -58,24 +72,78 @@ final class CollectionLinkStore: ObservableObject {
         return URLSession(configuration: cfg)
     }()
 
+    /// App storage (Application Support if writable, always Caches).
+    private var storage: BlobStorage?
+
     private init() {}
+
+    func attach(_ storage: BlobStorage) { self.storage = storage }
 
     // MARK: Profile
 
-    private func key(_ id: UUID) -> String { "collectionlinks.\(id.uuidString)" }
+    /// Key of round 2/3: whole entries with pack and media snapshot (migrated once, then removed).
+    private func legacyKey(_ id: UUID) -> String { "collectionlinks.\(id.uuidString)" }
+    private func key(_ id: UUID) -> String { "collectionlinkmeta.\(id.uuidString)" }
+    /// File-only blob: media addresses of the last import of a link (`TieredBlobStorage.fileOnlyPrefix`).
+    private func mediaFile(_ profile: UUID, _ id: String) -> String {
+        "\(TieredBlobStorage.fileOnlyPrefix)media-\(profile.uuidString)-\(id).json"
+    }
+    /// Preview pack of one import (small ones may stay in UserDefaults, inside the storage budget).
+    private func packFile(_ profile: UUID, _ id: String) -> String { "linkpack-\(profile.uuidString)-\(id).json" }
 
     /// Links of the active profile (re-read after a profile switch).
     func ensure(_ model: AppModel) {
         self.model = model
         guard let id = model.stored.active?.id, id != profile else { return }
         profile = id
-        links = UserDefaults.standard.data(forKey: key(id)).flatMap { try? JSONDecoder().decode([CollectionLink].self, from: $0) } ?? []
+        let defaults = UserDefaults.standard
+        if let d = defaults.data(forKey: key(id)) {
+            links = (try? JSONDecoder().decode([CollectionLink].self, from: d)) ?? []
+            for i in links.indices {
+                links[i].pack = storage?.read(packFile(id, links[i].id)).flatMap { try? JSONDecoder().decode([PreviewPackEntry].self, from: $0) }
+            }
+        } else if let d = defaults.data(forKey: legacyKey(id)) {
+            // Once: pack and media snapshot move out of UserDefaults, then the old key goes.
+            links = (try? JSONDecoder().decode([CollectionLink].self, from: d)) ?? []
+            for i in links.indices {
+                if let p = links[i].pack { save(p, as: packFile(id, links[i].id)) }
+                if links[i].url != nil, let m = links[i].media { save(m, as: mediaFile(id, links[i].id)) }
+                links[i].media = nil
+            }
+            persist()
+            RemoteLog.info("import", "Importe umgezogen: \(links.count) Einträge, \(d.count / 1024) KB aus UserDefaults entfernt")
+        } else {
+            links = []
+        }
+        defaults.removeObject(forKey: legacyKey(id))
         rebuildPack()
     }
 
     private func persist() {
         guard let profile, let d = try? JSONEncoder().encode(links) else { return }
         UserDefaults.standard.set(d, forKey: key(profile))
+    }
+
+    /// Writes a blob to the app storage; a failure is logged (the import itself stays usable until the next start).
+    private func save<T: Encodable>(_ value: T, as name: String) {
+        do {
+            guard let storage else { throw CocoaError(.fileWriteUnknown) }
+            try storage.write(name, try JSONEncoder().encode(value))
+        } catch {
+            RemoteLog.error("import", "Import: Speichern fehlgeschlagen (\(name): \(error))")
+        }
+    }
+
+    private func dropBlobs(_ id: String) {
+        guard let profile else { return }
+        storage?.remove(packFile(profile, id))
+        storage?.remove(mediaFile(profile, id))
+    }
+
+    /// Media snapshot of the last import of a stored link; nil if there is none (then a refresh takes all fresh values).
+    private func snapshot(_ id: String) -> [String: FolderMedia]? {
+        guard let profile else { return nil }
+        return storage?.read(mediaFile(profile, id)).flatMap { try? JSONDecoder().decode([String: FolderMedia].self, from: $0) }
     }
 
     private func rebuildPack() {
@@ -103,7 +171,7 @@ final class CollectionLinkStore: ObservableObject {
     /// Largest body of a link (same as the phone page).
     nonisolated static let maxLinkBytes = HTTPRequest.maxBody
     nonisolated static let linkTimeout: TimeInterval = 20
-    /// Most stored imports per profile (they live in UserDefaults).
+    /// Most stored imports per profile.
     static let maxLinks = 30
 
     private enum LinkError: Error { case http(Int), tooLarge }
@@ -163,6 +231,7 @@ final class CollectionLinkStore: ObservableObject {
     /// Forget a link. Imported rows stay on the start page (they are removed there); a pack stops enriching.
     func remove(_ id: String) {
         links.removeAll { $0.id == id }
+        dropBlobs(id)
         persist()
         rebuildPack()
     }
@@ -252,8 +321,9 @@ final class CollectionLinkStore: ObservableObject {
             line = { n in var s = base; s.rows = c.rows.count; s.sound = n; return s.line }
         case .collections(let r):
             // A refresh of a stored link takes the fresh media addresses (I4); a first import only fills gaps.
-            model.importNuvio(result: r, refresh: previous.map { $0.media ?? [:] })
-            media = NuvioImport.media(of: r.collections)
+            model.importNuvio(result: r, refresh: previous.map { snapshot($0.id) ?? [:] })
+            // Only a link can be refreshed, so only a link keeps a snapshot (pasted code needs none).
+            if link != nil { media = NuvioImport.media(of: r.collections) }
             let collections = r.collections.map { PreviewPack.apply(packIndex, to: $0) }
             probe = ImportSummary.videos(collections)
             let base = ImportSummary.of(collections)
@@ -271,20 +341,29 @@ final class CollectionLinkStore: ObservableObject {
             probe = entries.map(\.video).filter { seen.insert($0).inserted }
             line = { n in ImportSummary.packLine(entries: entries.count, matched: matched, sound: n) + (skipped > 0 ? " (\(skipped) übersprungen)" : "") }
         }
+        // At the cap the oldest import goes; the user is told (N3).
+        var dropped = ""
         if previous == nil, links.count >= Self.maxLinks, let oldest = links.min(by: { $0.at < $1.at }) {
-            links.removeAll { $0.id == oldest.id }   // keep UserDefaults small
+            links.removeAll { $0.id == oldest.id }
+            dropBlobs(oldest.id)
+            dropped = " · Ältester Import entfernt (höchstens \(Self.maxLinks)): \(oldest.format)"
+            RemoteLog.info("import", "Ältester Import entfernt (\(oldest.format), Grenze \(Self.maxLinks))")
         }
-        var entry = CollectionLink(id: id, url: link, format: format.name, summary: line(nil), at: Date(), pack: pack, media: media)
+        var entry = CollectionLink(id: id, url: link, format: format.name, summary: line(nil), at: Date(), pack: pack)
+        if let profile {
+            if let pack { save(pack, as: packFile(profile, id)) } else { storage?.remove(packFile(profile, id)) }
+            if let media { save(media, as: mediaFile(profile, id)) } else { storage?.remove(mediaFile(profile, id)) }
+        }
         store(entry)
         model.lastError = nil
-        model.notice = entry.summary
+        model.notice = entry.summary + dropped
         RemoteLog.info("import", "\(format.name)\(link == nil ? " (Code)" : ""): \(entry.summary)")
         // The sound count follows (range requests can take a while; the rows are already there).
         guard let sound = await soundCount(probe) else { return }
-        let first = entry.summary
+        let first = entry.summary + dropped
         entry.summary = line(sound)
         if links.contains(where: { $0.id == id }) { store(entry) }
-        if model.notice == first { model.notice = entry.summary }
+        if model.notice == first { model.notice = entry.summary + dropped }
         RemoteLog.info("import", "\(format.name): \(sound) mit Ton")
     }
 

@@ -40,7 +40,8 @@ final class AppModel: ObservableObject {
         stored = store.load()
         progressStore = ProgressStore(storage: storage)
         progress = progressStore.load(profile: profile.id)
-        FusionKitStore.shared.attach(self)   // Welle A e: Kit-Reihen der Startseite (AppModel+FusionKit)
+        CollectionLinkStore.shared.attach(storage)   // wave F-o round 4: import blobs in the size-bounded storage
+        FusionKitStore.shared.attach(self, storage: storage)   // Welle A e: Kit-Reihen der Startseite (AppModel+FusionKit)
         PlaybackStability.shared.attach(storage)   // Welle C-a: Netz, Ton-Route, fehlgeschlagene Quellen
         PlayerMemory.shared.attach(storage)   // Welle D-a: Spur-Wahl je Serie, TorBox-Fortschritt
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"

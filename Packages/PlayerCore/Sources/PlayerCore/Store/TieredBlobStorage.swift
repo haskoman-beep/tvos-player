@@ -31,6 +31,9 @@ public struct TieredBlobStorage: BlobStorage {
     public static let budget = 640 * 1024
     /// Was alle anderen Blöcke zusammen belegen dürfen.
     public static var othersBudget: Int { budget - profileLimit }
+    /// Blobs with this name prefix are kept as files only, whatever their size (import data that may be large and
+    /// that the app can rebuild or do without). They never count against the UserDefaults budget.
+    public static let fileOnlyPrefix = "import-"
 
     public let defaults: KeyValueBlobs
     /// Gelesen wird immer aus allen Ordnern (auch einem, der gerade nicht beschreibbar ist).
@@ -54,7 +57,7 @@ public struct TieredBlobStorage: BlobStorage {
 
     /// Höchstgröße (komprimiert) eines Blocks in UserDefaults; 0 = nur Datei.
     public static func limit(_ name: String) -> Int {
-        if name.hasSuffix(".bak") { return 0 }
+        if name.hasSuffix(".bak") || name.hasPrefix(fileOnlyPrefix) { return 0 }
         if name == profileName { return profileLimit }
         return smallLimit
     }

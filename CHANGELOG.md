@@ -35,6 +35,10 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   „Aktualisieren“ takes the fresh video, GIF and image addresses of a collection export and keeps only your own
   changes. Pasted widget exports are kept in permanent storage. Preview packs match the exact title first, so
   „Paramount+“ and „Paramount“ each get their own video. The sound count follows the result line.
+- Import data is stored in the app's size-bounded storage (Application Support if it is writable, always a second
+  copy in Caches): the media addresses of a collection link and pasted widget exports as files, so the settings
+  store stays small. Existing imports move over once. A failed write is logged, and the result line says when the
+  oldest of 30 imports was dropped.
 - Focus videos are cached on disk in two parts: silent clips (at most 50 MB, 20 MiB per file) and videos with a
   sound track (at most 150 MB, 30 MiB per file); only real video files are kept.
 

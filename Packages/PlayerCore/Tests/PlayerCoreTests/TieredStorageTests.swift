@@ -278,3 +278,45 @@ private func blockedDir() -> FileBlobStorage {
     let c = TimedCache<Int>()
     #expect(c.lifetime == 24 * 3600)
 }
+
+// Wave F-o round 4: import blobs (media snapshot of a collection link, pasted widget export) are files only.
+@Test func importBlobStaysOutOfDefaultsAtAnySize() throws {
+    let (s, kv, d) = tiered()
+    let name = TieredBlobStorage.fileOnlyPrefix + "media-p-1.json"
+    #expect(TieredBlobStorage.limit(name) == 0)
+    for n in [1, 200, TieredBlobStorage.smallLimit, 170_000] {
+        try s.write(name, bytes(n))
+        #expect(kv.data(forKey: "blob." + name) == nil)
+        #expect(d[0].read(name)?.count == n)
+        #expect(d[1].read(name)?.count == n)
+        #expect(s.read(name)?.count == n)
+    }
+    #expect(s.defaultsSizes().isEmpty)
+}
+
+@Test func manyImportBlobsLeaveDefaultsBudgetToOthers() throws {
+    let (s, _, _) = tiered()
+    try s.write("progress-a.json", bytes(50_000))
+    for i in 0..<30 { try s.write(TieredBlobStorage.fileOnlyPrefix + "media-p-\(i).json", bytes(170_000)) }
+    #expect(s.defaultsSizes() == ["progress-a.json": 50_000])
+}
+
+@Test func importBlobFallsBackToSecondDirectory() throws {
+    let good = FileBlobStorage(directory: tempDir())
+    let kv = MemoryKeyValueBlobs()
+    let s = TieredBlobStorage(defaults: kv, directories: [blockedDir(), good])
+    let name = TieredBlobStorage.fileOnlyPrefix + "paste-1.json"
+    try s.write(name, bytes(5000))
+    #expect(good.read(name) == bytes(5000))
+    #expect(s.read(name) == bytes(5000))
+    #expect(kv.data(forKey: "blob." + name) == nil)
+    s.remove(name)
+    #expect(s.read(name) == nil)
+}
+
+@Test func importBlobWithoutWritableDirectoryThrows() {
+    let s = TieredBlobStorage(defaults: MemoryKeyValueBlobs(), directories: [blockedDir()])
+    #expect(throws: TieredBlobStorage.StorageFull.self) {
+        try s.write(TieredBlobStorage.fileOnlyPrefix + "paste-1.json", bytes(10))
+    }
+}

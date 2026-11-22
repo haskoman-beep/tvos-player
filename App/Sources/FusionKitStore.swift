@@ -33,15 +33,19 @@ final class FusionKitStore: ObservableObject {
     private var inflight: [String: Task<Void, Never>] = [:]
     private let disk = FileBlobStorage(directory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("fusionkit"))
-    /// Pasted widget exports (persistent; no address to fetch them again).
+    /// Pasted widget exports of round 3 (read once and moved to `blobs`).
     private let pasteDisk = FileBlobStorage(directory: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("fusionkit-paste"))
+
+    /// App storage (Application Support if writable, always Caches): pasted widget exports live here.
+    private var blobs: BlobStorage?
 
     private init() {}
 
     /// Beim App-Start: Zwischenspeicher lesen, abgleichen, veraltete gewählte Dateien im Hintergrund neu holen.
-    func attach(_ model: AppModel) {
+    func attach(_ model: AppModel, storage: BlobStorage) {
         self.model = model
+        blobs = storage
         CollectionLinkStore.shared.ensure(model)   // wave F-o round 2: preview packs before the first sync
         // Profiländerung (Schlüssel, Layout, Profilwechsel) → abgleichen; erst danach, denn @Published meldet vor dem Setzen.
         watch = model.$stored.dropFirst().sink { [weak self] _ in
@@ -123,6 +127,7 @@ final class FusionKitStore: ObservableObject {
         contents[id] = nil; errors[id] = nil
         disk.remove(contentFile(id))
         pasteDisk.remove(contentFile(id))
+        blobs?.remove(pasteFile(id))
     }
 
     /// Per Handy eingefügte Kit-URL: laden, Kit an, alle Reihen der Datei wählen. Rückgabe: Fehlertext oder nil.
@@ -137,12 +142,22 @@ final class FusionKitStore: ObservableObject {
 
     /// Wave F-o round 2: widget export already fetched (collection link) or pasted as code: keep it like a kit
     /// file and place all its rows. A pasted text gets a `paste:` source that is never fetched again.
-    /// Already parsed off the main actor (`CollectionLinkStore`); `data` is kept for the next start. Pasted text goes
-    /// to Application Support (round 3, I2): it cannot be fetched again, so it must survive a purge of Caches.
+    /// Already parsed off the main actor (`CollectionLinkStore`); `data` is kept for the next start. Pasted text
+    /// cannot be fetched again, so it goes to the app storage (round 4, N2): Application Support if it is writable
+    /// and always Caches as the second copy. A failed write is logged.
     func importContent(_ c: FusionKitContent, source src: FusionKitSource, data: Data) {
         contents[src.id] = c
         errors[src.id] = nil
-        try? storage(src).write(contentFile(src.id), data)
+        do {
+            if isPaste(src) {
+                guard let blobs else { throw CocoaError(.fileWriteUnknown) }
+                try blobs.write(pasteFile(src.id), data)
+            } else {
+                try disk.write(contentFile(src.id), data)
+            }
+        } catch {
+            RemoteLog.error("import", "Import: Speichern fehlgeschlagen (\(src.title), \(data.count / 1024) KB: \(error))")
+        }
         change { $0.addAll(c, source: src) }
         sync()
         RemoteLog.info("kit", "Import \(src.title): \(c.rows.count) Reihen gewählt")
@@ -155,7 +170,25 @@ final class FusionKitStore: ObservableObject {
                                title: "Eingefügter Widget-Export", url: pastePrefix, custom: true)
     }
 
-    private func storage(_ src: FusionKitSource) -> FileBlobStorage { src.url.hasPrefix(Self.pastePrefix) ? pasteDisk : disk }
+    private func isPaste(_ src: FusionKitSource) -> Bool { src.url.hasPrefix(Self.pastePrefix) }
+    /// File-only blob of a pasted widget export (`TieredBlobStorage.fileOnlyPrefix`).
+    private func pasteFile(_ key: String) -> String { TieredBlobStorage.fileOnlyPrefix + "paste-" + key + ".json" }
+
+    /// Stored bytes of a source. A paste of an earlier build (own folder, or Caches) moves to the app storage once.
+    private func stored(_ src: FusionKitSource) -> Data? {
+        guard isPaste(src) else { return disk.read(contentFile(src.id)) }
+        if let d = blobs?.read(pasteFile(src.id)) { return d }
+        let file = contentFile(src.id)
+        guard let old = pasteDisk.read(file) ?? disk.read(file) else { return nil }
+        do {
+            guard let blobs else { throw CocoaError(.fileWriteUnknown) }
+            try blobs.write(pasteFile(src.id), old)
+            pasteDisk.remove(file); disk.remove(file)
+        } catch {
+            RemoteLog.error("import", "Import: Speichern fehlgeschlagen (\(src.title), \(old.count / 1024) KB: \(error))")
+        }
+        return old
+    }
 
     nonisolated static let pastePrefix = "paste:"
 
@@ -252,7 +285,7 @@ final class FusionKitStore: ObservableObject {
 
     /// Zwischengespeicherte Fassung, auch wenn sie älter als 24 h ist.
     private func cached(_ src: FusionKitSource) -> FusionKitContent? {
-        storage(src).read(contentFile(src.id)).flatMap { try? FusionImport.parse($0, sourceKey: src.id, title: src.title) }
+        stored(src).flatMap { try? FusionImport.parse($0, sourceKey: src.id, title: src.title) }
     }
 
     private func loadListing(force: Bool) async {
