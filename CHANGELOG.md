@@ -19,6 +19,15 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 
 <!-- Nothing user-facing is merged yet. In progress: a more compact audio and subtitle panel in the player, and a fix for the top menu bar that could not be reached after scrolling on the home screen. -->
 
+### Fixed
+- Home screen: the built-in packs (streaming services, genres) now show images. A tile takes its image
+  from a collection you imported, otherwise from the home screen kit, which is loaded at runtime for this
+  even when the kit is switched off. Tiles are matched by provider or genre ID or by name, for example
+  Netflix, Prime Video, Disney+, „Komödie“ (comedy) or „Krimi“ (crime). If the image has an animated GIF
+  (from an imported collection), it plays on the focused tile. The gradient tile stays while an image
+  loads and for services without an image; the „Krimi“ tile now shows a fingerprint instead of a
+  magnifying glass.
+
 ## [Build 174] – 2026-11-22 (integ)
 
 ### Added
