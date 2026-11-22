@@ -1,0 +1,12 @@
+# Direct Python packages for convert_sface.py (the human-readable list). CI does not install this file: it
+# installs the full lock requirements.lock (every package, with wheel hashes, --require-hashes --no-deps).
+# When a version here changes, update requirements.lock to match (see its header).
+numpy==1.26.4
+protobuf==4.25.5
+sympy==1.13.1
+torch==2.5.1
+torchvision==0.20.1
+onnx==1.17.0
+onnx2torch==1.5.15
+onnxruntime==1.20.1
+coremltools==8.3.0

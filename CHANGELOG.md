@@ -17,6 +17,8 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 
 ## [Unreleased]
 
+<!-- X1 (maintainers): CI now converts the SFace face model to Core ML and bundles SFace.mlmodelc; no visible change yet. -->
+
 ### Added
 - Groundwork for "who is in the picture" on pause (X-Ray, not visible yet): face alignment, comparison and
   matching logic, an on-device cache of cast face data (30 days per title, nothing is uploaded), and a

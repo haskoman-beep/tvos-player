@@ -5,3 +5,7 @@ Payload/
 *.ipa
 .swiftpm/
 .superpowers/
+# Face model, generated in CI by tools/xray_model/convert_sface.py (never committed)
+App/Resources/SFace.mlpackage/
+*.mlpackage
+*.onnx
