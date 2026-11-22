@@ -296,7 +296,13 @@ struct DetailView: View {
         }
         // Wave F-n: setting changed while the page is open: build or drop the card.
         .onChange(of: model.profile.player.instantPlay) { if let id = imdb { updateChoice(id) } }
-        .onDisappear { trailerTask?.cancel() }
+        .onDisappear {
+            trailerTask?.cancel()
+            // Wave F-p R1: page left before all parts arrived: log what came so far (missing parts „–“), so a later
+            // give-up timer on return does not count time spent elsewhere.
+            if timeline == nil, appeared != nil { timeline = DetailLoadTimeline(title: item.name, expectsTech: !isSeries) }
+            if let line = timeline?.takeLine(force: true) { RemoteLog.info("detail", line) }
+        }
         .sheet(isPresented: $showFullText) { FullTextSheet(title: item.name, text: overview) }
         .fullScreenCover(item: $trailer) { t in
             PlayerScreen(url: t.stream.url,
@@ -1316,5 +1322,7 @@ private struct RestPrefetch: ViewModifier {
             .onChange(of: focused) { _, f in
                 if f { StreamPrefetcher.shared.requestAfterRest(route, model: model) } else { StreamPrefetcher.shared.cancelRest(route) }
             }
+            // R1: the tile goes away with focus on it (page left within 350 ms): no stale request.
+            .onDisappear { StreamPrefetcher.shared.cancelRest(route) }
     }
 }

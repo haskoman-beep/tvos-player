@@ -380,7 +380,11 @@ final class AppModel: ObservableObject {
         if let c = localizedCache[imdb] { return c }
         // Wave F-p: the detail page asks in parallel to the meta, which asks too: one request, both wait for it.
         let key = "\(series ? "s" : "m"):\(imdb)"
-        if let t = localizedFlights[key] { return await t.value }
+        if let t = localizedFlights[key] {
+            // R1: joined a request that failed (timeout, network): ask once more, as the former second call did.
+            if let l = await t.value { return l }
+            return await fetchLocalized(imdb: imdb, series: series)
+        }
         let t = Task { await fetchLocalized(imdb: imdb, series: series) }
         localizedFlights[key] = t
         let l = await t.value
