@@ -3,9 +3,11 @@ import UIKit
 import PlayerCore
 
 /// Wave F-j: keeps the top tab bar reachable from the topmost element of the home page and logs why it was not.
-/// The views report focus per part (button row, first row, empty-page button); while the top edge holds focus
-/// the tab bar is requested (`HomeTabBarRequest`) and the page is scrolled exactly to the top.
-/// Only `barRequest` is observed, so focus moves elsewhere never re-render the home page.
+/// The views report focus per part (button row, first row, empty-page button). The tab bar is requested
+/// (`HomeTabBarRequest`) while the top edge or the bar holds focus or the page sits at its top position
+/// (`HomeTopRules.barRequest`); after the focus scroll the page snaps to the very top if the bar is not on screen.
+/// Only `barRequest` is observed (and only assigned on change), so scrolling and focus moves never re-render the
+/// home page.
 @MainActor @Observable final class HomeTopEdgeWatch {
     /// ID of the whole scroll content (scroll target "very top").
     static let topID = "home.top"
@@ -17,6 +19,8 @@ import PlayerCore
     @ObservationIgnored private var navigation: NavigationStyle = .sidebar
     /// Distance from the very top of the vertical home scroll view (points).
     @ObservationIgnored private var offset: Double = 0
+    /// Focus is in the tab bar (from `didUpdateNotification`, top navigation only).
+    @ObservationIgnored private var inBar = false
     @ObservationIgnored private var throttle = LogThrottle(interval: 1)
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var settle: Task<Void, Never>?
@@ -38,14 +42,22 @@ import PlayerCore
         refresh()
     }
 
-    func setOffset(_ value: Double) { offset = value }
+    func setOffset(_ value: Double) {
+        offset = value
+        updateRequest()
+    }
 
     // MARK: Focus state
 
+    /// Called per scroll frame too: cheap, and assigns (re-renders the carrier) only when the request changes.
+    private func updateRequest() {
+        let request = HomeTopRules.barRequest(atTop: focus.atTop, inBar: inBar, offset: offset, navigation: navigation)
+        if barRequest != request { barRequest = request }
+    }
+
     private func refresh() {
         let top = focus.atTop
-        let request = HomeTopRules.barRequest(atTop: top, navigation: navigation)
-        if barRequest != request { barRequest = request }
+        updateRequest()
         guard tracker.set(top, now: Self.now) else { return }
         settle?.cancel()
         settle = nil
@@ -61,11 +73,13 @@ import PlayerCore
     private func settled() {
         guard tracker.atTop else { return }
         let before = offset
-        let scroll = HomeTopRules.shouldScrollToTop(atTop: true, offset: before, navigation: navigation)
+        let bar = Self.tabBarState()
+        // Review F-j M1: with the bar on screen a residual offset stays (no shift of its own while the user moves on).
+        let scroll = HomeTopRules.shouldScrollToTop(atTop: true, offset: before, barOnScreen: bar.onScreen,
+                                                    navigation: navigation)
         if scroll, let scrollToTop {
             withAnimation(.easeOut(duration: 0.2)) { scrollToTop() }
         }
-        let bar = Self.tabBarState()
         guard !loggedArrival || scroll || (navigation == .top && !bar.onScreen),
               throttle.allow("arrived", now: Self.now) else { return }
         loggedArrival = true
@@ -78,6 +92,9 @@ import PlayerCore
     func start() {
         guard observers.isEmpty else { return }
         loggedArrival = false
+        // Back from another tab via the bar: the focus may still be in it.
+        inBar = navigation == .top && Self.focusedItem().map(Self.isInTabBar) == true
+        updateRequest()
         let center = NotificationCenter.default
         observers.append(center.addObserver(forName: UIFocusSystem.movementDidFailNotification, object: nil, queue: .main) { [weak self] note in
             MainActor.assumeIsolated { self?.focusEvent(note, failed: true) }
@@ -95,23 +112,33 @@ import PlayerCore
     }
 
     private func focusEvent(_ note: Notification, failed: Bool) {
-        guard let context = note.userInfo?[UIFocusSystem.focusUpdateContextUserInfoKey] as? UIFocusUpdateContext,
-              context.focusHeading.contains(.up) else { return }
+        guard let context = note.userInfo?[UIFocusSystem.focusUpdateContextUserInfoKey] as? UIFocusUpdateContext
+        else { return }
+        // Review F-j I1: track every focus change into and out of the bar, so the request holds while it has focus.
+        let nextInBar = !failed && navigation == .top && context.nextFocusedItem.map(Self.isInTabBar) == true
+        if !failed, nextInBar != inBar {
+            inBar = nextInBar
+            updateRequest()
+        }
+        guard context.focusHeading.contains(.up) else { return }
+        // Review F-j M2: up inside the bar itself has no target; that is not a home page failure.
+        if failed, context.previouslyFocusedItem.map(Self.isInTabBar) == true { return }
         let now = Self.now
         let atTop = tracker.wasAtTop(now: now)
-        // Up moves inside the content (away from the top) produce no line.
+        // Up moves inside the content (away from the top) produce no line; stop before describing the target.
         guard atTop || failed else { return }
         let outcome: TabBarReachLog.UpOutcome
         if failed {
             outcome = .failed
-        } else if let next = context.nextFocusedItem, Self.isInTabBar(next) {
+        } else if nextInBar {
             outcome = .reachedBar
         } else {
             outcome = .stayedInContent(context.nextFocusedItem.map(Self.describe) ?? "nichts")
         }
-        guard let line = TabBarReachLog.up(outcome, atTop: atTop, edge: focus.edge, bar: Self.tabBarState(),
-                                           offset: offset, navigation: navigation),
-              throttle.allow("up \(outcome)", now: now) else { return }
+        // Throttle (key per case, review M3) before the UIKit lookup (review M2).
+        guard TabBarReachLog.logs(outcome, atTop: atTop), throttle.allow("up \(outcome.kind)", now: now),
+              let line = TabBarReachLog.up(outcome, atTop: atTop, edge: focus.edge, bar: Self.tabBarState(),
+                                           offset: offset, navigation: navigation) else { return }
         RemoteLog.info("nav", line)
     }
 
@@ -125,6 +152,14 @@ import PlayerCore
         return "\(name), y \(Int(f.minY.rounded()))"
     }
 
+    private static func focusedItem() -> UIFocusItem? {
+        let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
+        guard let window = windows.first(where: \.isKeyWindow) ?? windows.first else { return nil }
+        return UIFocusSystem.focusSystem(for: window)?.focusedItem
+    }
+
+    /// Only a `UITabBar` ancestor counts (review M4: should the tvOS bar ever not be one, a successful move up is
+    /// logged as "Fokus blieb im Inhalt" with y near 0, and the request is still held by the unchanged offset).
     private static func isInTabBar(_ item: UIFocusItem) -> Bool {
         var env: UIFocusEnvironment? = item
         var steps = 0

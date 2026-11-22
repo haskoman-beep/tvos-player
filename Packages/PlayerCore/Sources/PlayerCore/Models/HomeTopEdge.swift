@@ -86,20 +86,32 @@ public struct TopEdgeTracker: Hashable, Sendable {
 public enum HomeTopRules {
     /// Scroll offsets up to this count as "at the very top" (points).
     public static let topTolerance: Double = 0.5
+    /// Offsets up to this still count as the top position of the page: the focus scroll to the topmost element
+    /// leaves the content padding (24 pt with the hero, 40 pt without) plus the focus margin (points).
+    public static let restOffset: Double = 60
     /// Time after reaching the top edge before the offset is checked and logged (focus scroll has settled).
     public static let settleMilliseconds = 400
 
     public enum BarRequest: Hashable, Sendable { case automatic, visible }
 
-    /// Top navigation only: while the top edge holds focus the tab bar is requested explicitly, so a bar that
-    /// stayed hidden after scrolling comes back. Everywhere else (and with the sidebar) the system decides.
-    public static func barRequest(atTop: Bool, navigation: NavigationStyle) -> BarRequest {
-        atTop && navigation == .top ? .visible : .automatic
+    /// Top navigation only: the tab bar is requested explicitly, so a bar that stayed hidden comes back, while
+    /// - the top edge holds focus (`atTop`),
+    /// - the focus is in the tab bar itself (`inBar`): the request must not drop the moment the move up lands there,
+    /// - or the page sits at its top position (`offset` up to `restOffset`); moving up into the bar does not scroll,
+    ///   so this holds the request even when the bar is not recognised as such.
+    /// Scrolled down with the focus in the content (and always with the sidebar) the system decides.
+    public static func barRequest(atTop: Bool, inBar: Bool, offset: Double, navigation: NavigationStyle) -> BarRequest {
+        guard navigation == .top else { return .automatic }
+        return atTop || inBar || offset <= restOffset ? .visible : .automatic
     }
 
-    /// Top navigation only: the top edge holds focus but the page is not scrolled exactly to the top.
-    public static func shouldScrollToTop(atTop: Bool, offset: Double, navigation: NavigationStyle) -> Bool {
-        atTop && navigation == .top && offset > topTolerance
+    /// Top navigation only: the top edge holds focus and the page is not exactly at the top. A residual offset up to
+    /// `restOffset` is left alone while the tab bar is on screen, so the page does not shift on its own; beyond that,
+    /// or with the bar off screen, the page snaps to the very top.
+    public static func shouldScrollToTop(atTop: Bool, offset: Double, barOnScreen: Bool,
+                                         navigation: NavigationStyle) -> Bool {
+        guard atTop, navigation == .top, offset > topTolerance else { return false }
+        return !barOnScreen || offset > restOffset
     }
 }
 
@@ -156,7 +168,19 @@ public enum TabBarReachLog {
         case stayedInContent(String)
         /// The focus engine found no target.
         case failed
+
+        /// Case without details (throttle key).
+        public var kind: String {
+            switch self {
+            case .reachedBar: "bar"
+            case .stayedInContent: "content"
+            case .failed: "failed"
+            }
+        }
     }
+
+    /// Whether an up move gets a line: at the top edge always, away from it only a failed move.
+    public static func logs(_ outcome: UpOutcome, atTop: Bool) -> Bool { atTop || outcome == .failed }
 
     public static func styleName(_ n: NavigationStyle) -> String { n == .top ? "Menü oben" : "Seitenleiste" }
 
@@ -175,10 +199,10 @@ public enum TabBarReachLog {
     /// An up move while the home page is visible. `atTop`: focus was on the top edge (or just left it).
     public static func up(_ outcome: UpOutcome, atTop: Bool, edge: HomeTopEdge, bar: TabBarState, offset: Double,
                           navigation: NavigationStyle) -> String? {
+        guard logs(outcome, atTop: atTop) else { return nil }
         let tail = "Leiste \(bar.summary) · Versatz \(pt(offset)) · \(styleName(navigation))"
         guard atTop else {
             // Up inside the content is normal; only a failed move is worth a line.
-            guard outcome == .failed else { return nil }
             return "Hoch gescheitert, nicht am oberen Rand (oben: \(edge.logName)) · \(tail)"
         }
         switch outcome {
@@ -204,4 +228,15 @@ public struct LogThrottle: Sendable {
         last[key] = now
         return true
     }
+}
+
+/// Wave F-j round 1 (hypothesis D): an autostart (continue with the last source, "play now") must not open the
+/// full-screen player while the push transition of the source list is still running. Presenting during a push
+/// can leave the tab bar in a stale state. The source list waits until `settleMs` after it appeared.
+public enum AutostartAfterPush {
+    /// Push transition on tvOS (about 0.5 s) plus margin.
+    public static let settleMs = 700
+
+    /// Remaining wait before the player may open, given the time since the source list appeared (0 = now).
+    public static func remainingWait(elapsedMs: Int) -> Int { max(0, settleMs - max(0, elapsedMs)) }
 }
