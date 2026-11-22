@@ -73,6 +73,8 @@ struct DetailView: View {
     @State private var choice: BestChoice.Pick?
     @State private var choiceChecked = false
     @State private var entryFocusAt: Date?
+    /// Wave F-n: measured height of the info block (meta line to description); the poster left of it takes it.
+    @State private var infoHeight: CGFloat = 0
     /// Startfokus auf der Hauptaktion, nicht auf der (darüber liegenden) Beschreibung.
     enum Focus: Hashable { case play, best, episode(String), overview }
     @FocusState private var focus: Focus?
@@ -110,17 +112,19 @@ struct DetailView: View {
                         } else {
                             Text(item.name).textRole(.display).accessibilityAddTraits(.isHeader)
                         }
-                        // Welle E-a: FSK steht in der Textzeile („2018 · 97 min · FSK 0 · Genre“), nicht als Plakette.
-                        MetaLine(parts: [meta?.releaseInfo ?? item.releaseInfo, meta?.runtime, certification ?? ratings?.certification,
-                                         meta?.genres?.prefix(3).joined(separator: ", ")])
-                        InfoBadges(ratings: model.ratingBadges(imdbRating: meta?.imdbRating, mdblist: ratings), tech: techBadges)
-                        if let t = extra?.tagline { Text(t).italic().textRole(.rowDetail) }
-                        if !overview.isEmpty {
-                            // Kurz halten; Klick zeigt den ganzen Text.
-                            Button { showFullText = true } label: { FocusHighlight { Text(overview).font(.callout).foregroundStyle(.white).lineLimit(3).multilineTextAlignment(.leading) } }
-                                .buttonStyle(.plain)
-                                .focused($focus, equals: .overview)
-                                .frame(maxWidth: Theme.Layout.contentMaxWidth, alignment: .leading)
+                        // Wave F-n: the title's poster left of the info block, exactly as tall as it (PlayerCore `DetailPage`).
+                        HStack(alignment: .top, spacing: CGFloat(DetailPage.posterGap)) {
+                            if let size = DetailPage.posterSize(blockHeight: Double(infoHeight), bottomInset: overview.isEmpty ? 0 : Double(FocusHighlightMetrics.verticalPadding)) {
+                                DetailPoster(item: posterItem)
+                                    .frame(width: CGFloat(size.width), height: CGFloat(size.height))
+                                    .transition(.opacity)
+                            }
+                            infoBlock
+                                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
+                                    guard DetailPage.shouldUpdate(measured: Double(h), stored: Double(infoHeight)) else { return }
+                                    // Review M2: animated, so the poster fades in and resizes smoothly.
+                                    withAnimation(.easeOut(duration: 0.2)) { infoHeight = h }
+                                }
                         }
 
                         if loading {
@@ -159,7 +163,7 @@ struct DetailView: View {
                     proxy.scrollTo(id)
                 }
             }
-            .defaultFocus($focus, choice != nil ? Focus.best : Focus.play)
+            .defaultFocus($focus, movieMainFocus)
             // Die App-Akzentfarbe (RootView .tint) färbte Knöpfe und Text-Knöpfe hier flächig: normale tvOS-Knöpfe.
             .tint(Color?.none)
         }
@@ -228,7 +232,9 @@ struct DetailView: View {
                 entryFocusAt = Date()
                 if focus == nil || focus == .overview { await applyFocus(playbackFocusTarget(), reason: "Eintritt") }
                 // R1 (M6): Karte kam während des Fokus-Setzens (Ziel war noch „Abspielen“).
-                if choice != nil, focus == .play, let at = entryFocusAt, Date().timeIntervalSince(at) <= 2 {
+                if choice != nil, DetailPage.lateCardTakesFocus(setting: model.profile.player.instantPlay, isSeries: isSeries,
+                                                                focusOnPlay: focus == .play,
+                                                                sinceEntry: entryFocusAt.map { Date().timeIntervalSince($0) }) {
                     focus = .best
                     RemoteLog.info("fokus", "Detail Eintritt: Sofort abspielen (Karte während des Fokus-Setzens)")
                 }
@@ -251,10 +257,14 @@ struct DetailView: View {
         // Welle G-a (§3.2): Karte kommt kurz nach dem Eintritt (Quellen liefen noch): Fokus wandert mit, solange er
         // noch auf „Abspielen“ steht und der Eintritt höchstens 2 s her ist.
         .onChange(of: choice != nil) { _, has in
-            guard has, focus == .play, let at = entryFocusAt, Date().timeIntervalSince(at) <= 2 else { return }
+            guard has, DetailPage.lateCardTakesFocus(setting: model.profile.player.instantPlay, isSeries: isSeries,
+                                                     focusOnPlay: focus == .play,
+                                                     sinceEntry: entryFocusAt.map { Date().timeIntervalSince($0) }) else { return }
             focus = .best
             RemoteLog.info("fokus", "Detail Eintritt: Sofort abspielen (Karte nachgeladen)")
         }
+        // Wave F-n: setting changed while the page is open: build or drop the card.
+        .onChange(of: model.profile.player.instantPlay) { if let id = imdb { updateChoice(id) } }
         .onDisappear { trailerTask?.cancel() }
         .sheet(isPresented: $showFullText) { FullTextSheet(title: item.name, text: overview) }
         .fullScreenCover(item: $trailer) { t in
@@ -288,7 +298,7 @@ struct DetailView: View {
     /// Fokusziel (§3.2): Film „Abspielen“; Serie die nächste ungesehene Folge nach der zuletzt gespielten
     /// (PlayerCore `EpisodeFocus`), auch in der nächsten Staffel. Die erste Folge einer Staffel trägt `.play`.
     private func playbackFocusTarget() -> FocusTarget {
-        guard isSeries, let imdb else { return FocusTarget(focus: choice != nil ? .best : .play) }
+        guard isSeries, let imdb else { return FocusTarget(focus: movieMainFocus) }
         let videos = meta?.videos ?? []
         let anchor = model.progress.latest(forItem: imdb).flatMap { p in
             p.season.flatMap { s in p.episode.map { EpisodeRef(season: s, episode: $0) } }
@@ -337,6 +347,43 @@ struct DetailView: View {
 
     private var overview: String { meta?.description ?? item.description ?? "" }
 
+    /// Meta line, badges, tagline and description (wave F-n: measured for the poster to its left).
+    @ViewBuilder private var infoBlock: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.l) {
+            // Welle E-a: FSK steht in der Textzeile („2018 · 97 min · FSK 0 · Genre“), nicht als Plakette.
+            MetaLine(parts: [meta?.releaseInfo ?? item.releaseInfo, meta?.runtime, certification ?? ratings?.certification,
+                             meta?.genres?.prefix(3).joined(separator: ", ")])
+            InfoBadges(ratings: model.ratingBadges(imdbRating: meta?.imdbRating, mdblist: ratings), tech: techBadges)
+            // Review M3: same width cap as the description, so the poster does not change its line breaks.
+            if let t = extra?.tagline { Text(t).italic().textRole(.rowDetail).frame(maxWidth: Theme.Layout.contentMaxWidth, alignment: .leading) }
+            if !overview.isEmpty {
+                // Kurz halten; Klick zeigt den ganzen Text.
+                Button { showFullText = true } label: { FocusHighlight { Text(overview).font(.callout).foregroundStyle(.white).lineLimit(3).multilineTextAlignment(.leading) } }
+                    .buttonStyle(.plain)
+                    .focused($focus, equals: .overview)
+                    .frame(maxWidth: Theme.Layout.contentMaxWidth, alignment: .leading)
+            }
+        }
+    }
+
+    /// Wave F-n: the page's item with the meta poster as fallback when the catalogue entry has none (the tile
+    /// choice addon poster, then this poster, runs in `TilePosterImage`).
+    private var posterItem: MetaPreview {
+        var p = item
+        if p.poster?.trimmingCharacters(in: .whitespaces).isEmpty ?? true { p.poster = meta?.poster }
+        return p
+    }
+
+    /// Wave F-n: „Sofort abspielen“ card shown (setting, movies only).
+    private var instantPlayOn: Bool {
+        DetailPage.showsInstantPlay(setting: model.profile.player.instantPlay, isSeries: isSeries)
+    }
+
+    /// Wave F-n: entry and return focus of a movie page (card only with the setting and a pick).
+    private var movieMainFocus: Focus {
+        DetailPage.mainAction(setting: model.profile.player.instantPlay, isSeries: isSeries, hasPick: choice != nil) == .instantPlay ? .best : .play
+    }
+
     /// Welle E-a: eine Zeile, höchstens 5 (Auflösung, DV/HDR, Atmos, Ton + Kanäle, Remux).
     private var techBadges: [QualityBadge] {
         best.map { QualityBadges.detailRow($0, settings: model.profile.appearance.badges) } ?? []
@@ -349,8 +396,13 @@ struct DetailView: View {
 
     /// Welle G-a: Beste Wahl neu bilden (Film). `list` = eben geholte Quellen; sonst aus dem Quellen-Cache
     /// (ohne Cache bleibt der Stand, bis die Quellen da sind).
+    /// Wave F-n: only with the setting „Sofort abspielen anzeigen“ (default off); off drops any earlier pick.
     private func updateChoice(_ id: String, list: [(addon: String, stream: StreamItem)]? = nil) {
-        guard !isSeries else { return }
+        guard instantPlayOn else {
+            choice = nil
+            choiceChecked = false
+            return
+        }
         guard let all = list ?? model.cachedStreams(id: id) else { return }
         let pick = model.bestChoice(all, title: id)
         if pick?.stream.id != choice?.stream.id || !choiceChecked {
@@ -366,7 +418,9 @@ struct DetailView: View {
     /// Ohne abspielbare Quelle: „Keine Quelle gefunden – Quellen ansehen“ öffnet die Liste.
     @ViewBuilder
     private func bestChoiceCard(_ imdb: String, resume: Double?) -> some View {
-        if let c = choice {
+        if !instantPlayOn {
+            EmptyView()
+        } else if let c = choice {
             let detail = BestChoice.detail(c.stream, primaryLanguage: model.sourceRankContext.primaryLanguage)
             Button {
                 markOpenedPlayback()
@@ -521,13 +575,33 @@ struct TrailerPlay: Identifiable {
     let stream: YouTubeStream
 }
 
+/// Wave F-n: the title's poster on the detail page, left of the info block. Same picture choice as the poster tiles
+/// (`TilePosterImage`: metadata addon poster when that setting is on, then the catalogue/TMDB poster, a failed address
+/// is skipped; without any picture the title shows on the placeholder). Not focusable.
+struct DetailPoster: View {
+    let item: MetaPreview
+
+    var body: some View {
+        TilePosterImage(item: item)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .shadow(color: .black.opacity(0.45), radius: 12, y: 6)
+            .accessibilityHidden(true)
+    }
+}
+
+/// Wave F-n: padding of `FocusHighlight` (the detail poster ends with the description text, not its highlight).
+enum FocusHighlightMetrics {
+    static let horizontalPadding: CGFloat = 16
+    static let verticalPadding: CGFloat = 10
+}
+
 /// Dezente Fokusanzeige für Text-Knöpfe (`.buttonStyle(.plain)`).
 struct FocusHighlight<C: View>: View {
     @Environment(\.isFocused) private var focused
     @ViewBuilder let content: C
     var body: some View {
         content
-            .padding(.horizontal, 16).padding(.vertical, 10)
+            .padding(.horizontal, FocusHighlightMetrics.horizontalPadding).padding(.vertical, FocusHighlightMetrics.verticalPadding)
             .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(focused ? 0.14 : 0)))
             .animation(.easeOut(duration: 0.15), value: focused)
     }

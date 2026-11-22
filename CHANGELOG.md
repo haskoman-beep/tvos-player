@@ -17,6 +17,18 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 
 ## [Unreleased]
 
+### Added
+- Detail page: the title's poster now sits to the left of the meta line, badges and description, exactly as
+  tall as that block. It uses the same picture as the poster tiles (metadata addon poster when that setting
+  is on, otherwise the catalog or TMDB poster) and is left out when the block is too short for it.
+- Settings › Playback › Detail page: a new setting „Sofort abspielen anzeigen“ (show instant play), off by
+  default.
+
+### Changed
+- Detail page: „Abspielen“ (play) is the main button again and takes the focus on entry and on return from
+  the player. The „Sofort abspielen“ (instant play) card is only shown, and its best source only chosen,
+  when the new setting is on; with it on, everything behaves as in build 198.
+
 ## [Build 198] – 2026-11-22 (integ)
 
 ### Added

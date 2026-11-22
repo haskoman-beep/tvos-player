@@ -10,16 +10,21 @@ public struct PlayerComfortSettings: Codable, Sendable, Equatable {
     public var remoteSkipSeconds: Int
     /// Welle F-h3: „Ton & Untertitel öffnen“ (Standard Leiste oben).
     public var trackPanelStyle: TrackPanelStyle
+    /// Wave F-n: show the „Sofort abspielen“ card (best source, wave G-a) on the movie detail page. Default off:
+    /// „Abspielen“ is the main button and no best choice is built.
+    public var instantPlay: Bool
 
     public init(rememberTracks: Bool = true, screensaverPauseMinutes: Int = IdleTimerPolicy.defaultPauseMinutes,
-                remoteSkipSeconds: Int = RemoteTransport.defaultSkipSeconds, trackPanelStyle: TrackPanelStyle = .topBar) {
+                remoteSkipSeconds: Int = RemoteTransport.defaultSkipSeconds, trackPanelStyle: TrackPanelStyle = .topBar,
+                instantPlay: Bool = false) {
         self.rememberTracks = rememberTracks
         self.screensaverPauseMinutes = screensaverPauseMinutes
         self.remoteSkipSeconds = remoteSkipSeconds
         self.trackPanelStyle = trackPanelStyle
+        self.instantPlay = instantPlay
     }
 
-    enum CodingKeys: String, CodingKey { case rememberTracks, screensaverPauseMinutes, remoteSkipSeconds, trackPanelStyle }
+    enum CodingKeys: String, CodingKey { case rememberTracks, screensaverPauseMinutes, remoteSkipSeconds, trackPanelStyle, instantPlay }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -29,5 +34,6 @@ public struct PlayerComfortSettings: Codable, Sendable, Equatable {
         remoteSkipSeconds = (try? c.decodeIfPresent(Int.self, forKey: .remoteSkipSeconds)) ?? nil ?? d.remoteSkipSeconds
         // Unbekannter Wert (neuere App) fällt auf den Standard zurück.
         trackPanelStyle = (try? c.decodeIfPresent(TrackPanelStyle.self, forKey: .trackPanelStyle)) ?? nil ?? d.trackPanelStyle
+        instantPlay = (try? c.decodeIfPresent(Bool.self, forKey: .instantPlay)) ?? nil ?? d.instantPlay
     }
 }
