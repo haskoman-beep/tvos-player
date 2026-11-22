@@ -1,7 +1,8 @@
 import SwiftUI
 import PlayerCore
 
-/// Kategorie 1 „Profil & Konten“ (§2.2): Statuskarte, Profile wechseln/anlegen/löschen, Konten, Fortschritt.
+/// Kategorie „Profil & Konten“ (§2.2): Statuskarte, Profile wechseln/anlegen/löschen, Konten, Schlüssel (wave S:
+/// TMDB, MDBList and TorBox), Fortschritt.
 struct ProfileSettings: View {
     @EnvironmentObject var model: AppModel
     @State private var naming = false
@@ -40,6 +41,8 @@ struct ProfileSettings: View {
                                 reserveDetailSpace: false) { confirmDelete = true }
                 }
             }
+            // Review S M3: the page label says "this profile", the profile list itself is device-wide.
+            SettingsFootnote("Die Profilliste gilt für das ganze Gerät.")
             AccountSettingsRows()
             SettingsSection("Fortschritt") {
                 SettingsChoiceRow(symbol: "checkmark.circle", tint: tint, title: "Fortschritt & Gesehen",

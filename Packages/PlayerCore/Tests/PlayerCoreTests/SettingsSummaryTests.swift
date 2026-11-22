@@ -96,9 +96,6 @@ import Testing
 }
 
 @Test func summaryAddonsAndHome() {
-    #expect(SettingsSummary.addons(count: 1, order: .smart) == "1 Addon · Smart sortiert")
-    #expect(SettingsSummary.addons(count: 3, order: .addon) == "3 Addons · Wie Addon sortiert")
-    #expect(SettingsSummary.addons(count: 0, order: .smart) == "Kein Addon")
     #expect(SettingsSummary.home(rows: 24, fusionKit: true) == "24 Reihen · Fusion-Kit an")
     #expect(SettingsSummary.home(rows: 1, fusionKit: false) == "1 Reihe · Fusion-Kit aus")
     #expect(SettingsSummary.home(rows: 0, fusionKit: false) == "Keine Reihen · Fusion-Kit aus")

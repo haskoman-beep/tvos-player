@@ -10,6 +10,15 @@ struct CategoryEntry {
     var count: Int? = nil
 }
 
+/// Wave S: what stands above an entry of the left column when it opens a group. Not focusable: focus moves
+/// from entry to entry, the column scrolls with it, and the header scrolls along above its first entry.
+enum CategoryGroupLabel: Equatable {
+    /// Small-caps header, e.g. „INHALTE“.
+    case title(String)
+    /// Only a gap (System at the end, set apart without a header).
+    case gap
+}
+
 /// Zweispaltiges Muster „links wählen, rechts Inhalt“ (§4.6) für die Einstellungen und den Reihen-Browser.
 /// - Fokuswechsel ohne Klick: der fokussierte Eintrag links wird sofort aktiv.
 /// - Akzentmarke statt Chevron am aktiven Eintrag.
@@ -25,6 +34,8 @@ struct CategoryList<Item: Hashable, Header: View, Content: View>: View {
     let items: [Item]
     @Binding var selected: Item
     let entry: (Item) -> CategoryEntry
+    /// Wave S: optional group header or gap above an entry (`nil` = none).
+    let groupLabel: (Item) -> CategoryGroupLabel?
     /// Menu in der linken Spalte (z. B. Einstellungen verlassen bzw. Browser schließen).
     let onExit: () -> Void
     @ViewBuilder let header: () -> Header
@@ -34,12 +45,14 @@ struct CategoryList<Item: Hashable, Header: View, Content: View>: View {
     @FocusState private var focused: Focus?
 
     init(items: [Item], selected: Binding<Item>, entry: @escaping (Item) -> CategoryEntry,
+         groupLabel: @escaping (Item) -> CategoryGroupLabel? = { _ in nil },
          onExit: @escaping () -> Void,
          @ViewBuilder header: @escaping () -> Header,
          @ViewBuilder content: @escaping (Item) -> Content) {
         self.items = items
         self._selected = selected
         self.entry = entry
+        self.groupLabel = groupLabel
         self.onExit = onExit
         self.header = header
         self.content = content
@@ -55,6 +68,9 @@ struct CategoryList<Item: Hashable, Header: View, Content: View>: View {
                     ForEach(items, id: \.self) { item in
                         let e = entry(item)
                         let active = item == selected
+                        if let label = groupLabel(item) {
+                            CategoryGroupHeader(label: label)
+                        }
                         Button { selected = item } label: {
                             CategoryEntryLabel(entry: e, active: active)
                         }
@@ -98,10 +114,33 @@ struct CategoryList<Item: Hashable, Header: View, Content: View>: View {
 
 extension CategoryList where Header == EmptyView {
     init(items: [Item], selected: Binding<Item>, entry: @escaping (Item) -> CategoryEntry,
+         groupLabel: @escaping (Item) -> CategoryGroupLabel? = { _ in nil },
          onExit: @escaping () -> Void,
          @ViewBuilder content: @escaping (Item) -> Content) {
-        self.init(items: items, selected: selected, entry: entry, onExit: onExit,
+        self.init(items: items, selected: selected, entry: entry, groupLabel: groupLabel, onExit: onExit,
                   header: { EmptyView() }, content: content)
+    }
+}
+
+/// Wave S: group header (small caps, aligned with the entry titles) or a plain gap. Not focusable.
+private struct CategoryGroupHeader: View {
+    let label: CategoryGroupLabel
+
+    var body: some View {
+        switch label {
+        case .title(let t):
+            Text(t.uppercased())
+                .textRole(.rowDetail)
+                .tracking(1)
+                .lineLimit(1)
+                // Same inset as the row content (row padding of ThemeRowButtonStyle).
+                .padding(.leading, Theme.Space.m)
+                .padding(.top, Theme.Space.s)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityLabel(t)
+        case .gap:
+            Spacer().frame(height: Theme.Space.m).accessibilityHidden(true)
+        }
     }
 }
 
@@ -135,11 +174,13 @@ private struct CategoryEntryLabel: View {
     @Previewable @State var selected = Theme.CategoryTint.audio
     let names: [Theme.CategoryTint: (String, String)] = [
         .profile: ("Profil & Konten", "person.crop.circle"),
-        .addons: ("Addons & Quellen", "puzzlepiece.extension"),
+        .addons: ("Addons", "puzzlepiece.extension"),
+        .sources: ("Quellen", "list.bullet.rectangle"),
         .home: ("Startseite", "house"),
         .appearance: ("Aussehen", "paintpalette"),
-        .playback: ("Wiedergabe & Bild", "play.rectangle"),
-        .audio: ("Ton & Untertitel", "captions.bubble"),
+        .playback: ("Wiedergabe", "play.rectangle"),
+        .audio: ("Sprache & Untertitel", "captions.bubble"),
+        .picture: ("Bild & Ton", "tv.and.hifispeaker.fill"),
         .system: ("System", "gearshape"),
     ]
     CategoryList(items: Theme.CategoryTint.allCases, selected: $selected,

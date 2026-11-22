@@ -10,12 +10,16 @@ struct SettingsPage<Content: View>: View {
     var pageTitle: String? = nil
     let title: String
     var summary: String? = nil
+    /// Wave S: storage scope under the category title („Gilt für dieses Profil“ / „… Gerät“).
+    var scope: SettingsScope? = nil
     let content: Content
 
-    init(pageTitle: String? = nil, title: String, summary: String? = nil, @ViewBuilder content: () -> Content) {
+    init(pageTitle: String? = nil, title: String, summary: String? = nil, scope: SettingsScope? = nil,
+         @ViewBuilder content: () -> Content) {
         self.pageTitle = pageTitle
         self.title = title
         self.summary = summary
+        self.scope = scope
         self.content = content()
     }
 
@@ -25,8 +29,11 @@ struct SettingsPage<Content: View>: View {
                 if let pageTitle {
                     Text(pageTitle).textRole(.pageTitle).accessibilityAddTraits(.isHeader)
                 }
-                SettingsHeader(title: title, summary: summary)
-                    .padding(.bottom, Theme.Space.xs)
+                VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                    SettingsHeader(title: title, summary: summary)
+                    if let scope { SettingsScopeLine(scope: scope) }
+                }
+                .padding(.bottom, Theme.Space.xs)
                 content
             }
             .frame(maxWidth: Theme.Layout.contentMaxWidth, alignment: .leading)
@@ -37,7 +44,20 @@ struct SettingsPage<Content: View>: View {
     }
 }
 
-/// Inhalt einer Kategorie: Seitentitel „Einstellungen“, Kategorietitel, Zusammenfassung aus `SettingsSummary`.
+/// Wave S: one quiet line under the category title that says where its values are stored. Not focusable.
+struct SettingsScopeLine: View {
+    let scope: SettingsScope
+
+    var body: some View {
+        Label(scope.label, systemImage: scope == .device ? "appletv" : "person.crop.circle")
+            .textRole(.rowDetail)
+            .lineLimit(1)
+            .accessibilityLabel(scope.label)
+    }
+}
+
+/// Inhalt einer Kategorie: Seitentitel „Einstellungen“, Kategorietitel, Zusammenfassung aus `SettingsSummary`,
+/// darunter die Geltung (wave S, `SettingsCategory.scope`).
 struct CategoryPage<Content: View>: View {
     let category: SettingsCategory
     let summary: String
@@ -50,7 +70,7 @@ struct CategoryPage<Content: View>: View {
     }
 
     var body: some View {
-        SettingsPage(pageTitle: "Einstellungen", title: category.title, summary: summary) { content }
+        SettingsPage(pageTitle: "Einstellungen", title: category.title, summary: summary, scope: category.scope) { content }
     }
 }
 

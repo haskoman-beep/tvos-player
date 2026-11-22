@@ -5,7 +5,7 @@ import PlayerCore
 /// Welle C-b (#8): Hänger des Hauptthreads messen statt fühlen. Ein Beobachter am Haupt-Runloop notiert
 /// jeden Schritt; liegt zwischen zwei Schritten (ohne Schlafpause) mehr als 250 ms, geht eine Log-Zeile
 /// mit Dauer, letzter Notiz („Brotkrume“) und Speicherverbrauch raus (Regeln in `HitchDetector`).
-/// Schalter: Einstellungen › Über › „Ruckler protokollieren“ (Standard an, kostet nur einen Zeitstempel je Schritt).
+/// Schalter: Einstellungen › System › Diagnose › „Ruckler protokollieren“ (Standard an, kostet nur einen Zeitstempel je Schritt).
 @MainActor
 enum MainThreadWatchdog {
     static let settingKey = "diag.hitchLog"

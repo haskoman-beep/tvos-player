@@ -1,11 +1,11 @@
 import SwiftUI
 import PlayerCore
 
-/// Unterseite „System › Erweitert“ (§2.2): Diagnose (Welle C-b, Gerät statt Profil), Log-Empfänger, Zeitgrenze je Addon,
-/// Dolby Vision fest/FEL, Icon-Satz, Katalog-Zwischenspeicher leeren (mit Rückfrage, E6).
-struct AdvancedSettingsPage: View {
+/// Wave S: „System“ sections Diagnose (Welle C-b, Gerät statt Profil; Log-Empfänger) and Zwischenspeicher
+/// (Katalog-Zwischenspeicher leeren, mit Rückfrage, E6). Was the subpage „System › Erweitert“, which is dissolved:
+/// Zeitgrenze je Addon → Addons, Dolby Vision fest/FEL → Bild & Ton, Icon-Satz only under Aussehen › Plaketten.
+struct SystemMaintenanceRows: View {
     @EnvironmentObject var model: AppModel
-    @ObservedObject private var icons = RatingIconStore.shared
     @AppStorage(MainThreadWatchdog.settingKey) private var hitchLog = true
     @AppStorage(XRayProbe.settingKey) private var xrayProbe = false
     @State private var confirmClear = false
@@ -16,7 +16,8 @@ struct AdvancedSettingsPage: View {
     private let tint = SettingsCategory.system.tint
 
     var body: some View {
-        SettingsSubpage(title: "Erweitert", summary: "Diagnose, Addons, Bild, Zwischenspeicher") {
+        // A VStack, not a Group: modifiers on a Group would run once per section (two polls, two covers).
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
             SettingsSection("Diagnose") {
                 SettingsToggleRow(symbol: "waveform.path.ecg", tint: tint, title: "Ruckler protokollieren",
                                   detail: "Schreibt ins Ereignis-Log, wenn die Oberfläche länger als 250 ms hängt (mit letzter Aktion und Speicherverbrauch).",
@@ -29,18 +30,6 @@ struct AdvancedSettingsPage: View {
                                 detail: "Das Ereignis-Log geht automatisch an ein Log-Programm im Heimnetz (Bonjour, Dienst _playerlog._tcp). "
                                     + "Ohne Empfänger bleiben die letzten 500 Zeilen im Speicher.",
                                 value: receiver ? "Gefunden" : "Nur Speicher")
-            }
-            SettingsSection("Addons") {
-                AddonTimeoutPicker()
-            }
-            SettingsSection("Bild") {
-                DisplayModeSettingsRows(part: .advanced, tint: tint)
-            }
-            SettingsSection("Plaketten") {
-                SettingsLinkRow(symbol: "photo.on.rectangle", tint: tint, title: "Bewertungs-Icon-Satz",
-                                value: RatingIconSettingsPage.value(model.profile.sources.ratingIconSetURL, status: icons.status)) {
-                    RatingIconSettingsPage()
-                }
             }
             SettingsSection("Zwischenspeicher") {
                 SettingsRow(symbol: "trash", tint: Theme.Tone.error.color,

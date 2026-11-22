@@ -1,8 +1,8 @@
 import SwiftUI
 import PlayerCore
 
-/// Kategorie 3 „Startseite“ (§2.2): Status, Reihen & Collections › / Fusion-Kit / Import (HomeSettings, Welle F-b2,
-/// hier nur eingehängt), Postergröße (Welle F-f), Titelbild, Kalender.
+/// Kategorie „Startseite“ (§2.2): Status, Reihen & Collections › / Fusion-Kit / Import (HomeSettings, Welle F-b2,
+/// hier nur eingehängt), Titelbild, Kalender. Wave S: „Postergröße“ only under Aussehen › Karten (no duplicate).
 struct HomeCategorySettings: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var kit = FusionKitStore.shared
@@ -19,10 +19,6 @@ struct HomeCategorySettings: View {
             SettingsSection("Reihen") {
                 // Reihen & Collections ›, Fusion-Kit, Collections importieren › (Inhalt gehört Welle F-b2).
                 HomeSettings()
-            }
-            // Welle F-f: Postergröße auch hier, damit man sie findet (gleiche Zeile wie unter Aussehen › Karten).
-            SettingsSection("Kacheln") {
-                PosterSizeSettingRow(tint: tint)
             }
             SettingsSection("Titelbild") {
                 SettingsToggleRow(symbol: "photo.artframe", tint: tint, title: "Titelbild oben",
@@ -66,9 +62,9 @@ struct HomeCategorySettings: View {
     }
 }
 
-/// Welle F-f: „Postergröße“ (`appearance.cardSize`, bisher „Kartengröße“ unter Aussehen). Steht unter Aussehen › Karten
-/// und unter Startseite › Kacheln, beide Male genau diese Zeile. Mittel = bisherige Größe; Plaketten und Schrift
-/// skalieren nicht mit.
+/// Welle F-f: „Postergröße“ (`appearance.cardSize`, bisher „Kartengröße“ unter Aussehen). Wave S: only under
+/// Aussehen › Karten (the second copy under Startseite › Kacheln is gone). Mittel = bisherige Größe; Plaketten und
+/// Schrift skalieren nicht mit.
 struct PosterSizeSettingRow: View {
     @EnvironmentObject var model: AppModel
     /// Farbe der Kategorie, in der die Zeile steht.

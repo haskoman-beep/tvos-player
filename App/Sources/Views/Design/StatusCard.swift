@@ -112,7 +112,7 @@ struct StatusCard: View {
     VStack(alignment: .leading, spacing: Theme.Space.m) {
         StatusCard(leading: .initial("Ich", Theme.CategoryTint.profile.color), title: "Ich", subtitle: "aktives Profil",
                    metrics: [.init(text: DesignText.metaLine(["3 Addons", "24 Reihen"])), .init(text: "Fortschritt: Trakt")])
-        StatusCard(leading: .symbol("puzzlepiece.extension", Theme.CategoryTint.addons.color), title: "Addons & Quellen",
+        StatusCard(leading: .symbol("puzzlepiece.extension", Theme.CategoryTint.addons.color), title: "Addons",
                    subtitle: "3 Addons",
                    metrics: [.init(text: "Verbunden", tone: .ok), .init(text: "Schlüssel fehlt", tone: .warn)],
                    action: .init(title: "Am Handy", symbol: "qrcode") {})

@@ -1,8 +1,9 @@
 import SwiftUI
 import PlayerCore
 
-/// Kategorie 4 „Aussehen“ (§2.2): Navigation, Akzentfarbe, Sprache, Karten, Detailseite, Plaketten.
-/// „Titelbild oben“ (früher Hero) steht jetzt unter Startseite.
+/// Kategorie „Aussehen“ (§2.2): Allgemein (Sprache der App first since wave S, Navigation, Akzentfarbe), Karten,
+/// Detailseite, Plaketten. „Titelbild oben“ (früher Hero) steht unter Startseite. Wave S: Postergröße and the rating
+/// icon set appear only here.
 struct AppearanceSettings: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var icons = RatingIconStore.shared
@@ -15,7 +16,11 @@ struct AppearanceSettings: View {
     var body: some View {
         let a = model.profile.appearance
         CategoryPage(.appearance, summary: SettingsSummary.appearance(navigation: a.navigation, accent: a.accent, cardSize: a.cardSize)) {
-            SettingsSection {
+            SettingsSection("Allgemein") {
+                SettingsChoiceRow(symbol: "globe", tint: tint, title: "Sprache der App",
+                                  detail: "Sprache von Titeln, Beschreibungen und Katalogen.",
+                                  options: AppLanguage.allCases, selection: model.binding(\.language),
+                                  alwaysList: true, label: SettingsSummary.languageName)
                 SettingsChoiceRow(symbol: "sidebar.left", tint: tint, title: "Navigation",
                                   detail: "Bereiche als Seitenleiste links oder als Leiste oben.",
                                   options: NavigationStyle.allCases, selection: model.binding(\.appearance.navigation),
@@ -25,13 +30,8 @@ struct AppearanceSettings: View {
                                   detail: "Markierungen und Fortschrittsbalken.",
                                   options: AccentChoice.allCases, selection: model.binding(\.appearance.accent),
                                   optionTint: Self.visibleTint, label: SettingsSummary.accentName)
-                SettingsChoiceRow(symbol: "globe", tint: tint, title: "Sprache der App",
-                                  detail: "Sprache von Titeln, Beschreibungen und Katalogen.",
-                                  options: AppLanguage.allCases, selection: model.binding(\.language),
-                                  alwaysList: true, label: SettingsSummary.languageName)
             }
             SettingsSection("Karten") {
-                // Welle F-f: dieselbe Zeile wie unter Startseite › Kacheln (gleicher Wert, gleicher Text).
                 PosterSizeSettingRow(tint: tint)
                 SettingsToggleRow(symbol: "rectangle.expand.vertical", tint: tint, title: "Poster aufklappen",
                                   detail: "Die fokussierte Kachel klappt zum breiten Bild mit Titel auf.",

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Bildmodus-Einstellungen des Profils für die Engine (Welle C-c, #13). Standard = bisheriges Verhalten,
+/// Bildmodus-Einstellungen (since wave S round 2 per device, `DeviceSettings`) für die Engine (Welle C-c, #13). Standard = bisheriges Verhalten,
 /// außer `keepModeBetweenEpisodes` (spart beim Dolby-Vision-Fernseher das mehrere Sekunden lange Umschalten
 /// zwischen zwei Folgen).
 public struct DisplayModeSettings: Codable, Sendable, Equatable {

@@ -30,7 +30,7 @@ final class RemoteLog {
         Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in Task { @MainActor in RemoteLog.shared.flush() } }
     }
 
-    /// Welle F-a: Status für Einstellungen → System → Erweitert („Empfänger gefunden“ / „nur Speicher“).
+    /// Welle F-a: Status für Einstellungen → System → Diagnose („Empfänger gefunden“ / „nur Speicher“).
     var hasReceiver: Bool { target != nil }
 
     static func info(_ cat: String, _ msg: String) { shared.add("info", cat, msg) }

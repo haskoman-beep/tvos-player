@@ -1,8 +1,8 @@
 import SwiftUI
 import PlayerCore
 
-/// Wave U: entry row for the subtitle look (one self-contained component, hooked into „Ton & Untertitel“ with one line;
-/// wave S moves it into the new settings tree). Stored in the profile (`Profile.subtitleStyle`) and synced with it.
+/// Wave U: entry row for the subtitle look (one self-contained component; since the wave S merge in „Sprache & Untertitel“,
+/// between „Sprache“ and „Merken“). Stored in the profile (`Profile.subtitleStyle`) and synced with it.
 struct SubtitleStyleSettingsRows: View {
     @EnvironmentObject var model: AppModel
 

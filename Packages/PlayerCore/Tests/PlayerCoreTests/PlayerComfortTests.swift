@@ -142,8 +142,8 @@ private func ok(_ b: Bool, sourceLocation: SourceLocation = #_sourceLocation) {
     // Alte Profile ohne Feld und Teilfelder laden mit Standard.
     let old = try JSONDecoder().decode(AudioShapingSettings.self, from: Data(#"{"nightMode":true,"bridge":"neu"}"#.utf8))
     #expect(old.nightMode && old.bridge == .surroundCompat && old.dialogueBoostDB == 0)
-    let p = try JSONDecoder().decode(Profile.self, from: Data(#"{"id":"\#(UUID().uuidString)","name":"x"}"#.utf8))
-    #expect(p.audioShaping == AudioShapingSettings())
+    let dev = try JSONDecoder().decode(DeviceSettings.self, from: Data("{}".utf8))
+    #expect(dev.audioShaping == AudioShapingSettings())
 }
 
 @Test func audioShapingClampsValues() {
@@ -174,8 +174,8 @@ private func ok(_ b: Bool, sourceLocation: SourceLocation = #_sourceLocation) {
     #expect(!d.panelPresentsDolbyVision && d.foldsDolbyVisionFEL && d.keepModeBetweenEpisodes && d.logText == "Standard")
     let old = try JSONDecoder().decode(DisplayModeSettings.self, from: Data(#"{"panelPresentsDolbyVision":true}"#.utf8))
     #expect(old.panelPresentsDolbyVision && old.foldsDolbyVisionFEL && old.keepModeBetweenEpisodes)
-    let p = try JSONDecoder().decode(Profile.self, from: Data(#"{"id":"\#(UUID().uuidString)","name":"x"}"#.utf8))
-    #expect(p.displayMode == DisplayModeSettings())
+    let dev = try JSONDecoder().decode(DeviceSettings.self, from: Data("{}".utf8))
+    #expect(dev.displayMode == DisplayModeSettings())
 }
 
 // MARK: Intro-Marken: Plattencache, Staffel-Schätzung, Zeitleiste

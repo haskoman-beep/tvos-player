@@ -5,7 +5,7 @@ import os
 import AetherFEL
 import PlayerCore
 
-// Wave X0 (spike): with "Gesichter bei Pause prüfen" on (System › Erweitert › Diagnose), a pause grabs the paused
+// Wave X0 (spike): with "Gesichter bei Pause prüfen" on (System › Diagnose), a pause grabs the paused
 // frame from the engine, runs Vision face rectangles, landmarks and capture quality on it and logs `xray:` lines.
 // Debug only: nothing is shown, nothing is stored, nothing leaves the device except the log lines.
 //

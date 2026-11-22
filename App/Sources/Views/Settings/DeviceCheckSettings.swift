@@ -3,12 +3,12 @@ import AVKit
 import AVFoundation
 import PlayerCore
 
-/// Welle C-d / F-a: Unterseite „System › Gerätecheck“ („Apple TV richtig eingestellt?“) und eine feste Tabelle,
+/// Welle C-d / F-a: Unterseite „Gerätecheck“ (wave S: Bild & Ton › Prüfen, was System) („Apple TV richtig eingestellt?“) und eine feste Tabelle,
 /// was wie abgespielt wird. Liest nur Systemwerte, ändert nichts.
 struct DeviceCheckPage: View {
     @State private var check: DeviceCheck?
 
-    private let tint = SettingsCategory.system.tint
+    private let tint = SettingsCategory.picture.tint
 
     var body: some View {
         SettingsSubpage(title: "Gerätecheck", summary: summary) {

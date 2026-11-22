@@ -53,17 +53,17 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   other chips combine. The filter only narrows the view; autostart, fallback and the next episode still use
   the full list.
 - Source list: the full file name as its own wrapped line when the addon text cuts it or leaves it out.
-- Settings › Audio & subtitles: a new page „Untertitel-Aussehen“ (subtitle look) with size, position, outline,
+- Settings › Sprache & Untertitel (language & subtitles): a new page „Untertitel-Aussehen“ (subtitle look) with size, position, outline,
   background (none, box, shadow) and a separate text brightness while the TV shows HDR or Dolby Vision (100 %
   down to 40 %), so white subtitles no longer blind at HDR peak. A live preview shows two sample lines over a dark and a
   bright picture; with the HDR row focused it shows the HDR brightness. The style is stored in the profile and
   the defaults are the previous look. It applies to text subtitles (SRT, WebVTT, ASS as text); image
   subtitles (PGS) only move up with a higher position.
-- Developer test „Gesichter bei Pause prüfen (Test)“ (check faces on pause) in Settings › System › Erweitert ›
+- Developer test „Gesichter bei Pause prüfen (Test)“ (check faces on pause) in Settings › System ›
   Diagnose, off by default. When it is on, each pause takes the paused frame from the engine, looks for faces
   on the device and writes timings and face sizes to the event log (`xray:` lines). Nothing is shown or stored.
   This is the first step towards showing who is in the picture.
-- Player: skip action per segment type. Settings › Playback › „Überspringen“ (skip) has one row each for intro,
+- Player: skip action per segment type. Settings › Wiedergabe (playback) › „Überspringen“ (skip) has one row each for intro,
   recap, credits and preview: „Aus“ (off), „Knopf“ (button) or „Automatisch“ (automatic). Defaults keep the old
   behaviour: intro and recap show the button, credits and preview are off. „Automatisch“ shows the button with a
   5-second countdown ring; OK skips at once, any other key stops the countdown and leaves the button, and a segment
@@ -99,6 +99,27 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   lists) keep the page with one row per list.
 
 ### Changed
+- Settings: the left column is regrouped into three groups with headers plus System at the end:
+  „Inhalte“ (content: Profil & Konten, Addons, Quellen), „Oberfläche“ (interface: Startseite, Aussehen),
+  „Wiedergabe“ (playback: Wiedergabe, Sprache & Untertitel, Bild & Ton) and „System“. „Addons & Quellen“ is
+  split into „Addons“ and „Quellen“ (sources); the new page „Bild & Ton“ (picture and sound) collects HDMI
+  mode, Dolby Vision, FEL, sound system, sound, audio offset and the device check. The „Erweitert“ (advanced)
+  subpage is gone: its rows moved to their categories, diagnostics and the catalog cache now sit directly
+  under System. All keys, TorBox included, are under Profil & Konten; „Postergröße“ (poster size) and the
+  rating icon set appear only once, under Aussehen; „Sprache der App“ (app language) comes first there; the
+  section „iPhone & Kontrollzentrum“ is now „Steuerung“ (controls). Each category says under its title
+  whether it applies to this profile or to this device. „Sofort abspielen anzeigen“ (show instant play) moved from Wiedergabe › Detailseite to Quellen › Auswahl. Only the place of the rows changed: values, keys and
+  defaults stay as they were.
+- Settings › Bild & Ton (picture and sound): every setting there (Dolby Vision fixed, FEL, keep HDMI mode,
+  sound system, always stereo, night mode, dialogue, loudness, audio offset) is now stored per device instead
+  of per profile. On the first start after the update the app takes the values of the active profile once.
+  Profile export, import and sync no longer carry them; old backups that still contain them load as before.
+  The page says „Gilt für dieses Gerät“ (applies to this device). The move runs once per device (a flag
+  remembers it); if the stored values are ever lost, the app starts with defaults and logs it instead of
+  taking old profile values again. Going back to an older build resets these settings to their defaults, and
+  restoring a backup on another Apple TV does not bring them along.
+- Phone page: the TorBox key moved to „Konten & Schlüssel“ (accounts and keys), next to the other keys; the
+  section „Addons & Quellen“ is now „Addons“. The TV row Profil & Konten › Schlüssel › TorBox opens it there.
 - Source list: while sources are still arriving, the focus keeps its row position instead of following its
   source to a new place, so the list no longer jumps under the remote.
 - Dolby Vision Profile 5: the engine is now built with its still reshaping part, so the face test above can take
