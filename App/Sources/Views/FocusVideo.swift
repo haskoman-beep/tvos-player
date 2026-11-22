@@ -9,7 +9,9 @@ import PlayerCore
 // `TileMotion.swift`.
 
 /// Disk cache of focus videos in Caches/FocusVideos (at most 50 MB and 7 days, least recently used goes first).
-/// One download at a time: a new address cancels the running one. Real failures are remembered for 5 min.
+/// One download at a time: a new address cancels the running one. Only a real video body is stored
+/// (`FocusVideoCachePlan.check`). Load failures rest 5 min; a stored file that did not play is deleted and its
+/// address rests 30 min.
 actor FocusVideoCache {
     static let shared = FocusVideoCache()
 
@@ -21,11 +23,12 @@ actor FocusVideoCache {
         case cancelled
     }
 
-    private enum LoadError: Error { case status(Int), tooLarge }
+    private enum LoadError: Error { case status(Int), body(FocusVideoCachePlan.Check) }
 
     private let dir: URL
     private let session: URLSession
     private var running: (key: String, task: Task<Void, Error>)?
+    /// Address → time until which no new attempt is made.
     private var failed: [String: Date] = [:]
 
     init() {
@@ -46,7 +49,10 @@ actor FocusVideoCache {
             try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: local.path)
             return .file(local)
         }
-        if let t = failed[key], Date().timeIntervalSince(t) < 300 { return .remembered }
+        if let until = failed[key] {
+            if Date() < until { return .remembered }
+            failed[key] = nil
+        }
         let task: Task<Void, Error>
         if let r = running, r.key == key {
             task = r.task
@@ -66,10 +72,13 @@ actor FocusVideoCache {
         } catch {
             if running?.key == key { running = nil }
             if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled { return .cancelled }
-            failed[key] = Date()
+            failed[key] = Date().addingTimeInterval(FocusVideoCachePlan.retryAfterLoadFailure)
             switch error {
             case LoadError.status(let code): return .failed("HTTP \(code)")
-            case LoadError.tooLarge: return .failed("Datei zu groß")
+            case LoadError.body(.tooLarge): return .failed("Datei zu groß")
+            case LoadError.body(.tooSmall): return .failed("Datei zu klein")
+            case LoadError.body(.notVideo(let type)): return .failed("kein Video: \(type)")
+            case LoadError.body: return .failed("ungültige Datei")
             default: return .failed((error as? URLError).map { "Netz \($0.code.rawValue)" } ?? "\(error)")
             }
         }
@@ -81,10 +90,25 @@ actor FocusVideoCache {
         try Task.checkCancellation()
         if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) { throw LoadError.status(http.statusCode) }
         let size = Int64((try? tmp.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
-        guard size <= FocusVideoCachePlan.maxFileBytes else { throw LoadError.tooLarge }
+        // Error pages served with 200 (captive portal, CDN) and empty bodies never reach the cache.
+        var head: [UInt8] = []
+        if let h = try? FileHandle(forReadingFrom: tmp) {
+            head = [UInt8]((try? h.read(upToCount: 16)) ?? Data())
+            try? h.close()
+        }
+        let check = FocusVideoCachePlan.check(contentType: (resp as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type"),
+                                              head: head, bytes: size)
+        guard check == .ok else { throw LoadError.body(check) }
         try? FileManager.default.removeItem(at: local)
         try FileManager.default.moveItem(at: tmp, to: local)
         evict()
+    }
+
+    /// The stored file of `url` did not play: delete it and let the address rest 30 min (no retry on every focus).
+    func markBroken(_ url: URL) {
+        let key = url.absoluteString
+        try? FileManager.default.removeItem(at: dir.appendingPathComponent(FocusVideoCachePlan.fileName(for: key)))
+        failed[key] = Date().addingTimeInterval(FocusVideoCachePlan.retryAfterPlaybackFailure)
     }
 
     private func evict() {
@@ -121,9 +145,14 @@ final class FocusVideoPlayer {
     private var fadeTask: Task<Void, Never>?
     private var loopObservation: NSKeyValueObservation?
     private var statusObservation: NSKeyValueObservation?
+    private var itemObservation: NSKeyValueObservation?
+    /// Boundary observer shortly before the end of the first pass (fade-out, sound once).
+    private var boundaryObserver: Any?
     private var observers: [NSObjectProtocol] = []
-    /// "gestartet" once per tile and sound state per launch (the device test needs it, browsing should not flood).
-    private var loggedStarts = Set<String>()
+    /// Address of the running video (a playback failure marks its cached file broken).
+    private var currentURL: URL?
+    /// "gestartet" per focus, but at most once per tile and sound state in 30 s (fast browsing should not flood).
+    private var loggedStarts: [String: Date] = [:]
 
     private init() {
         let center = NotificationCenter.default
@@ -151,6 +180,7 @@ final class FocusVideoPlayer {
         teardown()
         self.owner = owner
         self.tile = tile
+        self.currentURL = url
         let source: URL
         if FocusVideoURL.isStream(url.absoluteString) {
             source = url
@@ -174,6 +204,12 @@ final class FocusVideoPlayer {
             hasAudio = !(((try? await asset.loadTracks(withMediaType: .audio)) ?? []).isEmpty)
             guard gen == generation, self.owner == owner, !mainPlayback, !Task.isCancelled else { return false }
         }
+        var fadeOutAt: Double?
+        if hasAudio {
+            let d = (try? await asset.load(.duration)).map(CMTimeGetSeconds) ?? .nan
+            fadeOutAt = FocusVideoAudio.fadeOutStart(duration: d)
+            guard gen == generation, self.owner == owner, !mainPlayback, !Task.isCancelled else { return false }
+        }
         audible = FocusVideoAudio.audible(setting: sound, hasAudioTrack: hasAudio, mainPlayback: mainPlayback, loopsDone: 0)
         if audible { prepareAudioSession() }
 
@@ -192,10 +228,30 @@ final class FocusVideoPlayer {
             let why = l.error?.localizedDescription ?? "unbekannt"
             Task { @MainActor in FocusVideoPlayer.shared.failed(why, generation: gen) }
         }
-        layerView?.playerLayer.player = p
-        p.play()
+        if audible {
+            // Sound exactly once: fade out before the first pass ends ...
+            if let t = fadeOutAt {
+                let at = NSValue(time: CMTime(seconds: t, preferredTimescale: 600))
+                boundaryObserver = p.addBoundaryTimeObserver(forTimes: [at], queue: .main) {
+                    Task { @MainActor in FocusVideoPlayer.shared.endOfFirstPass(generation: gen) }
+                }
+            }
+            // ... and, as a hard stop, mute right on the switch to the looper's second replica (also for clips too
+            // short for a fade). Set synchronously in the observation, so the second pass is never audible.
+            let first = FirstReplica()
+            itemObservation = p.observe(\.currentItem, options: [.initial, .new]) { pl, _ in
+                guard let item = pl.currentItem else { return }
+                guard let seen = first.item else { first.item = item; return }
+                guard item !== seen, !pl.isMuted else { return }
+                pl.isMuted = true
+                Task { @MainActor in FocusVideoPlayer.shared.secondPassStarted(generation: gen) }
+            }
+        }
+        // Plays once the tile's layer is attached (no frames lost before the picture is there).
         let soundText = audible ? "Ton an" : (sound ? "Ton aus, keine Tonspur" : "Ton aus")
-        if loggedStarts.insert("\(tile)|\(soundText)").inserted {
+        let logKey = "\(tile)|\(soundText)"
+        if loggedStarts[logKey].map({ Date().timeIntervalSince($0) >= 30 }) ?? true {
+            loggedStarts[logKey] = Date()
             RemoteLog.info("bilder", "Kachel-Video: \(tile) gestartet (\(soundText))")
         }
         return true
@@ -207,6 +263,7 @@ final class FocusVideoPlayer {
         if let old = layerView, old !== view { old.playerLayer.player = nil }
         layerView = view
         view.playerLayer.player = player
+        if looper != nil, player.rate == 0 { player.play() }
     }
 
     func detach(_ view: FocusPlayerLayerView) {
@@ -272,6 +329,8 @@ final class FocusVideoPlayer {
         fadeTask = nil
         loopObservation = nil
         statusObservation = nil
+        itemObservation = nil
+        if let b = boundaryObserver { player?.removeTimeObserver(b); boundaryObserver = nil }
         looper?.disableLooping()
         looper = nil
         player?.pause()
@@ -281,9 +340,9 @@ final class FocusVideoPlayer {
         audible = false
     }
 
-    /// Sound once per focus: after the first pass the picture loops on silently.
-    private func loopPassed(_ count: Int, generation gen: Int) {
-        guard gen == generation, audible, count >= 1, let p = player else { return }
+    /// Shortly before the first pass ends: fade the sound out, then mute; the picture loops on silently.
+    fileprivate func endOfFirstPass(generation gen: Int) {
+        guard gen == generation, audible, let p = player else { return }
         audible = false
         fadeTask?.cancel()
         fadeTask = Task { @MainActor in
@@ -292,9 +351,28 @@ final class FocusVideoPlayer {
         }
     }
 
+    /// The looper switched to its second replica (already muted in the observation): no fade may run any more.
+    fileprivate func secondPassStarted(generation gen: Int) {
+        guard gen == generation else { return }
+        audible = false
+        fadeTask?.cancel()
+        fadeTask = nil
+    }
+
+    /// Fallback for the sound-once rule if neither the boundary nor the item switch was seen.
+    private func loopPassed(_ count: Int, generation gen: Int) {
+        guard gen == generation, audible, count >= 1, let p = player else { return }
+        p.isMuted = true
+        secondPassStarted(generation: gen)
+    }
+
     private func failed(_ why: String, generation gen: Int) {
         guard gen == generation else { return }
         RemoteLog.info("bilder", "Kachel-Video: \(tile) Fehler beim Abspielen (\(why))")
+        // A stored file that does not play is deleted; the address rests 30 min instead of failing on every focus.
+        if let u = currentURL, !FocusVideoURL.isStream(u.absoluteString) {
+            Task { await FocusVideoCache.shared.markBroken(u) }
+        }
         stopAll(release: false)
     }
 
@@ -306,6 +384,11 @@ final class FocusVideoPlayer {
             try? await Task.sleep(for: .seconds(seconds / Double(steps)))
         }
     }
+}
+
+/// First replica of the looper, seen by the item observation (one per start).
+private final class FirstReplica: @unchecked Sendable {
+    weak var item: AVPlayerItem?
 }
 
 /// A view whose layer is the `AVPlayerLayer` (scales with the focus lift of the card, no extra clip needed).
@@ -353,6 +436,10 @@ struct FocusVideo: View {
     @State private var owner = UUID()
     @State private var playing = false
     @State private var ready = false
+    /// Rises when the app becomes active again (screensaver, Siri): the focused tile restarts its video.
+    @State private var wake = 0
+    /// New per started run: forces a fresh layer view, whose attach starts playback.
+    @State private var run = UUID()
 
     var body: some View {
         ZStack {
@@ -362,19 +449,27 @@ struct FocusVideo: View {
                     FocusVideoPlayer.shared.layerReady(owner: owner)
                 }
                 .opacity(ready ? 1 : 0)
+                .id(run)
             }
         }
         .allowsHitTesting(false)
-        .task(id: focused) {
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            if focused { wake += 1 }
+        }
+        .task(id: FocusVideoRun(focused: focused, wake: wake)) {
             guard focused, let u = URL(string: url) else { stop(); return }
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled else { return }
+            // A fresh layer per start: its attach starts playback.
+            playing = false
+            ready = false
             let ok = await FocusVideoPlayer.shared.start(url: u, tile: tile, sound: sound, owner: owner)
             guard !Task.isCancelled else {
                 if ok { FocusVideoPlayer.shared.stop(owner: owner) }
                 return
             }
             ready = false
+            run = UUID()
             playing = ok
         }
         .onDisappear { stop() }
@@ -385,6 +480,12 @@ struct FocusVideo: View {
         playing = false
         ready = false
     }
+}
+
+/// Identity of one focus-video run of a tile (focus change or app wake starts a new one).
+private struct FocusVideoRun: Equatable {
+    let focused: Bool
+    let wake: Int
 }
 
 /// What a focused package tile plays over its still: video, else GIF, else nothing (PlayerCore `TileMotion`).

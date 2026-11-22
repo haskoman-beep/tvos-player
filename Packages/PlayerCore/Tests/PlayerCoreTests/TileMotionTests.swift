@@ -213,3 +213,31 @@ private func art(_ c: MediaCollection, _ id: String) -> Folder? { c.folders.firs
     on.tileAnimationSound = true
     #expect(try JSONDecoder().decode(Appearance.self, from: JSONEncoder().encode(on)).tileAnimationSound)
 }
+
+// Round 1 (I1): only a real video body goes into the cache.
+@Test func focusVideoBodyCheck() {
+    let mp4: [UInt8] = [0, 0, 0, 0x20] + Array("ftypisom".utf8)
+    let html = Array("<!DOCTYPE html><html>".utf8)
+    let kb: Int64 = 1 << 10
+    #expect(FocusVideoCachePlan.check(contentType: "video/mp4", head: mp4, bytes: 120 * kb) == .ok)
+    // ftyp box wins over a wrong type (CDN sending octet-stream).
+    #expect(FocusVideoCachePlan.check(contentType: "application/octet-stream", head: mp4, bytes: 120 * kb) == .ok)
+    // QuickTime file starting with another box, but labelled as video.
+    #expect(FocusVideoCachePlan.check(contentType: "video/quicktime; charset=binary", head: Array("\0\0\0\u{8}wide".utf8), bytes: 120 * kb) == .ok)
+    // Captive portal / error page with 200.
+    #expect(FocusVideoCachePlan.check(contentType: "text/html; charset=utf-8", head: html, bytes: 120 * kb) == .notVideo("text/html"))
+    #expect(FocusVideoCachePlan.check(contentType: nil, head: html, bytes: 120 * kb) == .notVideo("ohne Typ"))
+    #expect(FocusVideoCachePlan.check(contentType: "video/mp4", head: mp4, bytes: 1 * kb) == .tooSmall)
+    #expect(FocusVideoCachePlan.check(contentType: "video/mp4", head: mp4, bytes: 21 << 20) == .tooLarge)
+    #expect(FocusVideoCachePlan.retryAfterPlaybackFailure == 1800)
+}
+
+// Round 1 (I2): the sound is faded out before the first pass ends, so the loop never restarts the jingle.
+@Test func focusVideoFadeOutBeforeLoopBoundary() {
+    let t = FocusVideoAudio.fadeOutStart(duration: 3)
+    #expect(t != nil && abs(t! - (3 - FocusVideoAudio.fadeOut - FocusVideoAudio.endMargin)) < 1e-9)
+    #expect(t! + FocusVideoAudio.fadeOut < 3)
+    #expect(FocusVideoAudio.fadeOutStart(duration: 0.2) == nil)
+    #expect(FocusVideoAudio.fadeOutStart(duration: .nan) == nil)
+    #expect(FocusVideoAudio.fadeOutStart(duration: .infinity) == nil)
+}

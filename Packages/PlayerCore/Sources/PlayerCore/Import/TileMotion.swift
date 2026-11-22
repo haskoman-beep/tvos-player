@@ -52,6 +52,18 @@ public enum FocusVideoAudio {
         setting && hasAudioTrack && !mainPlayback && loopsDone == 0
     }
 
+    /// Safety margin before the end of the first pass: the fade-out must be finished before the looper's next
+    /// replica starts, so no part of the jingle is heard twice.
+    public static let endMargin = 0.05
+
+    /// Item time at which the sound starts fading out during the first pass (`duration` in seconds), so it is silent
+    /// at the loop boundary. Nil when the clip is too short for a fade; then the sound is muted at the boundary.
+    public static func fadeOutStart(duration: Double) -> Double? {
+        guard duration.isFinite else { return nil }
+        let t = duration - fadeOut - endMargin
+        return t > 0.1 ? t : nil
+    }
+
     /// Volume steps of a fade from `from` to `to` (`steps` values, the last one is `to`).
     public static func ramp(from: Float, to: Float, steps: Int) -> [Float] {
         guard steps > 0 else { return [to] }
@@ -65,6 +77,33 @@ public enum FocusVideoCachePlan {
     public static let maxAge: TimeInterval = 7 * 24 * 3600
     /// A single file above this is not kept (it would push out everything else).
     public static let maxFileBytes: Int64 = 20 << 20
+    /// Anything smaller is no real clip (an error page, an empty body). The smallest export video is about 58 KB.
+    public static let minFileBytes: Int64 = 4 << 10
+    /// How long a failed address rests before the next attempt: load failure (network, HTTP, not a video) and
+    /// playback failure (the stored file did not play; it is deleted).
+    public static let retryAfterLoadFailure: TimeInterval = 300
+    public static let retryAfterPlaybackFailure: TimeInterval = 1800
+
+    /// Result of checking a downloaded body before it goes into the cache.
+    public enum Check: Equatable, Sendable {
+        case ok
+        case tooSmall
+        case tooLarge
+        case notVideo(String)
+    }
+
+    /// A body is kept only if its size is sensible and it is a video: an ISO media file (`ftyp` box at byte 4,
+    /// mp4/m4v/mov) or a `video/*` content type (QuickTime files may start with another box). `head` is the start of
+    /// the body (at least 8 bytes to see the box).
+    public static func check(contentType: String?, head: [UInt8], bytes: Int64) -> Check {
+        if bytes > maxFileBytes { return .tooLarge }
+        if bytes < minFileBytes { return .tooSmall }
+        let hasFtyp = head.count >= 8 && Array(head[4..<8]) == Array("ftyp".utf8)
+        if hasFtyp { return .ok }
+        let type = (contentType ?? "").split(separator: ";").first.map { $0.trimmingCharacters(in: .whitespaces).lowercased() } ?? ""
+        if type.hasPrefix("video/") { return .ok }
+        return .notVideo(type.isEmpty ? "ohne Typ" : type)
+    }
 
     public struct Entry: Equatable, Sendable {
         public var name: String
