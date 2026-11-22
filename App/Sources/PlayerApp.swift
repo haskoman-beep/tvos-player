@@ -46,6 +46,8 @@ struct PlayRequest: Hashable {
     var runtimeMinutes: Double? = nil
     /// Aus Weiterschauen: zuletzt gespielte Quelle ohne Auswahl starten.
     var resumeLastSource = false
+    /// Welle G-a: „Sofort abspielen“ – diese Quelle (Beste Wahl der Detailseite) ohne Auswahl starten.
+    var bestChoice: LastSource? = nil
 
     var nextRequest: PlayRequest? {
         guard let s = season, let e = episode, let n = EpisodeRef.next(after: s, e, in: episodes),

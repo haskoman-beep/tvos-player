@@ -51,6 +51,11 @@ public struct ScrubPlanner: Sendable {
     public private(set) var wheelOn = false
     /// Drehung seit `wheelOn`, solange das Spulen noch nicht begonnen hat.
     private var wheelPending: Double = 0
+    /// Welle G-a: gehaltenes ◀/▶ (Schnellsuchlauf): Richtung (+1/−1), Beginn, letzter Takt, Obergrenze.
+    private var hold: (direction: Double, since: Double, last: Double, upper: Double)?
+    private var holdEndedAt: Double = -.greatestFiniteMagnitude
+    /// Ziel steht an der Grenze des Schnellsuchlaufs (Anfang, Dateiende bzw. vor dem Abspann).
+    public private(set) var holdAtLimit = false
 
     public init() {}
 
@@ -149,7 +154,8 @@ public struct ScrubPlanner: Sendable {
     /// ◀/▶-Klick während des Spulens: Ziel um `seconds` verschieben (ohne Rasten).
     @discardableResult
     public mutating func nudge(_ seconds: Double, now: Double) -> Bool {
-        guard isActive else { return false }
+        // Kurz nach dem Loslassen eines gehaltenen ◀/▶ ist ein ◀/▶ ein Nachzügler derselben Taste.
+        guard isActive, hold == nil, now - holdEndedAt >= Self.moveSuppression else { return false }
         return move(by: seconds, now: now, snaps: false)
     }
 
@@ -162,6 +168,52 @@ public struct ScrubPlanner: Sendable {
     public func idleExpired(now: Double) -> Bool {
         isActive && now - lastInput >= Self.idleTimeout
     }
+
+    // MARK: Schnellsuchlauf (Welle G-a)
+
+    /// ◀/▶ wird gehalten: Ziel läuft mit `FastSeek.speed` vor bzw. zurück (startet das Spulen bei `position`).
+    /// `upper` = Obergrenze (`FastSeek.upperLimit`). Ein neues Halten beginnt wieder bei 2×.
+    public mutating func holdBegin(forward: Bool, position: Double, duration: Double, upper: Double, now: Double) {
+        if !isActive { begin(position: position, duration: duration, now: now) }
+        hold = (forward ? 1 : -1, now, now, upper)
+        holdAtLimit = false
+        lastInput = now
+    }
+
+    /// Takt während des Haltens: Ziel um Geschwindigkeit × vergangene Zeit verschieben (ohne Rasten).
+    /// Liefert true, wenn sich das Ziel geändert hat.
+    @discardableResult
+    public mutating func holdTick(now: Double) -> Bool {
+        guard isActive, var h = hold else { return false }
+        let dt = max(0, now - h.last)
+        // Geschwindigkeit am Beginn des Takts (Stufenwechsel wirken ab dem nächsten Takt).
+        let speed = FastSeek.speed(heldFor: h.last - h.since)
+        h.last = now
+        hold = h
+        lastInput = now
+        let raw = target + h.direction * speed * dt
+        let t = h.direction > 0 ? min(raw, max(h.upper, target)) : max(raw, 0)
+        holdAtLimit = h.direction > 0 ? t >= h.upper : t <= 0
+        guard t != target else { return false }
+        target = t
+        return true
+    }
+
+    /// Losgelassen: Ziel bleibt stehen, bis Select/Play springt oder Menü verwirft.
+    public mutating func holdEnd(now: Double) {
+        guard hold != nil else { return }
+        holdTick(now: now)
+        hold = nil
+        holdEndedAt = now
+    }
+
+    /// Laufende Geschwindigkeit mit Vorzeichen (+ vor, − zurück); nil = nichts gehalten.
+    public func holdSpeed(now: Double) -> Double? {
+        guard let h = hold else { return nil }
+        return h.direction * FastSeek.speed(heldFor: now - h.since)
+    }
+
+    public var isHolding: Bool { hold != nil }
 
     /// Select: Ziel übernehmen (nil = es lief kein Spulen oder das Ziel ist die Ausgangsstelle).
     public mutating func confirm() -> Double? {
@@ -200,6 +252,7 @@ public struct ScrubPlanner: Sendable {
     private mutating func reset() {
         isActive = false; pendingPoints = 0
         dwellSince = nil; lastAngle = nil; wheelOn = false
+        hold = nil; holdAtLimit = false
     }
 
     /// Winkeldifferenz in −π…π.
@@ -208,6 +261,55 @@ public struct ScrubPlanner: Sendable {
         while d > .pi { d -= 2 * .pi }
         while d < -.pi { d += 2 * .pi }
         return d
+    }
+}
+
+/// Welle G-a: Schnellsuchlauf durch Halten von ◀/▶ (Touchfläche-Rand oder Ring).
+///
+/// Die Engine (AetherEngine 7.71.2) begrenzt `setRate` bei Video auf 2× (`maxSupportedRate`, AetherEngine#39) und
+/// meldet kein `canPlayFastForward`; jeder Sprung startet die Muxer-Sitzung neu. Darum läuft beim Halten nur das
+/// Spul-Ziel (mit Vorschau, wo die Quelle Standbilder liefert); gesprungen wird einmal bei Select/Play.
+public enum FastSeek {
+    /// So lange muss ◀/▶ gedrückt sein, bis es als Halten zählt (kürzer = normaler ±10-s-Sprung).
+    /// Unter der 450-ms-Sammelzeit der ±10-s-Sprünge: der Sprung desselben Drucks wird noch abgefangen.
+    public static let holdThreshold: Double = 0.4
+    /// Geschwindigkeitsstufen: ab so vielen Sekunden Halten (nach `holdThreshold`) diese Geschwindigkeit.
+    public static let steps: [(after: Double, speed: Double)] = [(0, 2), (1, 4), (2, 8), (3, 16), (4.5, 32), (6, 64)]
+    /// Abstand vor dem Abspann, an dem der Vorlauf anhält.
+    public static let creditsMargin: Double = 10
+    /// Takt des Vorlaufs (Sekunden).
+    public static let tick: Double = 0.05
+
+    /// Geschwindigkeit (Vielfaches der Echtzeit) nach `heldFor` Sekunden Halten.
+    public static func speed(heldFor: Double) -> Double {
+        guard heldFor.isFinite else { return steps[0].speed }
+        return steps.last { heldFor >= $0.after }?.speed ?? steps[0].speed
+    }
+
+    /// Obergrenze des Vorlaufs: nie hinter das Dateiende (`ScrubPlanner.endGuard`) und `creditsMargin` vor dem
+    /// Abspann, solange die Ausgangsstelle davor liegt (im Abspann gilt nur das Dateiende).
+    public static func upperLimit(duration: Double, creditsStart: Double?, origin: Double) -> Double {
+        let end = ScrubPlanner.clamp(.greatestFiniteMagnitude, duration: duration)
+        guard let c = creditsStart, c.isFinite, c > 0 else { return end }
+        let stop = c - creditsMargin
+        return stop > origin && stop < end ? stop : end
+    }
+
+    /// Ausgangsstelle beim Beginn des Haltens. Ein noch gesammelter ±10-s-Sprung bleibt erhalten, nur der
+    /// Sprung, den derselbe Druck ausgelöst hat (gleiche Richtung, vor höchstens `holdThreshold` + 0,2 s), fällt weg.
+    public static func origin(pending: Double?, current: Double, lastArrowForward: Bool?, lastArrowAge: Double?,
+                              forward: Bool) -> Double {
+        guard let p = pending else { return max(0, current) }
+        var base = p
+        if let f = lastArrowForward, f == forward, let age = lastArrowAge, age >= 0, age <= holdThreshold + 0.2 {
+            base -= forward ? 10 : -10
+        }
+        return max(0, base)
+    }
+
+    /// Anzeige der Pille: „▶▶ 8×“ bzw. „◀◀ 4×“.
+    public static func label(speed: Double) -> String {
+        (speed < 0 ? "◀◀ " : "▶▶ ") + DesignText.decimal(abs(speed), fractionDigits: 0) + "×"
     }
 }
 

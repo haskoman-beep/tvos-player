@@ -67,8 +67,13 @@ struct DetailView: View {
     /// Zeitpunkt des ersten Erscheinens und ob „erste Plaketten“ schon geloggt ist (Gerätemessung Addon-Antwortzeit).
     @State private var appeared: Date?
     @State private var badgesLogged = false
+    /// Welle G-a: „Sofort abspielen / Beste Wahl“ (Film): gewählte Quelle; `choiceChecked` = Quellen bekannt
+    /// (dann ohne Wahl der Hinweis „Keine Quelle gefunden“). `entryFocusAt`: Zeit des Eintritts-Fokus.
+    @State private var choice: BestChoice.Pick?
+    @State private var choiceChecked = false
+    @State private var entryFocusAt: Date?
     /// Startfokus auf der Hauptaktion, nicht auf der (darüber liegenden) Beschreibung.
-    enum Focus: Hashable { case play, episode(String), overview }
+    enum Focus: Hashable { case play, best, episode(String), overview }
     @FocusState private var focus: Focus?
     /// Fokusziel mit Staffel (nil = Film bzw. keine Folgen) und Folgen-ID zum Hinscrollen.
     struct FocusTarget {
@@ -125,6 +130,7 @@ struct DetailView: View {
                             } else {
                                 let resume = model.progress.resumePosition(for: imdb)
                                 HStack(spacing: Theme.Space.l) {
+                                    bestChoiceCard(imdb, resume: resume)
                                     Button(resume.map { "▶ Fortsetzen ab \(timeText($0))" } ?? "▶ Abspielen") {
                                         markOpenedPlayback()
                                         navigate(.streams(model.moviePlayRequest(item, imdb: imdb, meta: meta, resumeLastSource: resume != nil)))
@@ -148,7 +154,7 @@ struct DetailView: View {
                     proxy.scrollTo(id)
                 }
             }
-            .defaultFocus($focus, .play)
+            .defaultFocus($focus, choice != nil ? Focus.best : Focus.play)
             // Die App-Akzentfarbe (RootView .tint) färbte Knöpfe und Text-Knöpfe hier flächig: normale tvOS-Knöpfe.
             .tint(Color?.none)
         }
@@ -163,11 +169,14 @@ struct DetailView: View {
                 }
             }
             if appeared == nil { appeared = Date() }
+            // Welle G-a: nach dem Player neu wählen (8-h-Gedächtnis, letzte Quelle können sich geändert haben).
+            if loaded, let id = imdb { updateChoice(id) }
             // Quellen schon im Cache (z. B. zweiter Besuch): Technik-Plaketten im ersten Bild, nicht erst nach dem Laden.
             let id = imdb ?? (item.id.hasPrefix("tt") ? item.id : nil)
             if best == nil, !isSeries, let id, let b = detailQuality(id) {
                 best = b
                 logFirstBadges("Technik aus Cache")
+                updateChoice(id)
             }
         }
         .task {
@@ -178,12 +187,14 @@ struct DetailView: View {
                 if !isSeries, best == nil, let b = detailQuality(imdb) {
                     best = b
                     logFirstBadges("Technik aus Cache")
+                    updateChoice(imdb)
                 } else if !isSeries, best == nil {
                     // Quellen sofort und parallel holen (Technik-Plaketten; AppModel cached sie für die Quellenliste).
                     let id = imdb
                     Task {
                         let list = await model.streams(type: "movie", id: id)
                         best = detailQuality(id)
+                        updateChoice(id, list: list)
                         if !techBadges.isEmpty { logFirstBadges("Technik") }
                         RemoteLog.info("detail", "Plaketten nach \(Int(Date().timeIntervalSince(opened) * 1000)) ms (\(list.count) Quellen)")
                     }
@@ -210,6 +221,7 @@ struct DetailView: View {
             if !didInitialFocus {
                 didInitialFocus = true
                 if focus == nil || focus == .overview { await applyFocus(playbackFocusTarget(), reason: "Eintritt") }
+                entryFocusAt = Date()
             }
             await translateSeason()
         }
@@ -226,6 +238,13 @@ struct DetailView: View {
             await applyFocus(target, reason: "nach dem Player")
         }
         .onChange(of: season) { Task { await translateSeason() } }
+        // Welle G-a (§3.2): Karte kommt kurz nach dem Eintritt (Quellen liefen noch): Fokus wandert mit, solange er
+        // noch auf „Abspielen“ steht und der Eintritt höchstens 2 s her ist.
+        .onChange(of: choice != nil) { _, has in
+            guard has, focus == .play, let at = entryFocusAt, Date().timeIntervalSince(at) <= 2 else { return }
+            focus = .best
+            RemoteLog.info("fokus", "Detail Eintritt: Sofort abspielen (Karte nachgeladen)")
+        }
         .onDisappear { trailerTask?.cancel() }
         .sheet(isPresented: $showFullText) { FullTextSheet(title: item.name, text: overview) }
         .fullScreenCover(item: $trailer) { t in
@@ -259,7 +278,7 @@ struct DetailView: View {
     /// Fokusziel (§3.2): Film „Abspielen“; Serie die nächste ungesehene Folge nach der zuletzt gespielten
     /// (PlayerCore `EpisodeFocus`), auch in der nächsten Staffel. Die erste Folge einer Staffel trägt `.play`.
     private func playbackFocusTarget() -> FocusTarget {
-        guard isSeries, let imdb else { return FocusTarget() }
+        guard isSeries, let imdb else { return FocusTarget(focus: choice != nil ? .best : .play) }
         let videos = meta?.videos ?? []
         let anchor = model.progress.latest(forItem: imdb).flatMap { p in
             p.season.flatMap { s in p.episode.map { EpisodeRef(season: s, episode: $0) } }
@@ -294,7 +313,7 @@ struct DetailView: View {
     }
 
     private static func focusName(_ t: FocusTarget) -> String {
-        guard let s = t.season else { return "Abspielen" }
+        guard let s = t.season else { return t.focus == .best ? "Sofort abspielen" : "Abspielen" }
         return "Staffel \(s), \(t.video ?? "erste Folge")"
     }
 
@@ -316,6 +335,50 @@ struct DetailView: View {
     /// Technik-Werte aus dem Quellen-Cache (keine Abfrage); nil ohne gecachte Quellen.
     private func detailQuality(_ id: String) -> DetailQuality? {
         model.cachedStreams(id: id).flatMap { DetailQuality.from($0.map(\.stream)) }
+    }
+
+    /// Welle G-a: Beste Wahl neu bilden (Film). `list` = eben geholte Quellen; sonst aus dem Quellen-Cache
+    /// (ohne Cache bleibt der Stand, bis die Quellen da sind).
+    private func updateChoice(_ id: String, list: [(addon: String, stream: StreamItem)]? = nil) {
+        guard !isSeries else { return }
+        guard let all = list ?? model.cachedStreams(id: id) else { return }
+        let pick = model.bestChoice(all, title: id)
+        if pick?.stream.id != choice?.stream.id || !choiceChecked {
+            RemoteLog.info("play", pick.map { "Beste Wahl bereit: \($0.reason.rawValue) · \(BestChoice.detail($0.stream, primaryLanguage: model.sourceRankContext.primaryLanguage)) · \($0.addon)" }
+                ?? "Beste Wahl: keine abspielbare Quelle (\(all.count) Quellen)")
+        }
+        choice = pick
+        choiceChecked = true
+    }
+
+    /// Welle G-a: Karte „Sofort abspielen“ (bzw. „Weiter mit letzter Quelle“) mit dem, was spielen wird; ein Druck
+    /// startet die Quelle über die Quellenliste (Fehlerleiter dort unverändert), ohne Auswahl.
+    /// Ohne abspielbare Quelle: „Keine Quelle gefunden – Quellen ansehen“ öffnet die Liste.
+    @ViewBuilder
+    private func bestChoiceCard(_ imdb: String, resume: Double?) -> some View {
+        if let c = choice {
+            let detail = BestChoice.detail(c.stream, primaryLanguage: model.sourceRankContext.primaryLanguage)
+            Button {
+                markOpenedPlayback()
+                var r = model.moviePlayRequest(item, imdb: imdb, meta: meta, resumeLastSource: false)
+                r.bestChoice = LastSource(stream: c.stream, addon: c.addon, contentID: imdb)
+                RemoteLog.info("play", "Beste Wahl: \(c.reason.rawValue) · \(detail) · \(c.addon) · \(c.stream.name ?? "")")
+                navigate(.streams(r))
+            } label: {
+                VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                    Text("▶ " + BestChoice.title(c.reason, resumeText: resume.map(timeText))).font(.headline)
+                    Text(detail).font(.callout).lineLimit(1)
+                }
+                .frame(maxWidth: 620, alignment: .leading)
+            }
+            .focused($focus, equals: .best)
+        } else if choiceChecked {
+            Button(BestChoice.noSourceText) {
+                markOpenedPlayback()
+                RemoteLog.info("play", "Beste Wahl: keine Quelle → Quellenliste")
+                navigate(.streams(model.moviePlayRequest(item, imdb: imdb, meta: meta, resumeLastSource: false)))
+            }
+        }
     }
 
     private func trailerButton(_ key: String) -> some View {
@@ -566,7 +629,7 @@ struct StreamListView: View {
         .settingsSurface()
         .streamSearchPartials(id: request.id, loading: loading && current == nil) { streams = model.orderedStreams($0) }
         .task {
-            streams = model.orderedStreams(request.resumeLastSource && playing == nil
+            streams = model.orderedStreams((request.resumeLastSource || request.bestChoice != nil) && playing == nil
                 ? await model.streamsForAutoplay(type: request.type, id: request.id)
                 : await model.streams(type: request.type, id: request.id))
             loading = false
@@ -585,6 +648,20 @@ struct StreamListView: View {
                 } else {
                     nextNote = pick.note
                     RemoteLog.info("player", "Letzte Quelle nicht gefunden (\(last.fingerprint.prefix(60)))")
+                }
+            }
+            if let wanted = request.bestChoice, playing == nil {
+                // Welle G-a: „Sofort abspielen“: die auf der Detailseite gezeigte Quelle; fehlt sie im frischen Stand
+                // oder ist sie inzwischen fehlgeschlagen, neu wählen (gleiche Regeln). Rückfall danach wie immer.
+                let auto = model.autoOrderedStreams(streams)
+                let same = wanted.match(in: PlaybackStability.shared.autoCandidates(auto, title: request.id))
+                if let s = same ?? model.bestChoice(streams, title: request.id)?.stream {
+                    RemoteLog.info("play", "Beste Wahl startet\(same == nil ? " (neu gewählt)" : ""): \(s.name ?? "") \(s.label.prefix(60))")
+                    entryFocusDone = true
+                    playing = s
+                } else {
+                    nextNote = "Keine abspielbare Quelle gefunden – bitte wählen."
+                    RemoteLog.info("play", "Beste Wahl: keine abspielbare Quelle mehr → Liste")
                 }
             }
             if playing == nil { focusOnEntry() }

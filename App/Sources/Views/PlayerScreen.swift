@@ -190,6 +190,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
     /// Intern auch für PlayerScrub.swift (`confirmScrub`); sonst nur hier setzen.
     @State var pendingSeek: Double?
     @State var seekTask: Task<Void, Never>?
+    /// Welle G-a: letzter ◀/▶-Sprung (Richtung, Zeit), damit ein Halten den Sprung desselben Drucks abfängt.
+    @State private var lastArrow: (forward: Bool, at: Double)?
     @State private var lastToggle = Date.distantPast
     @State private var lastGoodTime: Double = 0
     /// Gemessene Höhe der Steuerleiste (nil = noch nicht gemessen), für das Untertitel-Overlay.
@@ -250,6 +252,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             // Beim Spulen verschieben ◀/▶ das Ziel; kurz nach einer Wischbewegung zählen sie nicht als Sprung.
             if scrub.isActive { if dir == .left { scrub.nudge(-10) } else if dir == .right { scrub.nudge(10) }; poke(); return }
             if dir == .left || dir == .right, scrub.suppressesMove() { return }
+            if dir == .left || dir == .right { lastArrow = (dir == .right, ProcessInfo.processInfo.systemUptime) }
             switch dir {
             case .left: queueSeek(-10)
             case .right: queueSeek(10)
@@ -294,7 +297,9 @@ struct PlayerControls<E: PlaybackEngine>: View {
             scrub.attach(engine: engine,
                          canScrub: { !leaving && !showTracks && upNext == nil && skip.prompt == nil && failureNotice == nil
                                      && !restorePending && !restoring && engine.duration > 0 && engine.errorText == nil },
-                         edges: { SkipSegments.snapEdges(skip.segments) + engine.chapterMarks.map(\.start) })
+                         edges: { SkipSegments.snapEdges(skip.segments) + engine.chapterMarks.map(\.start) },
+                         holdOrigin: { fastSeekOrigin(forward: $0) },
+                         holdLimit: { FastSeek.upperLimit(duration: engine.duration, creditsStart: skip.upNextAt, origin: $0) })
             idleTick(failed: failureNotice != nil || loadError != nil)
             guard loadTask == nil else { return }
             loadTask = Task { await loadAndStart() }
@@ -443,7 +448,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                 Text("-" + fmt(d - pos))
             }
             .font(.caption.monospacedDigit())
-            Text("◀▶ 10 s · Wischen/Rand drehen: spulen · ▼ Ton/Untertitel · ⏯ Pause · Zurück beenden").font(.caption2).foregroundStyle(.secondary)
+            Text("◀▶ 10 s · ◀▶ halten: Schnellsuchlauf · Wischen/Rand drehen: spulen · ▼ Ton/Untertitel · ⏯ Pause · Zurück beenden").font(.caption2).foregroundStyle(.secondary)
         }
         .padding(60)
         .background(LinearGradient(colors: [.black.opacity(0.8), .clear], startPoint: .bottom, endPoint: .top))
@@ -487,6 +492,17 @@ struct PlayerControls<E: PlaybackEngine>: View {
             await engine.seek(target)
             pendingSeek = nil
         }
+    }
+
+    /// Welle G-a: Schnellsuchlauf beginnt. Ein gesammelter ±10-s-Sprung springt nicht mehr (Ziel = Ausgangsstelle,
+    /// der Sprung desselben Drucks fällt weg: `FastSeek.origin`); gesprungen wird erst bei Select/Play.
+    private func fastSeekOrigin(forward: Bool) -> Double {
+        let age = lastArrow.map { ProcessInfo.processInfo.systemUptime - $0.at }
+        let from = FastSeek.origin(pending: pendingSeek, current: engine.currentTime, lastArrowForward: lastArrow?.forward,
+                                   lastArrowAge: age, forward: forward)
+        if pendingSeek != nil { RemoteLog.info("player", "Gesammelter Sprung → Schnellsuchlauf ab \(Int(from))s") }
+        seekTask?.cancel(); seekTask = nil; pendingSeek = nil
+        return from
     }
 
     /// Fehler: einordnen (PlayerCore `RecoveryPlanner`) und je Klasse gleiche Quelle neu laden, Link neu auflösen,
