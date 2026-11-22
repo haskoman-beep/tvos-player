@@ -206,7 +206,7 @@ private func jsonBody(_ r: APIRequest) -> [String: Any] { (try? JSONSerializatio
 
 @Test func simklAppliesQueuedChanges() async {
     let allItems = #"{"shows":[{"status":"completed","show":{"title":"The Bear","ids":{"imdb":"tt14452776"}}}]}"#
-    let http = FakeSender([(200, allItems), (201, "{}"), (200, allItems), (400, "")])
+    let http = FakeSender([(200, allItems), (201, "{}"), (200, allItems), (400, "")])   // bear: found under shows
     let s = SimklClient(clientID: "C", http: http)
     let tok = SyncToken(accessToken: "A")
     var q = SyncQueue()
@@ -269,4 +269,24 @@ private func jsonBody(_ r: APIRequest) -> [String: Any] { (try? JSONSerializatio
     try storage.write("syncqueue-\(p.uuidString).json", try enc.encode(q))
     let back = SyncQueueStore(storage: storage).load(profile: p)
     #expect(back.changes.keys.sorted() == ["watchlist:tt9"])
+}
+
+@Test func simklCompletedAnimeGetsNoPlantowatch() async {
+    let anime = #"{"anime":[{"status":"completed","show":{"title":"Frieren","ids":{"imdb":"tt22248376"}}}]}"#
+    let http = FakeSender([(200, #"{"shows":[]}"#), (200, anime)])
+    let s = SimklClient(clientID: "C", http: http)
+    let frieren = MetaPreview(id: "tt22248376", type: "series", name: "Frieren")
+    var q = SyncQueue()
+    let add = q.record(.watchlistAdd, item: frieren, imdb: frieren.id, series: true, services: ["simkl"], now: t0)
+    guard case .skipped = await s.apply(add, token: SyncToken(accessToken: "A")) else { Issue.record("anime must not move"); return }
+    #expect(http.sent.map(\.url.path) == ["/sync/all-items/shows", "/sync/all-items/anime"])
+}
+
+@Test func syncQueueStoreReportsUnreadableFile() throws {
+    let storage = FileBlobStorage(directory: tempDir())
+    let p = UUID()
+    try storage.write("syncqueue-\(p.uuidString).json", Data("kaputt".utf8))
+    var failed = false
+    let q = SyncQueueStore(storage: storage).load(profile: p) { failed = true }
+    #expect(failed && q.changes.isEmpty)
 }

@@ -28,7 +28,7 @@ extension AppModel {
         if h.store == nil { h.store = SyncQueueStore(storage: progressStore.storage) }
         guard h.profileID != profile.id, let store = h.store else { return }
         h.profileID = profile.id
-        h.queue = store.load(profile: profile.id)
+        h.queue = store.load(profile: profile.id) { RemoteLog.error("sync", "Warteschlange nicht lesbar, leer neu begonnen") }
         let gone = h.queue.prune()
         if !h.queue.changes.isEmpty || gone > 0 {
             RemoteLog.info("sync", "Warteschlange: \(h.queue.pendingCount) ausstehend, \(h.queue.changes.count) gemerkt, \(gone) abgelaufen")

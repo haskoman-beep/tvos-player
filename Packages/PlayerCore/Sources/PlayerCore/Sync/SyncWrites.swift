@@ -59,9 +59,17 @@ extension TraktClient {
 
 extension SimklClient {
     /// Simkl list of a title ("plantowatch", "watching", "completed", …), nil = on no list.
-    /// Reads `/sync/all-items/{movies|shows}` fresh, because Simkl list membership is exclusive.
+    /// Reads `/sync/all-items/movies` (or `/shows` and `/anime`: Simkl keeps anime as its own type) fresh, because
+    /// Simkl list membership is exclusive.
     func listStatus(imdb: String, series: Bool, token: SyncToken) async throws -> String? {
-        let o = try await json(request("GET", "/sync/all-items/\(series ? "shows" : "movies")", token: token)) as? [String: Any] ?? [:]
+        for type in series ? ["shows", "anime"] : ["movies"] {
+            if let s = try await listStatus(imdb: imdb, path: "/sync/all-items/\(type)", token: token) { return s }
+        }
+        return nil
+    }
+
+    private func listStatus(imdb: String, path: String, token: SyncToken) async throws -> String? {
+        let o = try await json(request("GET", path, token: token)) as? [String: Any] ?? [:]
         for key in ["movies", "shows", "anime"] {
             for e in o[key] as? [[String: Any]] ?? [] {
                 let t = (e["movie"] ?? e["show"]) as? [String: Any]
