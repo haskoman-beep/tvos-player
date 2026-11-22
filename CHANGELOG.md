@@ -17,6 +17,8 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 
 ## [Unreleased]
 
+## [Build 198] – 2026-11-22 (integ)
+
 ### Added
 - Player: a new setting, Settings › Playback › "Ton & Untertitel öffnen", chooses how the audio and subtitle
   choice opens: the bar at the top (swipe down, as before), the same bar at the bottom (swipe up), or a small
