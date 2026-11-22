@@ -52,7 +52,7 @@ struct ThemeBadge: View {
 
     let kind: Kind
     let text: String
-    /// Optionales Symbol vor dem Text (Status „⚡ sofort“, „✓ Gesehen“).
+    /// Optionales Symbol vor dem Text (Status „⚡ Sofort bereit“, „✓ Gesehen“).
     var symbol: String? = nil
     /// Gesprochener Text, wenn der sichtbare abgekürzt ist („DV“ → „Dolby Vision“).
     var spokenText: String? = nil
@@ -206,7 +206,7 @@ struct MetaLine: View {
         }
         HStack(spacing: Theme.Space.xs) {
             ThemeBadge(kind: .status(nil, onImage: true), text: "noch 97 min")
-            ThemeBadge(kind: .status(.ok, onImage: false), text: "sofort", symbol: "bolt.fill")
+            ThemeBadge(kind: .status(.ok, onImage: false), text: "Sofort bereit", symbol: "bolt.fill")
             ThemeBadge(kind: .status(nil, onImage: false), text: "Gesehen", symbol: "checkmark")
         }
         MetaLine(parts: ["2018", "97 min", "FSK 0", "Animation"])

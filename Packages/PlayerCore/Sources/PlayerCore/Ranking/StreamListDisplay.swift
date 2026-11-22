@@ -98,9 +98,11 @@ public enum StreamListOrder {
 }
 
 /// Text einer Zeile genau wie vom Formatter des Addons: `name` und `description` (ältere Addons: `title`),
-/// Zeilenumbrüche und Emoji bleiben, je höchstens `maxLines` Zeilen.
+/// Zeilenumbrüche und Emoji bleiben. Welle F-i: der ganze Text (bis `maxLines` Zeilen je Spalte); die Zeile wächst
+/// mit. Nur bei mehr Zeilen wird gekürzt, und dann stehen Zeilen mit Cache-Zustand („⚡Ready“, „❌ Not Ready“, „⏳“)
+/// zuerst, damit sie nie wegfallen.
 public struct StreamRowText: Equatable, Sendable {
-    public static let maxLines = 4
+    public static let maxLines = 12
     public var name: String
     public var body: String
 
@@ -111,38 +113,43 @@ public struct StreamRowText: Equatable, Sendable {
         body = b
     }
 
-    /// CR/LF vereinheitlichen, Leerraum außen weg; mehr als `lines` Zeilen → die ersten, letzte mit „…“.
+    /// CR/LF vereinheitlichen, Leerraum außen weg; mehr als `lines` Zeilen → Zeilen mit Cache-Zustand vorn, dann die
+    /// übrigen in Formatter-Reihenfolge, letzte mit „…“.
     public static func capped(_ text: String, lines: Int = maxLines) -> String {
         let t = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let parts = t.components(separatedBy: "\n")
-        guard parts.count > lines else { return t }
-        return parts.prefix(lines).joined(separator: "\n") + " …"
+        guard parts.count > lines, lines > 0 else { return t }
+        let status = parts.filter { StreamTraits.cacheStatus($0) != nil }
+        let rest = parts.filter { StreamTraits.cacheStatus($0) == nil }
+        return (status + rest).prefix(lines).joined(separator: "\n") + " …"
     }
 }
 
-/// Kompakte App-Plaketten der Quellenliste: nur „sofort“ (gecacht) und Größe, jeweils nur, wenn der Addon-Text
-/// sie nicht schon zeigt und der Typ in den Plaketten-Einstellungen an ist.
+/// App-Plaketten der Quellenliste: Cache-Zustand (links, immer wenn bekannt) und kompakt die Größe (rechts, nur wenn
+/// der Addon-Text sie nicht schon zeigt); jeweils nur, wenn der Typ in den Plaketten-Einstellungen an ist.
 public enum StreamListBadges {
+    /// Welle F-i: Cache-Zustand als eigene Plakette in der linken Spalte, unabhängig vom Addon-Text und von
+    /// „App-Plaketten“ (nur die Plaketten-Einstellung „Cache-Status“ schaltet sie ab). Unbekannt → keine Plakette.
+    public static func cacheBadge(_ s: StreamItem, settings: BadgeSettings) -> QualityBadge? {
+        guard settings.shows(.cacheStatus) else { return nil }
+        switch StreamTraits.parse(s).cached {
+        case true?: return QualityBadge(type: .cacheStatus, text: QualityBadges.cachedText, tone: .ready)
+        case false?: return QualityBadge(type: .cacheStatus, text: QualityBadges.uncachedText, tone: .pending)
+        case nil: return nil
+        }
+    }
+
+    /// Kompakte Plaketten rechts: nur noch die Größe (der Cache-Zustand steht links, `cacheBadge`).
     public static func badges(_ s: StreamItem, mode: StreamListBadgeMode, settings: BadgeSettings) -> [QualityBadge] {
         guard mode == .compact else { return [] }
         let t = StreamTraits.parse(s)
         let text = [s.name, s.description ?? s.title].compactMap { $0 }.joined(separator: "\n")
         var out: [QualityBadge] = []
-        if t.cached == true, settings.shows(.cacheStatus), !showsCached(text) {
-            out.append(QualityBadge(type: .cacheStatus, text: "⚡ sofort", tone: .ready))
-        }
         if let b = t.sizeBytes, b > 0, settings.shows(.size), !showsSize(text) {
             out.append(QualityBadge(type: .size, text: QualityBadges.formatSize(b)))
         }
         return out
-    }
-
-    /// Addon-Text nennt den Cache-Status schon (⚡, [RD+], „Cached“, „Instant“; „Uncached“ zählt nicht).
-    public static func showsCached(_ text: String) -> Bool {
-        let up = text.uppercased()
-        return text.contains("⚡") || up.contains("+]") || StreamTraits.containsToken(up, "CACHED")
-            || StreamTraits.containsToken(up, "INSTANT") || StreamTraits.containsToken(up, "SOFORT")
     }
 
     /// Addon-Text nennt eine Größe („5.93 GB“, „1,4 GiB“, „850MB“).

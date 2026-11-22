@@ -92,11 +92,13 @@ private let de = SourceRankContext(primaryLanguage: "de", av1Hardware: false)
     #expect(StreamListBadgeMode.off.label == "Aus" && StreamListBadgeMode.compact.label == "Kompakt")
 }
 
-@Test func rowTextKeepsFormatterLinesAndCapsAtFour() {
+@Test func rowTextKeepsAllFormatterLines() {
     let s = StreamItem(name: "[TB⚡] AIO\r\n4K DV", description: "🎬 Film (2018)\n📀 WEB-DL ⚙ HEVC\n💾 21.01 GB\n🔊 TrueHD 7.1\n🌐 DE EN\n", url: "https://u")
     let t = StreamRowText(s)
     #expect(t.name == "[TB⚡] AIO\n4K DV")
-    #expect(t.body == "🎬 Film (2018)\n📀 WEB-DL ⚙ HEVC\n💾 21.01 GB\n🔊 TrueHD 7.1 …")
+    // Welle F-i: nicht mehr nach 4 Zeilen gekürzt (die Cache-Zeile stand oft dahinter).
+    #expect(t.body == "🎬 Film (2018)\n📀 WEB-DL ⚙ HEVC\n💾 21.01 GB\n🔊 TrueHD 7.1\n🌐 DE EN")
+    #expect(StreamRowText.maxLines >= 8)
     // Ältere Addons: `title`; ohne Text der Dateiname.
     #expect(StreamRowText(StreamItem(name: "n", title: "Alt\nZeile", url: "https://u")).body == "Alt\nZeile")
     #expect(StreamRowText(StreamItem(url: "https://u", behaviorHints: hints(file: "a.mkv"))).body == "a.mkv")
@@ -107,23 +109,20 @@ private let de = SourceRankContext(primaryLanguage: "de", av1Hardware: false)
     let settings = BadgeSettings()
     // Addon-Text ohne Cache-Marker und ohne Größe → „sofort“ + Größe.
     let bare = StreamItem(name: "AIO", description: "🎬 Film", url: "https://u", behaviorHints: hints(size: 5_930_000_000, cached: true))
-    #expect(StreamListBadges.badges(bare, mode: .compact, settings: settings).map(\.text) == ["⚡ sofort", "5,93 GB"])
+    // Welle F-i: rechts nur noch die Größe; der Cache-Zustand steht links (`cacheBadge`).
+    #expect(StreamListBadges.badges(bare, mode: .compact, settings: settings).map(\.text) == ["5,93 GB"])
     // Text zeigt beides schon → keine App-Plakette.
     let full = StreamItem(name: "[TB⚡] AIO", description: "💾 5.93 GB", url: "https://u", behaviorHints: hints(size: 5_930_000_000, cached: true))
     #expect(StreamListBadges.badges(full, mode: .compact, settings: settings).isEmpty)
     // Aus → nie; abgeschaltete Typen in den Plaketten-Einstellungen bleiben aus.
     #expect(StreamListBadges.badges(bare, mode: .off, settings: settings).isEmpty)
     var noSize = settings; noSize.size = false
-    #expect(StreamListBadges.badges(bare, mode: .compact, settings: noSize).map(\.text) == ["⚡ sofort"])
-    // Nur „sofort“, nie „lädt erst“.
+    #expect(StreamListBadges.badges(bare, mode: .compact, settings: noSize).isEmpty)
     let pending = StreamItem(name: "AIO", description: "x", url: "https://u", behaviorHints: hints(cached: false))
     #expect(StreamListBadges.badges(pending, mode: .compact, settings: settings).isEmpty)
 }
 
 @Test func addonTextDetection() {
-    #expect(StreamListBadges.showsCached("[RD+] Torrentio"))
-    #expect(StreamListBadges.showsCached("Instant ✓"))
-    #expect(!StreamListBadges.showsCached("Uncached"))
     #expect(StreamListBadges.showsSize("💾 1,4 GiB"))
     #expect(StreamListBadges.showsSize("850MB"))
     #expect(!StreamListBadges.showsSize("1080p HEVC 7.1"))
@@ -161,4 +160,54 @@ private let de = SourceRankContext(primaryLanguage: "de", av1Hardware: false)
     let c = StreamItem(name: "[RD⚡]", url: "https://u/c", infoHash: "h", behaviorHints: hints(file: "f.mkv", size: 10))
     let d = StreamItem(name: "[RD⚡] 2", url: "https://u/d", behaviorHints: hints(file: "f.mkv", size: 10))
     #expect(StreamDedupe.unique([("A", a), ("A", b), ("A", c), ("A", d)]).map(\.stream.id) == [a.id, c.id])
+}
+
+// MARK: Welle F-i: ganzer Formatter-Text, Cache-Plakette
+
+/// Prism-artiger AIOStreams-Formatter wie auf dem Gerät: 6–7 Zeilen, Cache-Zeile weit unten.
+private func prismLike(cached: Bool) -> StreamItem {
+    StreamItem(name: "🍿 4K • 🖍 10bit • 🎨 HDR",
+               description: """
+               🎬 Pixels (2015)
+               💿 BluRay ⚙️ HEVC
+               🎶 DD 🔊 5.1 🗣️ 🌎 / 🇫🇷
+               💾 4.91 GB\(cached ? "" : " 🌱 1")
+               🏷️ D5T0 📡 DMM
+               \(cached ? "⚡Ready" : "❌ Not Ready") (TB) 🔍AIOStreams
+               """, url: "https://u/\(cached)")
+}
+
+@Test func rowTextShowsCacheLineOfLongFormatter() {
+    let t = StreamRowText(prismLike(cached: false))
+    #expect(t.body.contains("❌ Not Ready (TB)"))
+    #expect(!t.body.contains("…"))
+}
+
+@Test func rowTextCapPutsStatusLinesFirst() {
+    let lines = (1...15).map { "Zeile \($0)" } + ["⚡Ready (TB)"]
+    let capped = StreamRowText.capped(lines.joined(separator: "\n"), lines: 8)
+    let out = capped.components(separatedBy: "\n")
+    #expect(out.count == 8)
+    #expect(out.first == "⚡Ready (TB)")
+    #expect(out[1] == "Zeile 1")
+    #expect(capped.hasSuffix(" …"))
+}
+
+@Test func cacheBadgeFromFormatterText() {
+    let settings = BadgeSettings()
+    let ready = StreamListBadges.cacheBadge(prismLike(cached: true), settings: settings)
+    #expect(ready?.text == "⚡ Sofort bereit")
+    #expect(ready?.tone == .ready)
+    let notReady = StreamListBadges.cacheBadge(prismLike(cached: false), settings: settings)
+    #expect(notReady?.text == "Nicht gecacht")
+    #expect(notReady?.tone == .pending)
+    // Unbekannt bleibt unbekannt: keine Plakette.
+    let unknown = StreamListBadges.cacheBadge(StreamItem(name: "🍿 4K", description: "🎬 Film\n💾 4 GB", url: "https://u"), settings: settings)
+    #expect(unknown == nil)
+    // Plaketten-Einstellung „Cache-Status“ aus → keine.
+    var off = settings; off.cacheStatus = false
+    #expect(StreamListBadges.cacheBadge(prismLike(cached: true), settings: off) == nil)
+    // Strukturiertes Feld zählt auch ohne Text.
+    let hinted = StreamItem(name: "AIO", description: "x", url: "https://u", behaviorHints: hints(cached: false))
+    #expect(StreamListBadges.cacheBadge(hinted, settings: settings)?.tone == .pending)
 }

@@ -146,6 +146,10 @@ public struct BestQuality: Equatable, Sendable {
 }
 
 public enum QualityBadges {
+    /// Welle F-i: ein Wortlaut für den Cache-Zustand auf Detailseite, Quellenliste und Karte „Sofort abspielen“.
+    public static let cachedText = "⚡ Sofort bereit"
+    public static let uncachedText = "Nicht gecacht"
+
     /// Plaketten einer Quelle (Quellenliste), Reihenfolge wie bisher; nur eingeschaltete Typen.
     public static func forStream(_ t: StreamTraits, settings s: BadgeSettings) -> [QualityBadge] {
         let logos = s.style == .logo
@@ -163,8 +167,8 @@ public enum QualityBadges {
         if let ch = t.channels { add(.channels, ch) }
         for l in t.languages { add(.languages, l.uppercased()) }
         if let b = t.sizeBytes { add(.size, formatSize(b)) }
-        if t.cached == true { add(.cacheStatus, "⚡ sofort", nil, .ready) }
-        else if t.cached == false { add(.cacheStatus, "lädt erst", nil, .pending) }
+        if t.cached == true { add(.cacheStatus, cachedText, nil, .ready) }
+        else if t.cached == false { add(.cacheStatus, uncachedText, nil, .pending) }
         return out
     }
 
