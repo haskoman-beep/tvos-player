@@ -10,7 +10,7 @@ struct SubtitleStyleSettingsRows: View {
 
     var body: some View {
         let s = model.profile.subtitleStyle
-        SettingsSection("Untertitel-Aussehen") {
+        SettingsSection {
             SettingsLinkRow(symbol: "textformat.size", tint: tint, title: "Untertitel-Aussehen",
                             detail: "Größe, Lage, Umriss, Hintergrund und Helligkeit bei HDR, mit Vorschau.",
                             value: s == SubtitleStyle() ? "Standard" : "Eigener Stil") {
@@ -39,7 +39,7 @@ struct SubtitleStyleSettingsPage: View {
                 cycleRow(.size, symbol: "textformat.size", title: "Größe",
                          options: SubtitleStyle.Size.allCases, keyPath: \.size, label: { $0.title })
                 cycleRow(.position, symbol: "arrow.up.and.down.text.horizontal", title: "Lage",
-                         detail: "Abstand vom unteren Bildrand. Gilt auch für Bild-Untertitel.",
+                         detail: "Abstand vom unteren Bildrand. Bild-Untertitel werden nur angehoben.",
                          options: SubtitleStyle.Position.allCases, keyPath: \.position, label: { $0.title })
                 cycleRow(.outline, symbol: "character.textbox", title: "Umriss",
                          options: SubtitleStyle.Outline.allCases, keyPath: \.outline, label: { $0.title })
@@ -85,7 +85,7 @@ struct SubtitleStylePreview: View {
     var hdr = false
 
     private static let frame = CGSize(width: 1920, height: 1080)
-    private static let tileWidth: CGFloat = 520
+    private static let tileWidth: CGFloat = 440
     private static let sample = [SubtitleTextPart(text: "Wir müssen los, bevor es dunkel wird.\nIch hole nur noch schnell die Jacke.")]
 
     var body: some View {

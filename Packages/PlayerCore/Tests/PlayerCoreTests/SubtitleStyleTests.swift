@@ -80,5 +80,7 @@ import Testing
     #expect(high.bottomInset(controlsInset: 272, gap: 24) == 296)
     let low = SubtitleStyle(position: .low).look(hdr: false)
     #expect(low.bottomInset(controlsInset: 0, gap: 24) == 40)
-    #expect(low.bitmapShift(controlsInset: 0, gap: 24) == 30)
+    // Image subtitles never move below their own position (overscan).
+    #expect(low.bitmapShift(controlsInset: 0, gap: 24) == 0)
+    #expect(low.bitmapShift(controlsInset: 272, gap: 24) == -226)
 }

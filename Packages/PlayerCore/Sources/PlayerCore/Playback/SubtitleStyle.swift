@@ -104,7 +104,8 @@ public struct SubtitleStyle: Codable, Sendable, Equatable {
     public var position: Position
     public var outline: Outline
     public var background: Background
-    /// Text brightness in percent while an HDR or Dolby Vision source plays (SDR always 100 %).
+    /// Text brightness in percent while the TV presents HDR or Dolby Vision (SDR always 100 %). A perceptual step:
+    /// it scales the gamma-encoded colour, so 70 % is about 46 % luminance and 40 % about 13 %.
     public var hdrBrightness: Int
 
     public init(size: Size = .normal, position: Position = .standard, outline: Outline = .normal,
@@ -134,7 +135,7 @@ public struct SubtitleStyle: Codable, Sendable, Equatable {
 
     public static func brightnessTitle(_ percent: Int) -> String { percent >= 100 ? "100 % (wie SDR)" : "\(percent) %" }
 
-    /// Is the source format (name of the engine `VideoFormat` case) HDR or Dolby Vision?
+    /// Is the format (name of the engine `VideoFormat` case, use the presented output) HDR or Dolby Vision?
     public static func isHDR(formatName: String?) -> Bool {
         switch formatName?.lowercased() {
         case "dolbyvision", "hdr10", "hdr10plus", "hlg": true
@@ -175,7 +176,8 @@ public struct SubtitleLook: Sendable, Equatable {
     /// The default look (same as before wave U).
     public static let standard = SubtitleStyle().look(hdr: false)
 
-    /// Text colour scaled by the brightness (0…1 per channel). White at 70 % → 0.7 grey; colours keep their hue.
+    /// Text colour scaled by the brightness (0…1 per gamma-encoded channel, a perceptual step, not linear light).
+    /// White at 70 % → 0.7 grey; colours keep their hue.
     public func dimmed(red: Double, green: Double, blue: Double) -> (red: Double, green: Double, blue: Double) {
         let f = min(max(textBrightness, 0), 1)
         return (min(max(red, 0), 1) * f, min(max(green, 0), 1) * f, min(max(blue, 0), 1) * f)
@@ -194,7 +196,8 @@ public struct SubtitleLook: Sendable, Equatable {
 
     /// Vertical shift of an image subtitle in the lower half (negative = up). Image subtitles bring their own
     /// position, which matches the standard margin; the chosen position and the controls move them from there.
+    /// Only upwards: a lower position would push a disc subtitle near the screen edge (overscan).
     public func bitmapShift(controlsInset: CGFloat, gap: CGFloat) -> CGFloat {
-        -(bottomInset(controlsInset: controlsInset, gap: gap) - SubtitleStyle.Position.standard.bottomMargin)
+        min(0, -(bottomInset(controlsInset: controlsInset, gap: gap) - SubtitleStyle.Position.standard.bottomMargin))
     }
 }

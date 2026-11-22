@@ -34,7 +34,8 @@ struct SubtitleOverlayView: View {
     @State private var carry: [SubtitleCue] = []
     @State private var trackID: Int?
     @State private var nativeRendered = false
-    /// The source is HDR or Dolby Vision (engine `sourceVideoFormat`).
+    /// The TV presents HDR or Dolby Vision (engine `videoFormat`, the output, not the file). An HDR file shown
+    /// as SDR or tone-mapped keeps the SDR look.
     @State private var hdr = false
 
     var body: some View {
@@ -85,7 +86,7 @@ struct SubtitleOverlayView: View {
             let track = engine.subtitleTracks.first { $0.id == id }
             nativeRendered = track?.isNativelyRenderedSubtitle ?? false
         }
-        .onReceive(engine.$sourceVideoFormat) { f in
+        .onReceive(engine.$videoFormat) { f in
             let now = SubtitleStyle.isHDR(formatName: "\(f)")
             if now != hdr { hdr = now }
         }
