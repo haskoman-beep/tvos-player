@@ -40,7 +40,10 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   sound system, always stereo, night mode, dialogue, loudness, audio offset) is now stored per device instead
   of per profile. On the first start after the update the app takes the values of the active profile once.
   Profile export, import and sync no longer carry them; old backups that still contain them load as before.
-  The page says „Gilt für dieses Gerät“ (applies to this device).
+  The page says „Gilt für dieses Gerät“ (applies to this device). The move runs once per device (a flag
+  remembers it); if the stored values are ever lost, the app starts with defaults and logs it instead of
+  taking old profile values again. Going back to an older build resets these settings to their defaults, and
+  restoring a backup on another Apple TV does not bring them along.
 - Phone page: the TorBox key moved to „Konten & Schlüssel“ (accounts and keys), next to the other keys; the
   section „Addons & Quellen“ is now „Addons“. The TV row Profil & Konten › Schlüssel › TorBox opens it there.
 - Detail page: „Abspielen“ (play) is the main button again and takes the focus on entry and on return from

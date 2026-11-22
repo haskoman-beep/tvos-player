@@ -41,28 +41,91 @@ private func oldProfilesJSON(active: UUID?) -> Data {
     #expect(DeviceSettings.migrated(fromProfilesData: Data(#"{"profiles":[{"id":"\#(idA.uuidString)","name":"A"}]}"#.utf8)) == DeviceSettings())
 }
 
+/// The app's UserDefaults flag, in memory.
+private final class Flag: @unchecked Sendable {
+    var set = false
+    func store(_ storage: BlobStorage) -> DeviceSettingsStore {
+        DeviceSettingsStore(storage: storage, isMigrated: { self.set }, markMigrated: { self.set = true })
+    }
+}
+
+/// Storage whose writes always fail.
+private struct FailingStorage: BlobStorage {
+    let base: BlobStorage
+    struct Full: Error {}
+    func read(_ name: String) -> Data? { base.read(name) }
+    func write(_ name: String, _ data: Data) throws { throw Full() }
+    func remove(_ name: String) { base.remove(name) }
+}
+
 @Test func migrationRunsOnceThenDeviceBlockWins() throws {
-    let dir = tempDir()
-    let storage = FileBlobStorage(directory: dir)
+    let storage = FileBlobStorage(directory: tempDir())
     try storage.write(ProfileStore.name, oldProfilesJSON(active: idB))
-    let store = DeviceSettingsStore(storage: storage)
+    let flag = Flag()
+    let store = flag.store(storage)
     let first = store.loadOrMigrate()
-    #expect(first.migrated && first.settings.audioShaping.safeStereo)
+    #expect(first.outcome == .migrated(fromProfiles: true) && first.writeError == nil && flag.set)
+    #expect(first.settings.audioShaping.safeStereo)
     // Changed on the device; the profiles still hold the old values, but the move does not run again.
     var changed = first.settings
     changed.audioShaping.safeStereo = false
     changed.displayMode.panelPresentsDolbyVision = true
     try store.save(changed)
-    let second = DeviceSettingsStore(storage: storage).loadOrMigrate()
-    #expect(!second.migrated && second.settings == changed)
+    let second = flag.store(storage).loadOrMigrate()
+    #expect(second.outcome == .loaded && second.settings == changed)
     // Switching the active profile in profiles.json changes nothing either.
     try storage.write(ProfileStore.name, oldProfilesJSON(active: idA))
-    #expect(DeviceSettingsStore(storage: storage).loadOrMigrate().settings == changed)
-    // Fresh install without profiles: defaults, written once.
-    let fresh = DeviceSettingsStore(storage: FileBlobStorage(directory: tempDir()))
+    #expect(flag.store(storage).loadOrMigrate().settings == changed)
+    // Fresh install without profiles: defaults, written once, not reported as taken from a profile.
+    let freshFlag = Flag()
+    let fresh = freshFlag.store(FileBlobStorage(directory: tempDir()))
     let f = fresh.loadOrMigrate()
-    #expect(f.migrated && f.settings == DeviceSettings())
-    #expect(!fresh.loadOrMigrate().migrated)
+    #expect(f.outcome == .migrated(fromProfiles: false) && f.settings == DeviceSettings() && freshFlag.set)
+    #expect(fresh.loadOrMigrate().outcome == .loaded)
+}
+
+@Test func lostBlockWithFlagSetDoesNotMigrateAgain() throws {
+    // Review S I-R2-1: the block is gone (e.g. purged Caches copy), profiles.json still has the old values.
+    let storage = FileBlobStorage(directory: tempDir())
+    try storage.write(ProfileStore.name, oldProfilesJSON(active: idB))
+    let flag = Flag()
+    flag.set = true
+    let r = flag.store(storage).loadOrMigrate()
+    #expect(r.outcome == .blockMissing && r.settings == DeviceSettings() && !r.settings.audioShaping.safeStereo)
+    // Defaults are written back: the next start reads them without a further notice.
+    #expect(flag.store(storage).loadOrMigrate().outcome == .loaded)
+    // An unreadable block: defaults, reported.
+    try storage.write(DeviceSettingsStore.name, Data("kaputt".utf8))
+    let u = flag.store(storage).loadOrMigrate()
+    #expect(u.outcome == .blockUnreadable && u.settings == DeviceSettings())
+    // An old block without flag (earlier build) sets the flag and does not move.
+    let other = FileBlobStorage(directory: tempDir())
+    let fresh = Flag()
+    try fresh.store(other).save(DeviceSettings(audioShaping: AudioShapingSettings(nightMode: true)))
+    #expect(fresh.store(other).loadOrMigrate().outcome == .loaded && fresh.set)
+}
+
+@Test func failedFirstWriteIsReportedAndLeavesFlagUnset() throws {
+    let base = FileBlobStorage(directory: tempDir())
+    try base.write(ProfileStore.name, oldProfilesJSON(active: idA))
+    let flag = Flag()
+    let r = flag.store(FailingStorage(base: base)).loadOrMigrate()
+    #expect(r.outcome == .migrated(fromProfiles: true) && r.writeError != nil && !flag.set)
+    #expect(r.settings.audioShaping.nightMode)   // values are still used for this run
+}
+
+@Test func deviceBlockHasReservedDefaultsSlot() throws {
+    // The other blocks fill their shared budget; the device block still goes to UserDefaults and stays there.
+    let kv = MemoryKeyValueBlobs()
+    let s = TieredBlobStorage(defaults: kv, directories: [FileBlobStorage(directory: tempDir())])
+    let half = TieredBlobStorage.othersBudget / 2
+    try s.write("progress-a.json", Data(repeating: 1, count: half))
+    try s.write("progress-b.json", Data(repeating: 2, count: half))
+    #expect(s.defaultsSizes().values.reduce(0, +) == TieredBlobStorage.othersBudget)
+    try s.write(DeviceSettingsStore.name, try JSONEncoder().encode(DeviceSettings()))
+    #expect(kv.data(forKey: TieredBlobStorage.prefix + DeviceSettingsStore.name) != nil)
+    #expect(s.migrate().kept.contains(DeviceSettingsStore.name))
+    #expect(TieredBlobStorage.isReserved(DeviceSettingsStore.name) && TieredBlobStorage.isReserved(ProfileStore.name))
 }
 
 @Test func oldProfilesDecodeAndDropDeviceFields() throws {
@@ -75,7 +138,7 @@ private func oldProfilesJSON(active: UUID?) -> Data {
     #expect(!json.contains("audioShaping") && !json.contains("displayMode"))
     // An imported backup with other device values leaves the device block alone.
     let storage = FileBlobStorage(directory: tempDir())
-    let store = DeviceSettingsStore(storage: storage)
+    let store = Flag().store(storage)
     try store.save(DeviceSettings(displayMode: DisplayModeSettings(keepModeBetweenEpisodes: false)))
     try storage.write(ProfileStore.name, oldProfilesJSON(active: idA))
     #expect(store.loadOrMigrate().settings.displayMode.keepModeBetweenEpisodes == false)

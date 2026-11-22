@@ -17,12 +17,20 @@ public protocol KeyValueBlobs: Sendable {
 ///   Application Support und Caches); beim Lesen gewinnt die jüngste Kopie (Änderungsdatum).
 /// - Profile (`profiles.json`) haben in UserDefaults einen festen Vorbehalt von `profileLimit`:
 ///   sie passen immer, solange sie darunter bleiben – Caches darf tvOS leeren, Profile dürfen nie nur dort liegen.
+/// - Wave S round 3: the device settings (`device-settings.json`, under 1 KB) get the same treatment with a reserve
+///   of `deviceLimit`, outside the shared budget of the other blocks.
 /// - Andere Blöcke nur bis `smallLimit` je Block und zusammen höchstens `budget - profileLimit`.
 /// - Nach dem Schreiben in UserDefaults wird gegengelesen; weicht der Wert ab, wird der Eintrag gelöscht.
 /// - Lesen: Defaults-Eintrag zuerst (jeder Schreibvorgang hält ihn aktuell oder löscht ihn), sonst die jüngste Datei.
 public struct TieredBlobStorage: BlobStorage {
     public static let prefix = "blob."
     public static let profileName = "profiles.json"
+    /// Wave S round 3: device settings (Bild & Ton); reserved like the profiles (`DeviceSettingsStore.name`).
+    public static let deviceName = "device-settings.json"
+    /// Reserve for the device settings in UserDefaults.
+    public static let deviceLimit = 8 * 1024
+    /// Blocks with their own reserve: they always fit while under their limit and `migrate()` keeps them.
+    public static func isReserved(_ name: String) -> Bool { name == profileName || name == deviceName }
     /// Normale Blöcke: höchstens 96 KB komprimiert in UserDefaults (sofern das Restbudget reicht).
     public static let smallLimit = 96 * 1024
     /// Fester Vorbehalt für die Profile (Einstellungen, Schlüssel).
@@ -56,6 +64,7 @@ public struct TieredBlobStorage: BlobStorage {
     public static func limit(_ name: String) -> Int {
         if name.hasSuffix(".bak") { return 0 }
         if name == profileName { return profileLimit }
+        if name == deviceName { return deviceLimit }
         return smallLimit
     }
 
@@ -106,9 +115,9 @@ public struct TieredBlobStorage: BlobStorage {
 
     func fitsDefaults(_ name: String, bytes: Int) -> Bool {
         guard bytes <= Self.limit(name) else { return false }
-        if name == Self.profileName { return true }   // eigener Vorbehalt
+        if Self.isReserved(name) { return true }   // eigener Vorbehalt
         let others = defaults.keys(withPrefix: Self.prefix)
-            .filter { $0 != key(name) && $0 != key(Self.profileName) }
+            .filter { $0 != key(name) && !Self.isReserved(String($0.dropFirst(Self.prefix.count))) }
             .reduce(0) { $0 + (defaults.data(forKey: $1)?.count ?? 0) }
         return others + bytes <= Self.othersBudget
     }
@@ -138,8 +147,8 @@ public struct TieredBlobStorage: BlobStorage {
         var others = 0
         for name in order {
             let bytes = sizes[name]!
-            if name == Self.profileName, bytes <= Self.profileLimit { m.kept.append(name); continue }
-            if name != Self.profileName, bytes <= Self.limit(name), others + bytes <= Self.othersBudget {
+            if Self.isReserved(name), bytes <= Self.limit(name) { m.kept.append(name); continue }
+            if !Self.isReserved(name), bytes <= Self.limit(name), others + bytes <= Self.othersBudget {
                 others += bytes; m.kept.append(name); continue
             }
             let z = defaults.data(forKey: key(name)) ?? Data()

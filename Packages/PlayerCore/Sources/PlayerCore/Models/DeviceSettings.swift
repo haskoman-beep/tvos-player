@@ -51,27 +51,54 @@ public struct DeviceSettings: Codable, Sendable, Equatable {
     }
 }
 
-/// Device settings as one small JSON block. Its presence is the "already moved" mark: the move from the
-/// profiles runs only while the block is missing, so it happens once per device.
+/// Device settings as one small JSON block with a reserved UserDefaults slot (`TieredBlobStorage.deviceName`).
+/// A separate one-time flag (plain UserDefaults in the app) records that the move from the profiles happened, so a
+/// lost block never moves again: it would revert later device edits to old profile values.
 public final class DeviceSettingsStore: @unchecked Sendable {
-    public static let name = "device-settings.json"
+    public static let name = TieredBlobStorage.deviceName
+    /// UserDefaults key of the one-time flag in the app.
+    public static let migratedFlagKey = "deviceSettingsMigrated.v1"
     public let storage: BlobStorage
+    let isMigrated: @Sendable () -> Bool
+    let markMigrated: @Sendable () -> Void
 
-    public init(storage: BlobStorage) { self.storage = storage }
+    /// What `loadOrMigrate()` found; the app logs it.
+    public enum Outcome: Equatable, Sendable {
+        /// Block read as stored.
+        case loaded
+        /// First start: moved from the active profile (`fromProfiles`) or, without profiles, defaults.
+        case migrated(fromProfiles: Bool)
+        /// Flag set but the block is gone: defaults, no second move.
+        case blockMissing
+        /// Block present but unreadable: defaults.
+        case blockUnreadable
+    }
 
-    /// Loads the device block. Missing: takes the active profile's old values, writes them and reports `migrated`.
-    /// An unreadable block gives the defaults and does not move again (the profiles no longer hold the values
-    /// once they were saved after the update).
-    public func loadOrMigrate() -> (settings: DeviceSettings, migrated: Bool) {
+    public init(storage: BlobStorage, isMigrated: @escaping @Sendable () -> Bool, markMigrated: @escaping @Sendable () -> Void) {
+        self.storage = storage; self.isMigrated = isMigrated; self.markMigrated = markMigrated
+    }
+
+    /// Loads the block, or moves the values once from the active profile. Defaults that replace a missing or
+    /// unreadable block are written back, so the next start reads them. `writeError` is a failed write.
+    public func loadOrMigrate() -> (settings: DeviceSettings, outcome: Outcome, writeError: Error?) {
         if let data = storage.read(Self.name) {
-            return ((try? JSONDecoder().decode(DeviceSettings.self, from: data)) ?? DeviceSettings(), false)
+            if !isMigrated() { markMigrated() }
+            if let s = try? JSONDecoder().decode(DeviceSettings.self, from: data) { return (s, .loaded, nil) }
+            return (DeviceSettings(), .blockUnreadable, write(DeviceSettings()))
         }
-        let s = DeviceSettings.migrated(fromProfilesData: storage.read(ProfileStore.name))
-        try? save(s)
-        return (s, true)
+        if isMigrated() { return (DeviceSettings(), .blockMissing, write(DeviceSettings())) }
+        let profiles = storage.read(ProfileStore.name)
+        let s = DeviceSettings.migrated(fromProfilesData: profiles)
+        let error = write(s)
+        if error == nil { markMigrated() }
+        return (s, .migrated(fromProfiles: profiles != nil), error)
     }
 
     public func save(_ s: DeviceSettings) throws {
         try storage.write(Self.name, try JSONEncoder().encode(s))
+    }
+
+    private func write(_ s: DeviceSettings) -> Error? {
+        do { try save(s); return nil } catch { return error }
     }
 }

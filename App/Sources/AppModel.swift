@@ -40,12 +40,20 @@ final class AppModel: ObservableObject {
     init() {
         let storage = DefaultsStorage()
         // Before anything saves the profiles: the one-time move reads the old fields from profiles.json.
-        deviceStore = DeviceSettingsStore(storage: storage)
+        let flag = DeviceSettingsStore.migratedFlagKey
+        deviceStore = DeviceSettingsStore(storage: storage, isMigrated: { UserDefaults.standard.bool(forKey: flag) },
+                                          markMigrated: { UserDefaults.standard.set(true, forKey: flag) })
         let dev = deviceStore.loadOrMigrate()
         device = dev.settings
-        if dev.migrated {
+        switch dev.outcome {
+        case .loaded: break
+        case .migrated(fromProfiles: true):
             RemoteLog.info("speicher", "Bild & Ton jetzt je Gerät: aus aktivem Profil übernommen (Ton \(dev.settings.audioShaping.logText), Bild \(dev.settings.displayMode.logText))")
+        case .migrated(fromProfiles: false): RemoteLog.info("speicher", "Bild & Ton je Gerät: neu, Standardwerte")
+        case .blockMissing: RemoteLog.error("speicher", "Bild & Ton: Gerätewerte fehlen, Standardwerte")
+        case .blockUnreadable: RemoteLog.error("speicher", "Bild & Ton: Gerätewerte unlesbar, Standardwerte")
         }
+        if let e = dev.writeError { RemoteLog.error("speicher", "Bild & Ton: Gerätewerte nicht gespeichert: \(e)") }
         store = ProfileStore(storage: storage)
         stored = store.load()
         progressStore = ProgressStore(storage: storage)
