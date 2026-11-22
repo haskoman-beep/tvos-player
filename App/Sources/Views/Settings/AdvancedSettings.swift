@@ -7,6 +7,7 @@ struct AdvancedSettingsPage: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var icons = RatingIconStore.shared
     @AppStorage(MainThreadWatchdog.settingKey) private var hitchLog = true
+    @AppStorage(XRayProbe.settingKey) private var xrayProbe = false
     @State private var confirmClear = false
     @State private var cleared = false
     /// Review F-a M4: RemoteLog ist kein ObservableObject; die Seite fragt den Empfänger alle 2 s neu ab.
@@ -21,6 +22,9 @@ struct AdvancedSettingsPage: View {
                                   detail: "Schreibt ins Ereignis-Log, wenn die Oberfläche länger als 250 ms hängt (mit letzter Aktion und Speicherverbrauch).",
                                   reserveDetailSpace: false, isOn: $hitchLog)
                     .onChange(of: hitchLog) { MainThreadWatchdog.apply() }
+                SettingsToggleRow(symbol: "person.crop.rectangle", tint: tint, title: "Gesichter bei Pause prüfen (Test)",
+                                  detail: "Entwicklung: Bei jeder Pause sucht das Gerät Gesichter im Standbild und schreibt Zeiten und Größen ins Ereignis-Log (xray). Nichts wird angezeigt oder gespeichert.",
+                                  reserveDetailSpace: false, isOn: $xrayProbe)
                 SettingsInfoRow(symbol: "antenna.radiowaves.left.and.right", tint: tint, title: "Log-Empfänger",
                                 detail: "Das Ereignis-Log geht automatisch an ein Log-Programm im Heimnetz (Bonjour, Dienst _playerlog._tcp). "
                                     + "Ohne Empfänger bleiben die letzten 500 Zeilen im Speicher.",

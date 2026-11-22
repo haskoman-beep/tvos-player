@@ -211,8 +211,7 @@ final class AetherBackend: PlaybackEngine {
         applyAudioOptions(prefs, to: &o)   // Ton/„Inhalt anpassen“ (PlayerAudioOptions.swift)
         stopped = false
         // Plattencache: nur die Adresse tauschen; jeder Fehler dort → direkte Adresse.
-        let routed = await DiskCacheProxy.shared.route(url, headers: prefs.headers, settings: prefs.diskCache,
-                                                      nativeHLS: prefs.nativeRemoteHLS, reuse: cacheSession)
+        let routed = await routeCheckingProfile5(url, prefs: prefs, options: &o)   // X0: route + DV P5 pre-check → ladder option (XRayProfile5.swift)
         if let s = routed.session, Task.isCancelled || stopped {
             if cacheSession == s { cacheSession = nil }
             await DiskCacheProxy.shared.close(s); throw CancellationError()
@@ -225,6 +224,7 @@ final class AetherBackend: PlaybackEngine {
             cacheSession = nil
             _ = try await engine.load(url: url, startPosition: start, options: o)
         }
+        await settleProfile5(url: url, options: o)   // X0/I1: DV P5 keeps old playback (XRayProfile5.swift)
     }
     func recover() async throws {
         // Plattencache: Listener nach Ruhezustand neu auf dem alten Port; sonst wirft recover → load() → route.

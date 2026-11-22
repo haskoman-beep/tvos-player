@@ -24,9 +24,10 @@ extension PlaybackEngine {
 /// eine zweite Verbindung und sucht nie in der Wiedergabe. `supportsCacheBackedStills` = Quelle liefert Standbilder
 /// (nicht z. B. Dolby Vision Profil 5 ohne Umformung). Nach dem Spulen die Still-Dekoder freigeben.
 extension AetherBackend {
-    var supportsScrubPreview: Bool { engine.supportsCacheBackedStills }
+    /// X0/I1: DV Profile 5 has stills with the reshaping trait (for the pause probe), but keeps no scrub previews.
+    var supportsScrubPreview: Bool { engine.supportsCacheBackedStills && !profile5KeepsOldPreviews }
     func scrubPreview(at seconds: Double, refined: Bool, maxWidth: Int) async -> ScrubStill? {
-        guard engine.supportsCacheBackedStills else { return nil }
+        guard supportsScrubPreview else { return nil }
         // `isCancelled: { false }` genügt: die Engine prüft zusätzlich `Task.isCancelled`, und der Aufruf läuft
         // strukturiert im `previewTask` des ScrubController (dessen Abbruch beendet die Abfrage).
         guard let f = await engine.scrubPreviewFrame(atSeconds: seconds, refined: refined, maxWidth: maxWidth,

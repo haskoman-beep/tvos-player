@@ -59,10 +59,24 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   bright picture; with the HDR row focused it shows the HDR brightness. The style is stored in the profile and
   the defaults are the previous look. It applies to text subtitles (SRT, WebVTT, ASS as text); image
   subtitles (PGS) only move up with a higher position.
+- Developer test „Gesichter bei Pause prüfen (Test)“ (check faces on pause) in Settings › System › Erweitert ›
+  Diagnose, off by default. When it is on, each pause takes the paused frame from the engine, looks for faces
+  on the device and writes timings and face sizes to the event log (`xray:` lines). Nothing is shown or stored.
+  This is the first step towards showing who is in the picture.
 
 ### Changed
 - Source list: while sources are still arriving, the focus keeps its row position instead of following its
   source to a new place, so the list no longer jumps under the remote.
+- Dolby Vision Profile 5: the engine is now built with its still reshaping part, so the face test above can take
+  the paused frame of a Profile 5 source. Profile 5 otherwise keeps its earlier behaviour: no scrub previews and
+  no background still pictures (no second connection to the source) once the player knows the source is
+  Profile 5. It learns this from the first play and remembers it. Only while the face test is on, a source not
+  checked yet is examined before it loads (at most 1.5 s, after the disk cache, through the cache when it is used;
+  not for HLS/DASH), and the result is remembered (for sources that are not Profile 5, until the app restarts).
+  With the face test off, playback starts exactly as before. There is no restart during playback.
+- Accepted trade-off for Dolby Vision Profile 5: the picture held during an audio switch or reload is now decoded
+  and converted on the processor (shown in SDR, up to 3 s) instead of through the system. The event log notes its
+  time as `xray: P5 gehaltenes Bild per CPU (… ms)`.
 
 ## [Build 214] – 2026-11-22 (integ)
 
