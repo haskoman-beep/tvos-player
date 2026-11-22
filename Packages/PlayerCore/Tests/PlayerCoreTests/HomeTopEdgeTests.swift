@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import PlayerCore
 
@@ -256,4 +257,34 @@ private let stuckBar = TabBarState(found: true, minY: -2250, maxY: -2182)
             == "Leiste hängt weiter (nach gescheitertem Hoch, Start, Tiefe 0), alle Reparaturen versucht · Leiste außerhalb des Bildes (y -2250…-2182) · Versatz 207 pt · Menü oben")
     #expect(TabBarRepair.Trigger.arrivedAtTop.logName == "am oberen Rand")
     #expect(TabBarRepair.Trigger.playerClosed.logName == "nach dem Player")
+}
+
+@Test func pageScrollPickIgnoresHorizontalRowsAndOffscreenParts() {
+    let window = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+    // Hero home (review N-I1): list 470…1041 (571 pt) and a hero row strip of 738 pt, full width, partly below.
+    let list = PageScrollPick.Candidate(frame: CGRect(x: 0, y: 470, width: 1920, height: 571),
+                                        contentSize: CGSize(width: 1920, height: 4000), alwaysBounceVertical: true)
+    let heroRow = PageScrollPick.Candidate(frame: CGRect(x: 0, y: 900, width: 1920, height: 738),
+                                           contentSize: CGSize(width: 9000, height: 738))
+    #expect(PageScrollPick.choose([heroRow, list], window: window) == 1)
+    // A row that would scroll vertically but lies mostly below the screen loses by its visible part.
+    let lowTall = PageScrollPick.Candidate(frame: CGRect(x: 0, y: 700, width: 1920, height: 2000),
+                                           contentSize: CGSize(width: 1920, height: 3000))
+    #expect(PageScrollPick.choose([lowTall, list], window: window) == 1)
+    // Large posters with badges below: strip as tall as the list, still not vertical.
+    let strip = PageScrollPick.Candidate(frame: CGRect(x: 0, y: 470, width: 1920, height: 562),
+                                         contentSize: CGSize(width: 8000, height: 562))
+    #expect(PageScrollPick.choose([strip, list], window: window) == 1)
+    // The list handed over by the page wins over a larger vertical one; nothing vertical → nil.
+    var known = list
+    known.known = true
+    let grid = PageScrollPick.Candidate(frame: window, contentSize: CGSize(width: 1920, height: 5000))
+    #expect(PageScrollPick.choose([grid, known], window: window) == 1)
+    #expect(PageScrollPick.choose([grid, list], window: window) == 0)
+    #expect(PageScrollPick.choose([heroRow, strip], window: window) == nil)
+    // Detail page whose content fits: counts only with vertical bounce.
+    let fits = PageScrollPick.Candidate(frame: window, contentSize: CGSize(width: 1920, height: 1080))
+    #expect(PageScrollPick.choose([fits], window: window) == nil)
+    #expect(PageScrollPick.choose([PageScrollPick.Candidate(frame: window, contentSize: window.size, alwaysBounceVertical: true)],
+                                  window: window) == 0)
 }

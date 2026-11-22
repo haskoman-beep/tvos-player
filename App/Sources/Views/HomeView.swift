@@ -43,6 +43,8 @@ struct HomeView: View {
                             .padding(.top, max(0, 40 - room))
                             .padding(.bottom, 40)
                             .id(HomeTopEdgeWatch.topID)
+                            // Wave F-m R2: the tab bar guard binds the bar to this list, not to a tall row.
+                            .background(alignment: .topLeading) { PageScrollViewProbe() }
                     }
                     .modifier(TopEdgeScroll(watch: topWatch, proxy: proxy))
                     .scrollClipDisabled()
@@ -114,6 +116,7 @@ struct HomeView: View {
                     .padding(.top, 24)
                     .padding(.bottom, 60)
                     .id(HomeTopEdgeWatch.topID)
+                    .background(alignment: .topLeading) { PageScrollViewProbe() }
                 }
                 .modifier(TopEdgeScroll(watch: topWatch, proxy: proxy))
                 .environment(\.heroBackdropShared, true)

@@ -337,3 +337,44 @@ public enum AutostartAfterPush {
     /// Remaining wait before the player may open, given the time since the source list appeared (0 = now).
     public static func remainingWait(elapsedMs: Int) -> Int { max(0, settleMs - max(0, elapsedMs)) }
 }
+
+/// Wave F-m round 2 (review N-I1): which scroll view of the visible page drives the top tab bar. Only a scroll view
+/// that scrolls vertically counts (a full-width hero row strip of 738 pt is taller than the 570 pt hero home list
+/// but scrolls sideways), compared by its part inside the window (rows built below the screen do not count). A
+/// scroll view the page handed over itself (home list) wins while it is eligible.
+public enum PageScrollPick {
+    public struct Candidate: Equatable, Sendable {
+        /// Frame in window coordinates.
+        public var frame: CGRect
+        public var contentSize: CGSize
+        public var alwaysBounceVertical: Bool
+        /// Handed over by the page (known main list).
+        public var known: Bool
+
+        public init(frame: CGRect, contentSize: CGSize, alwaysBounceVertical: Bool = false, known: Bool = false) {
+            self.frame = frame
+            self.contentSize = contentSize
+            self.alwaysBounceVertical = alwaysBounceVertical
+            self.known = known
+        }
+
+        public var scrollsVertically: Bool { contentSize.height > frame.height + 1 || alwaysBounceVertical }
+    }
+
+    /// Minimum visible height, as a share of the window height.
+    public static let minHeightShare: CGFloat = 0.4
+
+    /// Index of the chosen candidate; outermost (first) on equal visible area, nil if none qualifies.
+    public static func choose(_ candidates: [Candidate], window: CGRect) -> Int? {
+        var best: Int?
+        var bestArea: CGFloat = 0
+        for (i, c) in candidates.enumerated() where c.scrollsVertically {
+            let visible = c.frame.intersection(window)
+            guard !visible.isNull, visible.height >= window.height * minHeightShare else { continue }
+            if c.known { return i }
+            let area = visible.width * visible.height
+            if area > bestArea { best = i; bestArea = area }
+        }
+        return best
+    }
+}

@@ -23,7 +23,8 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   followed that list far above the screen and stayed there on the next page (home page, or the detail page and
   grid in the Library tab). As a safety net, after every step back, after the player closes and after a failed
   move up, the app checks whether the bar is stuck and tries to bind it to the visible page again and show it.
-  Each step is logged (`nav: Leiste hing fest …`).
+  Each step is logged (`nav: Leiste hing fest …`). The home page hands its list to that check, so the bar is never
+  bound to a tall row of tiles.
 - Home: a focused poster in the lowest visible row is no longer cut at the bottom. The home list now ends above
   the screen edge by the height of the focus lift and draws into that room. Without the hero, the list also
   leaves that room at the top and still clips there, so rows never draw into the menu bar area.

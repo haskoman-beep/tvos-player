@@ -21,6 +21,8 @@ import PlayerCore
     /// Steps done on the visible page, and whether "all steps done" was logged for it.
     private var lastRepair: TabBarRepair?
     private var loggedExhausted = false
+    /// Main list handed over by a page (`PageScrollViewProbe`, home); preferred while it is in the visible page.
+    weak var knownScrollView: UIScrollView?
 
     private init() {}
 
@@ -118,8 +120,9 @@ import PlayerCore
               context.focusHeading.contains(.up) else { return }
         // Up inside the bar itself has no target; that is not a stuck bar.
         if context.previouslyFocusedItem.map(HomeTopEdgeWatch.isInTabBar) == true { return }
-        // Cheap pre-check before any task: only a stuck bar is repaired.
+        // Cheap pre-check before any task (review N-M1): read the bar first, walk the page only for a bar off screen.
         let bar = HomeTopEdgeWatch.tabBarState()
+        guard bar.found, bar.maxY <= 1 else { return }
         let offset = Self.pageScrollView().map { Self.distanceFromTop($0.scrollView) } ?? 0
         guard HomeTopRules.barStranded(bar, offset: offset, navigation: navigation) else { return }
         check(.upFailed)
@@ -133,15 +136,15 @@ import PlayerCore
         let page: UIViewController
     }
 
-    /// Main vertical scroll view of the visible page: the largest scroll view in the window that covers at least
-    /// 40 % of the screen height (horizontal tile rows are lower). Outermost first on equal size.
+    /// Main vertical scroll view of the visible page (`PageScrollPick`, review N-I1): only scroll views that scroll
+    /// vertically, compared by their part inside the window; the list handed over by the page wins.
     static func pageScrollView() -> PageScrollView? {
         guard let selected = HomeTopEdgeWatch.tabBarController()?.selectedViewController else { return nil }
-        let page = navigationController(in: selected, depth: 0)?.topViewController ?? selected
+        let page = visibleNavigationController(in: selected)?.topViewController ?? selected
         guard let root = page.viewIfLoaded, let window = root.window else { return nil }
-        let minHeight = window.bounds.height * 0.4
-        var best: UIScrollView?
-        var bestArea: CGFloat = 0
+        let known = shared.knownScrollView
+        var views: [UIScrollView] = []
+        var candidates: [PageScrollPick.Candidate] = []
         var queue: [UIView] = [root]
         var i = 0
         while i < queue.count, i < 4000 {
@@ -149,22 +152,44 @@ import PlayerCore
             i += 1
             if v.isHidden || v.alpha < 0.01 { continue }
             if let sv = v as? UIScrollView {
-                let f = sv.convert(sv.bounds, to: window)
-                let area = f.width * f.height
-                if f.height >= minHeight, area > bestArea { best = sv; bestArea = area }
+                views.append(sv)
+                candidates.append(PageScrollPick.Candidate(frame: sv.convert(sv.bounds, to: window),
+                                                           contentSize: sv.contentSize,
+                                                           alwaysBounceVertical: sv.alwaysBounceVertical,
+                                                           known: sv === known))
             }
             queue.append(contentsOf: v.subviews)
         }
-        return best.map { PageScrollView(scrollView: $0, page: page) }
+        guard let pick = PageScrollPick.choose(candidates, window: window.bounds) else { return nil }
+        return PageScrollView(scrollView: views[pick], page: page)
     }
 
-    private static func navigationController(in vc: UIViewController, depth: Int) -> UINavigationController? {
-        guard depth < 8 else { return nil }
-        if let nav = vc as? UINavigationController { return nav }
-        for child in vc.children {
-            if let nav = navigationController(in: child, depth: depth + 1) { return nav }
+    /// Navigation controller of the visible page (review N-M2): of all stacks in the tab, the one with the largest
+    /// part on screen (a split view or a settings column holds several).
+    private static func visibleNavigationController(in vc: UIViewController) -> UINavigationController? {
+        var found: [UINavigationController] = []
+        collectNavigationControllers(in: vc, depth: 0, into: &found)
+        var best: UINavigationController?
+        var bestArea: CGFloat = 0
+        for nav in found {
+            guard let v = nav.viewIfLoaded, let window = v.window, !v.isHidden else { continue }
+            let f = v.convert(v.bounds, to: window).intersection(window.bounds)
+            let area = f.isNull ? 0 : f.width * f.height
+            if best == nil || area > bestArea { best = nav; bestArea = area }
         }
-        return nil
+        return best
+    }
+
+    private static func collectNavigationControllers(in vc: UIViewController, depth: Int,
+                                                     into found: inout [UINavigationController]) {
+        guard depth < 8 else { return }
+        if let nav = vc as? UINavigationController {
+            found.append(nav)
+            // A nested stack lies in the top page only.
+            if let top = nav.topViewController { collectNavigationControllers(in: top, depth: depth + 1, into: &found) }
+            return
+        }
+        for child in vc.children { collectNavigationControllers(in: child, depth: depth + 1, into: &found) }
     }
 
     static func distanceFromTop(_ sv: UIScrollView) -> Double {
@@ -198,5 +223,32 @@ struct TabBarGuardHook: ViewModifier {
                 TabBarGuard.shared.visit("\(new.tab.logName), Tiefe \(new.depth)",
                                          popped: old.tab == new.tab && new.depth < old.depth)
             }
+    }
+}
+
+/// Wave F-m round 2: zero-size UIKit view inside a page's main list; hands the list's `UIScrollView` to the guard
+/// (review N-I1: preferred over the size heuristic). Not focusable, no touches, draws nothing.
+struct PageScrollViewProbe: UIViewRepresentable {
+    func makeUIView(context: Context) -> ProbeView {
+        let v = ProbeView()
+        v.isUserInteractionEnabled = false
+        return v
+    }
+
+    func updateUIView(_ uiView: ProbeView, context: Context) {}
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: ProbeView, context: Context) -> CGSize? { CGSize(width: 1, height: 1) }
+
+    final class ProbeView: UIView {
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            guard window != nil else { return }
+            // The nearest scroll view above the probe is the list (the probe sits in the list content, outside rows).
+            var v = superview
+            while let s = v {
+                if let sv = s as? UIScrollView { TabBarGuard.shared.knownScrollView = sv; return }
+                v = s.superview
+            }
+        }
     }
 }
