@@ -131,6 +131,28 @@ final class StreamPrefetcher {
         }
     }
 
+    /// Wave F-p: tile focus on a page without hero (folder pages, Library rows, „Ähnliche Titel“): the same request
+    /// after the same 350 ms rest as `HomeFocus` uses on the home page. One slot: a newer tile replaces the waiting one.
+    private var rest: (route: Route, task: Task<Void, Never>)?
+
+    func requestAfterRest(_ route: Route, model: AppModel) {
+        rest?.task.cancel()
+        let task = Task { [weak self, weak model] in
+            try? await Task.sleep(for: .milliseconds(FocusRest.milliseconds))
+            guard !Task.isCancelled, let self, let model else { return }
+            self.rest = nil
+            self.request(route, model: model)
+        }
+        rest = (route, task)
+    }
+
+    /// Focus left `route` before its rest ended: no request (a newer tile's wait stays).
+    func cancelRest(_ route: Route) {
+        guard let r = rest, r.route == route else { return }
+        r.task.cancel()
+        rest = nil
+    }
+
     /// Darf jetzt überhaupt vorgeladen werden (Schalter, Player offen/gerade gestartet, Pause nach „alle leer“)?
     private func allowed(_ model: AppModel) -> Bool {
         guard model.profile.appearance.prefetchStreams, !playerActive else { return false }

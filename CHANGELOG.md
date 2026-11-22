@@ -104,6 +104,20 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   and converted on the processor (shown in SDR, up to 3 s) instead of through the system. The event log notes its
   time as `xray: P5 gehaltenes Bild per CPU (… ms)`.
 
+### Fixed
+- Poster rows: moving left and right quickly no longer makes the row wobble. An expanding poster still moves to
+  the left edge (80 pt margin), with one scroll of that row only when it expands; the row no longer holds a
+  bound scroll position that competed with the focus scroll on every move. The bottom room for the focus lift (build 214) is unchanged.
+- Detail page: tech badges come from the source cache again when the page is opened from a genre or service
+  page, a collection page or „Ähnliche Titel“ (similar titles). Tiles there now fetch their sources after the
+  same 350 ms rest as on the home page; before, only home page tiles did, so the page waited 2–4 s for the
+  sources.
+- Detail page: the age rating, cast and similar titles no longer wait for the metadata addon; TMDB is asked in
+  parallel (one shared request). A catalog entry without a description takes the TMDB text meanwhile, so the
+  poster next to it shows early.
+- Log: one line per detail page, „Ladezeiten <title> · ID · TMDB · Meta · Poster · Technik“ (load times, with
+  the source of the tech badges: cache, prefetched cache or a new search).
+
 ## [Build 214] – 2026-11-22 (integ)
 
 ### Added
