@@ -187,3 +187,16 @@ public final class MemoryKeyValueBlobs: KeyValueBlobs, @unchecked Sendable {
     public func remove(forKey key: String) { _ = lock.withLock { values.removeValue(forKey: key) } }
     public func keys(withPrefix prefix: String) -> [String] { lock.withLock { values.keys.filter { $0.hasPrefix(prefix) } } }
 }
+
+public extension BlobStorage {
+    /// One-time moves: writes every blob that is not stored yet and returns the names that could not be written.
+    /// A blob that already exists is left alone (it may be newer than the copy being moved). The caller removes
+    /// the old copy only if the result is empty.
+    func adoptMissing(_ blobs: [(name: String, data: Data)]) -> [String] {
+        var failed: [String] = []
+        for b in blobs where read(b.name) == nil {
+            if (try? write(b.name, b.data)) == nil || read(b.name) != b.data { failed.append(b.name) }
+        }
+        return failed
+    }
+}

@@ -320,3 +320,26 @@ private func blockedDir() -> FileBlobStorage {
         try s.write(TieredBlobStorage.fileOnlyPrefix + "paste-1.json", bytes(10))
     }
 }
+
+// Wave F-o round 4 (R4-1): a one-time move reports every blob that was not stored, so the old copy can stay.
+@Test func adoptMissingWritesAllAndKeepsNewerBlobs() throws {
+    let (s, kv, _) = tiered()
+    let media = TieredBlobStorage.fileOnlyPrefix + "media-p-1.json"
+    try s.write("linkpack-p-2.json", bytes(40, 3))   // already there, newer than the copy being moved
+    let failed = s.adoptMissing([(media, bytes(170_000)), ("linkpack-p-1.json", bytes(500)), ("linkpack-p-2.json", bytes(40, 1))])
+    #expect(failed.isEmpty)
+    #expect(s.read(media) == bytes(170_000))
+    #expect(kv.data(forKey: "blob." + media) == nil)
+    #expect(s.read("linkpack-p-1.json") == bytes(500))
+    #expect(s.read("linkpack-p-2.json") == bytes(40, 3))
+}
+
+@Test func adoptMissingReportsFailedBlobs() {
+    let s = TieredBlobStorage(defaults: MemoryKeyValueBlobs(), directories: [blockedDir()])
+    let media = TieredBlobStorage.fileOnlyPrefix + "media-p-1.json"
+    // The small pack still fits the key-value store; the file-only snapshot has nowhere to go.
+    let failed = s.adoptMissing([(media, bytes(1000)), ("linkpack-p-1.json", bytes(500))])
+    #expect(failed == [media])
+    #expect(s.read("linkpack-p-1.json") == bytes(500))
+    #expect(s.adoptMissing([]) == [])
+}

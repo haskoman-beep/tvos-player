@@ -97,25 +97,36 @@ final class CollectionLinkStore: ObservableObject {
         guard let id = model.stored.active?.id, id != profile else { return }
         profile = id
         let defaults = UserDefaults.standard
-        if let d = defaults.data(forKey: key(id)) {
-            links = (try? JSONDecoder().decode([CollectionLink].self, from: d)) ?? []
-            for i in links.indices {
-                links[i].pack = storage?.read(packFile(id, links[i].id)).flatMap { try? JSONDecoder().decode([PreviewPackEntry].self, from: $0) }
+        let meta = defaults.data(forKey: key(id)).flatMap { try? JSONDecoder().decode([CollectionLink].self, from: $0) }
+        var legacy: [CollectionLink] = []
+        if let d = defaults.data(forKey: legacyKey(id)) {
+            // Once: pack and media snapshot move out of UserDefaults. The old key goes only after every blob is
+            // stored; otherwise it stays and the move is tried again at the next start.
+            legacy = (try? JSONDecoder().decode([CollectionLink].self, from: d)) ?? []
+            var blobs: [(name: String, data: Data)] = []
+            for l in legacy {
+                if let p = l.pack, let z = try? JSONEncoder().encode(p) { blobs.append((packFile(id, l.id), z)) }
+                if l.url != nil, let m = l.media, let z = try? JSONEncoder().encode(m) { blobs.append((mediaFile(id, l.id), z)) }
             }
-        } else if let d = defaults.data(forKey: legacyKey(id)) {
-            // Once: pack and media snapshot move out of UserDefaults, then the old key goes.
-            links = (try? JSONDecoder().decode([CollectionLink].self, from: d)) ?? []
-            for i in links.indices {
-                if let p = links[i].pack { save(p, as: packFile(id, links[i].id)) }
-                if links[i].url != nil, let m = links[i].media { save(m, as: mediaFile(id, links[i].id)) }
-                links[i].media = nil
+            let failed = storage?.adoptMissing(blobs) ?? blobs.map(\.name)
+            if failed.isEmpty {
+                if meta == nil {
+                    links = legacy
+                    persist()
+                }
+                defaults.removeObject(forKey: legacyKey(id))
+                RemoteLog.info("import", "Importe umgezogen: \(legacy.count) Einträge, \(d.count / 1024) KB aus UserDefaults entfernt")
+            } else {
+                RemoteLog.error("import", "Importe: Umzug verschoben (\(failed.count) von \(blobs.count) Blöcken nicht gespeichert, \(d.count / 1024) KB bleiben in UserDefaults)")
             }
-            persist()
-            RemoteLog.info("import", "Importe umgezogen: \(links.count) Einträge, \(d.count / 1024) KB aus UserDefaults entfernt")
-        } else {
-            links = []
         }
-        defaults.removeObject(forKey: legacyKey(id))
+        links = meta ?? legacy
+        for i in links.indices {
+            links[i].media = nil
+            // A pack that could not be stored yet still comes from the old entry.
+            links[i].pack = storage?.read(packFile(id, links[i].id)).flatMap { try? JSONDecoder().decode([PreviewPackEntry].self, from: $0) }
+                ?? legacy.first { $0.id == links[i].id }?.pack
+        }
         rebuildPack()
     }
 
