@@ -89,6 +89,20 @@ enum Theme {
         static func height(_ kind: TileKind, _ scale: CGFloat) -> CGFloat { size(kind, scale).height }
         /// Platzhalterfläche einer ladenden Reihe (Weiß 8 %, wie die Logo-Kacheln).
         static let placeholder = Color.white.opacity(0.08)
+        /// Welle F-g: Farbverläufe der Paket-Kacheln ohne Bild (Index aus `ReadyPackages.tileStyle`), gedeckte
+        /// Eigenfarben, keine Markenfarben. Genau `ReadyPackages.toneCount` Einträge.
+        static let packageGradients: [[Color]] = [
+            [Color(red: 0.16, green: 0.22, blue: 0.42), Color(red: 0.08, green: 0.10, blue: 0.20)],
+            [Color(red: 0.36, green: 0.16, blue: 0.30), Color(red: 0.16, green: 0.07, blue: 0.15)],
+            [Color(red: 0.12, green: 0.32, blue: 0.32), Color(red: 0.05, green: 0.14, blue: 0.15)],
+            [Color(red: 0.40, green: 0.22, blue: 0.12), Color(red: 0.18, green: 0.09, blue: 0.06)],
+            [Color(red: 0.24, green: 0.18, blue: 0.42), Color(red: 0.10, green: 0.08, blue: 0.20)],
+            [Color(red: 0.18, green: 0.30, blue: 0.16), Color(red: 0.07, green: 0.13, blue: 0.07)],
+        ]
+        static func packageGradient(_ tone: Int) -> LinearGradient {
+            let c = packageGradients[((tone % packageGradients.count) + packageGradients.count) % packageGradients.count]
+            return LinearGradient(colors: c, startPoint: .topLeading, endPoint: .bottomTrailing)
+        }
     }
 
     /// Fokuseffekt der Bedienzeilen (`ThemeRowButtonStyle`).

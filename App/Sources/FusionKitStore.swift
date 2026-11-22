@@ -52,6 +52,11 @@ final class FusionKitStore: ObservableObject {
     // MARK: Lesen (Startseite)
 
     func collection(_ id: String) -> MediaCollection? { visible[id] }
+    /// Alle sichtbaren Kit-Collections (Bildquelle für Paket-Kacheln, Welle F-g).
+    /// Nach ID sortiert, damit der Treffer bei mehreren passenden Importen immer derselbe ist.
+    var visibleCollections: [MediaCollection] { visible.values.sorted { $0.id < $1.id } }
+    /// Steigt mit jeder Änderung von `visible` (Merker der Paket-Kachelbilder).
+    private(set) var revision = 0
 
     /// Katalog-Dateien plus gewählte/eingetragene Quellen außerhalb des Katalogs.
     var sources: [FusionKitSource] {
@@ -59,6 +64,24 @@ final class FusionKitStore: ObservableObject {
     }
 
     func isListed(_ id: String) -> Bool { listing.contains { $0.id == id } }
+
+    /// Welle F-g: Name der Kit-Datei einer Kit-ID (Reihentitel, solange die Collection noch nicht da ist).
+    func sourceTitle(ofID id: String) -> String? {
+        guard let key = FusionImport.sourceKey(ofID: id) else { return nil }
+        return sources.first { $0.id == key }?.title
+    }
+
+    /// Welle F-g: Kit-Datei nach Fehlschlag neu holen (Statuskachel „Laden fehlgeschlagen“ der Startseite).
+    func retry(sourceKey key: String) async {
+        ensureSettings()
+        guard let src = sources.first(where: { $0.id == key }) else {
+            RemoteLog.error("kit", "Erneut laden: Quelle \(key) unbekannt")
+            return
+        }
+        RemoteLog.info("kit", "Erneut laden: \(src.title)")
+        await load(src, force: true)
+        sync()
+    }
 
     // MARK: Einstellungen
 
@@ -257,6 +280,7 @@ final class FusionKitStore: ObservableObject {
         }
         if vis != visible {
             visible = vis
+            revision &+= 1
             model.objectWillChange.send()   // Startseite liest die Kacheln über model.collection(_:)
         }
 

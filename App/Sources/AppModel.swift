@@ -4,7 +4,10 @@ import PlayerCore
 /// App-Zustand: Profile (persistiert), Clients, Katalog-Cache.
 @MainActor
 final class AppModel: ObservableObject {
-    @Published private(set) var stored: StoredProfiles
+    @Published private(set) var stored: StoredProfiles { didSet { profileRevision &+= 1 } }
+    /// Zählt Profiländerungen (Merker der Paket-Kachelbilder, Welle F-g).
+    private var profileRevision = 0
+    private var packageArt = PackageArtMemo()
     @Published var lastError: String? { didSet { if let e = lastError { RemoteLog.error("fehler", e) } } }
     @Published var notice: String?
     let store: ProfileStore
@@ -284,7 +287,15 @@ final class AppModel: ObservableObject {
         update { p in if !p.collections.contains(where: { $0.id == c.id }) { p.collections.append(c) } }
     }
 
-    func collection(_ id: String) -> MediaCollection? { profile.collections.first { $0.id == id } ?? FusionKitStore.shared.collection(id) }
+    /// Welle F-g: Paket-Kacheln zeigen Bilder nur aus einem eigenen Import des Nutzers (Nuvio/Fusion) mit demselben
+    /// Anbieter bzw. Genre; ohne Treffer bleibt die Symbol-Kachel. Keine Bilder aus dem Repo.
+    func collection(_ id: String) -> MediaCollection? {
+        guard let c = profile.collections.first(where: { $0.id == id }) else { return FusionKitStore.shared.collection(id) }
+        guard id.hasPrefix("pkg.") else { return c }
+        let kit = FusionKitStore.shared
+        let stamp = PackageArtMemo.Stamp(profile: profileRevision, kit: kit.revision)
+        return packageArt.collection(c, stamp: stamp) { profile.collections + kit.visibleCollections }
+    }
 
     // MARK: Kataloge
 

@@ -19,6 +19,8 @@ actor ImagePipeline {
     private let urlCache: URLCache
     /// NSCache ist threadsicher: `cachedImage` liest ohne Umweg über den Actor (Bild ohne Überblendung zeigen).
     nonisolated(unsafe) private let memory = NSCache<NSString, UIImage>()
+    /// Welle F-g: bewegte Fokusbilder (GIF) getrennt vom Bildcache: nur das zuletzt fokussierte bleibt (~30 MB).
+    private let animated = NSCache<NSString, UIImage>()
     /// Belegung des Speichercaches (Verdrängen meldet NSCache über den Delegate).
     private let tracker = CacheCostTracker()
     private var costLimit = ImageCacheBudget.maximum
@@ -30,6 +32,16 @@ actor ImagePipeline {
     /// Höchstens 3 gleichzeitige Dekodierungen, damit das Scrollen flüssig bleibt.
     private var decoding = 0
     private var waiters: [CheckedContinuation<Void, Never>] = []
+    /// Welle F-g: GIFs dekodieren in einem eigenen Platz (höchstens 1) und belegen keinen der 3 Standbild-Plätze.
+    private var gifDecoding = false
+    private var gifWaiters: [CheckedContinuation<Void, Never>] = []
+    /// Laufende GIF-Ladungen je Schlüssel; mit den wartenden Aufrufern, damit die Ladung abbricht, wenn keiner mehr wartet.
+    private struct AnimLoad { let id: UUID; let task: Task<UIImage?, Never>; var callers: Set<UUID> }
+    private var animInFlight: [String: AnimLoad] = [:]
+    /// Letzter Speicherschlüssel je Adresse (+ Weichzeichner): synchroner Treffer, bevor die Zielgröße bekannt ist.
+    private let lastKeys = LockedKeys()
+    /// Treffer/Fehlgriffe des Speichercaches, alle 30 s als Summe geloggt.
+    let stats = CacheStats()
 
     init() {
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?.appendingPathComponent("images")
@@ -42,6 +54,7 @@ actor ImagePipeline {
         urlCache = cache
         memory.totalCostLimit = ImageCacheBudget.maximum
         memory.delegate = tracker
+        animated.countLimit = 1
         NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: nil) { [weak self] _ in
             Task { await self?.memoryWarning() }
         }
@@ -58,7 +71,8 @@ actor ImagePipeline {
     /// Original-Adresse als Ersatz. `blur` > 0: einmal vorberechneter Weichzeichner (Radius in Pixeln, #34).
     func image(_ url: URL, target: ImageTarget, blur: Int = 0) async -> UIImage? {
         let key = Self.memoryKey(url, target: target, blur: blur)
-        if let img = memory.object(forKey: key as NSString) { return img }
+        if let img = memory.object(forKey: key as NSString) { stats.hit(); return img }
+        stats.miss()
         if let t = failed[key], Date().timeIntervalSince(t) < 300 { return nil }
         if let running = inFlight[key] { return await running.value }
         let task = Task<UIImage?, Never> { await self.fetch(url, target: target, blur: blur) }
@@ -69,6 +83,7 @@ actor ImagePipeline {
             let c = Self.cost(img)
             tracker.add(c)
             memory.setObject(img, forKey: key as NSString, cost: c)
+            lastKeys.set(Self.lastKey(url, blur: blur), key)
             updateBudget()
         } else { failed[key] = Date() }
         return img
@@ -79,8 +94,20 @@ actor ImagePipeline {
     }
 
     /// Nur der Speichercache, synchron: Treffer erscheinen sofort ohne Überblendung (kein Aufploppen, kein Grau).
-    nonisolated func cachedImage(_ url: URL, target: ImageTarget, blur: Int = 0) -> UIImage? {
-        memory.object(forKey: Self.memoryKey(url, target: target, blur: blur) as NSString)
+    /// `count`: in die Treffer-Statistik aufnehmen (nicht beim Nachsehen aus `body`, das je Frame läuft).
+    nonisolated func cachedImage(_ url: URL, target: ImageTarget, blur: Int = 0, count: Bool = true) -> UIImage? {
+        let img = memory.object(forKey: Self.memoryKey(url, target: target, blur: blur) as NSString)
+        if img != nil && count { stats.hit() }
+        return img
+    }
+
+    nonisolated static func lastKey(_ url: URL, blur: Int) -> String { "\(url.absoluteString)#b\(blur)" }
+
+    /// Welle F-g: zuletzt für diese Adresse dekodiertes Bild aus dem Speichercache, ohne Zielgröße. Für den ersten
+    /// Frame einer neu angelegten Kachel (LazyHStack legt Zellen neu an, @State ist dann leer): kein grauer Frame.
+    nonisolated func cachedAnySize(_ url: URL, blur: Int = 0) -> UIImage? {
+        guard let key = lastKeys.get(Self.lastKey(url, blur: blur)) else { return nil }
+        return memory.object(forKey: key as NSString)
     }
 
     /// Wiedergabe beginnt/endet: Speichercache leeren und klein halten bzw. wieder freigeben.
@@ -102,6 +129,8 @@ actor ImagePipeline {
 
     private func clearMemory() {
         memory.removeAllObjects()
+        animated.removeAllObjects()
+        lastKeys.removeAll()
         tracker.reset()
         // Speicheranteil des URLCache leeren, Plattencache behalten.
         urlCache.memoryCapacity = 0
@@ -140,6 +169,102 @@ actor ImagePipeline {
             }
         }
         return kr == KERN_SUCCESS ? info.phys_footprint : nil
+    }
+
+    /// Welle F-g: GIF als bewegtes Bild (Einzelbilder höchstens `maxPixels`, ausgedünnt nach `GIFFramePlan`).
+    /// Nicht während der Wiedergabe. Eine Ladung je Adresse (weitere Aufrufer warten mit); bricht ab, sobald kein
+    /// Aufrufer mehr wartet (Fokus weitergezogen) – auch mitten im Dekodieren. Abbruch zählt nicht als Fehlschlag;
+    /// echte Fehlschläge werden wie beim Standbild 5 min gemerkt.
+    func animatedImage(_ url: URL, maxPixels: Int) async -> UIImage? {
+        guard !playback else { return nil }
+        let key = "\(url.absoluteString)#anim\(maxPixels)"
+        if let img = animated.object(forKey: key as NSString) { return img }
+        if let t = failed[key], Date().timeIntervalSince(t) < 300 { return nil }
+        let caller = UUID()
+        let load: AnimLoad
+        if let running = animInFlight[key] { load = running } else {
+            let id = UUID()
+            load = AnimLoad(id: id, task: Task { await self.loadAnimated(url, key: key, maxPixels: maxPixels, loadID: id) }, callers: [])
+        }
+        var l = load; l.callers.insert(caller); animInFlight[key] = l
+        let img = await withTaskCancellationHandler {
+            await load.task.value
+        } onCancel: {
+            Task { await self.dropCaller(caller, key: key, loadID: load.id) }
+        }
+        dropCaller(caller, key: key, loadID: load.id, cancelIfLast: false)
+        return Task.isCancelled ? nil : img
+    }
+
+    /// Aufrufer austragen; war es der letzte und wurde er abgebrochen, die Ladung abbrechen.
+    private func dropCaller(_ caller: UUID, key: String, loadID: UUID, cancelIfLast: Bool = true) {
+        guard var l = animInFlight[key], l.id == loadID else { return }
+        l.callers.remove(caller)
+        if l.callers.isEmpty && cancelIfLast {
+            l.task.cancel()
+            animInFlight[key] = nil
+        } else { animInFlight[key] = l }
+    }
+
+    private func loadAnimated(_ url: URL, key: String, maxPixels: Int, loadID: UUID) async -> UIImage? {
+        defer { if animInFlight[key]?.id == loadID { animInFlight[key] = nil } }
+        let data: Data
+        do {
+            let (d, resp) = try await session.data(from: url)
+            guard (resp as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true else {
+                failed[key] = Date(); return nil
+            }
+            data = d
+        } catch {
+            // Abbruch (Fokus weg) ist kein Fehlschlag: sonst bliebe das GIF 5 min gesperrt.
+            if !Task.isCancelled && (error as? URLError)?.code != .cancelled && !(error is CancellationError) { failed[key] = Date() }
+            return nil
+        }
+        guard !Task.isCancelled else { return nil }
+        await acquireGIF()
+        guard !Task.isCancelled else { releaseGIF(); return nil }
+        let flag = CancelFlag()
+        let decoded = await withTaskCancellationHandler {
+            await Task.detached(priority: .utility) { Self.decodeAnimated(data, maxPixels: maxPixels, cancelled: flag) }.value
+        } onCancel: { flag.set() }
+        releaseGIF()
+        guard !Task.isCancelled else { return nil }
+        guard let (img, cost) = decoded else { failed[key] = Date(); return nil }
+        if !playback { animated.setObject(img, forKey: key as NSString, cost: cost) }
+        return img
+    }
+
+    private func acquireGIF() async {
+        if !gifDecoding { gifDecoding = true; return }
+        await withCheckedContinuation { gifWaiters.append($0) }
+    }
+
+    private func releaseGIF() {
+        if gifWaiters.isEmpty { gifDecoding = false } else { gifWaiters.removeFirst().resume() }
+    }
+
+    /// Alle (bzw. ausgedünnte) Einzelbilder verkleinert; Rückgabe mit Speicherkosten (ein bewegtes UIImage hat kein cgImage).
+    /// `UIImage.animatedImage` zeigt jedes Einzelbild gleich lang: unterschiedliche Verzögerungen je Bild gehen verloren.
+    /// `cancelled` wird vor jedem Einzelbild geprüft (Fokus weg → sofort aufhören).
+    nonisolated static func decodeAnimated(_ data: Data, maxPixels: Int, cancelled: CancelFlag = CancelFlag()) -> (UIImage, Int)? {
+        guard let src = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
+        let n = CGImageSourceGetCount(src)
+        guard n > 1 else { return downsample(src, maxPixels: maxPixels).map { ($0, cost($0)) } }
+        var delays: [Double?] = []
+        for i in 0..<n {
+            let props = CGImageSourceCopyPropertiesAtIndex(src, i, nil) as? [CFString: Any]
+            let gif = props?[kCGImagePropertyGIFDictionary] as? [CFString: Any]
+            let d = (gif?[kCGImagePropertyGIFUnclampedDelayTime] as? NSNumber) ?? (gif?[kCGImagePropertyGIFDelayTime] as? NSNumber)
+            delays.append(d?.doubleValue)
+        }
+        var frames: [UIImage] = []
+        for idx in GIFFramePlan.indices(frameCount: n) {
+            if cancelled.isSet { return nil }
+            if let f = downsample(src, maxPixels: maxPixels, index: idx) { frames.append(f) }
+        }
+        guard !frames.isEmpty else { return nil }
+        guard let img = UIImage.animatedImage(with: frames, duration: GIFFramePlan.duration(delays: delays)) else { return nil }
+        return (img, frames.reduce(0) { $0 + cost($1) })
     }
 
     /// Für Reihen: die nächsten Bilder schon laden.
@@ -206,14 +331,14 @@ actor ImagePipeline {
         return downsample(src, maxPixels: maxPixels)
     }
 
-    nonisolated private static func downsample(_ src: CGImageSource, maxPixels: Int) -> UIImage? {
+    nonisolated private static func downsample(_ src: CGImageSource, maxPixels: Int, index: Int = 0) -> UIImage? {
         let opts: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceShouldCacheImmediately: true,
             kCGImageSourceThumbnailMaxPixelSize: maxPixels,
         ]
-        guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) else { return nil }
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(src, index, opts as CFDictionary) else { return nil }
         return UIImage(cgImage: cg)
     }
 
@@ -268,7 +393,16 @@ struct RemoteImage: View {
     @Environment(\.displayScale) private var displayScale
     @State private var image: UIImage?
     @State private var loadedURL: String?
+    /// Weichzeichner, mit dem `image` geladen wurde: nach einem Wechsel (Spoilerschutz) nie das alte Bild zeigen.
+    @State private var loadedBlur: CGFloat?
     @State private var target: ImageTarget?
+
+    private var syncHit: UIImage? {
+        guard let s = url, let u = URL(string: s) else { return nil }
+        let b = Int((blur * displayScale).rounded())
+        if let t = fixedTarget ?? target, let hit = ImagePipeline.shared.cachedImage(u, target: t, blur: b, count: false) { return hit }
+        return ImagePipeline.shared.cachedAnySize(u, blur: b)
+    }
 
     /// Ab dieser Bitmap-Größe gibt die Ansicht beim Verschwinden frei (≈ 2560×1600 und größer).
     static let releaseBytes = 16 << 20
@@ -281,9 +415,13 @@ struct RemoteImage: View {
     }
 
     var body: some View {
+        // Welle F-g: eine neu angelegte Zelle (LazyHStack) hat leeren @State; ihr erster Frame nimmt das Bild synchron
+        // aus dem Speichercache statt grau zu zeichnen (die .task läuft erst nach dem ersten Frame).
+        // Nur ein Bild derselben Adresse und desselben Weichzeichners zeigen (kein Spoiler nach Blur-Wechsel).
+        let shown = (loadedURL == url && loadedBlur == blur ? image : nil) ?? syncHit
         ZStack {
-            if let image {
-                Image(uiImage: image).resizable().aspectRatio(contentMode: fit ? .fit : .fill)
+            if let shown {
+                Image(uiImage: shown).resizable().aspectRatio(contentMode: fit ? .fit : .fill)
                     .transition(.opacity)
             } else if !fit {
                 Color.white.opacity(0.08)
@@ -301,18 +439,120 @@ struct RemoteImage: View {
             let blurPx = Int((blur * displayScale).rounded())
             // Speichercache-Treffer (auch nach dem Freigeben beim Zurückkehren): sofort, ohne Überblendung.
             if let hit = ImagePipeline.shared.cachedImage(u, target: target, blur: blurPx) {
-                image = hit; loadedURL = s
+                image = hit; loadedURL = s; loadedBlur = blur
                 return
             }
-            if loadedURL != s { image = nil }
+            if loadedURL != s || loadedBlur != blur { image = nil }
             let img = await ImagePipeline.shared.image(u, target: target, blur: blurPx)
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.2)) { image = img; loadedURL = s }
+            withAnimation(.easeOut(duration: 0.2)) { image = img; loadedURL = s; loadedBlur = blur }
         }
         .onDisappear {
             guard let image, ImagePipeline.cost(image) >= Self.releaseBytes else { return }
             self.image = nil
             loadedURL = nil
+            loadedBlur = nil
         }
+    }
+}
+
+/// Welle F-g: bewegtes Bild (UIImage.animatedImage) – SwiftUI `Image` spielt es nicht ab, `UIImageView` schon.
+struct AnimatedImageView: UIViewRepresentable {
+    let image: UIImage
+
+    func makeUIView(context: Context) -> UIImageView {
+        let v = UIImageView()
+        v.contentMode = .scaleAspectFill
+        v.clipsToBounds = true
+        // Größe bestimmt SwiftUI (.frame), nicht die Bildgröße.
+        for axis in [NSLayoutConstraint.Axis.horizontal, .vertical] {
+            v.setContentHuggingPriority(.defaultLow, for: axis)
+            v.setContentCompressionResistancePriority(.defaultLow, for: axis)
+        }
+        return v
+    }
+
+    func updateUIView(_ v: UIImageView, context: Context) {
+        guard v.image !== image else { return }
+        v.image = image
+        v.startAnimating()
+    }
+
+    static func dismantleUIView(_ v: UIImageView, coordinator: Coordinator) {
+        v.stopAnimating()
+        v.image = nil
+    }
+}
+
+/// Welle F-g: GIF, das nur auf der fokussierten Kachel spielt. Erst nach kurzer Ruhe geladen (schnelles Durchscrollen
+/// lädt nichts); beim Verlassen gibt die Kachel die Einzelbilder frei.
+struct FocusGIF: View {
+    let url: String
+    let focused: Bool
+    @State private var image: UIImage?
+    /// Fehlgeschlagene Adressen nur einmal je Start loggen.
+    @MainActor private static var logged = Set<String>()
+
+    var body: some View {
+        ZStack {
+            if focused, let image { AnimatedImageView(image: image).transition(.opacity) }
+        }
+        .allowsHitTesting(false)
+        .task(id: focused) {
+            guard focused, let u = URL(string: url) else { image = nil; return }
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            let img = await ImagePipeline.shared.animatedImage(u, maxPixels: GIFFramePlan.maxPixels)
+            guard !Task.isCancelled else { return }
+            if img == nil, Self.logged.insert(url).inserted {
+                RemoteLog.info("bilder", "Fokus-GIF nicht geladen (\(u.host ?? "?") \(u.lastPathComponent))")
+            }
+            withAnimation(.easeOut(duration: 0.2)) { image = img }
+        }
+    }
+}
+
+/// Welle F-g: Abbruch-Merker, threadsicher (für die abgekoppelte GIF-Dekodierung).
+final class CancelFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+    var isSet: Bool { lock.lock(); defer { lock.unlock() }; return value }
+    func set() { lock.lock(); value = true; lock.unlock() }
+}
+
+/// Welle F-g: Adresse → letzter Speicherschlüssel, threadsicher (synchroner Zugriff aus `body`).
+final class LockedKeys: @unchecked Sendable {
+    private let lock = NSLock()
+    private var map: [String: String] = [:]
+    func get(_ k: String) -> String? { lock.lock(); defer { lock.unlock() }; return map[k] }
+    /// Höchstens so viele Einträge; voll → ganz leeren (die Bilder selbst hält der NSCache, hier nur Schlüssel).
+    static let limit = 2000
+    func set(_ k: String, _ v: String) {
+        lock.lock()
+        if map.count >= Self.limit && map[k] == nil { map.removeAll(keepingCapacity: true) }
+        map[k] = v
+        lock.unlock()
+    }
+    func removeAll() { lock.lock(); map.removeAll(); lock.unlock() }
+}
+
+/// Welle F-g: Treffer/Fehlgriffe des Bild-Speichercaches, höchstens alle 30 s eine Logzeile (nur wenn etwas passiert ist).
+final class CacheStats: @unchecked Sendable {
+    private let lock = NSLock()
+    private var hits = 0, misses = 0
+    private var last = Date()
+    func hit() { record(hit: true) }
+    func miss() { record(hit: false) }
+    private func record(hit: Bool) {
+        lock.lock()
+        if hit { hits += 1 } else { misses += 1 }
+        let now = Date()
+        var line: String?
+        if now.timeIntervalSince(last) >= 30 {
+            line = "Cache Treffer \(hits) / Fehlgriffe \(misses)"
+            hits = 0; misses = 0; last = now
+        }
+        lock.unlock()
+        if let line { Task { @MainActor in RemoteLog.info("bilder", line) } }
     }
 }
