@@ -32,17 +32,23 @@ struct HomeView: View {
                 heroHome(rows)
             } else {
                 ScrollViewReader { proxy in
+                    // Wave F-m: focus scrolling stops a card's frame at the list's edges, the lift reaches past them.
+                    // The list is inset by the lift at the top and at the bottom and draws into that room; the mask
+                    // keeps the old top clip line (review F-m I3: nothing in the overscan or the bar area) and lets
+                    // the bottom room show. Bottom at least the safe area (review M2: overscan on some TVs).
+                    let room = listBottomRoom(rows)
+                    let bottom = max(room, Self.bottomSafeArea)
                     ScrollView(.vertical) {
                         LazyVStack(alignment: .leading, spacing: Theme.Space.xl) { rowList(rows) }
-                            .padding(.vertical, 40)
+                            .padding(.top, max(0, 40 - room))
+                            .padding(.bottom, 40)
                             .id(HomeTopEdgeWatch.topID)
-                            .background(alignment: .topLeading) { HomeScrollViewProbe(watch: topWatch) }
                     }
                     .modifier(TopEdgeScroll(watch: topWatch, proxy: proxy))
-                    // Wave F-m: the list ends above the screen edge by the lift of its tallest tile and draws into
-                    // that room, so a focused card in the lowest visible row is never cut by the screen edge.
                     .scrollClipDisabled()
-                    .padding(.bottom, listBottomRoom(rows))
+                    .mask(alignment: .top) { Color.black.padding(.top, -room).padding(.bottom, -bottom) }
+                    .padding(.top, room)
+                    .padding(.bottom, bottom)
                     .ignoresSafeArea(edges: .bottom)
                 }
             }
@@ -108,7 +114,6 @@ struct HomeView: View {
                     .padding(.top, 24)
                     .padding(.bottom, 60)
                     .id(HomeTopEdgeWatch.topID)
-                    .background(alignment: .topLeading) { HomeScrollViewProbe(watch: topWatch) }
                 }
                 .modifier(TopEdgeScroll(watch: topWatch, proxy: proxy))
                 .environment(\.heroBackdropShared, true)
@@ -144,6 +149,9 @@ struct HomeView: View {
         let kinds = rows.map { PosterSize.kind(for: $0.style) }
         return Theme.Focus.listEdgeBand(height: FocusHeadroom.tallest(kinds, cardScale: a.cardSize.scale, posterExtra: strip))
     }
+
+    /// tvOS bottom safe area (the list ended there before wave F-m).
+    private static let bottomSafeArea: CGFloat = 60
 
     /// Wave F-m: room below the home list for the lift of its tallest tile (same tile heights as `listEdgeBand`).
     private func listBottomRoom(_ rows: [HomeRow]) -> CGFloat {

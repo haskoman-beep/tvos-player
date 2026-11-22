@@ -119,6 +119,8 @@ struct RootView: View {
         // sichtbarer Wurzel (Unterseiten sind NavigationLinks außerhalb des Pfads); die Kategorienspalte hat als
         // innerer Handler Vorrang.
         .onExitCommand(perform: tabBarExit)
+        // Wave F-m: after every pop (any tab) the guard checks that the top bar still follows the visible page.
+        .modifier(TabBarGuardHook(tab: tab, depth: depth(tab), navigation: model.profile.appearance.navigation))
     }
 
     private var tabBarExit: (() -> Void)? {

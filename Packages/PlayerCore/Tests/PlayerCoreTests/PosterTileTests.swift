@@ -144,3 +144,23 @@ private let shadow: CGFloat = 12
     #expect(abs(r.upperBound - 499) < 0.001)
     #expect(FocusHeadroom.liftedExtent(minY: 0, maxY: 10, scale: 1, shadow: 0) == 0...10)
 }
+
+@Test func liftedCardFitsTheTopOfTheHomeListWithoutHero() {
+    // Review F-m I3: without the hero the list keeps its old top clip line (nothing drawn into the overscan or the
+    // bar area) and starts the room lower; focus scrolling stops the frame at the list's top, the lift stays below
+    // the clip line.
+    let clip: CGFloat = 0, strip: CGFloat = 34
+    for size in CardSize.allCases {
+        for kinds in [[TileKind.poster], [.landscape], [.logo], [.hero], [.poster, .landscape, .logo]] {
+            for extra in [CGFloat(0), strip] {
+                let tallest = FocusHeadroom.tallest(kinds, cardScale: size.scale, posterExtra: extra)
+                let room = FocusHeadroom.listBottomRoom(height: tallest, scale: lift, shadow: shadow)
+                for kind in kinds {
+                    let h = PosterSize.tileSize(kind, scale: size.scale).height + (kind == .poster ? extra : 0)
+                    let top = FocusHeadroom.liftedExtent(minY: clip + room, maxY: clip + room + h, scale: lift, shadow: shadow)
+                    #expect(top.lowerBound >= clip, "top \(size) \(kind) extra \(extra)")
+                }
+            }
+        }
+    }
+}

@@ -28,12 +28,6 @@ import PlayerCore
     @ObservationIgnored private var loggedArrival = false
     /// Set by the scroll view (ScrollViewReader): scrolls to `topID`.
     @ObservationIgnored var scrollToTop: (() -> Void)?
-    /// Wave F-m: UIKit scroll view of the vertical home list (`HomeScrollViewProbe`), for the tab bar repair.
-    @ObservationIgnored weak var scrollView: UIScrollView?
-    /// Wave F-m: running check/repair of a stuck tab bar, and the last repair step of this appearance.
-    @ObservationIgnored private var repairTask: Task<Void, Never>?
-    @ObservationIgnored private var lastRepair: TabBarRepair?
-    @ObservationIgnored private var loggedExhausted = false
 
     private static var now: Double { ProcessInfo.processInfo.systemUptime }
 
@@ -80,9 +74,9 @@ import PlayerCore
         guard tracker.atTop else { return }
         let before = offset
         let bar = Self.tabBarState()
-        // Wave F-m: a bar stuck off screen is repaired first; the request and the snap to the top cannot move it.
-        if HomeTopRules.barStranded(bar, atTop: true, offset: before, navigation: navigation) {
-            checkBar(.arrivedAtTop, after: 0)
+        // Wave F-m: a bar stuck off screen goes to the tab-wide guard; the request and the snap cannot move it.
+        if HomeTopRules.barStranded(bar, offset: before, navigation: navigation) {
+            TabBarGuard.shared.check(.arrivedAtTop)
         }
         // Review F-j M1: with the bar on screen a residual offset stays (no shift of its own while the user moves on).
         let scroll = HomeTopRules.shouldScrollToTop(atTop: true, offset: before, barOnScreen: bar.onScreen,
@@ -102,10 +96,6 @@ import PlayerCore
     func start() {
         guard observers.isEmpty else { return }
         loggedArrival = false
-        lastRepair = nil
-        loggedExhausted = false
-        // Wave F-m: back from a pushed page (source list after the player): is the bar still bound to this page?
-        checkBar(.appeared, after: TabBarRepair.appearMilliseconds)
         // Back from another tab via the bar: the focus may still be in it.
         inBar = navigation == .top && Self.focusedItem().map(Self.isInTabBar) == true
         updateRequest()
@@ -123,84 +113,6 @@ import PlayerCore
         observers = []
         settle?.cancel()
         settle = nil
-        repairTask?.cancel()
-        repairTask = nil
-    }
-
-    // MARK: Stuck tab bar (wave F-m)
-
-    /// Checks the bar after `ms` and repairs it step by step while it is stuck (`HomeTopRules.barStranded`).
-    /// One check at a time; the steps of one appearance run at most once each.
-    private func checkBar(_ trigger: TabBarRepair.Trigger, after ms: Int) {
-        // Navigation style is checked in `barStranded` (the first check may be scheduled before `configure`).
-        guard repairTask == nil else { return }
-        repairTask = Task { [weak self] in
-            if ms > 0 { try? await Task.sleep(for: .milliseconds(ms)) }
-            guard !Task.isCancelled else { return }
-            await self?.repairBar(trigger)
-            // Cancelled by `stop`: a newer check may already be registered, leave it alone.
-            guard !Task.isCancelled else { return }
-            self?.repairTask = nil
-        }
-    }
-
-    private func repairBar(_ trigger: TabBarRepair.Trigger) async {
-        var bar = Self.tabBarState()
-        while HomeTopRules.barStranded(bar, atTop: focus.atTop, offset: offset, navigation: navigation) {
-            let atRest = HomeTopRules.atRest(atTop: focus.atTop, offset: offset)
-            guard let step = TabBarRepair.next(after: lastRepair, atRest: atRest) else {
-                // Scrolled down after the rebind: the reshow waits for the top position (next trigger).
-                if lastRepair == .reshow, !loggedExhausted {
-                    loggedExhausted = true
-                    RemoteLog.info("nav", TabBarReachLog.repairExhausted(bar: bar, offset: offset, navigation: navigation))
-                }
-                return
-            }
-            lastRepair = step
-            let observed = observedDescription()
-            let applied = apply(step)
-            try? await Task.sleep(for: .milliseconds(TabBarRepair.checkMilliseconds))
-            guard !Task.isCancelled else { return }
-            let after = Self.tabBarState()
-            RemoteLog.info("nav", TabBarReachLog.repaired(step, trigger: trigger, applied: applied, before: bar, after: after,
-                                                          offset: offset, observed: observed, navigation: navigation))
-            bar = after
-        }
-    }
-
-    private func apply(_ step: TabBarRepair) -> Bool {
-        switch step {
-        case .rebind:
-            // The view controller that owns the home list answers `contentScrollView(for: .top)` while the home
-            // page is the top page of its navigation stack; pushed pages answer for themselves.
-            guard let sv = scrollView, sv.window != nil, let owner = Self.owningController(of: sv) else { return false }
-            owner.setContentScrollView(sv, for: .top)
-            Self.tabBarController()?.view.setNeedsLayout()
-            return true
-        case .reshow:
-            guard let controller = Self.tabBarController() else { return false }
-            controller.setTabBarHidden(true, animated: false)
-            controller.setTabBarHidden(false, animated: true)
-            return true
-        }
-    }
-
-    /// Which scroll view the tab bar controller reports for its top edge (log only): the home list, none, or another.
-    private func observedDescription() -> String {
-        guard let selected = Self.tabBarController()?.selectedViewController else { return "unbekannt" }
-        guard let sv = selected.contentScrollView(for: .top) else { return "keine" }
-        if sv === scrollView { return "Startseite" }
-        let name = String(String(describing: type(of: sv)).prefix(40))
-        return "\(name) (Versatz \(Int(sv.contentOffset.y.rounded())) pt\(sv.window == nil ? ", nicht im Fenster" : ""))"
-    }
-
-    private static func owningController(of view: UIView) -> UIViewController? {
-        var responder: UIResponder? = view
-        while let r = responder {
-            if let vc = r as? UIViewController { return vc }
-            responder = r.next
-        }
-        return nil
     }
 
     private func focusEvent(_ note: Notification, failed: Bool) {
@@ -217,8 +129,6 @@ import PlayerCore
         if failed, context.previouslyFocusedItem.map(Self.isInTabBar) == true { return }
         let now = Self.now
         let atTop = tracker.wasAtTop(now: now)
-        // Wave F-m: a failed move up may be the stuck bar (build 198: up failed from the hero buttons and the rows).
-        if failed, navigation == .top { checkBar(.upFailed, after: 0) }
         // Up moves inside the content (away from the top) produce no line; stop before describing the target.
         guard atTop || failed else { return }
         let outcome: TabBarReachLog.UpOutcome
@@ -254,7 +164,7 @@ import PlayerCore
 
     /// Only a `UITabBar` ancestor counts (review M4: should the tvOS bar ever not be one, a successful move up is
     /// logged as "Fokus blieb im Inhalt" with y near 0, and the request is still held by the unchanged offset).
-    private static func isInTabBar(_ item: UIFocusItem) -> Bool {
+    static func isInTabBar(_ item: UIFocusItem) -> Bool {
         var env: UIFocusEnvironment? = item
         var steps = 0
         while let e = env, steps < 64 {
@@ -265,16 +175,16 @@ import PlayerCore
         return false
     }
 
-    private static func keyWindow() -> UIWindow? {
+    static func keyWindow() -> UIWindow? {
         let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
         return windows.first(where: \.isKeyWindow) ?? windows.first
     }
 
-    private static func tabBarController() -> UITabBarController? {
+    static func tabBarController() -> UITabBarController? {
         tabBarController(from: keyWindow()?.rootViewController, depth: 0)
     }
 
-    private static func tabBarState() -> TabBarState {
+    static func tabBarState() -> TabBarState {
         guard let window = keyWindow() else { return .notFound }
         let controller = tabBarController(from: window.rootViewController, depth: 0)
         guard let bar = controller?.tabBar ?? findTabBar(in: window) else { return .notFound }
@@ -315,38 +225,5 @@ struct HomeTabBarRequest: View {
         Color.clear
             .frame(width: 0, height: 0)
             .toolbar(watch.barRequest == .visible ? .visible : .automatic, for: .tabBar)
-    }
-}
-
-/// Wave F-m: zero-size UIKit view inside the vertical home list; hands the list's `UIScrollView` to the watch for the
-/// tab bar repair. Not focusable, no touches, draws nothing.
-struct HomeScrollViewProbe: UIViewRepresentable {
-    let watch: HomeTopEdgeWatch
-
-    func makeUIView(context: Context) -> ProbeView {
-        let v = ProbeView()
-        v.isUserInteractionEnabled = false
-        let w = watch
-        v.onWindow = { [weak w] sv in w?.scrollView = sv }
-        return v
-    }
-
-    func updateUIView(_ uiView: ProbeView, context: Context) {}
-
-    func sizeThatFits(_ proposal: ProposedViewSize, uiView: ProbeView, context: Context) -> CGSize? { CGSize(width: 1, height: 1) }
-
-    final class ProbeView: UIView {
-        var onWindow: (@MainActor (UIScrollView) -> Void)?
-
-        override func didMoveToWindow() {
-            super.didMoveToWindow()
-            guard window != nil else { return }
-            // The nearest scroll view above the probe is the vertical list (the probe sits outside the rows).
-            var v = superview
-            while let s = v {
-                if let sv = s as? UIScrollView { onWindow?(sv); return }
-                v = s.superview
-            }
-        }
     }
 }
