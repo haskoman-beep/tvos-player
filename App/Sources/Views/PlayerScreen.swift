@@ -169,6 +169,10 @@ struct PlayerControls<E: PlaybackEngine>: View {
     @State var addonSubTask: Task<Void, Never>?
     /// Laufendes Neuladen nach einem Fehler; abgebrochen beim Verlassen.
     @State var recoverTask: Task<Void, Never>?
+    /// Welle F-h R1: die Fehlerleiter lädt gerade neu (Spurwahl gesperrt). `recoverGen` zählt die Aufgaben, damit eine
+    /// abgelöste alte das Flag der neuen nicht zurücksetzt.
+    @State var recovering = false
+    @State var recoverGen = 0
     /// Laden und Start; läuft einmal (ein onAppear nach dem Spur-Panel lädt nicht neu), abgebrochen beim Verlassen.
     /// Intern auch für PlayerExit.swift (Abbruch beim geordneten Ausstieg).
     @State var loadTask: Task<Void, Never>?
@@ -256,7 +260,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             switch dir {
             case .left: queueSeek(-10)
             case .right: queueSeek(10)
-            case .down: showTracks = true
+            case .down: openTracks("▼ Klick")
             default: break
             }
             poke()
@@ -300,7 +304,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
                          edges: { SkipSegments.snapEdges(skip.segments) + engine.chapterMarks.map(\.start) },
                          holdAllowed: { !leaving },
                          holdOrigin: { fastSeekOrigin(forward: $0) },
-                         holdLimit: { FastSeek.upperLimit(duration: engine.duration, creditsStart: skip.upNextAt, origin: $0) })
+                         holdLimit: { FastSeek.upperLimit(duration: engine.duration, creditsStart: skip.upNextAt, origin: $0) },
+                         swipeDown: { openTracks("Wisch nach unten") })
             idleTick(failed: failureNotice != nil || loadError != nil)
             NowPlayingBridge.route(engine, handlers: .init(context: { RemoteTransportContext(isPlaying: engine.isPlaying, isBusy: engine.isLoading, position: pendingSeek ?? engine.currentTime, inputBlocked: leaving || scrub.isActive || showTracks || failureNotice != nil, upNextShowing: upNext != nil, sinceLastPress: Date().timeIntervalSince(lastToggle)) }, toggle: { onUserInput(); togglePlay() }, seekBy: { onUserInput(); queueSeek($0); poke() }))
             guard loadTask == nil else { return }
@@ -336,7 +341,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
         .onChange(of: scrub.isActive) { _, a in if a { onUserInput() }; poke() }
         .onChange(of: scrub.holdSpeed != nil) { _, h in if h { onUserInput() } }   // G-a R1: Halten zählt als Eingabe
         .onChange(of: scrub.target) { _, _ in poke() }
-        .fullScreenCover(isPresented: $showTracks) { PlayerTrackPanel(engine: engine, profile: profile, sourceURL: url, audioLocked: restorePending, onRemember: onRemember) }
+        .fullScreenCover(isPresented: $showTracks) { PlayerTrackPanel(engine: engine, profile: profile, sourceURL: url, audioLocked: restorePending, lock: { trackLock }, onRemember: onRemember) }
         // Play von außen (Siri, Kontrollzentrum) nach dem Hintergrund: erst neu aufbauen.
         .onChange(of: engine.isPlaying) { _, p in if p { stabilityPlaying() }; if p, restorePending { restoreAndPlay() } }
         .onPlayerLifecycle { handlePhase($0) }
@@ -452,10 +457,50 @@ struct PlayerControls<E: PlaybackEngine>: View {
                 Text("-" + fmt(d - pos))
             }
             .font(.caption.monospacedDigit())
-            Text("◀▶ 10 s · ◀▶ halten: Schnellsuchlauf · Wischen/Rand drehen: spulen · ▼ Ton/Untertitel · ⏯ Pause · Zurück beenden").font(.caption2).foregroundStyle(.secondary)
+            // Welle F-h: aktuelle Spurwahl und der Weg ins Panel stehen sichtbar in der Leiste.
+            if !engine.audioTracks.isEmpty || !engine.subtitleTracks.isEmpty {
+                Text(TrackChoice.overlayLine(audio: TrackChoice.active(engine.audioTracks, id: engine.activeAudioID),
+                                             subtitle: TrackChoice.active(engine.subtitleTracks, id: engine.activeSubtitleID)))
+                    .font(.caption).lineLimit(1)
+            }
+            Text("◀▶ 10 s · ◀▶ halten: Schnellsuchlauf · waagerecht wischen/Rand drehen: spulen · nach unten wischen: Ton & Untertitel · ⏯ Pause · Zurück beenden").font(.caption2).foregroundStyle(.secondary)
         }
         .padding(60)
         .background(LinearGradient(colors: [.black.opacity(0.8), .clear], startPoint: .bottom, endPoint: .top))
+    }
+
+    /// Welle F-h: Spur-Panel öffnen, per Wisch nach unten (Pan-Recognizer der Spul-Steuerung) oder Klick auf den
+    /// unteren Rand (`onMoveCommand(.down)`); tvOS meldet einen Wisch nicht als Move-Befehl.
+    private func openTracks(_ via: String) {
+        switch TrackPanelEntry.decide(leaving: leaving, scrubbing: scrub.isActive, upNextShowing: upNext != nil,
+                                      failureShowing: failureNotice != nil, alreadyOpen: showTracks,
+                                      skipPromptShowing: skip.prompt != nil, lock: trackLock) {
+        case .open:
+            onUserInput()
+            // Gesammelter ±10-s-Sprung nicht parallel zu einem Ton-Neuladen aus dem Panel (R1 M3).
+            if pendingSeek != nil {
+                seekTask?.cancel(); seekTask = nil; pendingSeek = nil
+                RemoteLog.info("player", "Gesammelter Sprung verworfen (Spur-Panel öffnet)")
+            }
+            RemoteLog.info("player", "Spur-Panel öffnen (\(via)) · " + TrackChoice.summary(
+                audio: TrackChoice.active(engine.audioTracks, id: engine.activeAudioID),
+                subtitle: TrackChoice.active(engine.subtitleTracks, id: engine.activeSubtitleID))
+                + " · \(engine.audioTracks.count) Ton, \(engine.subtitleTracks.count) UT")
+            showTracks = true
+        case .cancelUpNext:
+            onUserInput()
+            withAnimation { upNext = nil }; upNextCancelled = true
+            RemoteLog.info("player", "Up-next abgebrochen")
+        case .ignore(let why):
+            RemoteLog.info("player", "Spur-Panel nicht geöffnet (\(via)): \(why.logText)")
+        }
+    }
+
+    /// Welle F-h R1: Spurwahl gesperrt während Neuaufbau, Fehlerleiter, Start (TrackLock in PlayerCore).
+    var trackLock: TrackLock? {
+        TrackLock.current(restoring: restoring, recovering: recovering, loadInFlight: stab.loadInFlight,
+                          startPending: stab.startPending, waitingForNetwork: stab.networkNotice != nil,
+                          engineError: engine.errorText != nil)
     }
 
     private func togglePlay() {
@@ -583,7 +628,11 @@ struct PlayerControls<E: PlaybackEngine>: View {
                                                url: sub.flatMap { addonTrackURLs[$0] }, byUser: subByUser)
         let audioLanguage = engine.audioTracks.first { $0.id == engine.activeAudioID }?.language
         recoverTask?.cancel()
+        recoverGen &+= 1
+        let gen = recoverGen
+        recovering = true
         recoverTask = Task {
+            defer { if recoverGen == gen { recovering = false } }
             var reloaded = false
             if case .retrySame(let delay) = step, delay > 0 {
                 RemoteLog.info("player", "Neu laden in \(Int(delay)) s")
