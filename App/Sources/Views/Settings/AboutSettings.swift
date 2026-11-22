@@ -24,8 +24,9 @@ struct SystemSettings: View {
                        metrics: [updateMetric(status),
                                  StatusCard.Metric(text: DesignText.metaLine([SettingsSummary.addons(model.profile.addons.count),
                                                                               SettingsSummary.profiles(model.stored.profiles.count)]))],
-                       action: updater.busy ? nil : StatusCard.Action(title: "Nach Update suchen", symbol: "arrow.down.circle") {
-                           updater.check()
+                       // Review F-a M3: Aktion bleibt während der Suche stehen (kein Fokussprung), tut dann nichts.
+                       action: StatusCard.Action(title: updater.busy ? "Suche läuft …" : "Nach Update suchen", symbol: "arrow.down.circle") {
+                           if !updater.busy { updater.check() }
                        })
             SettingsSection {
                 SettingsLinkRow(symbol: "arrow.down.app", tint: tint, title: "App aktualisieren",
@@ -54,7 +55,7 @@ struct SystemSettings: View {
         case .unknown: StatusCard.Metric(text: "Update nicht geprüft")
         case .upToDate: StatusCard.Metric(text: "Aktuell", tone: .ok)
         case .available(let n): StatusCard.Metric(text: "Update: Build " + (n.map(String.init) ?? "?"), tone: .warn)
-        case .newerInstalled: StatusCard.Metric(text: "Neuer als main")
+        case .newerInstalled: StatusCard.Metric(text: "Neuer als die veröffentlichte Version")
         }
     }
 
@@ -63,7 +64,7 @@ struct SystemSettings: View {
         case .unknown: nil
         case .upToDate: "Aktuell"
         case .available(let n): "Build " + (n.map(String.init) ?? "?")
-        case .newerInstalled: "Neuer als main"
+        case .newerInstalled: "Neuer als veröffentlicht"
         }
     }
 }

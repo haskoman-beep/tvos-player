@@ -122,7 +122,7 @@ public enum SettingsSummary {
         case .unknown: return b
         case .upToDate: return DesignText.metaLine([b, "aktuell"])
         case .available(let n): return DesignText.metaLine([b, "Update: Build " + (n.map(String.init) ?? "?")])
-        case .newerInstalled: return DesignText.metaLine([b, "neuer als main"])
+        case .newerInstalled: return DesignText.metaLine([b, "neuer als veröffentlicht"])
         }
     }
 

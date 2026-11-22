@@ -142,7 +142,7 @@ import Testing
     #expect(SettingsSummary.system(build: 35, update: .upToDate) == "Build 35 · aktuell")
     #expect(SettingsSummary.system(build: 35, update: .available(build: 36)) == "Build 35 · Update: Build 36")
     #expect(SettingsSummary.system(build: nil, update: .available(build: nil)) == "Build ? · Update: Build ?")
-    #expect(SettingsSummary.system(build: 40, update: .newerInstalled) == "Build 40 · neuer als main")
+    #expect(SettingsSummary.system(build: 40, update: .newerInstalled) == "Build 40 · neuer als veröffentlicht")
 }
 
 // MARK: Wertetexte

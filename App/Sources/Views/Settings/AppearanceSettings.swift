@@ -9,6 +9,9 @@ struct AppearanceSettings: View {
 
     private let tint = SettingsCategory.appearance.tint
 
+    /// Kachelfarbe für eine Akzentfarbe; Weiß wird zu Grau, damit das (weiße) Symbol sichtbar bleibt.
+    static func visibleTint(_ a: AccentChoice) -> Color { a == .white ? Color(white: 0.45) : a.color }
+
     var body: some View {
         let a = model.profile.appearance
         CategoryPage(.appearance, summary: SettingsSummary.appearance(navigation: a.navigation, accent: a.accent, cardSize: a.cardSize)) {
@@ -16,15 +19,16 @@ struct AppearanceSettings: View {
                 SettingsChoiceRow(symbol: "sidebar.left", tint: tint, title: "Navigation",
                                   detail: "Bereiche als Seitenleiste links oder als Leiste oben.",
                                   options: NavigationStyle.allCases, selection: model.binding(\.appearance.navigation),
-                                  label: SettingsSummary.navigationName)
-                SettingsChoiceRow(symbol: "paintbrush", tint: a.accent.color, title: "Akzentfarbe",
+                                  alwaysList: true, label: SettingsSummary.navigationName)
+                // Review F-a M1: bei Weiß kein weißes Symbol auf weißer Kachel.
+                SettingsChoiceRow(symbol: "paintbrush", tint: Self.visibleTint(a.accent), title: "Akzentfarbe",
                                   detail: "Markierungen und Fortschrittsbalken.",
                                   options: AccentChoice.allCases, selection: model.binding(\.appearance.accent),
-                                  optionTint: { $0.color }, label: SettingsSummary.accentName)
+                                  optionTint: Self.visibleTint, label: SettingsSummary.accentName)
                 SettingsChoiceRow(symbol: "globe", tint: tint, title: "Sprache der App",
                                   detail: "Sprache von Titeln, Beschreibungen und Katalogen.",
                                   options: AppLanguage.allCases, selection: model.binding(\.language),
-                                  label: SettingsSummary.languageName)
+                                  alwaysList: true, label: SettingsSummary.languageName)
             }
             SettingsSection("Karten") {
                 SettingsChoiceRow(symbol: "rectangle.grid.2x2", tint: tint, title: "Kartengröße",

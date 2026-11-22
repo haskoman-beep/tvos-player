@@ -12,11 +12,11 @@ struct AudioSettings: View {
         let custom = AudioLanguageChoice.of(p.audioPriority) == .custom
         CategoryPage(.audio, summary: SettingsSummary.audio(audioPriority: p.audioPriority, subtitles: p.subtitleMode)) {
             SettingsSection("Sprache") {
-                // E5: Presets; ein alter, eigener Vorrang bleibt unverändert, bis ein Preset gewählt wird.
+                // E5: Voreinstellungen; ein alter, eigener Vorrang bleibt unverändert, bis eine Voreinstellung gewählt wird.
                 SettingsChoiceRow(symbol: "waveform", tint: tint, title: "Tonsprache",
                                   detail: custom
-                                      ? "Gespeichert: \(AudioLanguagePreset.describe(p.audioPriority)). Bleibt so, bis du ein Preset wählst."
-                                      : "Welche Tonspur zuerst gewählt wird; bestimmt auch die Reihenfolge der Quellen.",
+                                      ? "Gespeichert: \(AudioLanguagePreset.describe(p.audioPriority)). Bleibt so, bis du eine andere Reihenfolge wählst."
+                                      : "Welche Tonspur zuerst gewählt wird; bei „Quellen sortieren: Smart“ auch die Reihenfolge der Quellen.",
                                   detailAlwaysVisible: custom,
                                   options: AudioLanguageChoice.choices(for: p.audioPriority),
                                   selection: Binding(get: { AudioLanguageChoice.of(model.profile.audioPriority) },

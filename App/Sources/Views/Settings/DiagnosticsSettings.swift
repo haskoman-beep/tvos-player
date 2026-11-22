@@ -9,6 +9,8 @@ struct AdvancedSettingsPage: View {
     @AppStorage(MainThreadWatchdog.settingKey) private var hitchLog = true
     @State private var confirmClear = false
     @State private var cleared = false
+    /// Review F-a M4: RemoteLog ist kein ObservableObject; die Seite fragt den Empfänger alle 2 s neu ab.
+    @State private var receiver = RemoteLog.shared.hasReceiver
 
     private let tint = SettingsCategory.system.tint
 
@@ -20,9 +22,9 @@ struct AdvancedSettingsPage: View {
                                   reserveDetailSpace: false, isOn: $hitchLog)
                     .onChange(of: hitchLog) { MainThreadWatchdog.apply() }
                 SettingsInfoRow(symbol: "antenna.radiowaves.left.and.right", tint: tint, title: "Log-Empfänger",
-                                detail: "Das Ereignis-Log geht automatisch an ein Log-Programm im Heimnetz (Bonjour `_playerlog._tcp`). "
+                                detail: "Das Ereignis-Log geht automatisch an ein Log-Programm im Heimnetz (Bonjour, Dienst _playerlog._tcp). "
                                     + "Ohne Empfänger bleiben die letzten 500 Zeilen im Speicher.",
-                                value: RemoteLog.shared.hasReceiver ? "Gefunden" : "Nur Speicher")
+                                value: receiver ? "Gefunden" : "Nur Speicher")
             }
             SettingsSection("Addons") {
                 AddonTimeoutPicker()
@@ -40,9 +42,15 @@ struct AdvancedSettingsPage: View {
                 SettingsRow(symbol: "trash", tint: Theme.Tone.error.color,
                             title: cleared ? "Katalog-Zwischenspeicher geleert" : "Katalog-Zwischenspeicher leeren …",
                             detail: "Kataloge und Reihen werden danach neu geladen.", reserveDetailSpace: false) {
-                    confirmClear = true
+                    if !cleared { confirmClear = true }
                 }
-                .disabled(cleared)
+                .settingsUnavailable(cleared)
+            }
+        }
+        .task {
+            while !Task.isCancelled {
+                receiver = RemoteLog.shared.hasReceiver
+                try? await Task.sleep(for: .seconds(2))
             }
         }
         .settingsConfirmation("Katalog-Zwischenspeicher leeren?", isPresented: $confirmClear,

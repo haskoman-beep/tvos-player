@@ -23,17 +23,17 @@ struct UpdatePage: View {
                 SettingsRow(symbol: "arrow.clockwise", tint: tint,
                             title: updater.phase == .checking ? "Suche läuft …" : "Nach Update suchen",
                             detail: statusText, detailAlwaysVisible: statusText != nil, reserveDetailSpace: false) {
-                    updater.check()
+                    if !updater.busy { updater.check() }
                 }
-                .disabled(updater.busy)
+                .settingsUnavailable(updater.busy)
                 if case .checked(.available(let release, _)) = updater.phase {
                     if let base {
                         SettingsRow(symbol: "arrow.down.app", tint: tint, title: "Build " + Self.num(release.number) + " installieren",
                                     detail: "Die App wird beim Installieren beendet und muss danach neu geöffnet werden.",
                                     detailAlwaysVisible: true, reserveDetailSpace: false) {
-                            updater.install(release, base: base)
+                            if !updater.busy { updater.install(release, base: base) }
                         }
-                        .disabled(updater.busy)
+                        .settingsUnavailable(updater.busy)
                     } else {
                         SettingsFootnote("Zum Installieren zuerst die atvloadly-Adresse eintragen (Pi suchen oder am Handy).")
                     }
@@ -45,9 +45,10 @@ struct UpdatePage: View {
                 SettingsRow(symbol: "magnifyingglass", tint: tint, title: updater.searching ? "Suche läuft …" : "Pi im Netz suchen",
                             detail: "Findet atvloadly über Bonjour im Heimnetz und speichert die Adresse.",
                             reserveDetailSpace: false) {
+                    guard !updater.searching else { return }
                     Task { if let u = await updater.discover() { save(u) } }
                 }
-                .disabled(updater.searching)
+                .settingsUnavailable(updater.searching)
                 PhoneLinkRow(section: .system, symbol: "iphone", tint: tint, title: "Adresse am Handy eintragen",
                              detail: "Feld atvloadly im Abschnitt System.")
                 if let note = updater.addressNote { SettingsFootnote(note) }
@@ -78,7 +79,7 @@ struct UpdatePage: View {
         case .notPublished(let b):
             return "Build \(b.number) ist fertig, aber noch nicht als Installationspaket veröffentlicht (Release „app-main“)."
         case .newerInstalled(let main):
-            return "Installiert ist neuer als main (Build \(main))"
+            return "Installiert ist neuer als die veröffentlichte Version (Build \(main))"
         }
     }
 

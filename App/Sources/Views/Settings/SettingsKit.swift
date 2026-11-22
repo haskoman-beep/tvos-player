@@ -163,9 +163,12 @@ struct SettingsChoiceRow<Value: Hashable>: View {
     @Binding var selection: Value
     let label: (Value) -> String
     let optionTint: ((Value) -> Color)?
+    /// Immer Push-Liste, auch bei ≤ 3 Werten: für Auswahlen mit Nebenwirkung (Sync, Neuladen, Umbau der Oberfläche),
+    /// damit beim Durchschalten kein Zwischenwert gespeichert wird (Review F-a M6).
+    let alwaysList: Bool
 
     init(symbol: String, tint: Color, title: String, detail: String? = nil, detailAlwaysVisible: Bool = false,
-         options: [Value], selection: Binding<Value>, optionTint: ((Value) -> Color)? = nil,
+         options: [Value], selection: Binding<Value>, optionTint: ((Value) -> Color)? = nil, alwaysList: Bool = false,
          label: @escaping (Value) -> String) {
         self.symbol = symbol
         self.tint = tint
@@ -176,10 +179,11 @@ struct SettingsChoiceRow<Value: Hashable>: View {
         self._selection = selection
         self.label = label
         self.optionTint = optionTint
+        self.alwaysList = alwaysList
     }
 
     var body: some View {
-        if options.count <= 3 {
+        if options.count <= 3, !alwaysList {
             SettingsRow(symbol: symbol, tint: tint, title: title, detail: detail, accessory: .value(label(selection)),
                         detailAlwaysVisible: detailAlwaysVisible, reserveDetailSpace: false) {
                 guard !options.isEmpty else { return }
@@ -247,16 +251,113 @@ struct SettingsInfoRow: View {
     }
 }
 
+/// E6/§2.4: eigene Rückfrage statt `confirmationDialog`. Grund (Review F-a I1): tvOS fokussiert im Aktionsblatt die
+/// erste Aktion, `role: .cancel` rückt „Behalten“ aber ans Ende – der Fokus läge auf dem Zerstörenden.
+/// Hier steht „Behalten“ oben und bekommt den Fokus doppelt abgesichert (`defaultFocus` + `onAppear`);
+/// Menu schließt ohne Aktion (`onExitCommand`). Wiederverwendbar für alle Wellen (auch F-b2).
+struct SettingsConfirmationView: View {
+    let title: String
+    let message: String
+    let verb: String
+    let onKeep: () -> Void
+    let onConfirm: () -> Void
+
+    private enum Choice: Hashable { case keep, confirm }
+    @FocusState private var focus: Choice?
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.75).ignoresSafeArea()
+            VStack(alignment: .leading, spacing: Theme.Space.m) {
+                Text(title).font(.title3.weight(.semibold)).foregroundStyle(.white)
+                Text(message).font(.callout).foregroundStyle(.white.opacity(0.75))
+                    .fixedSize(horizontal: false, vertical: true)
+                VStack(spacing: Theme.Space.s) {
+                    Button(action: keep) {
+                        SettingsRowLabel(symbol: "arrow.uturn.backward", tint: Theme.CategoryTint.system.color, title: "Behalten",
+                                         reserveDetailSpace: false)
+                    }
+                    .buttonStyle(ThemeRowButtonStyle(maxWidth: .infinity))
+                    .focused($focus, equals: .keep)
+                    .settingsRowAccessibility(title: "Behalten", detail: nil, accessory: .none)
+                    Button(action: confirm) {
+                        SettingsRowLabel(symbol: "trash", tint: Theme.Tone.error.color, title: verb, reserveDetailSpace: false)
+                    }
+                    .buttonStyle(ThemeRowButtonStyle(maxWidth: .infinity))
+                    .focused($focus, equals: .confirm)
+                    .settingsRowAccessibility(title: verb, detail: message, accessory: .none)
+                }
+                .padding(.top, Theme.Space.s)
+            }
+            .padding(Theme.Space.l)
+            .frame(maxWidth: 760)
+            .background(Color(white: 0.12), in: RoundedRectangle(cornerRadius: 24))
+            .focusSection()
+        }
+        .defaultFocus($focus, .keep)
+        .onAppear { focus = .keep }
+        .onExitCommand(perform: keep)
+    }
+
+    private func keep() {
+        RemoteLog.info("einstellung", "Rückfrage „\(title)“: behalten")
+        onKeep()
+    }
+
+    private func confirm() {
+        RemoteLog.info("einstellung", "Rückfrage „\(title)“: \(verb)")
+        onConfirm()
+    }
+}
+
+/// Hält fest, ob bestätigt wurde, und führt die Aktion erst nach dem Schließen der Überlagerung aus
+/// (sonst kollidiert z. B. „Addon entfernen“ + Seite schließen mit der laufenden Ausblendung).
+private struct SettingsConfirmationModifier: ViewModifier {
+    let title: String
+    @Binding var isPresented: Bool
+    let message: String
+    let verb: String
+    let action: () -> Void
+    /// Aktion aus dem Moment der Bestätigung (bei item: noch mit dem Objekt).
+    @State private var pending: (() -> Void)?
+
+    func body(content: Content) -> some View {
+        content.fullScreenCover(isPresented: $isPresented, onDismiss: {
+            let run = pending
+            pending = nil
+            run?()
+        }) {
+            SettingsConfirmationView(title: title, message: message, verb: verb,
+                                     onKeep: { isPresented = false },
+                                     onConfirm: { pending = action; isPresented = false })
+                .presentationBackground(.clear)
+        }
+    }
+}
+
 extension View {
-    /// E6/§2.4: Rückfrage vor Zerstörendem. Titel = Frage mit Objektname, Nachricht = Folge,
-    /// Knöpfe = Verb und „Behalten“ (Abbrechen-Rolle, damit Menu und der Standardfokus nichts löschen).
+    /// Review F-a M2/M3: „gerade nicht verfügbar“ – abgeschwächt, aber weiter fokussierbar (kein `.disabled`, damit der
+    /// Fokus nicht springt, wenn sich eine Zeile unter ihm sperrt). Die Aktion muss selbst nichts tun.
+    func settingsUnavailable(_ unavailable: Bool) -> some View {
+        opacity(unavailable ? 0.5 : 1)
+            .accessibilityHint(unavailable ? "Nicht verfügbar" : "")
+    }
+
+    /// E6/§2.4: Rückfrage vor Zerstörendem (Titel = Frage mit Objektname, Nachricht = Folge, Verb + „Behalten“).
+    /// Zeigt `SettingsConfirmationView` als Vollbild-Überlagerung; „Behalten“ hat den Standardfokus.
     func settingsConfirmation(_ title: String, isPresented: Binding<Bool>, message: String, verb: String,
                               action: @escaping () -> Void) -> some View {
-        confirmationDialog(title, isPresented: isPresented, titleVisibility: .visible) {
-            Button(verb, role: .destructive, action: action)
-            Button("Behalten", role: .cancel) {}
-        } message: {
-            Text(message)
+        modifier(SettingsConfirmationModifier(title: title, isPresented: isPresented, message: message, verb: verb, action: action))
+    }
+
+    /// Variante mit Objekt (z. B. „„X“ entfernen?“): zeigt die Rückfrage, solange `item` nicht nil ist.
+    func settingsConfirmation<Item>(item: Binding<Item?>, title: @escaping (Item) -> String, message: @escaping (Item) -> String,
+                                    verb: String, action: @escaping (Item) -> Void) -> some View {
+        let current = item.wrappedValue
+        return settingsConfirmation(current.map(title) ?? "",
+                             isPresented: Binding(get: { item.wrappedValue != nil }, set: { if !$0 { item.wrappedValue = nil } }),
+                             message: current.map(message) ?? "", verb: verb) {
+            if let current { action(current) }
         }
     }
 }

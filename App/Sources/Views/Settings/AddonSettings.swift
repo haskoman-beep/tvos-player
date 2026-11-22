@@ -73,10 +73,10 @@ struct AddonDetailPage: View {
                 SettingsSection("Reihenfolge") {
                     SettingsRow(symbol: "arrow.up", tint: tint, title: "Nach oben",
                                 detail: "Position \(i + 1) von \(addons.count)", reserveDetailSpace: false) { move(by: -1) }
-                        .disabled(i == 0)
+                        .settingsUnavailable(i == 0)
                     SettingsRow(symbol: "arrow.down", tint: tint, title: "Nach unten",
                                 detail: "Position \(i + 1) von \(addons.count)", reserveDetailSpace: false) { move(by: 1) }
-                        .disabled(i == addons.count - 1)
+                        .settingsUnavailable(i == addons.count - 1)
                 }
                 SettingsSection {
                     SettingsRow(symbol: "trash", tint: Theme.Tone.error.color, title: "Addon entfernen …",

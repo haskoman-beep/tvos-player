@@ -45,6 +45,7 @@ struct ProfileSettings: View {
                 SettingsChoiceRow(symbol: "checkmark.circle", tint: tint, title: "Fortschritt & Gesehen",
                                   detail: "Woher Weiterschauen und „gesehen“ kommen.",
                                   options: ProgressSource.allCases, selection: model.binding(\.progressSource),
+                                  alwaysList: true,   // Review F-a M6: kein Zwischenwert (Trakt) beim Durchschalten
                                   label: SettingsSummary.progressName)
             }
         }
@@ -81,12 +82,14 @@ private struct NewProfileSheet: View {
                 .onSubmit { submit() }
             HStack(spacing: Theme.Space.m) {
                 Button("Profil anlegen") { submit() }
-                    .disabled(trimmed.isEmpty)
+                    .settingsUnavailable(trimmed.isEmpty)
                 Button("Abbrechen", role: .cancel) { dismiss() }
             }
         }
         .frame(maxWidth: 900, alignment: .leading)
         .padding(Theme.Space.xl)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .settingsSurface()   // Review F-a M9: gleicher Grund wie die Einstellungen
     }
 
     private func submit() {

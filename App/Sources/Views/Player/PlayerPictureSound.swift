@@ -270,6 +270,7 @@ struct PlayerComfortSettingsRows: View {
     var part: Part
     @EnvironmentObject var model: AppModel
     @State private var cleared = false
+    @State private var confirmClear = false
 
     let tint = SettingsCategory.playback.tint
 
@@ -281,13 +282,19 @@ struct PlayerComfortSettingsRows: View {
                                   + "und nimmt sie beim nächsten Start, wenn die Spur da ist.",
                               reserveDetailSpace: false, isOn: model.binding(\.player.rememberTracks))
             if model.profile.player.rememberTracks {
-                SettingsRow(symbol: "trash", tint: tint, title: cleared ? "Gemerkte Spur-Wahl gelöscht" : "Gemerkte Spur-Wahl löschen",
+                // Review F-a I2: Rückfrage; M3: Zeile bleibt fokussierbar (nach dem Löschen ohne Wirkung).
+                SettingsRow(symbol: "trash", tint: Theme.Tone.error.color,
+                            title: cleared ? "Gemerkte Spur-Wahl gelöscht" : "Gemerkte Spur-Wahl löschen …",
                             reserveDetailSpace: false) {
+                    if !cleared { confirmClear = true }
+                }
+                .settingsConfirmation("Gemerkte Spur-Wahl löschen?", isPresented: $confirmClear,
+                                      message: "Ton- und Untertitelwahl aller Serien und Filme dieses Profils wird vergessen.",
+                                      verb: "Löschen") {
                     PlayerMemory.shared.clearTrackMemory(profile: model.profile.id)
                     RemoteLog.info("einstellung", "Gemerkte Spur-Wahl gelöscht")
                     cleared = true
                 }
-                .disabled(cleared)
             }
         case .screensaver:
             SettingsChoiceRow(symbol: "moon.zzz", tint: tint, title: "Bildschirmschoner in der Pause",

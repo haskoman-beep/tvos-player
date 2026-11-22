@@ -69,19 +69,22 @@ struct MetadataAddonImagesSettingRow: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
-        SettingsToggleRow(symbol: "photo", tint: SettingsCategory.appearance.tint, title: "Bilder vom Metadaten-Addon",
-                          detail: model.hasMetadataAddon
-                              ? "Poster, Hintergrund und Logo des Metadaten-Addons vor den TMDB-Bildern, auch auf Kacheln der TMDB-Reihen."
-                              : "Kein Addon mit Metadaten installiert.",
-                          detailAlwaysVisible: !model.hasMetadataAddon,
-                          reserveDetailSpace: false,
-                          isOn: Binding(
-                              get: { model.profile.appearance.titles.addonImages },
-                              set: { on in
-                                  model.update { $0.appearance.titles.addonImages = on }
-                                  model.titleImagesChanged()
-                                  RemoteLog.info("einstellung", "Bilder vom Metadaten-Addon \(on ? "an" : "aus")")
-                              }))
-            .disabled(!model.hasMetadataAddon)
+        if model.hasMetadataAddon {
+            SettingsToggleRow(symbol: "photo", tint: SettingsCategory.appearance.tint, title: "Bilder vom Metadaten-Addon",
+                              detail: "Poster, Hintergrund und Logo des Metadaten-Addons vor den TMDB-Bildern, auch auf Kacheln der TMDB-Reihen.",
+                              reserveDetailSpace: false,
+                              isOn: Binding(
+                                  get: { model.profile.appearance.titles.addonImages },
+                                  set: { on in
+                                      model.update { $0.appearance.titles.addonImages = on }
+                                      model.titleImagesChanged()
+                                      RemoteLog.info("einstellung", "Bilder vom Metadaten-Addon \(on ? "an" : "aus")")
+                                  }))
+        } else {
+            // Review F-a M2/M3: gesperrt sichtbar („nicht verfügbar“, abgeschwächt), aber fokussierbar.
+            SettingsInfoRow(symbol: "photo", tint: SettingsCategory.appearance.tint, title: "Bilder vom Metadaten-Addon",
+                            detail: "Kein Addon mit Metadaten installiert.", value: "nicht verfügbar", detailAlwaysVisible: true)
+                .settingsUnavailable(true)
+        }
     }
 }
