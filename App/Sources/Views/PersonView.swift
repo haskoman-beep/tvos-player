@@ -26,8 +26,12 @@ struct PersonView: View {
                             }
                             .buttonStyle(.plain)
                         }
-                        if person == nil && !failed { ProgressView() }
+                        // N6 (Welle F-c): beim Laden unsichtbares Fokusziel, bei Fehler bzw. leerer Seite „Zurück“.
+                        if person == nil && !failed { ProgressView().quietFocusTarget() }
                         if failed { Text("Person konnte nicht geladen werden.").foregroundStyle(.secondary) }
+                        if failed || (person != nil && person?.biography == nil && person?.credits.isEmpty == true) {
+                            FocusAnchor(kind: .back)
+                        }
                     }
                     .frame(maxWidth: 1100, alignment: .leading)
                 }

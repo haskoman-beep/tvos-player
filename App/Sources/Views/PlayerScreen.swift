@@ -74,7 +74,13 @@ struct PlayerScreen: View {
                                                        onRemember: memoryKey.map { key -> (TrackMemoryChange) -> Void in
                                                            { change in PlayerMemory.shared.remember(change, key: key, profile: model.profile.id) }
                                                        }) }
-            else { Text(initError ?? "Player wird gestartet …") }
+            else {
+                VStack(spacing: Theme.Space.l) {
+                    Text(initError ?? "Player wird gestartet …")
+                    // N6: Fehlerseite mit Fokusziel; „Zurück“ schließt den Player (zur startenden Seite).
+                    if initError != nil { FocusAnchor(kind: .back) }
+                }
+            }
         }
         .onDisappear {
             // Öffnet das Spur-Panel (fullScreenCover) und löst onDisappear aus: Vorlader bleibt gesperrt,
@@ -256,7 +262,22 @@ struct PlayerControls<E: PlaybackEngine>: View {
             guard !leaving else { return }
             if scrub.cancel() { onUserInput(); return }   // Menü bricht zuerst das Spulen ab
             if skip.dismissPrompt() { onUserInput(); return }   // Menü schließt zuerst den Überspringen-Knopf
-            leaveWithModeSwitch()   // Abdeckung, Moduswechsel abwarten, dann schließen (PlayerExit.swift)
+            // N5 (Welle F-c): offene Überlagerung schließt nur sich selbst, erst bei freiem Bild verlassen.
+            switch PlayerMenuStep.decide(upNext: upNext != nil, controlsVisible: showOverlay,
+                                         hasPicture: engine.loadActivity.hasFirstFrame,
+                                         failed: loadError != nil || engine.errorText != nil) {
+            case .cancelUpNext:
+                onUserInput()
+                withAnimation { upNext = nil }; upNextCancelled = true
+                RemoteLog.info("player", "Menu: Up-next abgebrochen")
+            case .hideControls:
+                onUserInput()
+                hideTask?.cancel()
+                withAnimation { showOverlay = false }
+                RemoteLog.info("player", "Menu: Steuerleiste ausgeblendet")
+            case .leave:
+                leaveWithModeSwitch()   // Abdeckung, Moduswechsel abwarten, dann schließen (PlayerExit.swift)
+            }
         }
         .onReceive(timer) { _ in
             tick &+= 1

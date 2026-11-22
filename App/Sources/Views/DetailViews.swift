@@ -8,6 +8,7 @@ struct FolderView: View {
         ScrollView(.vertical) {
             LazyVStack(alignment: .leading, spacing: 50) {
                 Text(folder.title).font(.largeTitle.bold()).padding(.leading, 60)
+                if folder.sources.isEmpty { FocusAnchor(kind: .back).padding(.leading, 60) }   // N6 (Welle F-c)
                 ForEach(folder.sources) { s in
                     HomeRowView(row: HomeRow(content: .list(s), style: .poster), onActivate: { $0 })
                 }
@@ -23,6 +24,9 @@ struct CollectionView: View {
     var body: some View {
         ScrollView(.vertical) {
             HomeRowView(row: HomeRow(content: .collection(id: collectionID)), onActivate: { $0 })
+            if model.collection(collectionID)?.folders.isEmpty ?? true {
+                FocusAnchor(kind: .back).padding(.leading, 60)   // N6 (Welle F-c): leere oder fehlende Collection
+            }
         }
     }
 }
@@ -56,62 +60,88 @@ struct DetailView: View {
     /// Startfokus auf der Hauptaktion, nicht auf der (darüber liegenden) Beschreibung.
     enum Focus: Hashable { case play, episode(String), overview }
     @FocusState private var focus: Focus?
+    /// Fokusziel mit Staffel (nil = Film bzw. keine Folgen) und Folgen-ID zum Hinscrollen.
+    struct FocusTarget {
+        var season: Int? = nil
+        var focus: Focus = .play
+        var video: String? = nil
+    }
+    /// Welle F-c (§3.2): Quellenliste/Player geöffnet; bei der Rückkehr Fokus auf „Abspielen“ bzw. die nächste
+    /// ungesehene Folge (auch über die Staffelgrenze). Zähler startet die Rückkehr-Aufgabe (.task(id:)).
+    @State private var openedPlayback = false
+    @State private var returnFocusToken = 0
+    /// Folge, zu der die Folgenliste scrollt, bevor sie den Fokus bekommt (LazyVStack legt sie sonst nicht an).
+    @State private var scrollTarget: String?
+    @State private var scrollRequest = 0
 
     private var isSeries: Bool { item.type == "series" }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             RemoteImage(url: meta?.background ?? item.background).ignoresSafeArea().overlay(Color.black.opacity(0.55))
-            ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 28) {
-                    if let logo = meta?.logo {
-                        RemoteImage(url: logo, maxPixels: 1400, fit: true).frame(maxWidth: 700, maxHeight: 200, alignment: .leading)
-                    } else {
-                        Text(item.name).font(.system(size: 70, weight: .heavy))
-                    }
-                    // Welle E-a: FSK steht in der Textzeile („2018 · 97 min · FSK 0 · Genre“), nicht als Plakette.
-                    Text([meta?.releaseInfo ?? item.releaseInfo, meta?.runtime, certification ?? ratings?.certification,
-                          meta?.genres?.prefix(3).joined(separator: ", ")]
-                        .compactMap { $0 }.joined(separator: " · ")).foregroundStyle(.secondary)
-                    InfoBadges(ratings: model.ratingBadges(imdbRating: meta?.imdbRating, mdblist: ratings), tech: techBadges)
-                    if let t = extra?.tagline { Text(t).italic().foregroundStyle(.secondary) }
-                    if !overview.isEmpty {
-                        // Kurz halten; Klick zeigt den ganzen Text.
-                        Button { showFullText = true } label: { FocusHighlight { Text(overview).font(.callout).foregroundStyle(.white).lineLimit(3).multilineTextAlignment(.leading) } }
-                            .buttonStyle(.plain)
-                            .focused($focus, equals: .overview)
-                            .frame(maxWidth: 1100, alignment: .leading)
-                    }
-
-                    if loading {
-                        ProgressView()
-                    } else if let imdb {
-                        if isSeries {
-                            if let k = extra?.trailerYouTube { trailerButton(k) }
-                            episodes(imdb)
+            ScrollViewReader { proxy in
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 28) {
+                        if let logo = meta?.logo {
+                            RemoteImage(url: logo, maxPixels: 1400, fit: true).frame(maxWidth: 700, maxHeight: 200, alignment: .leading)
                         } else {
-                            let resume = model.progress.resumePosition(for: imdb)
-                            HStack(spacing: 30) {
-                                Button(resume.map { "▶ Fortsetzen ab \(timeText($0))" } ?? "▶ Abspielen") {
-                                    navigate(.streams(model.moviePlayRequest(item, imdb: imdb, meta: meta, resumeLastSource: resume != nil)))
-                                }
-                                .focused($focus, equals: .play)
-                                if let k = extra?.trailerYouTube { trailerButton(k) }
-                            }
+                            Text(item.name).font(.system(size: 70, weight: .heavy))
                         }
-                        if let trailerNote { Text(trailerNote).foregroundStyle(.secondary) }
-                        if let x = extra { DetailExtras(info: x, isSeries: isSeries) }
-                    } else {
-                        Text("Keine IMDb-ID gefunden – Streams nicht abrufbar.").foregroundStyle(.secondary)
+                        // Welle E-a: FSK steht in der Textzeile („2018 · 97 min · FSK 0 · Genre“), nicht als Plakette.
+                        Text([meta?.releaseInfo ?? item.releaseInfo, meta?.runtime, certification ?? ratings?.certification,
+                              meta?.genres?.prefix(3).joined(separator: ", ")]
+                            .compactMap { $0 }.joined(separator: " · ")).foregroundStyle(.secondary)
+                        InfoBadges(ratings: model.ratingBadges(imdbRating: meta?.imdbRating, mdblist: ratings), tech: techBadges)
+                        if let t = extra?.tagline { Text(t).italic().foregroundStyle(.secondary) }
+                        if !overview.isEmpty {
+                            // Kurz halten; Klick zeigt den ganzen Text.
+                            Button { showFullText = true } label: { FocusHighlight { Text(overview).font(.callout).foregroundStyle(.white).lineLimit(3).multilineTextAlignment(.leading) } }
+                                .buttonStyle(.plain)
+                                .focused($focus, equals: .overview)
+                                .frame(maxWidth: 1100, alignment: .leading)
+                        }
+
+                        if loading {
+                            // N6: ohne Beschreibung sonst nichts fokussierbar (unsichtbares Ziel, danach Abspielen).
+                            ProgressView().quietFocusTarget(overview.isEmpty)
+                        } else if let imdb {
+                            if isSeries {
+                                if let k = extra?.trailerYouTube { trailerButton(k) }
+                                episodes(imdb)
+                            } else {
+                                let resume = model.progress.resumePosition(for: imdb)
+                                HStack(spacing: 30) {
+                                    Button(resume.map { "▶ Fortsetzen ab \(timeText($0))" } ?? "▶ Abspielen") {
+                                        openedPlayback = true
+                                        navigate(.streams(model.moviePlayRequest(item, imdb: imdb, meta: meta, resumeLastSource: resume != nil)))
+                                    }
+                                    .focused($focus, equals: .play)
+                                    if let k = extra?.trailerYouTube { trailerButton(k) }
+                                }
+                            }
+                            if let trailerNote { Text(trailerNote).foregroundStyle(.secondary) }
+                            if let x = extra { DetailExtras(info: x, isSeries: isSeries) }
+                        } else {
+                            Text("Keine IMDb-ID gefunden – Streams nicht abrufbar.").foregroundStyle(.secondary)
+                            if overview.isEmpty { FocusAnchor(kind: .back) }   // N6
+                        }
                     }
+                    .padding(80)
                 }
-                .padding(80)
+                .onChange(of: scrollRequest) {
+                    guard let id = scrollTarget else { return }
+                    proxy.scrollTo(id)
+                }
             }
             .defaultFocus($focus, .play)
             // Die App-Akzentfarbe (RootView .tint) färbte Knöpfe und Text-Knöpfe hier flächig: normale tvOS-Knöpfe.
             .tint(Color?.none)
         }
         .onAppear {
+            if loaded, openedPlayback {
+                openedPlayback = false
+                returnFocusToken += 1
+            }
             if appeared == nil { appeared = Date() }
             // Quellen schon im Cache (z. B. zweiter Besuch): Technik-Plaketten im ersten Bild, nicht erst nach dem Laden.
             let id = imdb ?? (item.id.hasPrefix("tt") ? item.id : nil)
@@ -150,7 +180,8 @@ struct DetailView: View {
                 }
             }
             if Task.isCancelled { return }   // Seite verlassen: beim nächsten Erscheinen vollständig neu laden
-            season = imdb.flatMap { model.progress.latest(forItem: $0)?.season } ?? seasons.first ?? 1
+            // Serie: Staffel der nächsten ungesehenen Folge (§3.2 „Weiter: S2 F5“), sonst der zuletzt gesehenen.
+            season = playbackFocusTarget().season ?? imdb.flatMap { model.progress.latest(forItem: $0)?.season } ?? seasons.first ?? 1
             loading = false
             loaded = true
             // Während des Ladens war die Beschreibung das einzige fokussierbare Element: Fokus auf die Hauptaktion holen.
@@ -158,9 +189,18 @@ struct DetailView: View {
             guard !Task.isCancelled else { return }
             if !didInitialFocus {
                 didInitialFocus = true
-                if focus == nil || focus == .overview { focus = .play }
+                if focus == nil || focus == .overview { await applyFocus(playbackFocusTarget(), reason: "Eintritt") }
             }
             await translateSeason()
+        }
+        .task(id: returnFocusToken) {
+            guard returnFocusToken > 0 else { return }
+            // Erst nach dem Zurück-Übergang: sonst setzt die Rückkehr-Animation den Fokus wieder auf den alten Knopf.
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            let target = playbackFocusTarget()
+            if let s = target.season, s != season { season = s }
+            await applyFocus(target, reason: "nach dem Player")
         }
         .onChange(of: season) { Task { await translateSeason() } }
         .onDisappear { trailerTask?.cancel() }
@@ -183,6 +223,48 @@ struct DetailView: View {
                          isTrailer: true, remoteHLS: t.stream.isHLS)
                 .environmentObject(model)
         }
+    }
+
+    /// Fokusziel (§3.2): Film „Abspielen“; Serie die nächste ungesehene Folge nach der zuletzt gespielten
+    /// (PlayerCore `EpisodeFocus`), auch in der nächsten Staffel. Die erste Folge einer Staffel trägt `.play`.
+    private func playbackFocusTarget() -> FocusTarget {
+        guard isSeries, let imdb else { return FocusTarget() }
+        let videos = meta?.videos ?? []
+        let anchor = model.progress.latest(forItem: imdb).flatMap { p in
+            p.season.flatMap { s in p.episode.map { EpisodeRef(season: s, episode: $0) } }
+        }
+        guard let t = EpisodeFocus.target(episodes: EpisodeRef.list(from: videos), anchor: anchor,
+                                          isWatched: { model.progress.isWatched("\(imdb):\($0.season):\($0.episode)") })
+        else { return FocusTarget() }
+        let eps = videos.filter { $0.season == t.season }.sorted { ($0.episode ?? 0) < ($1.episode ?? 0) }
+        guard let v = eps.first(where: { $0.episode == t.episode }) else { return FocusTarget(season: t.season) }
+        return FocusTarget(season: t.season, focus: v.id == eps.first?.id ? .play : .episode(v.id), video: v.id)
+    }
+
+    /// Fokus setzen; die Folge liegt evtl. außerhalb des angelegten Bereichs: erst hinscrollen, dann bis zu
+    /// viermal nachfassen, bis der Fokus sitzt (Log „fokus“ für den Gerätetest).
+    private func applyFocus(_ target: FocusTarget, reason: String) async {
+        for attempt in 1...4 {
+            if let id = target.video {
+                scrollTarget = id
+                scrollRequest += 1
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            guard !Task.isCancelled else { return }
+            focus = target.focus
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            if focus == target.focus {
+                RemoteLog.info("fokus", "Detail \(reason): \(Self.focusName(target)) (Versuch \(attempt))")
+                return
+            }
+        }
+        RemoteLog.info("fokus", "Detail \(reason): \(Self.focusName(target)) nicht gesetzt (jetzt \(focus.map { "\($0)" } ?? "nichts"))")
+    }
+
+    private static func focusName(_ t: FocusTarget) -> String {
+        guard let s = t.season else { return "Abspielen" }
+        return "Staffel \(s), \(t.video ?? "erste Folge")"
     }
 
     /// Einmal je Seite: Zeit vom Erscheinen bis zur ersten sichtbaren Plakette und deren Quelle.
@@ -268,6 +350,7 @@ struct DetailView: View {
     @ViewBuilder private func episodes(_ imdb: String) -> some View {
         if seasons.isEmpty {
             Text("Keine Folgen gefunden.").foregroundStyle(.secondary)
+            if overview.isEmpty && extra?.trailerYouTube == nil { FocusAnchor(kind: .back) }   // N6
         } else {
             ScrollView(.horizontal) {
                 HStack {
@@ -283,6 +366,7 @@ struct DetailView: View {
                     let isFirst = v.id == eps.first?.id
                     Button {
                         let e = v.episode ?? 0
+                        openedPlayback = true
                         navigate(.streams(PlayRequest(type: "series", id: "\(imdb):\(season):\(e)", title: "\(item.name) S\(season)E\(e)",
                                                       item: progressItem(imdb), season: season, episode: e,
                                                       episodes: EpisodeRef.list(from: meta?.videos ?? []))))
@@ -307,6 +391,7 @@ struct DetailView: View {
                         }
                     }
                     .focused($focus, equals: isFirst ? .play : .episode(v.id))
+                    .id(v.id)
                 }
             }
         }
@@ -368,33 +453,63 @@ struct StreamListView: View {
     @State private var autoNext = AutoNextState()
     /// Welle D-b (M3): veralteter, lückenhafter Stand gezeigt, die Erneuerung läuft und wird übernommen.
     @State private var refreshingPartial = false
+    /// Welle F-c (§3.2): fokussierte Quelle; Eintritt auf die zuletzt gespielte, nach einem Fehler die nächste darunter.
+    @FocusState private var focusedStream: String?
+    @State private var focusRequest: SourceFocusRequest?
+    @State private var entryFocusDone = false
+    /// Zuletzt gescheiterte Quelle (von `fallback` gesetzt, beim Schließen des Players verbraucht).
+    @State private var lastFailure: String?
 
     var body: some View {
         // Welle E-b: Addon-Name nur, wenn die Liste mehrere Addons mischt (sonst steht er schon im Text des Addons).
         let showAddon = Set(streams.map(\.addon)).count > 1
         // Titel als Listenkopf (scrollt mit weg) statt navigationTitle: der große tvOS-Titel lag über den Zeilen.
-        List {
-            Section {
-                if let nextNote { Text(nextNote).foregroundStyle(.secondary) }
-                if loading { ProgressView("Quellen werden geladen …") }
-                if refreshingPartial { ProgressView("Fehlende Quellen werden nachgeladen …") }
-                AddonSearchStatusLine(id: (current ?? request).id)
-                if !loading && streams.isEmpty {
-                    Text(model.profile.addons.isEmpty ? "Kein Addon installiert (Einstellungen → Addons)." : "Keine abspielbaren Quellen.")
+        ScrollViewReader { proxy in
+            List {
+                Section {
+                    if let nextNote { Text(nextNote).foregroundStyle(.secondary) }
+                    // N6: solange keine Zeile da ist, ist die Ladezeile das (unsichtbare) Fokusziel.
+                    if loading { ProgressView("Quellen werden geladen …").quietFocusTarget(streams.isEmpty) }
+                    if refreshingPartial { ProgressView("Fehlende Quellen werden nachgeladen …") }
+                    AddonSearchStatusLine(id: (current ?? request).id)
+                    if !loading && streams.isEmpty {
+                        Text(model.profile.addons.isEmpty ? "Kein Addon installiert (Einstellungen → Addons)." : "Keine abspielbaren Quellen.")
+                        FocusAnchor(kind: .back)   // N6: sonst nichts fokussierbar, Menu schlösse die App
+                    }
+                    ForEach(streams, id: \.stream.id) { entry in
+                        Button {
+                            fallbacks = 0; AutoNextState.userInput($autoNext); autoNext.ask = nil
+                            PlaybackStability.shared.timing.markTap()
+                            playing = entry.stream
+                        } label: {
+                            StreamRow(addon: showAddon ? entry.addon : nil, stream: entry.stream).opacity(failed.contains(entry.stream.id) ? 0.4 : 1)
+                                .recentlyFailedMark(entry.stream, title: (current ?? request).id)
+                        }
+                        .focused($focusedStream, equals: entry.stream.id)
+                        .id(entry.stream.id)
+                    }
+                } header: {
+                    Text(current?.title ?? request.title).font(.title2.bold()).foregroundStyle(.primary)
+                        .textCase(nil).lineLimit(2).padding(.bottom, 10)
                 }
-                ForEach(streams, id: \.stream.id) { entry in
-                    Button {
-                        fallbacks = 0; AutoNextState.userInput($autoNext); autoNext.ask = nil
-                        PlaybackStability.shared.timing.markTap()
-                        playing = entry.stream
-                    } label: {
-                        StreamRow(addon: showAddon ? entry.addon : nil, stream: entry.stream).opacity(failed.contains(entry.stream.id) ? 0.4 : 1)
-                            .recentlyFailedMark(entry.stream, title: (current ?? request).id)
+            }
+            .task(id: focusRequest) {
+                guard let r = focusRequest else { return }
+                // Nach dem Player: erst nach dem Schließen des Vollbilds (sonst setzt tvOS den Fokus auf die gedrückte Zeile).
+                try? await Task.sleep(for: .milliseconds(r.delayMs))
+                for attempt in 1...4 {
+                    guard !Task.isCancelled else { return }
+                    proxy.scrollTo(r.id)
+                    try? await Task.sleep(for: .milliseconds(100))
+                    guard !Task.isCancelled else { return }
+                    focusedStream = r.id
+                    try? await Task.sleep(for: .milliseconds(150))
+                    if focusedStream == r.id {
+                        RemoteLog.info("fokus", "Quellenliste \(r.reason): Zeile \(r.index + 1) (Versuch \(attempt))")
+                        return
                     }
                 }
-            } header: {
-                Text(current?.title ?? request.title).font(.title2.bold()).foregroundStyle(.primary)
-                    .textCase(nil).lineLimit(2).padding(.bottom, 10)
+                RemoteLog.info("fokus", "Quellenliste \(r.reason): Zeile \(r.index + 1) nicht gesetzt")
             }
         }
         .listStyle(.grouped)
@@ -424,6 +539,7 @@ struct StreamListView: View {
                     RemoteLog.info("player", "Letzte Quelle nicht gefunden (\(last.fingerprint.prefix(60)))")
                 }
             }
+            if playing == nil { focusOnEntry() }
             // Welle D-b (M3, Nacharbeit I2): lückenhafter alter Stand → Erneuerung abwarten und nur die neuen Quellen
             // anhängen (bestehende Zeilen bleiben: Fokus, `failed`, Rückfall). Nicht, wenn inzwischen etwas spielt oder
             // startet oder die Liste schon eine andere Folge zeigt.
@@ -440,7 +556,8 @@ struct StreamListView: View {
                 }
             }
         }
-        .onChange(of: playing) { _, s in
+        .onChange(of: playing) { old, s in
+            if s == nil, let old { focusAfterPlayer(old) }
             guard let s else { return }
             // Addon aus der Liste, sonst das bei der nächsten Folge gemerkte (sonst „Addon nicht installiert“ beim Neuauflösen).
             model.rememberSource(current ?? request, stream: s,
@@ -460,6 +577,38 @@ struct StreamListView: View {
 }
 
 extension StreamListView {
+    /// In dieser Liste startbar: Adresse da, hier nicht gescheitert, nicht im 8-h-Gedächtnis.
+    private func focusPlayable(_ id: String) -> Bool {
+        guard let s = streams.first(where: { $0.stream.id == id })?.stream else { return false }
+        return s.url != nil && !failed.contains(id) && !PlaybackStability.shared.isRecentlyFailed(s, title: (current ?? request).id)
+    }
+
+    /// Eintritt (§3.2): zuletzt gespielte Quelle, sonst die erste spielbare. Einmal je Liste und nur, solange der
+    /// Nutzer den Fokus nicht selbst auf eine andere Zeile gelegt hat.
+    func focusOnEntry() {
+        guard !entryFocusDone else { return }
+        entryFocusDone = true
+        let ids = streams.map(\.stream.id)
+        guard focusedStream == nil || focusedStream == ids.first else { return }
+        let last = model.progress.lastSource(for: (current ?? request).id)?.match(in: streams)?.id
+        guard let id = SourceFocus.entry(ids: ids, lastPlayed: last, isPlayable: focusPlayable) else { return }
+        requestFocus(id, in: ids, reason: last == id ? "Eintritt, zuletzt gespielt" : "Eintritt", delayMs: 0)
+    }
+
+    /// Player geschlossen (§3.2): nach einem Fehler die nächste Quelle unter der gescheiterten, sonst die gespielte.
+    func focusAfterPlayer(_ played: StreamItem) {
+        let failure = lastFailure == played.id
+        lastFailure = nil
+        let ids = streams.map(\.stream.id)
+        guard let id = SourceFocus.afterPlayer(ids: ids, played: played.id, failed: failure, isPlayable: focusPlayable)
+        else { return }
+        requestFocus(id, in: ids, reason: failure ? "nach Fehler" : "nach dem Player", delayMs: 400)
+    }
+
+    private func requestFocus(_ id: String, in ids: [String], reason: String, delayMs: Int) {
+        focusRequest = SourceFocusRequest(id: id, index: ids.firstIndex(of: id) ?? 0, reason: reason, delayMs: delayMs)
+    }
+
     /// Nächste Quelle (Liste in kluger Ordnung): zuerst gecachte (⚡) unterhalb, dann gecachte oberhalb, zuletzt unbekannte; nie sicher ungecachte (🎫/⏳).
     func fallbackCandidate(after i: Int, in list: [StreamItem]) -> StreamItem? {
         let order = Array(list[(i + 1)...]) + Array(list[..<i])
@@ -471,6 +620,7 @@ extension StreamListView {
     /// Quelle versagt → nächste noch nicht gescheiterte Quelle darunter, höchstens 3 automatische Wechsel.
     func fallback(from s: StreamItem, reason: String) {
         failed.insert(s.id)
+        lastFailure = s.id
         playing = nil
         // Welle E-b: Rückfall in kluger Ordnung (Dekoder, Sprache, Cache), auch wenn die Liste wie das Addon sortiert ist.
         let list = model.autoOrderedStreams(streams).map(\.stream)
@@ -540,6 +690,15 @@ extension StreamListView {
             playing = s
         }
     }
+}
+
+/// Fokuswunsch der Quellenliste; jede Anfrage ist neu (`token`), auch für dieselbe Zeile.
+struct SourceFocusRequest: Equatable {
+    let id: String
+    let index: Int
+    let reason: String
+    let delayMs: Int
+    let token = UUID()
 }
 
 /// Welle E-b: Zeile wie vom Formatter des Addons gebaut: links `name`, rechts `description`/`title`, Umbrüche und

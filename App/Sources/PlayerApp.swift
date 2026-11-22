@@ -55,9 +55,6 @@ struct PlayRequest: Hashable {
     }
 }
 
-/// Tabs der Hauptnavigation.
-enum AppTab: Hashable { case home, search, library, calendar, settings }
-
 struct RootView: View {
     @EnvironmentObject var model: AppModel
     @State private var tab: AppTab = .home
@@ -69,8 +66,6 @@ struct RootView: View {
     @State private var pickedProfile = false
     /// Gewählte Einstellungs-Kategorie; liegt hier, damit sie den Neuaufbau beim Wechsel der Navigationsart übersteht.
     @State private var settingsCategory: SettingsCategory = .profile
-    /// Bereich, aus dem die Einstellungen geöffnet wurden; Zurück in der obersten Ebene der Einstellungen führt dorthin.
-    @State private var settingsCameFrom: AppTab = .home
 
     var body: some View {
         Group {
@@ -91,31 +86,68 @@ struct RootView: View {
     }
 
     private var tabs: some View {
-        TabView(selection: $tab) {
+        TabView(selection: tabSelection) {
             Tab("Start", systemImage: "house", value: AppTab.home) {
-                stack($path) { HomeView() }
+                stack($path, tab: .home) { HomeView() }
             }
             Tab("Suche", systemImage: "magnifyingglass", value: AppTab.search) {
-                stack($searchPath) { SearchView() }
+                stack($searchPath, tab: .search) { SearchView() }
             }
             Tab("Bibliothek", systemImage: "books.vertical", value: AppTab.library) {
-                stack($libraryPath) { LibraryView() }
+                stack($libraryPath, tab: .library) { LibraryView() }
             }
             Tab("Kalender", systemImage: "calendar", value: AppTab.calendar) {
-                stack($calendarPath) { CalendarView() }
+                stack($calendarPath, tab: .calendar) { CalendarView() }
             }
             Tab("Einstellungen", systemImage: "gearshape", value: AppTab.settings) {
-                stack($settingsPath) {
-                    SettingsView(selected: $settingsCategory) {
-                        RemoteLog.info("nav", "Einstellungen: Zurück → \(settingsCameFrom)")
-                        tab = settingsCameFrom
-                    }
+                // Menu-Kette der Einstellungen: Inhalt → aktive Kategorie (CategoryList) → Start-Tab (N2).
+                stack($settingsPath, tab: .settings, rootHandlesMenu: false) {
+                    SettingsView(selected: $settingsCategory) { toStartTab(from: .settings, level: "Kategorienspalte") }
                 }
             }
         }
-        .onChange(of: tab) { old, new in
-            if new == .settings && old != .settings { settingsCameFrom = old }
+        .onChange(of: tab) { old, new in RemoteLog.info("nav", "Tab \(old.logName) → \(new.logName)") }
+        // Menu in der Tab-/Seitenleiste eines anderen Tabs als Start: erst zum Start-Tab (N2). Auf Start und mit
+        // gepushten Seiten `nil`: dann gilt das System (Stack poppen bzw. App verlassen). Einstellungen: deren
+        // Unterseiten liegen nicht im Pfad (NavigationLink), darum dort kein Handler auf dieser Ebene.
+        .onExitCommand(perform: tabBarExit)
+    }
+
+    private var tabBarExit: (() -> Void)? {
+        let t = tab
+        guard t != .settings, MenuChain.handlesAtTabLevel(tab: t, depth: depth(t)) else { return nil }
+        return { toStartTab(from: t, level: "Leiste") }
+    }
+
+    /// Auswahl der TabView. Zweiter Druck auf den aktiven Tab (§3.3) poppt NICHT: SwiftUI bietet für `Tab`/
+    /// `.sidebarAdaptable` keinen Rückruf für die erneute Wahl; ob der Setter dann mit gleichem Wert kommt, ist
+    /// nicht zugesichert (auf tvOS wählt schon der Fokus einen Tab). Regel nach Plan §6.4 gestrichen, die
+    /// Menu-Kette reicht. Die Log-Zeile zeigt am Gerät, ob und wann der Setter mit gleichem Wert kommt.
+    private var tabSelection: Binding<AppTab> {
+        Binding(get: { tab }, set: { new in
+            if new == tab {
+                RemoteLog.info("nav", "Tab \(new.logName) erneut gewählt (Tiefe \(depth(new)), kein Pop)")
+            } else {
+                tab = new
+            }
+        })
+    }
+
+    /// Gepushte Seiten im Pfad eines Tabs (ohne NavigationLink-/navigationDestination(item:)-Seiten).
+    private func depth(_ t: AppTab) -> Int {
+        switch t {
+        case .home: path.count
+        case .search: searchPath.count
+        case .library: libraryPath.count
+        case .calendar: calendarPath.count
+        case .settings: settingsPath.count
         }
+    }
+
+    /// N2: Menu auf der Tab-Ebene eines anderen Tabs führt zum Start-Tab; erst dort verlässt Menu die App.
+    private func toStartTab(from t: AppTab, level: String) {
+        RemoteLog.info("nav", "Menu auf Tab-Ebene (\(t.logName), \(level)) → Start")
+        tab = .home
     }
 
     /// Seitenleiste oder Standard-Leiste oben. SwiftUI hat keinen typgelöschten TabViewStyle, daher bleibt die
@@ -133,14 +165,21 @@ struct RootView: View {
     /// `\.navigate` wird zusätzlich IN jeder Destination gesetzt: mit der Tab-API (`Tab {}` / `.sidebarAdaptable`)
     /// erreicht der außen am NavigationStack gesetzte Wert die gepushten Seiten nicht (dort galt der No-op-Standard,
     /// Abspielen/Ähnliche Titel auf der Detailseite taten nichts).
-    private func stack<V: View>(_ p: Binding<NavigationPath>, @ViewBuilder root: () -> V) -> some View {
+    /// `rootHandlesMenu`: Menu im Inhalt der Wurzelseite führt zum Start-Tab (N2, nur Tabs außer Start). Der
+    /// Handler sitzt an der Wurzelseite und greift nicht in gepushten Seiten (eigene Hosting-Ebene, der Stack
+    /// geht dort selbst zurück); innere Handler (Blätter, Spalten) haben Vorrang.
+    private func stack<V: View>(_ p: Binding<NavigationPath>, tab t: AppTab, rootHandlesMenu: Bool = true,
+                                @ViewBuilder root: () -> V) -> some View {
         let r = root()
         let push: (Route) -> Void = { route in
             RemoteLog.info("nav", "→ \(route.logName)")
             p.wrappedValue.append(route)
         }
+        let exit: (() -> Void)? = rootHandlesMenu && MenuChain.target(.tabRoot, tab: t) == .startTab
+            ? { toStartTab(from: t, level: "Inhalt") } : nil
         return NavigationStack(path: p) {
-            r.navigationDestination(for: Route.self) { RouteView(route: $0).environment(\.navigate, push) }
+            r.onExitCommand(perform: exit)
+                .navigationDestination(for: Route.self) { RouteView(route: $0).environment(\.navigate, push) }
         }
         .environment(\.navigate, push)
     }

@@ -34,6 +34,8 @@ struct SyncLoginView: View {
                 }
             }
             Text(status).font(.title3).foregroundStyle(done ? .green : .secondary)
+            // N6 (Welle F-c): QR-Seite ohne andere Fokusziele; „Fertig“ schließt sie (Abfrage endet mit der Seite).
+            FocusAnchor()
         }
         .padding(80)
         .task { await run() }
