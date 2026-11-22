@@ -211,8 +211,8 @@ struct GenrePageView: View {
             return (items, nil)
         case (_, .tmdbPage(let page)):
             guard let tmdb = model.tmdb else { return ([], nil) }
-            let r = try await tmdb.page(for: src, page: page)
-            return (r.items, r.totalPages)
+            let answer = try await tmdb.page(for: src, page: page)
+            return (answer.items, answer.totalPages)
         default:
             return ([], nil)
         }
