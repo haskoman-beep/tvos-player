@@ -4,22 +4,46 @@ import Foundation
 ///
 /// Ursache des Fehlers „keine Sprache für Ton und Untertitel wählbar“: das Panel ging nur über `onMoveCommand(.down)`
 /// auf. tvOS meldet dort nur den Klick auf den unteren Rand der Touchfläche, kein Wischen. Ein Wisch nach unten
-/// (wie in der TV-App) kam nur beim Pan-Recognizer der Spul-Steuerung an, der senkrechte Wischer verwarf.
+/// (tvOS-Konvention) kam nur beim Pan-Recognizer der Spul-Steuerung an, der senkrechte Wischer verwarf.
 public enum TrackPanelEntry {
+    /// Warum ein Öffnen-Wunsch nichts tut (für das Log).
+    public enum IgnoreReason: Equatable, Sendable {
+        case leaving, alreadyOpen, failure, scrubbing, skipPrompt
+        case busy(TrackLock)
+
+        public var logText: String {
+            switch self {
+            case .leaving: "Ausgang läuft"
+            case .alreadyOpen: "Panel schon offen"
+            case .failure: "Fehlerkarte steht"
+            case .scrubbing: "Spulen läuft"
+            case .skipPrompt: "Überspringen-Knopf hat den Fokus"
+            case .busy(let l): l.logText
+            }
+        }
+    }
+
     /// Was ein Öffnen-Wunsch (Wisch nach unten oder ▼-Klick) bewirkt.
     public enum Step: Equatable, Sendable {
         /// Panel öffnen.
         case open
         /// Erst die Up-next-Karte abbrechen (wie jede Richtungstaste), Panel bleibt zu.
         case cancelUpNext
-        /// Nichts tun (Ausgang läuft, Spulen läuft, Fehlerkarte, Panel schon offen).
-        case ignore
+        /// Nichts tun; der Grund geht ins Log.
+        case ignore(IgnoreReason)
     }
 
-    public static func decide(leaving: Bool, scrubbing: Bool, upNextShowing: Bool,
-                              failureShowing: Bool, alreadyOpen: Bool) -> Step {
-        if leaving || alreadyOpen || failureShowing || scrubbing { return .ignore }
+    /// `lock`: laufender Neuaufbau/Start (`TrackLock.current`); dann öffnet das Panel nicht.
+    /// Steht der Überspringen-Knopf, behält er den Fokus (Wisch und ▼ öffnen nicht).
+    public static func decide(leaving: Bool, scrubbing: Bool, upNextShowing: Bool, failureShowing: Bool,
+                              alreadyOpen: Bool, skipPromptShowing: Bool, lock: TrackLock?) -> Step {
+        if leaving { return .ignore(.leaving) }
+        if alreadyOpen { return .ignore(.alreadyOpen) }
+        if failureShowing { return .ignore(.failure) }
+        if scrubbing { return .ignore(.scrubbing) }
         if upNextShowing { return .cancelUpNext }
+        if skipPromptShowing { return .ignore(.skipPrompt) }
+        if let lock { return .ignore(.busy(lock)) }
         return .open
     }
 
@@ -35,6 +59,52 @@ public enum TrackPanelEntry {
         guard translationY > 0, translationY > abs(translationX) * 1.5 else { return false }
         if translationY >= swipeMinDistance { return true }
         return translationY >= swipeFastDistance && velocityY >= swipeFastVelocity
+    }
+}
+
+/// Welle F-h R1: Spurwahl gesperrt, solange die Sitzung neu aufgebaut wird oder der Start läuft. Sonst würde die
+/// Fehlerleiter eine Untertitelwahl danach still zurückdrehen und ein Ton-Neuladen liefe parallel zu ihrem.
+/// (`restorePending` nach dem Hintergrund sperrt nur den Ton, „gesperrt bis Play“, und steht nicht hier.)
+public enum TrackLock: Equatable, Sendable {
+    /// Neuaufbau nach dem Hintergrund läuft.
+    case restoring
+    /// Fehlerleiter lädt neu (Wartezeit, frischer Link, reloadAtCurrentPosition).
+    case recovering
+    /// Start (`engine.load`) läuft.
+    case loading
+    /// Wiederholter Start ist angesetzt, aber noch nicht begonnen.
+    case startPending
+    /// Fehlerleiter wartet auf das Netz.
+    case waitingForNetwork
+    /// Engine meldet einen Fehler, die Leiter hat noch nicht entschieden.
+    case engineError
+
+    /// Reihenfolge: was gerade läuft, vor dem, was nur angesetzt ist.
+    public static func current(restoring: Bool, recovering: Bool, loadInFlight: Bool, startPending: Bool,
+                               waitingForNetwork: Bool, engineError: Bool) -> TrackLock? {
+        if restoring { return .restoring }
+        if recovering { return .recovering }
+        if loadInFlight { return .loading }
+        if startPending { return .startPending }
+        if waitingForNetwork { return .waitingForNetwork }
+        if engineError { return .engineError }
+        return nil
+    }
+
+    /// Hinweis für den Nutzer.
+    public var text: String {
+        self == .waitingForNetwork ? "Gerade nicht möglich – warte auf das Netz" : "Gerade nicht möglich – Quelle wird geladen"
+    }
+
+    public var logText: String {
+        switch self {
+        case .restoring: "Neuaufbau nach Hintergrund"
+        case .recovering: "Fehlerleiter lädt neu"
+        case .loading: "Start lädt"
+        case .startPending: "Start angesetzt"
+        case .waitingForNetwork: "warte auf Netz"
+        case .engineError: "Engine-Fehler offen"
+        }
     }
 }
 

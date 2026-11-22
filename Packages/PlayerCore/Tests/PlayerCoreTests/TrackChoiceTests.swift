@@ -16,19 +16,60 @@ private func s(_ id: Int, _ lang: String?, forced: Bool = false, sdh: Bool = fal
 
 // MARK: Öffnen
 
+private func entry(leaving: Bool = false, scrubbing: Bool = false, upNext: Bool = false, failure: Bool = false,
+                   open: Bool = false, skip: Bool = false, lock: TrackLock? = nil) -> TrackPanelEntry.Step {
+    TrackPanelEntry.decide(leaving: leaving, scrubbing: scrubbing, upNextShowing: upNext, failureShowing: failure,
+                           alreadyOpen: open, skipPromptShowing: skip, lock: lock)
+}
+
 @Test func entryOpensOnlyWhenFree() {
-    let open = TrackPanelEntry.decide(leaving: false, scrubbing: false, upNextShowing: false, failureShowing: false, alreadyOpen: false)
-    #expect(open == .open)
-    let leaving = TrackPanelEntry.decide(leaving: true, scrubbing: false, upNextShowing: false, failureShowing: false, alreadyOpen: false)
-    #expect(leaving == .ignore)
-    let scrub = TrackPanelEntry.decide(leaving: false, scrubbing: true, upNextShowing: false, failureShowing: false, alreadyOpen: false)
-    #expect(scrub == .ignore)
-    let failure = TrackPanelEntry.decide(leaving: false, scrubbing: false, upNextShowing: false, failureShowing: true, alreadyOpen: false)
-    #expect(failure == .ignore)
-    let twice = TrackPanelEntry.decide(leaving: false, scrubbing: false, upNextShowing: false, failureShowing: false, alreadyOpen: true)
-    #expect(twice == .ignore)
-    let upNext = TrackPanelEntry.decide(leaving: false, scrubbing: false, upNextShowing: true, failureShowing: false, alreadyOpen: false)
-    #expect(upNext == .cancelUpNext)
+    #expect(entry() == .open)
+    #expect(entry(leaving: true) == .ignore(.leaving))
+    #expect(entry(scrubbing: true) == .ignore(.scrubbing))
+    #expect(entry(failure: true) == .ignore(.failure))
+    #expect(entry(open: true) == .ignore(.alreadyOpen))
+    #expect(entry(upNext: true) == .cancelUpNext)
+    // Ausgang schlägt alles
+    #expect(entry(leaving: true, upNext: true, lock: .loading) == .ignore(.leaving))
+}
+
+@Test func entrySkipPromptKeepsFocus() {
+    #expect(entry(skip: true) == .ignore(.skipPrompt))
+    #expect(TrackPanelEntry.IgnoreReason.skipPrompt.logText == "Überspringen-Knopf hat den Fokus")
+    // Up-next zuerst abbrechen, auch wenn der Knopf noch steht
+    #expect(entry(upNext: true, skip: true) == .cancelUpNext)
+}
+
+@Test func entryBlockedWhileReloading() {
+    #expect(entry(lock: .recovering) == .ignore(.busy(.recovering)))
+    #expect(entry(lock: .loading) == .ignore(.busy(.loading)))
+    #expect(TrackPanelEntry.IgnoreReason.busy(.restoring).logText == "Neuaufbau nach Hintergrund")
+}
+
+@Test func trackLockOrderAndText() {
+    let none = TrackLock.current(restoring: false, recovering: false, loadInFlight: false, startPending: false,
+                                 waitingForNetwork: false, engineError: false)
+    #expect(none == nil)
+    let restoring = TrackLock.current(restoring: true, recovering: true, loadInFlight: true, startPending: true,
+                                      waitingForNetwork: true, engineError: true)
+    #expect(restoring == .restoring)
+    let recovering = TrackLock.current(restoring: false, recovering: true, loadInFlight: false, startPending: true,
+                                       waitingForNetwork: false, engineError: true)
+    #expect(recovering == .recovering)
+    let loading = TrackLock.current(restoring: false, recovering: false, loadInFlight: true, startPending: false,
+                                    waitingForNetwork: false, engineError: false)
+    #expect(loading == .loading)
+    let pending = TrackLock.current(restoring: false, recovering: false, loadInFlight: false, startPending: true,
+                                    waitingForNetwork: false, engineError: false)
+    #expect(pending == .startPending)
+    let net = TrackLock.current(restoring: false, recovering: false, loadInFlight: false, startPending: false,
+                                waitingForNetwork: true, engineError: false)
+    #expect(net == .waitingForNetwork)
+    let err = TrackLock.current(restoring: false, recovering: false, loadInFlight: false, startPending: false,
+                                waitingForNetwork: false, engineError: true)
+    #expect(err == .engineError)
+    #expect(TrackLock.loading.text == "Gerade nicht möglich – Quelle wird geladen")
+    #expect(TrackLock.waitingForNetwork.text == "Gerade nicht möglich – warte auf das Netz")
 }
 
 @Test func swipeDownRecognition() {
@@ -45,10 +86,18 @@ private func s(_ id: Int, _ lang: String?, forced: Bool = false, sdh: Bool = fal
 }
 
 @Test func swipeDownNeverAlsoScrubs() {
-    // Was als Wisch nach unten zählt, ist nie waagerecht genug zum Spulen.
+    // Diese Wischer gelten als Wisch nach unten, und keiner davon spult.
     for (x, y) in [(0.0, 300.0), (100, 160), (199, 300), (-150, 240)] {
-        if TrackPanelEntry.isSwipeDown(translationX: x, translationY: y, velocityY: 0) {
-            #expect(!ScrubPlanner.panIsHorizontal(translationX: x, translationY: y))
+        #expect(TrackPanelEntry.isSwipeDown(translationX: x, translationY: y, velocityY: 0))
+        #expect(!ScrubPlanner.panIsHorizontal(translationX: x, translationY: y))
+    }
+    // Gitter über viele Winkel und Längen: nie beides zugleich.
+    for deg in stride(from: 0.0, to: 360.0, by: 5.0) {
+        for len in [50.0, 100, 200, 400] {
+            let x = cos(deg * .pi / 180) * len, y = sin(deg * .pi / 180) * len
+            let down = TrackPanelEntry.isSwipeDown(translationX: x, translationY: y, velocityY: 2000)
+            let horizontal = ScrubPlanner.panIsHorizontal(translationX: x, translationY: y)
+            #expect(!(down && horizontal))
         }
     }
 }

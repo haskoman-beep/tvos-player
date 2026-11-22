@@ -44,6 +44,8 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
     var sourceURL: URL? = nil
     /// Tonspur-Wechsel gesperrt (nach dem Hintergrund bis Play neu aufgebaut hat).
     var audioLocked = false
+    /// Welle F-h R1: Spurwahl ganz gesperrt (Neuaufbau, Fehlerleiter, Start); nil = frei. Wird beim Wählen neu gelesen.
+    var lock: () -> TrackLock? = { nil }
     /// Welle D-a: Nutzerwahl merken (Spur-Gedächtnis je Serie); nil = aus.
     var onRemember: ((TrackMemoryChange) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
@@ -77,6 +79,7 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
+            if let l = lock() { Text(l.text).font(.callout).foregroundStyle(.secondary) }
             tabBar.focusSection()
             content.focusSection()
         }
@@ -172,6 +175,7 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
                 if tracks.isEmpty { Text("Keine Tonspuren").foregroundStyle(.secondary).padding(16) }
                 ForEach(Array(tracks.enumerated()), id: \.element.id) { i, t in
                     row(TrackPanelLogic.audioRow(t, number: i + 1), active: t.id == engine.activeAudioID) {
+                        guard !blocked() else { return }
                         // Engine: sitzungserhaltendes Neuladen an derselben Stelle (AetherEngine selectAudioTrack).
                         switch TrackChoice.audioAction(selected: t.id, active: engine.activeAudioID, locked: audioLocked) {
                         case .apply: engine.selectAudio(t.id); onRemember?(.audio(t)); logChoice(audio: t)
@@ -197,6 +201,7 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
             VStack(alignment: .leading, spacing: 4) {
                 offsetRow
                 row(TrackRowLabel(title: "Aus", detail: nil, name: nil, badges: []), active: engine.activeSubtitleID == nil) {
+                    guard !blocked() else { return }
                     engine.selectSubtitle(nil); onRemember?(.subtitle(nil)); logChoice(subtitle: .some(nil)); dismiss()
                 }
                 .focused($focus, equals: .subtitleOff)
@@ -206,6 +211,7 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
                         .padding(.horizontal, 16).padding(.top, 18)
                     ForEach(Array(g.tracks.enumerated()), id: \.element.id) { i, t in
                         row(TrackPanelLogic.subtitleRow(t, number: i + 1), active: t.id == engine.activeSubtitleID) {
+                            guard !blocked() else { return }
                             engine.selectSubtitle(t.id); onRemember?(.subtitle(t)); logChoice(subtitle: .some(t)); dismiss()
                         }
                         .focused($focus, equals: .subtitle(t.id))
@@ -257,6 +263,16 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
         RemoteLog.info("player", "UT-Versatz: \(SubtitleOffset.label(n))"
                        + (n < 0 && embedded ? " · Vorauslesen der Engine aktiv (Fernquelle wird teils doppelt geladen)" : ""))
         onRemember?(.offset(n))
+    }
+
+    // MARK: Sperre (R1)
+
+    /// Sperre beim Wählen: Hinweis loggen, Panel schließen, nichts umschalten. true = gesperrt.
+    private func blocked() -> Bool {
+        guard let l = lock() else { return false }
+        RemoteLog.info("player", "Spurwahl gesperrt: \(l.logText)")
+        dismiss()
+        return true
     }
 
     // MARK: Log
