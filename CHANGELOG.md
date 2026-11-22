@@ -17,6 +17,12 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 
 ## [Unreleased]
 
+### Added
+- Groundwork for "who is in the picture" on pause (X-Ray, not visible yet): face alignment, comparison and
+  matching logic, an on-device cache of cast face data (30 days per title, nothing is uploaded), and a
+  background step that loads the full cast of a film or episode (including guest stars) and several TMDB
+  portraits per person.
+
 ## [Build 198] – 2026-11-22 (integ)
 
 ### Added
