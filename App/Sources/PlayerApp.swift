@@ -66,6 +66,9 @@ struct RootView: View {
     @State private var pickedProfile = false
     /// Gewählte Einstellungs-Kategorie; liegt hier, damit sie den Neuaufbau beim Wechsel der Navigationsart übersteht.
     @State private var settingsCategory: SettingsCategory = .profile
+    /// Wurzel der Einstellungen sichtbar (keine NavigationLink-Unterseite offen): deren Unterseiten liegen nicht
+    /// in `settingsPath`, darum zählt hier onAppear/onDisappear der Wurzel (Review F-c I2).
+    @State private var settingsRootVisible = false
 
     var body: some View {
         Group {
@@ -103,20 +106,24 @@ struct RootView: View {
                 // Menu-Kette der Einstellungen: Inhalt → aktive Kategorie (CategoryList) → Start-Tab (N2).
                 stack($settingsPath, tab: .settings, rootHandlesMenu: false) {
                     SettingsView(selected: $settingsCategory) { toStartTab(from: .settings, level: "Kategorienspalte") }
+                        .onAppear { settingsRootVisible = true }
+                        .onDisappear { settingsRootVisible = false }
                 }
             }
         }
         .onChange(of: tab) { old, new in RemoteLog.info("nav", "Tab \(old.logName) → \(new.logName)") }
         // Menu in der Tab-/Seitenleiste eines anderen Tabs als Start: erst zum Start-Tab (N2). Auf Start und mit
-        // gepushten Seiten `nil`: dann gilt das System (Stack poppen bzw. App verlassen). Einstellungen: deren
-        // Unterseiten liegen nicht im Pfad (NavigationLink), darum dort kein Handler auf dieser Ebene.
+        // gepushten Seiten `nil`: dann gilt das System (Stack poppen bzw. App verlassen). Einstellungen: nur bei
+        // sichtbarer Wurzel (Unterseiten sind NavigationLinks außerhalb des Pfads); die Kategorienspalte hat als
+        // innerer Handler Vorrang.
         .onExitCommand(perform: tabBarExit)
     }
 
     private var tabBarExit: (() -> Void)? {
         let t = tab
-        guard t != .settings, MenuChain.handlesAtTabLevel(tab: t, depth: depth(t)) else { return nil }
-        return { toStartTab(from: t, level: "Leiste") }
+        let d = t == .settings && !settingsRootVisible ? depth(t) + 1 : depth(t)
+        guard MenuChain.handlesAtTabLevel(tab: t, depth: d) else { return nil }
+        return { toStartTab(from: t, level: "Handler Leiste") }
     }
 
     /// Auswahl der TabView. Zweiter Druck auf den aktiven Tab (§3.3) poppt NICHT: SwiftUI bietet für `Tab`/
@@ -176,7 +183,7 @@ struct RootView: View {
             p.wrappedValue.append(route)
         }
         let exit: (() -> Void)? = rootHandlesMenu && MenuChain.target(.tabRoot, tab: t) == .startTab
-            ? { toStartTab(from: t, level: "Inhalt") } : nil
+            ? { toStartTab(from: t, level: "Handler Inhalt") } : nil
         return NavigationStack(path: p) {
             r.onExitCommand(perform: exit)
                 .navigationDestination(for: Route.self) { RouteView(route: $0).environment(\.navigate, push) }

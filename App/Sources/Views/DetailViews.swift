@@ -24,7 +24,7 @@ struct CollectionView: View {
     var body: some View {
         ScrollView(.vertical) {
             HomeRowView(row: HomeRow(content: .collection(id: collectionID)), onActivate: { $0 })
-            if model.collection(collectionID)?.folders.isEmpty ?? true {
+            if model.collection(collectionID)?.folders.isEmpty == true {
                 FocusAnchor(kind: .back).padding(.leading, 60)   // N6 (Welle F-c): leere oder fehlende Collection
             }
         }
@@ -69,7 +69,12 @@ struct DetailView: View {
     /// Welle F-c (§3.2): Quellenliste/Player geöffnet; bei der Rückkehr Fokus auf „Abspielen“ bzw. die nächste
     /// ungesehene Folge (auch über die Staffelgrenze). Zähler startet die Rückkehr-Aufgabe (.task(id:)).
     @State private var openedPlayback = false
+    /// Fortschritts-Stand beim Öffnen: nur wenn danach wirklich gespielt wurde (Stand geändert), springt der Fokus
+    /// (Review F-c M1); sonst bleibt der System-Fokus auf der gedrückten Zeile.
+    @State private var openedPlaybackStamp: Date?
     @State private var returnFocusToken = 0
+    /// Rückkehr noch auszuführen; `.task(id:)` läuft bei jedem Erscheinen erneut (Review F-c I1).
+    @State private var pendingReturnFocus = false
     /// Folge, zu der die Folgenliste scrollt, bevor sie den Fokus bekommt (LazyVStack legt sie sonst nicht an).
     @State private var scrollTarget: String?
     @State private var scrollRequest = 0
@@ -112,7 +117,7 @@ struct DetailView: View {
                                 let resume = model.progress.resumePosition(for: imdb)
                                 HStack(spacing: 30) {
                                     Button(resume.map { "▶ Fortsetzen ab \(timeText($0))" } ?? "▶ Abspielen") {
-                                        openedPlayback = true
+                                        markOpenedPlayback()
                                         navigate(.streams(model.moviePlayRequest(item, imdb: imdb, meta: meta, resumeLastSource: resume != nil)))
                                     }
                                     .focused($focus, equals: .play)
@@ -140,7 +145,12 @@ struct DetailView: View {
         .onAppear {
             if loaded, openedPlayback {
                 openedPlayback = false
-                returnFocusToken += 1
+                if playbackStamp != openedPlaybackStamp {
+                    pendingReturnFocus = true
+                    returnFocusToken += 1
+                } else {
+                    RemoteLog.info("fokus", "Detail: zurück ohne Wiedergabe, Fokus bleibt")
+                }
             }
             if appeared == nil { appeared = Date() }
             // Quellen schon im Cache (z. B. zweiter Besuch): Technik-Plaketten im ersten Bild, nicht erst nach dem Laden.
@@ -194,7 +204,8 @@ struct DetailView: View {
             await translateSeason()
         }
         .task(id: returnFocusToken) {
-            guard returnFocusToken > 0 else { return }
+            guard pendingReturnFocus else { return }
+            pendingReturnFocus = false
             // Erst nach dem Zurück-Übergang: sonst setzt die Rückkehr-Animation den Fokus wieder auf den alten Knopf.
             try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled else { return }
@@ -223,6 +234,14 @@ struct DetailView: View {
                          isTrailer: true, remoteHLS: t.stream.isHLS)
                 .environmentObject(model)
         }
+    }
+
+    /// Letzte Änderung am Fortschritt dieses Titels (nil = noch nie gespielt).
+    private var playbackStamp: Date? { imdb.flatMap { model.progress.latest(forItem: $0)?.updated } }
+
+    private func markOpenedPlayback() {
+        openedPlayback = true
+        openedPlaybackStamp = playbackStamp
     }
 
     /// Fokusziel (§3.2): Film „Abspielen“; Serie die nächste ungesehene Folge nach der zuletzt gespielten
@@ -366,7 +385,7 @@ struct DetailView: View {
                     let isFirst = v.id == eps.first?.id
                     Button {
                         let e = v.episode ?? 0
-                        openedPlayback = true
+                        markOpenedPlayback()
                         navigate(.streams(PlayRequest(type: "series", id: "\(imdb):\(season):\(e)", title: "\(item.name) S\(season)E\(e)",
                                                       item: progressItem(imdb), season: season, episode: e,
                                                       episodes: EpisodeRef.list(from: meta?.videos ?? []))))
@@ -459,6 +478,9 @@ struct StreamListView: View {
     @State private var entryFocusDone = false
     /// Zuletzt gescheiterte Quelle (von `fallback` gesetzt, beim Schließen des Players verbraucht).
     @State private var lastFailure: String?
+    /// Automatischer Wechsel geplant: dann kein Fokuswunsch nach dem Fehler (Review F-c M2; das nächste Vollbild
+    /// öffnet gleich, beim Schließen gilt die Regel für die zuletzt gespielte Quelle).
+    @State private var autoSwitchScheduled = false
 
     var body: some View {
         // Welle E-b: Addon-Name nur, wenn die Liste mehrere Addons mischt (sonst steht er schon im Text des Addons).
@@ -495,6 +517,8 @@ struct StreamListView: View {
             }
             .task(id: focusRequest) {
                 guard let r = focusRequest else { return }
+                // Verbrauchen (Review F-c M4): beim nächsten Erscheinen nicht erneut setzen; neuere Anfrage bleibt.
+                defer { if focusRequest?.token == r.token { focusRequest = nil } }
                 // Nach dem Player: erst nach dem Schließen des Vollbilds (sonst setzt tvOS den Fokus auf die gedrückte Zeile).
                 try? await Task.sleep(for: .milliseconds(r.delayMs))
                 for attempt in 1...4 {
@@ -533,6 +557,7 @@ struct StreamListView: View {
                 let pick = Self.resumeCandidate(last, in: model.autoOrderedStreams(streams), title: request.id)
                 if let s = pick.stream {
                     RemoteLog.info("player", "Weiterschauen mit letzter Quelle: \(s.name ?? "") \(s.label.prefix(60))")
+                    entryFocusDone = true   // Review F-c M3: Rückkehr regelt focusAfterPlayer, nicht der Eintritt
                     playing = s
                 } else {
                     nextNote = pick.note
@@ -599,6 +624,11 @@ extension StreamListView {
     func focusAfterPlayer(_ played: StreamItem) {
         let failure = lastFailure == played.id
         lastFailure = nil
+        if failure, autoSwitchScheduled {
+            autoSwitchScheduled = false
+            RemoteLog.info("fokus", "Quellenliste nach Fehler: automatischer Wechsel geplant, kein Fokuswunsch")
+            return
+        }
         let ids = streams.map(\.stream.id)
         guard let id = SourceFocus.afterPlayer(ids: ids, played: played.id, failed: failure, isPlayable: focusPlayable)
         else { return }
@@ -621,6 +651,7 @@ extension StreamListView {
     func fallback(from s: StreamItem, reason: String) {
         failed.insert(s.id)
         lastFailure = s.id
+        autoSwitchScheduled = false
         playing = nil
         // Welle E-b: Rückfall in kluger Ordnung (Dekoder, Sprache, Cache), auch wenn die Liste wie das Addon sortiert ist.
         let list = model.autoOrderedStreams(streams).map(\.stream)
@@ -631,6 +662,7 @@ extension StreamListView {
             return
         }
         fallbacks += 1
+        autoSwitchScheduled = true
         nextNote = "\(reason) – versuche nächste Quelle (\(fallbacks)/3) …"
         RemoteLog.info("player", "Wechsel \(fallbacks)/3 auf: \(next.name ?? "") \(next.title?.prefix(60) ?? "")")
         Task {
