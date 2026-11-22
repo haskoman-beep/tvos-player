@@ -84,7 +84,7 @@ final class ScrubController: ObservableObject {
     func attach<E: PlaybackEngine>(engine: E, canScrub: @escaping () -> Bool, edges: @escaping () -> [Double],
                                    holdAllowed: @escaping () -> Bool,
                                    holdOrigin: @escaping (Bool) -> Double, holdLimit: @escaping (Double) -> Double,
-                                   swipeDown: @escaping () -> Void) {
+                                   swipeDown: @escaping () -> Void, verticalQuiet: @escaping () -> Bool = { false }) {
         self.canScrub = canScrub
         self.swipeDown = swipeDown
         self.edges = edges
@@ -99,6 +99,7 @@ final class ScrubController: ObservableObject {
         input.onPan = { [weak self] dx, vx in self?.pan(dx, vx) }
         input.onPanEnded = { [weak self] in self?.planner.panEnded() }
         input.onSwipeDown = { [weak self] in self?.swipeDown() }
+        input.verticalQuiet = verticalQuiet
         input.onTouch = { [weak self] x, y in self?.touch(x, y) }
         input.onTouchEnded = { [weak self] in self?.planner.touchEnded() }
         input.onHoldBegan = { [weak self] forward in self?.holdBegan(forward) }
@@ -299,6 +300,8 @@ final class RemoteTouchInput: NSObject, UIGestureRecognizerDelegate {
     var onPanEnded: () -> Void = {}
     /// Welle F-h: Wischbewegung endete als Wisch nach unten (`TrackPanelEntry.isSwipeDown`).
     var onSwipeDown: () -> Void = {}
+    /// Welle F-h2 R1: senkrechtes Wischen gehört gerade jemand anderem (offenes Spur-Panel): nichts melden, nichts loggen.
+    var verticalQuiet: () -> Bool = { false }
     var onTouch: (Double, Double) -> Void = { _, _ in }
     var onTouchEnded: () -> Void = {}
     /// Welle G-a: ◀/▶ gehalten (true = vor) bzw. losgelassen.
@@ -383,7 +386,7 @@ final class RemoteTouchInput: NSObject, UIGestureRecognizerDelegate {
             lastTranslation = 0
             onPanEnded()
             // Welle F-h: senkrechter Wisch nach unten öffnet das Spur-Panel (Spulen ist nur waagerecht).
-            guard g.state == .ended else { return }
+            guard g.state == .ended, !verticalQuiet() else { return }
             let vy = Double(g.velocity(in: g.view).y)
             if TrackPanelEntry.isSwipeDown(translationX: Double(tr.x), translationY: Double(tr.y), velocityY: vy) {
                 onSwipeDown()

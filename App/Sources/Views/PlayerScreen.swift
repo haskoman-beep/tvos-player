@@ -186,6 +186,9 @@ struct PlayerControls<E: PlaybackEngine>: View {
     @Environment(\.dismiss) var dismiss
     @State private var showOverlay = true
     @State private var showTracks = false
+    /// Welle F-h2 R1: Ton-Neuladen aus dem Panel läuft (sperrt Untertitel/Versatz, `TrackLock.audioSwitching`).
+    @State private var audioSwitch = AudioSwitchWatch()
+    @State private var audioSwitchSerial = 0
     @State private var hideTask: Task<Void, Never>?
     @State private var loadError: String?
     @State private var tick = 0
@@ -305,8 +308,9 @@ struct PlayerControls<E: PlaybackEngine>: View {
                          holdAllowed: { !leaving },
                          holdOrigin: { fastSeekOrigin(forward: $0) },
                          holdLimit: { FastSeek.upperLimit(duration: engine.duration, creditsStart: skip.upNextAt, origin: $0) },
-                         // F-h2: im offenen Panel ist Wischen nach unten ein Listenschritt, kein Öffnen (kein Log-Rauschen).
-                         swipeDown: { if !showTracks { openTracks("Wisch nach unten") } })
+                         // F-h2: im offenen Panel ist senkrechtes Wischen ein Listenschritt (kein Öffnen, kein Log-Rauschen).
+                         swipeDown: { if !showTracks { openTracks("Wisch nach unten") } },
+                         verticalQuiet: { showTracks })
             idleTick(failed: failureNotice != nil || loadError != nil)
             NowPlayingBridge.route(engine, handlers: .init(context: { RemoteTransportContext(isPlaying: engine.isPlaying, isBusy: engine.isLoading, position: pendingSeek ?? engine.currentTime, inputBlocked: leaving || scrub.isActive || showTracks || failureNotice != nil, upNextShowing: upNext != nil, sinceLastPress: Date().timeIntervalSince(lastToggle)) }, toggle: { onUserInput(); togglePlay() }, seekBy: { onUserInput(); queueSeek($0); poke() }))
             guard loadTask == nil else { return }
@@ -342,7 +346,19 @@ struct PlayerControls<E: PlaybackEngine>: View {
         .onChange(of: scrub.isActive) { _, a in if a { onUserInput() }; poke() }
         .onChange(of: scrub.holdSpeed != nil) { _, h in if h { onUserInput() } }   // G-a R1: Halten zählt als Eingabe
         .onChange(of: scrub.target) { _, _ in poke() }
-        .fullScreenCover(isPresented: $showTracks) { PlayerTrackPanel(engine: engine, profile: profile, sourceURL: url, audioLocked: restorePending, lock: { trackLock }, onRemember: onRemember) }
+        .fullScreenCover(isPresented: $showTracks) {
+            PlayerTrackPanel(engine: engine, profile: profile, sourceURL: url, audioLocked: restorePending, shownLock: trackLock,
+                             lock: { trackLock }, onAudioSwitch: { beginAudioSwitch($0) }, onRemember: onRemember)
+        }
+        .onChange(of: engine.isLoading) { _, _ in checkAudioSwitch() }
+        .onChange(of: engine.activeAudioID) { _, _ in checkAudioSwitch() }
+        .task(id: audioSwitchSerial) {
+            // Zeitgrenzen der Wechsel-Wache (verworfen nach 3 s, hart nach 30 s) auch ohne Engine-Änderung prüfen.
+            while !Task.isCancelled, audioSwitch.isActive {
+                try? await Task.sleep(for: .seconds(1))
+                checkAudioSwitch()
+            }
+        }
         // Play von außen (Siri, Kontrollzentrum) nach dem Hintergrund: erst neu aufbauen.
         .onChange(of: engine.isPlaying) { _, p in if p { stabilityPlaying() }; if p, restorePending { restoreAndPlay() } }
         .onPlayerLifecycle { handlePhase($0) }
@@ -411,8 +427,9 @@ struct PlayerControls<E: PlaybackEngine>: View {
         if rem < 120 || now >= cardAt - 100, !nextPrefetched { nextPrefetched = true; onNextSoon() }
         if let n = upNext {
             if now < cardAt - 20 { withAnimation { upNext = nil } }   // zurückgespult
-            else if engine.isPlaying { if n <= 1 { startNext() } else { upNext = n - 1 } }
-        } else if now >= cardAt, rem > 0, engine.isPlaying, !upNextCancelled {
+            // F-h2 R1 M7: hinter dem offenen Spur-Panel zählt die Karte nicht weiter.
+            else if engine.isPlaying, !showTracks { if n <= 1 { startNext() } else { upNext = n - 1 } }
+        } else if now >= cardAt, rem > 0, engine.isPlaying, !upNextCancelled, !showTracks {
             let fromCredits = cardAt < engine.duration - 20 ? " · ab Abspann \(Int(cardAt))s" : ""
             RemoteLog.info("player", "Up-next: \(nextTitle ?? "")\(fromCredits)")
             withAnimation { upNext = 10 }
@@ -501,7 +518,23 @@ struct PlayerControls<E: PlaybackEngine>: View {
     var trackLock: TrackLock? {
         TrackLock.current(restoring: restoring, recovering: recovering, loadInFlight: stab.loadInFlight,
                           startPending: stab.startPending, waitingForNetwork: stab.networkNotice != nil,
-                          engineError: engine.errorText != nil)
+                          engineError: engine.errorText != nil, audioSwitching: audioSwitch.isActive)
+    }
+
+    /// Welle F-h2 R1: Ton-Neuladen aus dem Panel begonnen.
+    private func beginAudioSwitch(_ id: Int) {
+        audioSwitch.begin(id, now: Date())
+        audioSwitchSerial += 1
+        RemoteLog.info("player", "Tonwechsel lädt (Ton-ID \(id)) · Untertitel/Versatz gesperrt")
+    }
+
+    private func checkAudioSwitch() {
+        guard audioSwitch.isActive else { return }
+        let target = audioSwitch.target
+        if let o = audioSwitch.update(activeID: engine.activeAudioID, isLoading: engine.isLoading,
+                                      failed: engine.errorText != nil, now: Date()) {
+            RemoteLog.info("player", "Tonwechsel \(o.logText) (Ziel \(target.map(String.init) ?? "-") · aktiv \(engine.activeAudioID.map(String.init) ?? "-")) · Spurwahl frei")
+        }
     }
 
     private func togglePlay() {
