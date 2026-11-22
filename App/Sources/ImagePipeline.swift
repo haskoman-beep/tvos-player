@@ -19,6 +19,8 @@ actor ImagePipeline {
     private let urlCache: URLCache
     /// NSCache ist threadsicher: `cachedImage` liest ohne Umweg über den Actor (Bild ohne Überblendung zeigen).
     nonisolated(unsafe) private let memory = NSCache<NSString, UIImage>()
+    /// Welle F-g: bewegte Fokusbilder (GIF) getrennt vom Bildcache: nur das zuletzt fokussierte bleibt (~30 MB).
+    private let animated = NSCache<NSString, UIImage>()
     /// Belegung des Speichercaches (Verdrängen meldet NSCache über den Delegate).
     private let tracker = CacheCostTracker()
     private var costLimit = ImageCacheBudget.maximum
@@ -42,6 +44,7 @@ actor ImagePipeline {
         urlCache = cache
         memory.totalCostLimit = ImageCacheBudget.maximum
         memory.delegate = tracker
+        animated.countLimit = 1
         NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: nil) { [weak self] _ in
             Task { await self?.memoryWarning() }
         }
@@ -102,6 +105,7 @@ actor ImagePipeline {
 
     private func clearMemory() {
         memory.removeAllObjects()
+        animated.removeAllObjects()
         tracker.reset()
         // Speicheranteil des URLCache leeren, Plattencache behalten.
         urlCache.memoryCapacity = 0
@@ -140,6 +144,43 @@ actor ImagePipeline {
             }
         }
         return kr == KERN_SUCCESS ? info.phys_footprint : nil
+    }
+
+    /// Welle F-g: GIF als bewegtes Bild (Einzelbilder höchstens `maxPixels`, ausgedünnt nach `GIFFramePlan`).
+    /// Nicht während der Wiedergabe; Fehlschläge werden wie beim Standbild 5 min gemerkt.
+    func animatedImage(_ url: URL, maxPixels: Int) async -> UIImage? {
+        guard !playback else { return nil }
+        let key = "\(url.absoluteString)#anim\(maxPixels)"
+        if let img = animated.object(forKey: key as NSString) { return img }
+        if let t = failed[key], Date().timeIntervalSince(t) < 300 { return nil }
+        guard let (data, resp) = try? await session.data(from: url),
+              (resp as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true else {
+            failed[key] = Date(); return nil
+        }
+        await acquire()
+        let decoded = await Task.detached(priority: .utility) { Self.decodeAnimated(data, maxPixels: maxPixels) }.value
+        release()
+        guard let (img, cost) = decoded else { failed[key] = Date(); return nil }
+        if !playback { animated.setObject(img, forKey: key as NSString, cost: cost) }
+        return img
+    }
+
+    /// Alle (bzw. ausgedünnte) Einzelbilder verkleinert; Rückgabe mit Speicherkosten (ein bewegtes UIImage hat kein cgImage).
+    nonisolated static func decodeAnimated(_ data: Data, maxPixels: Int) -> (UIImage, Int)? {
+        guard let src = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
+        let n = CGImageSourceGetCount(src)
+        guard n > 1 else { return downsample(src, maxPixels: maxPixels).map { ($0, cost($0)) } }
+        var delays: [Double?] = []
+        for i in 0..<n {
+            let props = CGImageSourceCopyPropertiesAtIndex(src, i, nil) as? [CFString: Any]
+            let gif = props?[kCGImagePropertyGIFDictionary] as? [CFString: Any]
+            let d = (gif?[kCGImagePropertyGIFUnclampedDelayTime] as? NSNumber) ?? (gif?[kCGImagePropertyGIFDelayTime] as? NSNumber)
+            delays.append(d?.doubleValue)
+        }
+        let frames = GIFFramePlan.indices(frameCount: n).compactMap { downsample(src, maxPixels: maxPixels, index: $0) }
+        guard !frames.isEmpty else { return nil }
+        guard let img = UIImage.animatedImage(with: frames, duration: GIFFramePlan.duration(delays: delays)) else { return nil }
+        return (img, frames.reduce(0) { $0 + cost($1) })
     }
 
     /// Für Reihen: die nächsten Bilder schon laden.
@@ -206,14 +247,14 @@ actor ImagePipeline {
         return downsample(src, maxPixels: maxPixels)
     }
 
-    nonisolated private static func downsample(_ src: CGImageSource, maxPixels: Int) -> UIImage? {
+    nonisolated private static func downsample(_ src: CGImageSource, maxPixels: Int, index: Int = 0) -> UIImage? {
         let opts: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceShouldCacheImmediately: true,
             kCGImageSourceThumbnailMaxPixelSize: maxPixels,
         ]
-        guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) else { return nil }
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(src, index, opts as CFDictionary) else { return nil }
         return UIImage(cgImage: cg)
     }
 
@@ -313,6 +354,62 @@ struct RemoteImage: View {
             guard let image, ImagePipeline.cost(image) >= Self.releaseBytes else { return }
             self.image = nil
             loadedURL = nil
+        }
+    }
+}
+
+/// Welle F-g: bewegtes Bild (UIImage.animatedImage) – SwiftUI `Image` spielt es nicht ab, `UIImageView` schon.
+struct AnimatedImageView: UIViewRepresentable {
+    let image: UIImage
+
+    func makeUIView(context: Context) -> UIImageView {
+        let v = UIImageView()
+        v.contentMode = .scaleAspectFill
+        v.clipsToBounds = true
+        // Größe bestimmt SwiftUI (.frame), nicht die Bildgröße.
+        for axis in [NSLayoutConstraint.Axis.horizontal, .vertical] {
+            v.setContentHuggingPriority(.defaultLow, for: axis)
+            v.setContentCompressionResistancePriority(.defaultLow, for: axis)
+        }
+        return v
+    }
+
+    func updateUIView(_ v: UIImageView, context: Context) {
+        guard v.image !== image else { return }
+        v.image = image
+        v.startAnimating()
+    }
+
+    static func dismantleUIView(_ v: UIImageView, coordinator: Coordinator) {
+        v.stopAnimating()
+        v.image = nil
+    }
+}
+
+/// Welle F-g: GIF, das nur auf der fokussierten Kachel spielt. Erst nach kurzer Ruhe geladen (schnelles Durchscrollen
+/// lädt nichts); beim Verlassen gibt die Kachel die Einzelbilder frei.
+struct FocusGIF: View {
+    let url: String
+    let focused: Bool
+    @State private var image: UIImage?
+    /// Fehlgeschlagene Adressen nur einmal je Start loggen.
+    @MainActor private static var logged = Set<String>()
+
+    var body: some View {
+        ZStack {
+            if focused, let image { AnimatedImageView(image: image).transition(.opacity) }
+        }
+        .allowsHitTesting(false)
+        .task(id: focused) {
+            guard focused, let u = URL(string: url) else { image = nil; return }
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            let img = await ImagePipeline.shared.animatedImage(u, maxPixels: GIFFramePlan.maxPixels)
+            guard !Task.isCancelled else { return }
+            if img == nil, Self.logged.insert(url).inserted {
+                RemoteLog.info("bilder", "Fokus-GIF nicht geladen (\(u.host ?? "?") \(u.lastPathComponent))")
+            }
+            withAnimation(.easeOut(duration: 0.2)) { image = img }
         }
     }
 }

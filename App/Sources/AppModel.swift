@@ -284,7 +284,10 @@ final class AppModel: ObservableObject {
         update { p in if !p.collections.contains(where: { $0.id == c.id }) { p.collections.append(c) } }
     }
 
-    func collection(_ id: String) -> MediaCollection? { profile.collections.first { $0.id == id } ?? FusionKitStore.shared.collection(id) }
+    /// Welle F-g: Paket-Kacheln bekommen ihre Bilder auch in Profil-Kopien von vor F-g (ReadyPackages.withArtwork).
+    func collection(_ id: String) -> MediaCollection? {
+        profile.collections.first { $0.id == id }.map { ReadyPackages.withArtwork($0) } ?? FusionKitStore.shared.collection(id)
+    }
 
     // MARK: Kataloge
 

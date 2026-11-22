@@ -33,7 +33,7 @@ public enum NuvioImport {
                 let ftitle = rf.title ?? "?"
                 folders.append(Folder(id: rf.id ?? "nuvio.folder." + stableHash(ctitle + "|" + ftitle), title: ftitle,
                                       coverImage: rf.coverImageUrl, logo: rf.titleLogoUrl, backdrop: rf.heroBackdropUrl,
-                                      sources: sources))
+                                      sources: sources, focusGif: rf.focusGifEnabled == false ? nil : rf.focusGifUrl))
             }
             let title = ctitle
             if var existing = byTitle[title] {
@@ -60,6 +60,7 @@ public enum NuvioImport {
                 out[i].coverImage = out[i].coverImage ?? f.coverImage
                 out[i].logo = out[i].logo ?? f.logo
                 out[i].backdrop = out[i].backdrop ?? f.backdrop
+                out[i].focusGif = out[i].focusGif ?? f.focusGif
             } else {
                 var f = f
                 var seen = Set<String>()
@@ -188,6 +189,8 @@ public enum NuvioImport {
     struct RawFolder: Decodable {
         var id: String?; var title: String?; var coverImageUrl: String?; var titleLogoUrl: String?
         var heroBackdropUrl: String?; var sources: [RawSource]?; var catalogSources: [RawSource]?
+        /// Bewegtes Fokusbild (Welle F-g); `focusGifEnabled == false` schaltet es ab.
+        var focusGifUrl: String?; var focusGifEnabled: Bool?
     }
     struct RawSource: Decodable {
         var id: String?; var name: String?; var title: String?; var provider: String?

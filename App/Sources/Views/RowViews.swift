@@ -24,6 +24,8 @@ struct HomeRowView: View {
     @Environment(\.homeRowFocusMemory) private var focusMemory
     /// Welle C-d: nachgezogene Sendezeiten (TVmaze) → Reihe „Heute neu“ lädt aus dem Kalender-Cache neu.
     @ObservedObject private var upcomingRevision = UpcomingRevision.shared
+    /// Welle F-g: Kit-Ladefehler und laufende Ladungen (Statuskachel der Kit-Collections).
+    @ObservedObject private var kit = FusionKitStore.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
@@ -73,8 +75,13 @@ struct HomeRowView: View {
     private var title: String {
         switch row.content {
         case .list(let s): s.title
-        case .collection(let id): model.collection(id)?.title ?? "Collection"
+        case .collection(let id): model.collection(id)?.title ?? kit.sourceTitle(ofID: id) ?? "Collection"
         }
+    }
+
+    /// Welle F-g: Phase der Collection-Reihe (Kit-Datei lädt, schlug fehl, leer, Kacheln).
+    private func collectionPhase(_ id: String, _ c: MediaCollection?) -> CollectionRowPhase {
+        CollectionRowPhase.of(collectionID: id, folders: c?.folders, kitErrors: kit.errors, kitLoading: kit.loading)
     }
 
     /// Welle F-f: Phase der Listen-Reihe (jede Phase hat ein Fokusziel, PlayerCore `HomeRowPhase`).
@@ -86,17 +93,30 @@ struct HomeRowView: View {
     @ViewBuilder private var content: some View {
         switch row.content {
         case .collection(let id):
-            if let c = model.collection(id) {
-                if c.folders.isEmpty {
-                    Strip { statusTile("Keine Einträge", retry: false) }
-                } else {
-                    Strip {
-                        ForEach(c.folders) { f in
-                            card(.folder(f)) { FolderTile(folder: f, logoStyle: row.style == .logoTiles) }
-                        }
+            let c = model.collection(id)
+            let p = collectionPhase(id, c)
+            switch p {
+            case .tiles:
+                let folders = c?.folders ?? []
+                let line = CollectionArtStats(folders: folders, logoStyle: row.style == .logoTiles).logLine(title: title)
+                Strip {
+                    ForEach(folders) { f in
+                        card(.folder(f)) { FolderTile(folder: f, logoStyle: row.style == .logoTiles) }
                     }
                 }
-            } else {
+                .task(id: line) { CollectionRowLog.note(row: row.id.uuidString, line: line) }
+            case .failed(let key):
+                // Welle F-g: Kit-Datei schlug fehl: erreichbare Statuskachel statt ewiger Platzhalter; OK lädt neu.
+                Strip {
+                    statusTile(p.statusText ?? "", retry: true) {
+                        focusedPlaceholder = 0
+                        Task { await FusionKitStore.shared.retry(sourceKey: key) }
+                    }
+                }
+                .task(id: "failed|\(key)") { CollectionRowLog.note(row: row.id.uuidString, line: "Collection \(title): Laden fehlgeschlagen") }
+            case .empty:
+                Strip { statusTile(p.statusText ?? "Keine Einträge", retry: false) }
+            case .loading:
                 // Fusion-Kit lädt die Collection noch nach: fokussierbare Platzhalter statt leerer Reihe.
                 placeholders
             }
@@ -150,10 +170,12 @@ struct HomeRowView: View {
 
     /// Welle F-f: leere oder fehlgeschlagene Reihe bleibt erreichbar: eine Kachel in Reihenhöhe mit dem Grund;
     /// bei Fehlschlag lädt OK neu.
-    private func statusTile(_ text: String, retry canRetry: Bool) -> some View {
+    /// `action`: eigener Neuversuch (Kit-Collection, Welle F-g); sonst lädt die Listen-Reihe neu.
+    private func statusTile(_ text: String, retry canRetry: Bool, action: (() -> Void)? = nil) -> some View {
         Button {
             guard canRetry else { return }
             RemoteLog.info("home", "Reihe erneut laden: \(title)")
+            if let action { action(); return }
             loaded = false; failed = false; retry += 1
             focusedPlaceholder = 0
         } label: {
@@ -189,6 +211,19 @@ struct HomeRowView: View {
         NavigationLinkish(route: route, onActivate: onActivate, label: label())
             .focused($focusedRoute, equals: route)
             .homeRowMenu(menu)
+    }
+}
+
+/// Welle F-g: eine Logzeile je Collection-Reihe („Collection <titel>: <n> Kacheln, Bilder <n>, GIF <n>“), erneut nur,
+/// wenn sich der Stand ändert (LazyVStack baut Reihen beim Scrollen ab und wieder auf).
+@MainActor
+enum CollectionRowLog {
+    private static var last: [String: String] = [:]
+
+    static func note(row: String, line: String) {
+        guard last[row] != line else { return }
+        last[row] = line
+        RemoteLog.info("home", line)
     }
 }
 
@@ -372,6 +407,8 @@ struct FolderTile: View {
     let folder: Folder
     let logoStyle: Bool
     @Environment(\.cardScale) private var scale
+    /// Fokus der umgebenden Karte (Fokus-GIF, Welle F-g).
+    @Environment(\.isFocused) private var focused
     var body: some View {
         if logoStyle {
             ZStack {
@@ -382,6 +419,9 @@ struct FolderTile: View {
         } else {
             RemoteImage(url: folder.coverImage ?? folder.backdrop)
                 .frame(width: Theme.Tile.width(.landscape, scale), height: Theme.Tile.height(.landscape, scale)).clipped()
+                // Welle F-g: bewegtes Fokusbild über dem Standbild (nur auf der fokussierten Kachel).
+                .overlay { if let g = folder.focusGif { FocusGIF(url: g, focused: focused) } }
+                .clipped()
                 .overlay(alignment: .bottomLeading) {
                     if folder.coverImage == nil || folder.showsTitleOverImage { Text(folder.title).font(.headline).shadow(radius: 4).padding(14) }
                 }

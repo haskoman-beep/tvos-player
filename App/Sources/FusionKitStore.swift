@@ -60,6 +60,24 @@ final class FusionKitStore: ObservableObject {
 
     func isListed(_ id: String) -> Bool { listing.contains { $0.id == id } }
 
+    /// Welle F-g: Name der Kit-Datei einer Kit-ID (Reihentitel, solange die Collection noch nicht da ist).
+    func sourceTitle(ofID id: String) -> String? {
+        guard let key = FusionImport.sourceKey(ofID: id) else { return nil }
+        return sources.first { $0.id == key }?.title
+    }
+
+    /// Welle F-g: Kit-Datei nach Fehlschlag neu holen (Statuskachel „Laden fehlgeschlagen“ der Startseite).
+    func retry(sourceKey key: String) async {
+        ensureSettings()
+        guard let src = sources.first(where: { $0.id == key }) else {
+            RemoteLog.error("kit", "Erneut laden: Quelle \(key) unbekannt")
+            return
+        }
+        RemoteLog.info("kit", "Erneut laden: \(src.title)")
+        await load(src, force: true)
+        sync()
+    }
+
     // MARK: Einstellungen
 
     func setEnabled(_ on: Bool) {
