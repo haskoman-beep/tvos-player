@@ -9,6 +9,49 @@ enum SyncWriteBody {
         return [series ? "shows" : "movies": [o]]
     }
 
+    /// How far a history entry may lie from the queued time and still count as the same play (the scrobble's
+    /// server time lies before the queue time by the failed request plus its retry).
+    static let historyWindow: TimeInterval = 180
+
+    /// ISO-8601 UTC with milliseconds, as Trakt and Simkl write `watched_at`.
+    static func iso(_ d: Date) -> String {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        f.timeZone = TimeZone(identifier: "UTC")
+        return f.string(from: d)
+    }
+
+    /// "tt…" → (imdb, nil, nil); "tt…:season:episode" → (imdb, season, episode).
+    static func splitID(_ id: String) -> (imdb: String, season: Int?, episode: Int?) {
+        let p = id.split(separator: ":").map(String.init)
+        if p.count == 3, let s = Int(p[1]), let e = Int(p[2]) { return (p[0], s, e) }
+        return (p.first ?? id, nil, nil)
+    }
+
+    /// History entry for a finished playback, with `watched_at`.
+    static func history(id: String, watchedAt: Date) -> [String: Any] {
+        let (imdb, season, episode) = splitID(id)
+        let at = iso(watchedAt)
+        guard let season, let episode else { return ["movies": [["ids": ["imdb": imdb], "watched_at": at]]] }
+        return ["shows": [["ids": ["imdb": imdb],
+                           "seasons": [["number": season, "episodes": [["number": episode, "watched_at": at]]]]]]]
+    }
+
+    /// Does a `GET /sync/history/{movies|episodes}?start_at…` answer hold this entry (same IMDb ID, same episode,
+    /// watched within the window)? `imdb` is the movie's or the show's ID.
+    static func historyContains(_ data: Data, imdb: String, season: Int?, episode: Int?, at: Date,
+                                window: TimeInterval = historyWindow) -> Bool {
+        let arr = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] ?? []
+        return arr.contains { o in
+            guard let w = (o["watched_at"] as? String).flatMap(TraktClient.date), abs(w.timeIntervalSince(at)) <= window else { return false }
+            let title = (o["movie"] ?? o["show"]) as? [String: Any]
+            guard (title?["ids"] as? [String: Any])?["imdb"] as? String == imdb else { return false }
+            guard let season, let episode else { return true }
+            let ep = o["episode"] as? [String: Any]
+            return ep?["season"] as? Int == season && ep?["number"] as? Int == episode
+        }
+    }
+
     /// Playback entry ID as number or string.
     static func playbackID(_ v: Any?) -> Int? {
         if let i = v as? Int { return i }
@@ -41,14 +84,44 @@ extension TraktClient {
             switch c.kind {
             case .watchlistAdd: return try await post("/sync/watchlist", body, token)
             case .watchlistRemove: return try await post("/sync/watchlist/remove", body, token)
-            case .markWatched: return try await post("/sync/history", body, token)
+            case .markWatched:
+                // A resend first checks the history: the earlier send may have arrived without its answer.
+                if (c.attempts ?? 0) > 0, try await inHistory(imdb: imdb, series: c.series, season: nil, episode: nil, at: c.createdAt, token: token) {
+                    return .confirmed
+                }
+                let watched = SyncWriteBody.titles(imdb: imdb, series: c.series, extra: ["watched_at": SyncWriteBody.iso(c.createdAt)])
+                return try await post("/sync/history", watched, token)
             case .markUnwatched: return try await post("/sync/history/remove", body, token)
             case .removeFromContinue:
                 return try await deletePlayback(c, remote: try await playback(token: token), service: "Trakt") { id in
                     try await perform(request("DELETE", "/sync/playback/\(id)", token: token), token: token).status
                 }
             }
-        } catch { return .retry }
+        } catch { return SyncWriteResult.failure(error) }
+    }
+
+    /// Sends a queued action (a failed scrobble stop becomes a history entry). Never throws.
+    /// `.resolveThen` is handled by the app (lookup) and `.change` is never due.
+    public func apply(_ e: SyncQueue.Entry, token: SyncToken) async -> SyncWriteResult {
+        guard case .scrobbleStop(let id, _, let at) = e.action else { return .skipped("nichts zu senden") }
+        let (imdb, season, episode) = SyncWriteBody.splitID(id)
+        do {
+            // Always a resend: the stop scrobble itself may have reached the service without its answer.
+            if try await inHistory(imdb: imdb, series: season != nil, season: season, episode: episode, at: at, token: token) {
+                return .confirmed
+            }
+            return try await post("/sync/history", SyncWriteBody.history(id: id, watchedAt: at), token)
+        } catch { return SyncWriteResult.failure(error) }
+    }
+
+    /// `GET /sync/history/{movies|episodes}?start_at=…&end_at=…` around `at`, matched by IMDb ID in the answer (the
+    /// path takes no IMDb ID). A failed check counts as "not there" (send again): a duplicate is better than a loss.
+    func inHistory(imdb: String, series: Bool, season: Int?, episode: Int?, at: Date, token: SyncToken) async throws -> Bool {
+        let w = SyncWriteBody.historyWindow
+        let query = "?start_at=\(SyncWriteBody.iso(at.addingTimeInterval(-w)))&end_at=\(SyncWriteBody.iso(at.addingTimeInterval(w)))&limit=100"
+        let r = try await perform(request("GET", "/sync/history/\(series ? "episodes" : "movies")\(query)", token: token), token: token)
+        guard (200..<300).contains(r.status) else { return false }
+        return SyncWriteBody.historyContains(r.data, imdb: imdb, season: season, episode: episode, at: at)
     }
 
     private func post(_ path: String, _ body: [String: Any], _ token: SyncToken) async throws -> SyncWriteResult {
@@ -102,13 +175,23 @@ extension SimklClient {
             case .watchlistRemove:
                 return .unconfirmed("Merkliste: Simkl nur lokal entfernt (Simkl kann das nicht, ohne den Verlauf zu löschen)")
             case .markUnwatched: return try await post("/sync/history/remove", plain, token)
-            case .markWatched: return try await post("/sync/history", plain, token)
+            case .markWatched:
+                let watched = SyncWriteBody.titles(imdb: imdb, series: c.series, extra: ["watched_at": SyncWriteBody.iso(c.createdAt)])
+                return try await post("/sync/history", watched, token)
             case .removeFromContinue:
                 return try await deletePlayback(c, remote: try await playback(token: token), service: "Simkl") { id in
                     try await http.sendRespectingRateLimit(request("DELETE", "/sync/playback/\(id)", token: token), sleep: sleep).status
                 }
             }
-        } catch { return .retry }
+        } catch { return SyncWriteResult.failure(error) }
+    }
+
+    /// Sends a queued action (a failed scrobble stop becomes a history entry). Never throws.
+    /// Simkl keeps one watched state per title or episode, so a resend cannot double it: no history check.
+    public func apply(_ e: SyncQueue.Entry, token: SyncToken) async -> SyncWriteResult {
+        guard case .scrobbleStop(let id, _, let at) = e.action else { return .skipped("nichts zu senden") }
+        do { return try await post("/sync/history", SyncWriteBody.history(id: id, watchedAt: at), token) }
+        catch { return SyncWriteResult.failure(error) }
     }
 
     private func post(_ path: String, _ body: [String: Any], _ token: SyncToken) async throws -> SyncWriteResult {

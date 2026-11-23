@@ -88,20 +88,21 @@ public struct ProgressBook: Codable, Sendable, Equatable {
     public static let markerSeconds = 120.0
 
     /// Speichert eine Position. Ab 92 % gilt der Titel als gesehen.
+    /// `finishedAt`: watched threshold (80 % while a sync service is connected, as there; else 92 %).
     public mutating func record(id: String, item: MetaPreview, season: Int? = nil, episode: Int? = nil,
-                                position: Double, duration: Double, now: Date = Date()) {
+                                position: Double, duration: Double, now: Date = Date(), finishedAt: Double = ProgressBook.finishedAt) {
         record(WatchProgress(id: id, item: item, season: season, episode: episode,
-                             position: position, duration: duration, updated: now), now: now)
+                             position: position, duration: duration, updated: now), now: now, finishedAt: finishedAt)
     }
 
     /// Merges a new position into the existing entry instead of replacing it (Task 2.1, W-B-1):
     /// - a watched entry stays watched unless the new session ran more than 5 % and more than 120 s;
     /// - the next-episode hint stays until the episode itself ran more than 120 s;
     /// - `remoteFraction`, title and artwork of the old entry stay when the new one does not bring them.
-    public mutating func record(_ new: WatchProgress, now: Date = Date()) {
+    public mutating func record(_ new: WatchProgress, now: Date = Date(), finishedAt: Double = ProgressBook.finishedAt) {
         guard new.duration > 0, new.position.isFinite else { return }
         let old = entries[new.id]
-        let done = new.position / new.duration >= Self.finishedAt
+        let done = new.position / new.duration >= finishedAt
         let ranLong = new.position > Self.markerSeconds
         if let old, old.finished, !done, !(ranLong && new.position > Self.unfinishFraction * new.duration) { return }
         clearSeriesMarker(itemID: new.item.id, episodeID: new.id, updated: now)

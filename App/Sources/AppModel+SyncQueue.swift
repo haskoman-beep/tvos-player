@@ -105,8 +105,13 @@ extension AppModel {
         case .watchlistAdd, .watchlistRemove: break
         }
         let services = Set(Self.syncServices.filter(isConnected))
+        let now = Date()
         var q = syncQueue
-        q.record(kind, item: m, imdb: imdb, series: series, services: services)
+        q.record(kind, item: m, imdb: imdb, series: series, services: services, now: now)
+        // Build 2 (2.5): a TMDB tile whose IMDb ID could not be looked up (offline) waits for the lookup.
+        if imdb == nil, m.id.hasPrefix("tmdb:"), !services.isEmpty {
+            q.enqueue(.resolveThen(tmdbID: m.id, type: m.type, action: kind), services: services, now: now)
+        }
         syncQueue = q
         saveSyncQueue()
         for s in [CatalogSource.watchlist, CatalogSource.continueWatching] { catalogRevisions[s.id, default: 0] += 1 }
@@ -133,9 +138,19 @@ extension AppModel {
         q.prune()
         for s in Self.syncServices where !isConnected(s) { q.drop(service: s) }
         syncQueue = q
+        await resolveWaitingTiles()
+        guard profile.id == profileID else { return }
+        // Build 2 (2.5): an attempt counts once per entry and pass, however many services fail it.
+        var counted = Set<String>()
         for s in Self.syncServices where isConnected(s) {
             let due = syncQueue.due(for: s)
-            guard !due.isEmpty, let t = await token(s) else { continue }
+            guard !due.isEmpty else {
+                await processActions(service: s, profileID: profileID, counted: &counted)
+                guard profile.id == profileID else { return }
+                continue
+            }
+            guard let t = await token(s) else { continue }
+            var reached = true
             for c in due {
                 let r: SyncWriteResult
                 if s == "trakt", let trakt { r = await trakt.apply(c, token: t) }
@@ -155,15 +170,87 @@ extension AppModel {
                     syncQueue.confirm(c.id, service: s, createdAt: c.createdAt, held: true)
                 case .rejected(let status):
                     RemoteLog.error("sync", "\(name): vom Dienst abgelehnt (HTTP \(status)), wird nicht erneut gesendet")
-                    syncQueue.confirm(c.id, service: s, createdAt: c.createdAt)
+                    syncQueue.failChange(c.id, service: s, createdAt: c.createdAt, result: r)
+                case .offline:
+                    RemoteLog.info("sync", "\(name): kein Netz, später erneut (zählt nicht als Versuch)")
                 case .retry:
-                    RemoteLog.info("sync", "\(name): nicht erreicht, später erneut")
+                    // Build 2 (2.5): after 8 attempts the change is given up, so it blocks the service no longer.
+                    let count = counted.insert(c.id).inserted
+                    if syncQueue.failChange(c.id, service: s, createdAt: c.createdAt, result: r, countAttempt: count) {
+                        RemoteLog.error("sync", "\(name): nach \(SyncQueue.maxAttempts) Versuchen aufgegeben")
+                    } else {
+                        RemoteLog.info("sync", "\(name): nicht erreicht, später erneut")
+                    }
                 }
-                if r == .retry { break }
                 saveSyncQueue()
+                if r == .retry || r == .offline { reached = false; break }
             }
+            // The service just failed: its queued actions wait for the next pass.
+            guard reached else { continue }
+            await processActions(service: s, profileID: profileID, counted: &counted)
+            guard profile.id == profileID else { return }
         }
         saveSyncQueue()
+    }
+
+    /// Build 2 (2.5): queued actions besides tile changes (failed watched stops), oldest first.
+    private func processActions(service s: String, profileID: UUID, counted: inout Set<String>) async {
+        let due = syncQueue.dueActions(for: s).filter { if case .scrobbleStop = $0.action { true } else { false } }
+        guard !due.isEmpty, let t = await token(s) else { return }
+        for e in due {
+            let r: SyncWriteResult
+            if s == "trakt", let trakt { r = await trakt.apply(e, token: t) }
+            else if s == "simkl", let simkl { r = await simkl.apply(e, token: t) }
+            else { return }
+            guard profile.id == profileID else { return }
+            let name = "\(s == "trakt" ? "Trakt" : "Simkl") Verlauf nachgetragen"
+            switch r {
+            case .confirmed, .skipped, .unconfirmed:
+                RemoteLog.info("sync", "\(name): bestätigt")
+                syncQueue.finish(e.id, service: s)
+            case .offline:
+                RemoteLog.info("sync", "\(name): kein Netz, später erneut (zählt nicht als Versuch)")
+            case .rejected, .retry:
+                let count = counted.insert(e.id).inserted
+                if syncQueue.fail(e.id, service: s, result: r, countAttempt: count) {
+                    RemoteLog.error("sync", "\(name): aufgegeben (\(r == .retry ? "\(SyncQueue.maxAttempts) Versuche" : "\(r)"))")
+                } else {
+                    RemoteLog.info("sync", "\(name): nicht erreicht, später erneut")
+                }
+            }
+            saveSyncQueue()
+            if r == .retry || r == .offline { return }
+        }
+    }
+
+    /// Build 2 (2.5): tile actions on TMDB tiles that waited for the IMDb lookup go out once it works.
+    private func resolveWaitingTiles() async {
+        let profileID = profile.id
+        let waiting = syncQueue.actions.compactMap { e -> (entry: SyncQueue.Entry, tmdb: String, type: String)? in
+            if case .resolveThen(let tmdb, let type, _) = e.action { return (e, tmdb, type) }
+            return nil
+        }
+        guard !waiting.isEmpty else { return }
+        let services = Set(Self.syncServices.filter(isConnected))
+        for w in waiting {
+            let imdb = await imdbID(for: MetaPreview(id: w.tmdb, type: w.type, name: w.tmdb))
+            guard profile.id == profileID else { return }
+            if let imdb {
+                syncQueue.resolve(tmdbID: w.tmdb, imdb: imdb, services: services)
+                RemoteLog.info("sync", "\(w.tmdb) → \(imdb): wartende Kachel-Aktion geht an die Dienste")
+            }
+            // Not resolved yet: it keeps waiting without burning attempts (it expires after 30 days).
+        }
+        saveSyncQueue()
+    }
+
+    /// Build 2 (2.5): a watched stop did not get through; it is sent later as a history entry.
+    func queueScrobbleStop(id: String, progress: Double, service: String) {
+        var q = syncQueue
+        q.enqueue(.scrobbleStop(id: id, progress: progress, at: Date()), services: [service])
+        syncQueue = q
+        saveSyncQueue()
+        RemoteLog.info("sync", "\(service): Gesehen-Meldung \(id) in die Warteschlange gelegt")
     }
 
     /// A watchlist pull that started at `startedAt` is in the catalog cache: confirmed entries older than it can go.

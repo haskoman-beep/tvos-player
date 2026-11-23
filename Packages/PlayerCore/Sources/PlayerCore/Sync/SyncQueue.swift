@@ -25,6 +25,23 @@ public enum SyncChangeKind: String, Codable, Sendable, CaseIterable {
     }
 }
 
+/// Build 2: a queued action besides the tile changes. Additive in the queue file (`actions`, `deadLetters`).
+public enum SyncAction: Codable, Sendable, Equatable {
+    /// A `stop` scrobble from 80 % on that did not get through: sent later as a history entry.
+    /// `id`: "tt…" (movie) or "tt…:season:episode"; `progress` 0…1; `at`: when it was watched.
+    case scrobbleStop(id: String, progress: Double, at: Date)
+    /// A tile action on a "tmdb:" tile made while the IMDb ID could not be looked up; it waits for the lookup.
+    case resolveThen(tmdbID: String, type: String, action: SyncChangeKind)
+    /// A tile change that was given up (only in `deadLetters`).
+    case change(SyncChange)
+}
+
+/// Decodes one element of an array; a broken or unknown one becomes nil instead of failing the array.
+struct Lossy<T: Decodable>: Decodable {
+    let value: T?
+    init(from decoder: Decoder) throws { value = try? T(from: decoder) }
+}
+
 /// One pending change (a tombstone for removals). `pending` = services that have not confirmed it yet.
 public struct SyncChange: Codable, Sendable, Equatable, Identifiable {
     public var kind: SyncChangeKind
@@ -39,6 +56,8 @@ public struct SyncChange: Codable, Sendable, Equatable, Identifiable {
     public var confirmedAt: Date?
     /// A service took it but changed nothing remotely: keep it until it expires (30 days), not just the grace time.
     public var held: Bool?
+    /// Failed sends so far (nil in files of older builds = 0). Additive: older builds ignore it.
+    public var attempts: Int?
 
     /// Keyed by the canonical title ID (IMDb first, else the tile's own TMDB or addon ID), so a TMDB tile and an
     /// IMDb tile of the same title share one entry.
@@ -64,10 +83,149 @@ public struct SyncQueue: Codable, Sendable, Equatable {
     public static let confirmedGrace: TimeInterval = 5 * 60
     /// Remote timestamps up to this much after a local change still count as older (device clock drift).
     public static let clockTolerance: TimeInterval = 5
+    /// After this many failed sends an entry goes to `deadLetters` and blocks nothing any more.
+    public static let maxAttempts = 8
+    /// Dead letters kept for the log (newest last).
+    public static let maxDeadLetters = 50
     public var schemaVersion = 1
     public var changes: [String: SyncChange] = [:]
+    /// Queued actions that are no tile change (failed scrobble stops, actions waiting for a TMDB→IMDb lookup).
+    /// Additive key: older builds ignore it.
+    public var actions: [Entry] = []
+    /// Entries given up on (too many attempts or a permanent error). Additive key.
+    public var deadLetters: [Entry] = []
 
     public init() {}
+
+    enum CodingKeys: String, CodingKey { case schemaVersion, changes, actions, deadLetters }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = (try? c.decodeIfPresent(Int.self, forKey: .schemaVersion)) ?? 1
+        changes = try c.decode([String: SyncChange].self, forKey: .changes)
+        // One unknown or broken action never costs the whole queue.
+        actions = ((try? c.decodeIfPresent([Lossy<Entry>].self, forKey: .actions)) ?? []).compactMap(\.value)
+        deadLetters = ((try? c.decodeIfPresent([Lossy<Entry>].self, forKey: .deadLetters)) ?? []).compactMap(\.value)
+    }
+
+    /// One queued action. `pending` = services that still have to take it.
+    public struct Entry: Codable, Sendable, Equatable, Identifiable {
+        public var id: String
+        public var action: SyncAction
+        public var createdAt: Date
+        public var pending: Set<String>
+        public var attempts: Int
+        /// Last HTTP status of a failed send (0 = network or retry), for the log.
+        public var lastStatus: Int?
+
+        public init(id: String = UUID().uuidString, action: SyncAction, createdAt: Date, pending: Set<String>,
+                    attempts: Int = 0, lastStatus: Int? = nil) {
+            self.id = id; self.action = action; self.createdAt = createdAt; self.pending = pending
+            self.attempts = attempts; self.lastStatus = lastStatus
+        }
+
+        enum CodingKeys: String, CodingKey { case id, action, createdAt, pending, attempts, lastStatus }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            action = try c.decode(SyncAction.self, forKey: .action)
+            createdAt = try c.decode(Date.self, forKey: .createdAt)
+            pending = (try? c.decodeIfPresent(Set<String>.self, forKey: .pending)) ?? []
+            attempts = (try? c.decodeIfPresent(Int.self, forKey: .attempts)) ?? 0
+            lastStatus = try? c.decodeIfPresent(Int.self, forKey: .lastStatus)
+        }
+    }
+
+    /// Is this failed send the end of the line (permanent error, or the last allowed attempt)?
+    static func givesUp(_ r: SyncWriteResult, attempts: Int) -> Bool {
+        if case .rejected = r { return true }
+        if r == .offline { return false }
+        return attempts >= maxAttempts
+    }
+
+    private mutating func bury(_ e: Entry) {
+        deadLetters.append(e)
+        if deadLetters.count > Self.maxDeadLetters { deadLetters.removeFirst(deadLetters.count - Self.maxDeadLetters) }
+    }
+
+    /// Queues an action for these services (nothing is queued without services).
+    @discardableResult
+    public mutating func enqueue(_ action: SyncAction, services: Set<String>, now: Date = Date()) -> Entry? {
+        guard !services.isEmpty else { return nil }
+        let e = Entry(action: action, createdAt: now, pending: services)
+        actions.append(e)
+        return e
+    }
+
+    /// Actions this service still has to take, oldest first.
+    public func dueActions(for service: String) -> [Entry] {
+        actions.filter { $0.pending.contains(service) }.sorted { $0.createdAt < $1.createdAt }
+    }
+
+    /// The service took the action (or it is no longer needed there).
+    public mutating func finish(_ id: String, service: String) {
+        guard let i = actions.firstIndex(where: { $0.id == id }) else { return }
+        actions[i].pending.remove(service)
+        if actions[i].pending.isEmpty { actions.remove(at: i) }
+    }
+
+    /// A send failed. Returns true when the entry was given up for this service (moved to `deadLetters`).
+    @discardableResult
+    public mutating func fail(_ id: String, service: String, result: SyncWriteResult, countAttempt: Bool = true) -> Bool {
+        guard let i = actions.firstIndex(where: { $0.id == id }) else { return false }
+        if countAttempt, result != .offline { actions[i].attempts += 1 }
+        if case .rejected(let s) = result { actions[i].lastStatus = s } else { actions[i].lastStatus = 0 }
+        guard Self.givesUp(result, attempts: actions[i].attempts) else { return false }
+        var dead = actions[i]
+        dead.pending = [service]
+        bury(dead)
+        finish(id, service: service)
+        return true
+    }
+
+    /// A tile change failed to send. Returns true when it was given up for this service: it then counts as done
+    /// there (the local state stays as the user left it) and a copy goes to `deadLetters`.
+    @discardableResult
+    public mutating func failChange(_ id: String, service: String, createdAt: Date, result: SyncWriteResult, countAttempt: Bool = true,
+                                    now: Date = Date()) -> Bool {
+        guard var c = changes[id], c.createdAt == createdAt else { return false }
+        let n = (c.attempts ?? 0) + (countAttempt && result != .offline ? 1 : 0)
+        c.attempts = n
+        changes[id] = c
+        guard Self.givesUp(result, attempts: n) else { return false }
+        var status = 0
+        if case .rejected(let s) = result { status = s }
+        bury(Entry(action: .change(c), createdAt: c.createdAt, pending: [service], attempts: n, lastStatus: status))
+        confirm(id, service: service, createdAt: createdAt, now: now)
+        return true
+    }
+
+    /// A TMDB tile resolved to an IMDb ID: the local change waiting for it gets the ID and goes to the services.
+    /// Returns how many waiting actions were settled.
+    @discardableResult
+    public mutating func resolve(tmdbID: String, imdb: String, services: Set<String>, now: Date = Date()) -> Int {
+        let waiting = actions.filter { e in
+            if case .resolveThen(let t, _, _) = e.action { return t == tmdbID }
+            return false
+        }
+        for e in waiting {
+            guard case .resolveThen(_, let type, let kind) = e.action else { continue }
+            let old = changes.values.first { $0.kind == kind && $0.matches(tmdbID) && $0.createdAt == e.createdAt }
+            // A newer change in the slot made meanwhile wins (the user changed their mind).
+            if old == nil, changes.values.contains(where: { $0.createdAt > e.createdAt && $0.kind.slot == kind.slot && ($0.matches(imdb) || $0.matches(tmdbID)) }) { continue }
+            var c = old ?? SyncChange(kind: kind, itemID: tmdbID, imdb: nil, item: MetaPreview(id: tmdbID, type: type, name: tmdbID),
+                                      series: ContentKind.isEpisodic(type: type), createdAt: e.createdAt, pending: [])
+            if let old { changes[old.id] = nil }
+            c.imdb = imdb
+            c.pending = services
+            c.confirmedAt = services.isEmpty ? now : nil
+            changes = changes.filter { _, o in o.kind.slot != kind.slot || !o.matches(imdb) }
+            changes[c.id] = c
+        }
+        actions.removeAll { w in waiting.contains { $0.id == w.id } }
+        return waiting.count
+    }
 
     /// Records a change; it replaces its counterpart in the same slot. Without services it is confirmed at once.
     @discardableResult
@@ -93,6 +251,7 @@ public struct SyncQueue: Codable, Sendable, Equatable {
 
     /// The service is no longer connected: nothing left to confirm there.
     public mutating func drop(service: String, now: Date = Date()) {
+        for e in actions where e.pending.contains(service) { finish(e.id, service: service) }
         for (k, var c) in changes where c.pending.contains(service) {
             c.pending.remove(service)
             if c.pending.isEmpty, c.confirmedAt == nil { c.confirmedAt = now }
@@ -103,6 +262,8 @@ public struct SyncQueue: Codable, Sendable, Equatable {
     /// Removes expired entries; returns how many.
     @discardableResult
     public mutating func prune(now: Date = Date()) -> Int {
+        actions.removeAll { now.timeIntervalSince($0.createdAt) > Self.maxAge }
+        deadLetters.removeAll { now.timeIntervalSince($0.createdAt) > Self.maxAge }
         let before = changes.count
         changes = changes.filter { _, c in
             if now.timeIntervalSince(c.createdAt) > Self.maxAge { return false }
@@ -181,14 +342,24 @@ public struct SyncQueue: Codable, Sendable, Equatable {
 public enum SyncWriteResult: Sendable, Equatable {
     /// Done (2xx, or 404 when deleting something that is already gone).
     case confirmed
-    /// Try again later (network, 401, 408, 429, 5xx).
+    /// Try again later (401, 408, 429, 5xx).
     case retry
+    /// No answer at all (no network, the request failed on the device): try again later, counts as no attempt.
+    case offline
     /// The service will never accept it (other 4xx); stop asking.
     case rejected(Int)
     /// Deliberately not sent (no safe call for it); counts as done. The text is a German log line.
     case skipped(String)
     /// Sent, but nothing could be changed remotely (no entry or no entry ID): stays pending until it expires.
     case unconfirmed(String)
+
+    /// A thrown send: an HTTP status is classified as usual; a transport error (no network, timeout) is `.offline`;
+    /// anything else (broken answer) is `.retry`.
+    public static func failure(_ error: Error) -> SyncWriteResult {
+        if case APIError.status(let s) = error { return classify(status: s) }
+        if error is URLError { return .offline }
+        return .retry
+    }
 
     public static func classify(status: Int, deleting: Bool = false) -> SyncWriteResult {
         if (200..<300).contains(status) || (deleting && status == 404) { return .confirmed }
@@ -237,6 +408,13 @@ extension ProgressBook {
         let old = entries[item.id]
         entries[item.id] = WatchProgress(id: item.id, item: item, position: 0, duration: old?.duration ?? 0,
                                          updated: now, finished: true)
+    }
+
+    /// A playback ended past the services' watched threshold: the entry counts as watched locally too.
+    public mutating func markFinished(id: String) {
+        guard var e = entries[id], !e.finished else { return }
+        e.finished = true
+        entries[id] = e
     }
 
     /// Marks a title as unwatched: all local progress of it goes (movie entry, or every episode of the series).
