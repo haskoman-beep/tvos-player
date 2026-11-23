@@ -198,8 +198,12 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           ls -la Player.ipa
-          # The first line keeps the format the app reads (build/commit); the license line comes after it.
-          notes="Build $GITHUB_RUN_NUMBER · Commit $GITHUB_SHA · Branch main"
+          # SHA-256 of exactly the file uploaded below; the app shows it before installing (it cannot check it,
+          # because atvloadly downloads the package itself).
+          sha256=$(sha256sum Player.ipa | cut -d' ' -f1)
+          [ "${#sha256}" -eq 64 ] || { echo "::error::SHA-256 of Player.ipa missing"; exit 1; }
+          # The first line keeps the format the app reads (build/commit/hash); the license line comes after it.
+          notes="Build $GITHUB_RUN_NUMBER · Commit $GITHUB_SHA · Branch main · SHA256 $sha256"
           notes="$notes"$'\n\n'"Licenses and sources of the bundled components (AetherEngine, FFmpeg, libdovi, Anime4K and others): https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/THIRD_PARTY_NOTICES.md"
           title="Player Build $GITHUB_RUN_NUMBER"
           if old=$(gh release view app-main --json body --jq .body 2>/dev/null); then

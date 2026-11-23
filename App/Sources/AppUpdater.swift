@@ -22,6 +22,9 @@ final class AppUpdater: ObservableObject {
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var searching = false
     @Published private(set) var addressNote: String?
+    /// Zuletzt gefundenes installierbares Paket. Bleibt über Start, Installation und Fehler hinweg stehen,
+    /// damit die Installieren-Zeile unter dem Fokus nicht verschwindet (F-B-6); neu gesetzt bei jeder Prüfung.
+    @Published private(set) var offered: ReleaseBuild?
 
     /// Build dieser App (CI-Laufnummer, Commit, Branch aus der Info.plist).
     let current = AppBuildInfo(info: Bundle.main.infoDictionary)
@@ -56,10 +59,12 @@ final class AppUpdater: ObservableObject {
         Task {
             do {
                 let s = try await client.check(current: current)
+                if case .available(let r, _) = s { offered = r } else { offered = nil }
                 phase = .checked(s)
                 RemoteLog.info("update", "Prüfung: installiert Build \(current.buildLabel) · \(Self.describe(s))")
             } catch {
                 let m = Self.text(error)
+                offered = nil
                 phase = .failed(m)
                 RemoteLog.error("update", "Prüfung fehlgeschlagen: \(m)")
             }
@@ -92,7 +97,8 @@ final class AppUpdater: ObservableObject {
                 case .sourceUpdate: way = "Quelle"
                 case .mcp: way = "MCP install_app"
                 }
-                RemoteLog.info("update", "atvloadly übernimmt Build \(n) über \(way) (Eintrag \(s.appID)): \(AppUpdateLog.redact(s.message))")
+                let hash = release.sha256.map { " · SHA256 \($0.prefix(12))…" } ?? ""
+                RemoteLog.info("update", "atvloadly übernimmt Build \(n)\(hash) über \(way) (Eintrag \(s.appID)): \(AppUpdateLog.redact(s.message))")
                 phase = .installing("atvloadly installiert Build \(n) … Die App wird dabei beendet – danach neu öffnen.")
                 watch(base: base, appID: s.appID, bundleID: bundleID, ipaURL: release.ipaURL)
             } catch {
@@ -135,8 +141,9 @@ final class AppUpdater: ObservableObject {
 
     /// Bonjour `_workstation._tcp` kurz durchsuchen und Rechner per `GET /api/version` prüfen.
     /// (atvloadly selbst meldet sich nicht per Bonjour; der Pi meldet sich als Workstation.)
-    func discover() async -> URL? {
-        guard !searching else { return nil }
+    /// Gibt alle Treffer zurück und speichert nichts – die Seite lässt auswählen (SEC-11).
+    func discover() async -> [AtvloadlyCandidate] {
+        guard !searching else { return [] }
         searching = true
         addressNote = nil
         defer { searching = false }
@@ -153,18 +160,27 @@ final class AppUpdater: ObservableObject {
         try? await Task.sleep(nanoseconds: 3_000_000_000)
         b.cancel()
         let names = workstations
-        for u in AtvloadlyAddress.candidates(workstations: names) {
-            if let v = await Self.probe(u) {
-                addressNote = "Gefunden: atvloadly \(v)"
-                RemoteLog.info("update", "atvloadly gefunden: \(u.absoluteString) (\(v))")
-                return u
-            }
+        let urls = AtvloadlyAddress.candidates(workstations: names)
+        // Alle Prüfadressen gleichzeitig (je 4 s), Reihenfolge der Suche bleibt erhalten.
+        let versions = await withTaskGroup(of: (Int, String?).self, returning: [String?].self) { group in
+            for (i, u) in urls.enumerated() { group.addTask { (i, await AppUpdater.probe(u)) } }
+            var out = [String?](repeating: nil, count: urls.count)
+            for await (i, v) in group { out[i] = v }
+            return out
+        }
+        let found = zip(urls, versions).compactMap { u, v -> AtvloadlyCandidate? in
+            guard let v else { return nil }
+            return AtvloadlyCandidate(name: u.host ?? u.absoluteString, url: u, version: v)
+        }
+        if !found.isEmpty {
+            RemoteLog.info("update", "atvloadly-Suche: \(found.count) Treffer (\(names.count) Workstation(s))")
+            return found
         }
         addressNote = names.isEmpty
             ? "Kein Rechner per Bonjour gefunden – Adresse über die Handy-Seite eintragen."
             : "Kein atvloadly unter \(names.count) Rechner(n) gefunden – Adresse über die Handy-Seite eintragen."
         RemoteLog.info("update", "atvloadly-Suche ohne Treffer (\(names.count) Workstation(s))")
-        return nil
+        return []
     }
 
     /// Eingetragene Adresse prüfen (Hinweis unter dem Feld). Liegt sie nicht erkennbar im Heimnetz,

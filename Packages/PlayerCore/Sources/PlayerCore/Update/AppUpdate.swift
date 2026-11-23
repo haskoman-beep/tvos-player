@@ -61,14 +61,18 @@ public struct CIBuild: Sendable, Equatable {
     public var shortCommit: String { String(commit.prefix(7)) }
 }
 
-/// Installationspaket im Release `app-main` (Text der CI: „Build 40 · Commit <sha> · Branch main“).
+/// Installationspaket im Release `app-main` (Text der CI: „Build 40 · Commit <sha> · Branch main · SHA256 <hex>“).
 public struct ReleaseBuild: Sendable, Equatable {
     public var number: Int?
     public var commit: String?
     public var ipaURL: URL
     public var size: Int
-    public init(number: Int?, commit: String?, ipaURL: URL, size: Int = 0) {
+    /// SHA-256 des IPA aus dem Release-Text (64 Hex-Zeichen, klein); nil bei älteren Releases oder falscher Länge.
+    /// Nur Anzeige: Die App lädt das IPA nicht selbst (atvloadly lädt es), kann den Hash also nicht prüfen.
+    public var sha256: String?
+    public init(number: Int?, commit: String?, ipaURL: URL, size: Int = 0, sha256: String? = nil) {
         self.number = number; self.commit = commit?.lowercased(); self.ipaURL = ipaURL; self.size = size
+        self.sha256 = sha256?.lowercased()
     }
 }
 
@@ -123,7 +127,8 @@ public enum GitHubBuilds {
         let number = token(after: "Build ", in: notes, \.isNumber).flatMap { Int($0) }
             ?? token(after: "Build ", in: rel.name ?? "", \.isNumber).flatMap { Int($0) }
         let commit = token(after: "Commit ", in: notes, \.isHexDigit).flatMap { $0.count >= 7 ? $0 : nil }
-        return ReleaseBuild(number: number, commit: commit, ipaURL: url, size: a.size ?? 0)
+        let sha256 = token(after: "SHA256 ", in: notes, \.isHexDigit).flatMap { $0.count == 64 ? $0 : nil }
+        return ReleaseBuild(number: number, commit: commit, ipaURL: url, size: a.size ?? 0, sha256: sha256)
     }
 
     static func token(after key: String, in s: String, _ allowed: (Character) -> Bool) -> String? {
@@ -235,6 +240,27 @@ public enum AtvloadlyAddress {
         return n + ".local"
     }
 
+    /// Was die Seite nach „Pi im Netz suchen“ zeigt. Gespeichert wird nur, was der Nutzer danach auswählt (SEC-11).
+    public enum CandidateChoice: Sendable, Equatable {
+        /// Kein Rechner hat als atvloadly geantwortet.
+        case nothingFound
+        /// Die gespeicherte Adresse hat selbst geantwortet – nichts zu ändern.
+        case savedResponds(AtvloadlyCandidate)
+        /// Treffer zur Auswahl (ohne Doppelte, Reihenfolge der Suche); `replacing` = vorhandene Adresse, die eine
+        /// Auswahl ersetzen würde. Auch ein einzelner Treffer wird nur angeboten, nie stillschweigend übernommen.
+        case choose([AtvloadlyCandidate], replacing: URL?)
+    }
+
+    /// Reine Auswahlregel über die Treffer der Suche; speichert nichts.
+    public static func chooseCandidate(_ found: [AtvloadlyCandidate], saved: URL?) -> CandidateChoice {
+        func key(_ u: URL) -> String { (normalize(u.absoluteString) ?? u).absoluteString.lowercased() }
+        var seen = Set<String>(), unique: [AtvloadlyCandidate] = []
+        for c in found where seen.insert(key(c.url)).inserted { unique.append(c) }
+        guard !unique.isEmpty else { return .nothingFound }
+        if let saved, let hit = unique.first(where: { key($0.url) == key(saved) }) { return .savedResponds(hit) }
+        return .choose(unique, replacing: saved)
+    }
+
     /// Prüfadressen: gefundene Rechner zuerst, dann die Standard-Namen; ohne Doppelte.
     public static func candidates(workstations: [String]) -> [URL] {
         var seen = Set<String>(), out: [URL] = []
@@ -244,6 +270,14 @@ public enum AtvloadlyAddress {
         }
         return out
     }
+}
+
+/// Treffer der Suche: Rechner, der unter `url` als atvloadly geantwortet hat.
+public struct AtvloadlyCandidate: Sendable, Equatable {
+    public var name: String
+    public var url: URL
+    public var version: String
+    public init(name: String, url: URL, version: String) { self.name = name; self.url = url; self.version = version }
 }
 
 // MARK: - atvloadly-REST (Antworten `{"code":200,"msg":"success","data":…}`)

@@ -305,3 +305,56 @@ private func sse(_ json: String) -> String { "event: message\nid: X_0\ndata: \(j
     }
     #expect(none.sent.isEmpty)
 }
+
+// MARK: - Task 1.6: Hash im Release-Text, Kandidaten zur Auswahl
+
+private let ipaHash = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+
+private func releaseJSON(body: String) -> String {
+    #"{"tag_name":"app-main","name":"Player Build 41","draft":false,"body":"\#(body)","assets":[{"name":"Player.ipa","size":1234,"browser_download_url":"https://github.com/haskoman-beep/tvos-player/releases/download/app-main/Player.ipa"}]}"#
+}
+
+@Test func releaseTextWithHash() throws {
+    let body = "Build 41 · Commit \(sha41) · Branch main · SHA256 \(ipaHash.uppercased())\\n\\nLicenses and sources …"
+    let rel = try #require(GitHubBuilds.parseRelease(Data(releaseJSON(body: body).utf8)))
+    #expect(rel.number == 41 && rel.commit == sha41 && rel.sha256 == ipaHash)
+}
+
+@Test func releaseTextWithoutHash() throws {
+    let rel = try #require(GitHubBuilds.parseRelease(Data(releaseJSON(body: "Build 41 · Commit \(sha41) · Branch main").utf8)))
+    #expect(rel.number == 41 && rel.commit == sha41 && rel.sha256 == nil)
+}
+
+@Test func releaseHashWithWrongLengthIsDropped() throws {
+    for bad in [String(ipaHash.dropLast()), ipaHash + "0", "abc"] {
+        let rel = try #require(GitHubBuilds.parseRelease(Data(releaseJSON(body: "Build 41 · Commit \(sha41) · SHA256 \(bad)").utf8)))
+        #expect(rel.sha256 == nil && rel.commit == sha41 && rel.number == 41)
+    }
+}
+
+@Test func decideUnchangedWithoutHash() {
+    let latest = CIBuild(number: 41, commit: sha41)
+    let installed40 = AppBuildInfo(version: "0.4.0", build: 40, commit: sha40, branch: "main")
+    let plain = ReleaseBuild(number: 41, commit: sha41, ipaURL: GitHubBuilds.ipaURL)
+    let hashed = ReleaseBuild(number: 41, commit: sha41, ipaURL: GitHubBuilds.ipaURL, sha256: ipaHash)
+    #expect(plain.sha256 == nil)
+    #expect(UpdateState.decide(current: installed40, latest: latest, release: plain) == .available(plain, latest: latest))
+    #expect(UpdateState.decide(current: installed40, latest: latest, release: hashed) == .available(hashed, latest: latest))
+    let rel40 = ReleaseBuild(number: 40, commit: sha40, ipaURL: GitHubBuilds.ipaURL)
+    #expect(UpdateState.decide(current: installed40, latest: latest, release: rel40) == .notPublished(latest))
+}
+
+@Test func candidateListIsNotSaved() throws {
+    let pi = AtvloadlyCandidate(name: "raspberrypi.local", url: try #require(AtvloadlyAddress.normalize("raspberrypi.local")), version: "v0.8.5")
+    let other = AtvloadlyCandidate(name: "atvloadly.local", url: try #require(AtvloadlyAddress.normalize("atvloadly.local:8080")), version: "v0.8.5")
+    // Nichts gefunden: nichts anzubieten.
+    #expect(AtvloadlyAddress.chooseCandidate([], saved: nil) == .nothingFound)
+    // Auch ein einziger Treffer ohne gespeicherte Adresse wird nur angeboten, nicht übernommen.
+    #expect(AtvloadlyAddress.chooseCandidate([pi], saved: nil) == .choose([pi], replacing: nil))
+    // Vorhandene Adresse bleibt; die Auswahl nennt, was sie ersetzen würde. Doppelte fallen weg.
+    let saved = try #require(AtvloadlyAddress.normalize("http://atvloadly.local:9000"))
+    #expect(AtvloadlyAddress.chooseCandidate([pi, other, pi], saved: saved) == .choose([pi, other], replacing: saved))
+    // Antwortet die gespeicherte Adresse selbst, ist nichts zu tun – auch wenn es weitere Treffer gibt.
+    let savedPi = try #require(AtvloadlyAddress.normalize("RaspberryPi.local"))
+    #expect(AtvloadlyAddress.chooseCandidate([other, pi], saved: savedPi) == .savedResponds(pi))
+}
