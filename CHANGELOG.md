@@ -25,7 +25,8 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   „Diese Fassung laden“ (load an older version) or „Neu anfangen“ (start over). The unreadable state is always kept
   as a copy. The app keeps the two previous versions of the profiles for this.
 - Phone page: a backup **with** keys is offered as the encrypted file `player-sicherung.enc`. The TV shows a
-  12-character code in three groups of four (`XXXX-XXXX-XXXX`); the file can only be restored with it.
+  12-character code in three groups of four (`XXXX-XXXX-XXXX`); the file can only be restored with it. You have
+  5 minutes to enter the code on the TV, and a typo can be corrected without sending the file again.
 - Settings › System › „Verlauf“ (history): the latest lines of the event log, kept on the device, also without a
   log receiver.
 - Remote log measuring points as `metric: <name> <ms>` lines (`start.usable`, `start.profiles`, `start.catalog`,
@@ -35,7 +36,8 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 ### Changed
 - Phone page: the QR address works once and only for the first phone; another device needs a new QR code, and the
   session ends after 30 minutes. Adding an addon, setting a key and restoring a backup only take effect after
-  „Erlauben“ (allow) on the TV. The normal backup no longer contains keys or tokens.
+  „Erlauben“ (allow) on the TV. The normal backup no longer contains keys, tokens or addon configuration; after
+  restoring it, enter keys, logins and configured addons again.
 - Remote log: off after the update. Turn it on under Settings › System › „Fern-Log“ (remote log), choose the receiver
   by name, and set a shared secret on the phone page; `tools/logcollector.py` needs the same secret
   (`PLAYERLOG_SECRET` or `--secret-file`). The app sends only to the chosen receiver and signs every request.
@@ -51,6 +53,8 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 - Profiles: one damaged or unknown value (for example from a newer build) no longer makes all profiles unreadable;
   everything else loads.
 - No more crashes from unusual source names (very long numbers before „GB“) or from bad intro data.
+- Releases: the IPA is uploaded before the release text names the new build and its SHA256, so a failed upload
+  never offers a build that is not there.
 
 ## [Build 249] – 2026-11-22 (integ)
 
