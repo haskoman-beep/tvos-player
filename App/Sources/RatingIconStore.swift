@@ -48,6 +48,7 @@ final class RatingIconStore: ObservableObject {
                 let (data, code) = try await RatingIconSet.withDeadline(RatingIconSet.timeout) { () async throws -> (Data, Int) in
                     var req = URLRequest(url: u)
                     req.timeoutInterval = RatingIconSet.timeout
+                    // Task 2.3 exception (direct URLSession, not via HTTPClient in Build 2): rating icons from a fixed service, read via bytes(for:); migrate later.
                     let (bytes, resp) = try await URLSession.shared.bytes(for: req)
                     let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
                     guard (200..<300).contains(code) else { return (Data(), code) }

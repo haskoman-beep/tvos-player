@@ -85,6 +85,7 @@ final class DiskCacheOriginFetcher: NSObject, URLSessionDataDelegate, @unchecked
         c.timeoutIntervalForRequest = timeout
         let q = OperationQueue()
         q.maxConcurrentOperationCount = 1
+        // Task 2.3 exception (direct URLSession, not via HTTPClient in Build 2): PERMANENT exception: streaming proxy for the player (delegate session, unbounded media bodies).
         session = URLSession(configuration: c, delegate: self, delegateQueue: q)
     }
 

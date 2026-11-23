@@ -48,7 +48,9 @@ extension APISending {
 }
 
 public struct URLSessionSender: APISending {
-    public init() {}
+    /// Task 2.3: goes through the shared `HTTPClient` (time limits, JSON size limit); never served from cache.
+    let client: HTTPClient
+    public init(client: HTTPClient = LimitedHTTPClient.shared) { self.client = client }
     public func send(_ r: APIRequest) async throws -> (status: Int, data: Data) {
         let x = try await sendFull(r)
         return (x.status, x.data)
@@ -58,11 +60,10 @@ public struct URLSessionSender: APISending {
         u.httpMethod = r.method
         for (k, v) in r.headers { u.setValue(v, forHTTPHeaderField: k) }
         u.httpBody = r.body
-        let (d, resp) = try await URLSession.shared.data(for: u)
-        let http = resp as? HTTPURLResponse
+        let (d, http) = try await client.data(u, limits: .json, fresh: true)
         var h: [String: String] = [:]
-        for (k, v) in http?.allHeaderFields ?? [:] { h[String(describing: k)] = String(describing: v) }
-        return APIResponse(status: http?.statusCode ?? 0, data: d, headers: h)
+        for (k, v) in http.allHeaderFields { h[String(describing: k)] = String(describing: v) }
+        return APIResponse(status: http.statusCode, data: d, headers: h)
     }
 }
 

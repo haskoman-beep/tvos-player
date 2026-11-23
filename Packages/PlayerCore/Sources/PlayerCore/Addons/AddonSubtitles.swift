@@ -107,7 +107,7 @@ extension AddonClient {
     public func subtitles(_ addon: InstalledAddon, type: String, id: String,
                           extra: [String: String] = [:]) async throws -> [AddonSubtitle] {
         let url = try resourceURL(addon, "subtitles", type: type, id: id, extra: extra)
-        let resp = try JSONDecoder().decode(SubtitlesResponse.self, from: try await http.data(from: url))
+        let resp = try JSONDecoder().decode(SubtitlesResponse.self, from: try await http.data(from: url, limits: addonLimits))
         let errors = resp.subtitles.filter { AddonNotices.isErrorSubtitle(id: $0.id, lang: $0.lang, url: $0.url) }
         if !errors.isEmpty {
             let texts = errors.prefix(3).map { AddonStreamNotices.shorten(AddonStreamNotices.oneLine($0.lang) ?? $0.id ?? "?", AddonStreamNotices.maxText) }

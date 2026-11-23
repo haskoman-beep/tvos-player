@@ -670,6 +670,7 @@ public struct TimeoutSender: APISending {
         u.httpMethod = r.method
         for (k, v) in r.headers { u.setValue(v, forHTTPHeaderField: k) }
         u.httpBody = r.body
+        // Task 2.3 exception (direct URLSession, not via HTTPClient in Build 2): TimeoutSender for atvloadly in the home network, already has a fixed per-request timeout; migrate later.
         let (d, resp) = try await URLSession.shared.data(for: u)
         let http = resp as? HTTPURLResponse
         var h: [String: String] = [:]

@@ -76,6 +76,9 @@ public struct TorBoxClient: Sendable {
         case APIError.status(401), APIError.status(403): return "TorBox lehnt den Schlüssel ab"
         case APIError.status(let n): return "TorBox antwortet mit Fehler \(n)"
         case APIError.decoding: return "TorBox-Antwort unverständlich"
+        case HTTPClientError.timedOut: return "TorBox antwortet nicht (Zeitüberschreitung)"
+        case HTTPClientError.tooLarge: return "TorBox-Antwort zu groß"
+        case HTTPClientError.incomplete: return "TorBox-Verbindung abgerissen"
         case let e as URLError:
             switch e.code {
             case .timedOut: return "TorBox antwortet nicht (Zeitüberschreitung)"

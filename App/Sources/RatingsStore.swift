@@ -29,6 +29,7 @@ actor RatingsStore {
 
     private func fetch(key: String, imdb: String, series: Bool, apiKey: String, old: ExternalRatings?) async -> ExternalRatings? {
         guard let url = MDBList.url(imdb: imdb, series: series, apiKey: apiKey),
+              // Task 2.3 exception (direct URLSession, not via HTTPClient in Build 2): small ratings JSON from a fixed public service, no addon address; migrate later.
               let (data, resp) = try? await URLSession.shared.data(from: url) else { return old }
         switch MDBList.parse(status: (resp as? HTTPURLResponse)?.statusCode ?? 0, data: data) {
         case .ratings(let r):

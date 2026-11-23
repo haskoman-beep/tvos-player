@@ -419,7 +419,9 @@ extension StreamBehaviorHints {
         notWebReady = bool(.notWebReady)
         filename = str(.filename)
         videoSize = num(.videoSize).flatMap { $0.isFinite && $0 >= 0 && $0 < 9e18 ? Int64($0) : nil }
-        proxyHeaders = (try? c.decodeIfPresent(ProxyHeaders.self, forKey: .proxyHeaders)) ?? nil
+        // Task 2.3: only harmless headers from an addon answer are ever sent on (ProxyHeaderPolicy).
+        proxyHeaders = ((try? c.decodeIfPresent(ProxyHeaders.self, forKey: .proxyHeaders)) ?? nil)
+            .map { ProxyHeaders(request: $0.request.map(ProxyHeaderPolicy.filtered)) }
         service = str(.service).flatMap { $0.isEmpty ? nil : $0 }
         cached = bool(.cached)
         duration = num(.duration).flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
