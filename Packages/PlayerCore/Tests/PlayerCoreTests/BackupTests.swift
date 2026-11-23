@@ -137,3 +137,9 @@ private func kitRow(_ id: String) -> HomeRow { HomeRow(content: .collection(id: 
     #expect(l.compactMap { $0["id"] as? String } == ["b", "c"])
     #expect(plain.device?.remoteLogReceiver == nil && plain.device?.remoteLogEnabled == false)
 }
+
+@Test func restoreRemovesOnlyProfilesNotInTheBackup() {
+    let a = UUID(), b = UUID(), c = UUID(), d = UUID()
+    #expect(ProfileBlocks.removedByRestore(before: [a, b, c, a], after: [b, d]) == [a, c])
+    #expect(ProfileBlocks.removedByRestore(before: [a, b], after: [b, a]).isEmpty)
+}

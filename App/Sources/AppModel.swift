@@ -382,6 +382,18 @@ final class AppModel: ObservableObject {
         Task { await syncRemoteProgress() }
     }
 
+    /// Task 2.4 (S-9): everything stored for a profile that is gone (deleted, or not in a restored backup): catalog
+    /// files, sync queue, every block `*-<profile>.json` (progress, trackmemory, fileprogress, link packs, import-media,
+    /// …) and the per-profile UserDefaults entries. Sync logins live in the profile itself (no Keychain entries yet).
+    func removeProfileData(_ id: UUID) {
+        removeCatalogFile(profile: id)
+        removeSyncQueue(profile: id)   // Welle L
+        let removed = ProfileBlocks.remove(profile: id, from: progressStore.storage)
+        FusionKitStore.setStoredSettings(nil, for: id)
+        CollectionLinkStore.setStoredLinks(nil, for: id)
+        RemoteLog.info("speicher", "Profildaten entfernt · \(removed.count) Block/Blöcke")
+    }
+
     func addProfile(name: String) {
         let p = Profile.makeDefault(name: name)
         stored.profiles.append(p)
@@ -391,14 +403,7 @@ final class AppModel: ObservableObject {
     func deleteProfile(_ id: UUID) {
         guard stored.profiles.count > 1 else { return }
         stored.profiles.removeAll { $0.id == id }
-        removeCatalogFile(profile: id)
-        removeSyncQueue(profile: id)   // Welle L
-        // Task 2.4 (S-12): every block `*-<profile>.json` (progress, catalog, link packs, …) and the per-profile
-        // UserDefaults entries. Sync logins live in the profile itself (no Keychain entries per profile yet).
-        let removed = ProfileBlocks.remove(profile: id, from: progressStore.storage)
-        FusionKitStore.setStoredSettings(nil, for: id)
-        CollectionLinkStore.setStoredLinks(nil, for: id)
-        RemoteLog.info("speicher", "Profil gelöscht · \(removed.count) Block/Blöcke entfernt")
+        removeProfileData(id)
         // Aktives Profil gelöscht: über den Profilwechsel (Cache leeren, Stand des neuen Profils lesen).
         if stored.activeProfileID == id, let next = stored.profiles.first?.id { switchProfile(next) } else { save() }
     }
@@ -776,7 +781,13 @@ final class AppModel: ObservableObject {
                     // Final review: like the load line, paths only (a backup from a newer build).
                     if !report.isEmpty { RemoteLog.info("speicher", "Import · ignoriert: \(report.ignored.joined(separator: ", "))") }
                     let (imported, expired) = backup.profiles.droppingExpiredTokens()
-                    stored = imported; save()
+                    // Fix round 2: saved directly, so the cleanup below runs only after the restored profiles are
+                    // stored (a failed save ends in the catch: nothing is removed).
+                    try store.save(imported)
+                    stored = imported
+                    for gone in ProfileBlocks.removedByRestore(before: before, after: imported.profiles.map(\.id)) {
+                        removeProfileData(gone)
+                    }
                     // Parts of version 2 overwrite only what the backup contains; a version 1 file leaves them as they are.
                     for (id, book) in backup.progress where backup.profileIDs.contains(id) {
                         try? progressStore.save(book, profile: id)

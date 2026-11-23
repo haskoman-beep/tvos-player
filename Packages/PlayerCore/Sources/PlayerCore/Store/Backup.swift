@@ -228,3 +228,12 @@ extension Backup {
         return try? JSONSerialization.data(withJSONObject: kept, options: [.sortedKeys])
     }
 }
+
+extension ProfileBlocks {
+    /// Fix round 2 (S-9): profiles a restore removes (in the old set, not in the restored one), in the old order.
+    public static func removedByRestore(before: [UUID], after: [UUID]) -> [UUID] {
+        let kept = Set(after)
+        var seen = Set<UUID>()
+        return before.filter { !kept.contains($0) && seen.insert($0).inserted }
+    }
+}
