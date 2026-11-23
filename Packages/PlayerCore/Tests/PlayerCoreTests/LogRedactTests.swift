@@ -296,7 +296,22 @@ import Testing
     // "@" inside the path is no credential: the host stays (review of task 1.5).
     #expect(LogRedact.url("https://h.example/a@KEYKEY/file.mkv") == "https://h.example/…/file.mkv")
     #expect(LogRedact.text("x https://h.example:8443/a@KEYKEY/file.mkv y") == "x https://h.example:8443/…/file.mkv y")
-    #expect(!LogRedact.url("https://h.example/a@KEYKEY/file.mkv").lowercased().contains("keykey"))
+    // Credentials plus "@" in the path, slash in the password, ambiguous mix: KEY never shows (re-review).
+    let atCases: [(String, String)] = [
+        ("https://user:pass@host.example/a@KEYKEY/f.mkv", "https://host.example/…/f.mkv"),
+        ("https://user:pass@host.example:8443/a@KEYKEY/f.mkv", "https://host.example:8443/…/f.mkv"),
+        ("https://user:pa/ss@Host.example/a/b.mkv", "https://host.example/…/b.mkv"),
+        ("https://user:pass@host.example/a/b.mkv", "https://host.example/…/b.mkv"),
+        ("https://h.example/a@KEYKEY/f.mkv", "https://h.example/…/f.mkv"),
+        ("https://user:pa/ss@Host.example/a@KEYKEY/f.mkv", "https://…"),
+    ]
+    for (raw, want) in atCases {
+        let got = LogRedact.url(raw)
+        #expect(got == want, "\(raw)")
+        #expect(!got.lowercased().contains("keykey"), "\(raw)")
+        #expect(!got.contains("pass") && !got.contains("ss@"), "\(raw)")
+        #expect(LogRedact.url(got) == got, "\(raw)")
+    }
     // "?" and "#" inside the password still work (credentials before the first "/").
     #expect(LogRedact.url("https://user:p?a#ss@Host.example/a/b.mkv?x=1") == "https://host.example/…/b.mkv")
 }

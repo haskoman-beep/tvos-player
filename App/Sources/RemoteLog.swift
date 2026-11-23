@@ -41,7 +41,8 @@ final class RemoteLog {
         // app without notice, the last up to 30 s of lines would be lost otherwise.
         _ = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil,
                                                    queue: .main) { _ in
-            Task { @MainActor in RemoteLog.shared.saveRing(now: true) }
+            // queue .main: already on the main thread, so save right here instead of in a later Task.
+            MainActor.assumeIsolated { RemoteLog.shared.saveRing(now: true) }
         }
     }
 

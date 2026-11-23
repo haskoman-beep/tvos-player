@@ -77,20 +77,30 @@ public enum LogRedact {
 
     /// Teil nach `schema://` (bzw. eine Adresse ohne Schema): Host + gekürzter Pfad.
     private static func redactAfterScheme(_ rest: Substring) -> String {
-        // Zugangsdaten (user:pass@) zuerst abtrennen, erst dann Query/Fragment. Das Passwort darf „?“/„#“ enthalten
-        // (letztes „@“ vor dem ersten „/“) oder „/“ (Task 1.5: letztes „@“ vor dem ersten „?“/„#“). Ein „@“ hinter dem
-        // ersten „/“ zählt nur, wenn der Teil davor wie `user:pass` aussieht (Doppelpunkt, danach keine reine
-        // Portnummer) – sonst liegt es im Pfad (`h.example/a@KEY/x.mkv`) und der Host bleibt `h.example`.
+        // Zugangsdaten (user:pass@) zuerst abtrennen, erst dann Query/Fragment. Regeln (Review Task 1.5):
+        // 1. Ein „@“ vor dem ersten „/“ beendet die Zugangsdaten (letztes davon; Passwort darf „?“/„#“ enthalten).
+        //    Ein „@“ weiter hinten liegt dann im Pfad (`user:pass@host/a@KEY/f.mkv` → Host `host`).
+        // 2. Sonst, wenn der Teil vor dem ersten „/“ wie `user:pass` aussieht (Doppelpunkt, danach keine reine
+        //    Portnummer), darf das Passwort „/“ enthalten: das Ende ist das letzte „@“ vor dem nächsten „/“ hinter
+        //    dem ersten „@“ (`user:pa/ss@Host/a/b.mkv`). Folgt dahinter noch ein „@“, ist nicht zu entscheiden, was
+        //    Host ist – dann wird alles verborgen („…“), nie ein Pfadstück als Host gezeigt.
+        // 3. Sonst gibt es keine Zugangsdaten (`h.example/a@KEY/f.mkv` → Host `h.example`).
         let firstSlash = rest.firstIndex(of: "/") ?? rest.endIndex
         let firstQuery = rest.firstIndex(where: { $0 == "?" || $0 == "#" }) ?? rest.endIndex
-        let atBeforeSlash = rest[..<firstSlash].lastIndex(of: "@")
         let beforeSlash = rest[..<firstSlash]
-        let userinfoShaped = beforeSlash.firstIndex(of: ":").map { colon in
-            let after = beforeSlash[beforeSlash.index(after: colon)...]
-            return after.isEmpty || !after.allSatisfy(\.isNumber)
-        } ?? false
-        let atBeforeQuery = userinfoShaped ? rest[..<firstQuery].lastIndex(of: "@") : nil
-        let lastAt = [atBeforeSlash, atBeforeQuery].compactMap { $0 }.max()
+        var lastAt = beforeSlash.lastIndex(of: "@")
+        if lastAt == nil, firstSlash < firstQuery {
+            let userinfoShaped = beforeSlash.firstIndex(of: ":").map { colon in
+                let after = beforeSlash[beforeSlash.index(after: colon)...]
+                return after.isEmpty || !after.allSatisfy(\.isNumber)
+            } ?? false
+            let region = rest[firstSlash..<firstQuery]
+            if userinfoShaped, let firstAt = region.firstIndex(of: "@") {
+                let hostEnd = region[firstAt...].firstIndex(of: "/") ?? region.endIndex
+                if region[hostEnd...].contains("@") { return "…" }
+                lastAt = region[..<hostEnd].lastIndex(of: "@")
+            }
+        }
         let hostStart = lastAt.map { rest.index(after: $0) } ?? rest.startIndex
         let afterUser = rest[hostStart...]
         let hostEnd = afterUser.firstIndex(where: { $0 == "/" || $0 == "?" || $0 == "#" }) ?? afterUser.endIndex
