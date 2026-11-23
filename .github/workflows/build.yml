@@ -15,8 +15,21 @@ on:
 permissions:
   contents: read
 jobs:
+  test:
+    name: Core tests (PlayerCore)
+    # PlayerCore tests on Linux in the same Swift image as the local runs; "build" (and so every release) waits for it.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container: swift:6.2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: swift test
+        run: cd Packages/PlayerCore && swift test
   build:
     name: Build IPA
+    needs: test
     runs-on: macos-26
     timeout-minutes: 40
     steps:
@@ -69,14 +82,30 @@ jobs:
           [ -f "$m/Manifest.json" ] || { echo "::error title=SFace::$m missing (cache hit: ${{ steps.sface-cache.outputs.cache-hit }})"; exit 1; }
           echo "cache hit: ${{ steps.sface-cache.outputs.cache-hit }}"
           find "$m" -type f -exec ls -l {} \;
+      - name: Install XcodeGen (pinned release)
+        # Fixed release archive with a SHA-256 checked here instead of "brew install" (moving formula).
+        env:
+          XCODEGEN_VERSION: '2.48.0'
+          XCODEGEN_SHA256: '620c9f0dc10849f94728ab5df52d225ebab8187439dd6fee1925e59e80dff892'
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 3 -o xcodegen.zip "https://github.com/yonaskolb/XcodeGen/releases/download/$XCODEGEN_VERSION/xcodegen.zip"
+          echo "$XCODEGEN_SHA256  xcodegen.zip" | shasum -a 256 -c
+          unzip -q xcodegen.zip
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
       - name: Generate project (XcodeGen)
-        run: brew install xcodegen && cd App && xcodegen generate
+        run: |
+          cd App && xcodegen --version && xcodegen generate
+          # The generated project resolves packages itself and ignores the Package.resolved of the local package
+          # AetherFEL; copy the checked-in pins there so the build can only use these versions.
+          d=Player.xcodeproj/project.xcworkspace/xcshareddata/swiftpm
+          mkdir -p "$d" && cp ../Packages/AetherFEL/Package.resolved "$d/Package.resolved"
       - name: Build
         run: |
           set -o pipefail
           # Build number = run number; commit and branch for "update app" (App aktualisieren) in the settings.
           cd App && xcodebuild -project Player.xcodeproj -scheme Player -configuration Release \
-            -sdk appletvos -destination 'generic/platform=tvOS' -derivedDataPath build \
+            -sdk appletvos -destination 'generic/platform=tvOS' -derivedDataPath build -onlyUsePackageVersionsFromResolvedFile \
             CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" PLAYER_BUILD_COMMIT="$GITHUB_SHA" PLAYER_BUILD_BRANCH="$GITHUB_REF_NAME" \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build > build.log 2>&1 || { grep -E 'error:|BUILD FAILED' build.log | head -80; exit 1; }
           tail -5 build.log
@@ -224,9 +253,15 @@ jobs:
           [ "$DRY" = true ] && mode=dry-run
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
           echo "Mode: $mode (ref $GITHUB_REF, event $GITHUB_EVENT_NAME)"
+      # The secret IPA_DENYLIST only in runs on integ and main (the check code comes from the branch);
+      # other branches run the same check without the extra list.
       - name: Check IPA (no keys, addresses, names)
+        if: github.ref_name == 'integ' || github.ref_name == 'main'
         env:
           EXTRA_DENY: ${{ secrets.IPA_DENYLIST }}
+        run: bash tools/check_ipa.sh Player.ipa
+      - name: Check IPA (no keys, addresses, names; without the extra list)
+        if: github.ref_name != 'integ' && github.ref_name != 'main'
         run: bash tools/check_ipa.sh Player.ipa
       - name: Release notes
         env:
