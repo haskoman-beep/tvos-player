@@ -65,6 +65,13 @@ final class RemoteLog {
     /// Millisekunden seit `launch`.
     static func msSinceLaunch() -> Int { Metric.ms(launch.duration(to: ContinuousClock.now)) }
 
+    /// `start.usable`, genau einmal je Start, vom ersten bedienbaren Bildschirm: Startseite mit Hero (erster Fokus
+    /// auf „Abspielen“ oder in den Reihen), Startseite ohne Hero, Profilwahl oder „Profile nicht lesbar“.
+    /// `at` = Zeitpunkt, ab dem der Bildschirm bedienbar war; `weg` sagt, welcher Bildschirm es war.
+    static func startUsable(_ way: String, at: ContinuousClock.Instant = ContinuousClock.now) {
+        metric(.startUsable, ms: Metric.ms(launch.duration(to: at)), fields: ["weg": way], once: true)
+    }
+
     // MARK: Einstellungen
 
     /// Vom AppModel bei jeder Änderung der Geräte-Einstellungen oder der Profile (Geheimnis `playerlog`).

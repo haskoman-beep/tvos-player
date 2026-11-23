@@ -72,7 +72,8 @@ The TV stays in control of the phone page:
 - Adding an addon, setting a key and restoring a backup only take effect after you confirm them on the TV
   („Erlauben“ / „Ablehnen“, allow / decline).
 - The normal backup is a JSON file **without** keys and tokens. A backup **with** keys is only offered as the
-  encrypted file `player-sicherung.enc`: the TV shows a 6-digit code, and the file can only be restored with that
+  encrypted file `player-sicherung.enc`: the TV shows a 12-character code in three groups
+  of four (`XXXX-XXXX-XXXX`), and the file can only be restored with that
   code. The phone never sees the code.
 
 The repository contains no keys, tokens or addresses, and none should be added. The app's logs

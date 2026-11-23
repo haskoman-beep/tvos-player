@@ -67,6 +67,8 @@ struct DetailView: View {
     @State private var didInitialFocus = false
     /// Zeitpunkt des ersten Erscheinens und ob „erste Plaketten“ schon geloggt ist (Gerätemessung Addon-Antwortzeit).
     @State private var appeared: Date?
+    /// Task 1.8: the same moment on the monotonic clock (`systemUptime`) for `detail.badges`.
+    @State private var appearedUptime: TimeInterval?
     @State private var badgesLogged = false
     /// Wave F-p: arrival times of the page's parts (one log line „Ladezeiten …“).
     @State private var timeline: DetailLoadTimeline?
@@ -180,7 +182,7 @@ struct DetailView: View {
                     RemoteLog.info("fokus", "Detail: zurück ohne Wiedergabe, Fokus bleibt")
                 }
             }
-            if appeared == nil { appeared = Date() }
+            if appeared == nil { appeared = Date(); appearedUptime = ProcessInfo.processInfo.systemUptime }
             // Welle G-a: nach dem Player neu wählen (8-h-Gedächtnis, letzte Quelle können sich geändert haben).
             if loaded, let id = imdb { updateChoice(id) }
             // Quellen schon im Cache (z. B. zweiter Besuch): Technik-Plaketten im ersten Bild, nicht erst nach dem Laden.
@@ -401,7 +403,9 @@ struct DetailView: View {
         badgesLogged = true
         let ms = appeared.map { Int(Date().timeIntervalSince($0) * 1000) } ?? -1
         RemoteLog.info("detail", "erste Plaketten nach \(ms) ms (\(source))")
-        if ms >= 0 { RemoteLog.metric(.detailBadges, ms: ms, fields: ["quelle": source]) }   // Task 1.8
+        if let up = StartTiming.ms(appearedUptime, ProcessInfo.processInfo.systemUptime) {   // Task 1.8
+            RemoteLog.metric(.detailBadges, ms: up, fields: ["quelle": source])
+        }
     }
 
     /// Wave F-p: the TMDB text fills in while the meta loads (catalogue entries without a description), so the

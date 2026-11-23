@@ -141,21 +141,35 @@ public struct StartTiming: Sendable, Equatable {
     public private(set) var firstFrame: Date?
     public private(set) var playing: Date?
     public private(set) var logged = false
+    /// Task 1.8: the same points on a monotonic clock (`ProcessInfo.systemUptime`, seconds) for the `metric:` lines;
+    /// they follow `tap`, `resolved` and `firstFrame` (set and dropped together).
+    public private(set) var tapUptime: TimeInterval?
+    public private(set) var resolvedUptime: TimeInterval?
+    public private(set) var firstFrameUptime: TimeInterval?
 
     public init() {}
 
-    public mutating func markTap(_ now: Date = Date()) { self = StartTiming(); tap = now }
-
-    /// Player beginnt zu laden. Ein alter Druck (oder keiner, z. B. nächste Folge) zählt ab hier.
-    public mutating func markResolved(_ now: Date = Date()) {
-        if let t = tap, now.timeIntervalSince(t) > Self.maxTapAge || now < t { tap = nil }
-        resolved = now
-        firstFrame = nil; playing = nil; logged = false
+    public mutating func markTap(_ now: Date = Date(), uptime: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        self = StartTiming(); tap = now; tapUptime = uptime
     }
 
-    public mutating func markFirstFrame(_ now: Date = Date()) {
+    /// Player beginnt zu laden. Ein alter Druck (oder keiner, z. B. nächste Folge) zählt ab hier.
+    public mutating func markResolved(_ now: Date = Date(), uptime: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        if let t = tap, now.timeIntervalSince(t) > Self.maxTapAge || now < t { tap = nil; tapUptime = nil }
+        if let u = tapUptime, uptime - u > Self.maxTapAge || uptime < u { tap = nil; tapUptime = nil }
+        resolved = now; resolvedUptime = uptime
+        firstFrame = nil; firstFrameUptime = nil; playing = nil; logged = false
+    }
+
+    public mutating func markFirstFrame(_ now: Date = Date(), uptime: TimeInterval = ProcessInfo.processInfo.systemUptime) {
         guard resolved != nil, firstFrame == nil else { return }
-        firstFrame = now
+        firstFrame = now; firstFrameUptime = uptime
+    }
+
+    /// Task 1.8: whole milliseconds between two monotonic points (nil when one is missing; never negative).
+    public static func ms(_ from: TimeInterval?, _ to: TimeInterval?) -> Int? {
+        guard let from, let to else { return nil }
+        return max(0, Int(((to - from) * 1000).rounded()))
     }
 
     /// Spielt: liefert die Logzeile genau einmal (nil = schon gemeldet oder kein Start erfasst).
@@ -166,7 +180,7 @@ public struct StartTiming: Sendable, Equatable {
         logged = true
         let text = Self.line(tap: tap, resolved: r, firstFrame: firstFrame ?? now, playing: now)
         // Der Druck gehört zu diesem Start; die nächste Folge (ohne Druck) misst ab dem Laden.
-        tap = nil
+        tap = nil; tapUptime = nil
         return text
     }
 

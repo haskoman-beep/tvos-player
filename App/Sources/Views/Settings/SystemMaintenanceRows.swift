@@ -102,7 +102,7 @@ struct RemoteLogPage: View {
                                     reserveDetailSpace: false) {
                             guard !chosen else { return }
                             model.updateDevice { $0.remoteLogReceiver = name }
-                            RemoteLog.info("einstellung", "Fern-Log-Empfänger: \(name)")
+                            RemoteLog.info("log", "Empfänger \(name) gewählt")   // Task 1.8 (plan line)
                         }
                     }
                 }

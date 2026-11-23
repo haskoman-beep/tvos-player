@@ -48,20 +48,27 @@ extension AppModel {
 
     /// Erste Reihen warten hier auf das Lesen; nur die erste übernimmt den Stand.
     func awaitCatalogSnapshot() async {
-        guard let task = catalogDisk.pending else { return }
+        // Task 1.8: `start.catalog` once per start. No read pending: either the first read was already taken over
+        // (line written, `once` drops this one) or it was dropped (`clearCatalogCache`) → "stand verworfen".
+        guard let task = catalogDisk.pending else {
+            RemoteLog.metric(.startCatalog, ms: RemoteLog.msSinceLaunch(), fields: ["reihen": "0", "stand": "verworfen"], once: true)
+            return
+        }
         let t0 = Date()
+        let waitStart = ContinuousClock.now
         let snap = await task.value
-        guard catalogDisk.pending == task else { return }   // schon übernommen oder durch neueres Lesen ersetzt
+        // Schon übernommen oder durch neueres Lesen ersetzt (das neuere schreibt die Messzeile, wenn es übernommen wird).
+        guard catalogDisk.pending == task else { return }
         catalogDisk.pending = nil
         guard catalogDisk.pendingProfile == profile.id, let snap else {
             RemoteLog.info("katalog", "Plattencache: kein Stand")
-            RemoteLog.metric(.startCatalog, ms: RemoteLog.msSinceLaunch(), fields: ["reihen": "0"], once: true)
+            RemoteLog.metric(.startCatalog, ms: RemoteLog.msSinceLaunch(), fields: ["reihen": "0", "stand": "keiner"], once: true)
             return
         }
         let n = snap.restore(into: &cache, generation: catalogDisk.pendingGeneration)
         // Task 1.8: first snapshot of this start (a later profile switch does not count).
         RemoteLog.metric(.startCatalog, ms: RemoteLog.msSinceLaunch(),
-                         fields: ["reihen": "\(n)", "warten": "\(Int(Date().timeIntervalSince(t0) * 1000))"], once: true)
+                         fields: ["reihen": "\(n)", "warten": "\(Metric.ms(waitStart.duration(to: ContinuousClock.now)))"], once: true)
         let age = snap.oldestAge().map { " · ältester \(Int($0 / 60)) min" } ?? ""
         RemoteLog.info("katalog", "Plattencache: \(n) Reihen sofort gezeigt (\(Int(Date().timeIntervalSince(t0) * 1000)) ms)\(age), Erneuerung im Hintergrund")
     }

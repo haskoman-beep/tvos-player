@@ -26,7 +26,7 @@ migration paths are written out.
 - **Follows:** keys move to the Keychain in later builds with double bookkeeping first; the stored format stays readable by build 249 until then.
 
 ## ADR-5: Own web server for the phone page (22 Nov 2026)
-- **Decision:** keep the phone page, but the TV is the authority: one-time QR address bound to the first phone, sensitive changes confirmed on the TV, export without keys by default, a backup with keys only as `player-sicherung.enc` with a 6-digit code shown on the TV.
+- **Decision:** keep the phone page, but the TV is the authority: one-time QR address bound to the first phone, sensitive changes confirmed on the TV, export without keys by default, a backup with keys only as `player-sicherung.enc` with a 12-character code (three groups of four, `XXXX-XXXX-XXXX`) shown on the TV.
 - **Why:** before, the token in the address unlocked everything, including all keys, without any confirmation.
 - **Follows:** one extra press on the remote for sensitive actions; no data migration.
 

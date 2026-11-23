@@ -170,7 +170,7 @@ extension PhoneCommand {
         return false
     }
 
-    static let keyLabels = ["tmdb": "TMDB-API-Key", "mdblist": "MDBList-Key", "tvdb": "TVDB-Key", "trakt_id": "Trakt Client ID",
+    static let keyLabels = ["tmdb": "TMDB-API-Key", "mdblist": "MDBList-Key", "trakt_id": "Trakt Client ID",
                             "trakt_secret": "Trakt Client Secret", "simkl_id": "Simkl Client ID", "torbox": "TorBox-API-Key",
                             LogSignature.secretKey: "Fern-Log-Geheimnis"]
 }
@@ -181,6 +181,32 @@ public struct PhoneConfirmation: Equatable, Sendable {
     public let summary: [String]
     public let expires: Date
     public var needsCode: Bool { commands.contains(where: \.needsBackupCode) }
+}
+
+extension PhoneConfirmation {
+    /// Task 1.8: how an open request ended, for the log line `handy: Bestätigung <Art> <Ausgang>`.
+    public enum Outcome: String, Sendable { case allowed = "erlaubt", declined = "abgelehnt", lapsed = "abgelaufen" }
+
+    /// Short kind of the request: Addon, Schlüssel, Adresse (atvloadly), Import (restore a backup), Sicherung (export
+    /// with keys); several kinds in their order joined with „+“. Never a value, host or key.
+    public var logKind: String {
+        var kinds: [String] = []
+        for c in commands {
+            let k: String
+            switch c {
+            case .addAddon: k = "Addon"
+            case .setKey(let s, _): k = s == AtvloadlyAddress.key ? "Adresse" : "Schlüssel"
+            case .importBackup: k = "Import"
+            case .exportSecrets: k = "Sicherung"
+            default: k = "Befehl"
+            }
+            if !kinds.contains(k) { kinds.append(k) }
+        }
+        return kinds.isEmpty ? "Befehl" : kinds.joined(separator: "+")
+    }
+
+    /// The message part after the category `handy`.
+    public func logLine(_ outcome: Outcome) -> String { "Bestätigung \(logKind) \(outcome.rawValue)" }
 }
 
 /// Only one open request at a time; it lapses after 60 s without an answer.

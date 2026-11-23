@@ -25,7 +25,7 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   „Diese Fassung laden“ (load an older version) or „Neu anfangen“ (start over). The unreadable state is always kept
   as a copy. The app keeps the two previous versions of the profiles for this.
 - Phone page: a backup **with** keys is offered as the encrypted file `player-sicherung.enc`. The TV shows a
-  6-digit code; the file can only be restored with it.
+  12-character code in three groups of four (`XXXX-XXXX-XXXX`); the file can only be restored with it.
 - Settings › System › „Verlauf“ (history): the latest lines of the event log, kept on the device, also without a
   log receiver.
 - Remote log measuring points as `metric: <name> <ms>` lines (`start.usable`, `start.profiles`, `start.catalog`,

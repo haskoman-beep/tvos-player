@@ -3,7 +3,7 @@ import Foundation
 import PlayerCore
 
 /// Task 1.4: the real cipher of the encrypted backup (`player-sicherung.enc`, format in `PlayerCore/Store/BackupCrypto`).
-/// Key: HKDF-SHA256 over the 6 digits of the code shown on the TV, with the random salt of the file and the fixed info
+/// Key: HKDF-SHA256 over the 12-character code shown on the TV (`XXXX-XXXX-XXXX`, key derivation id 2), with the random salt of the file and the fixed info
 /// `BackupCrypto.hkdfInfo`, 32 bytes. Encryption: ChaChaPoly (ChaCha20-Poly1305), the file header as authenticated data.
 struct CryptoKitBackupCipher: BackupCipher {
     private func key(_ code: String, salt: Data) -> SymmetricKey {

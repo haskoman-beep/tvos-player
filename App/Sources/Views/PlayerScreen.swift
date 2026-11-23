@@ -424,8 +424,9 @@ struct PlayerControls<E: PlaybackEngine>: View {
             RemoteLog.info("player", "Laden \(title) · Start \(start.map { Int($0) } ?? 0)s · \(url.host ?? "?")")
             stabilityLoadBegins()
             // Task 1.8: press on the source until loading begins (a stale press is dropped by `markResolved`).
-            if let tap = PlaybackStability.shared.timing.tap {
-                RemoteLog.metric(.playerLoadBegins, ms: Int(Date().timeIntervalSince(tap) * 1000))
+            let timing = PlaybackStability.shared.timing
+            if let ms = StartTiming.ms(timing.tapUptime, timing.resolvedUptime) {
+                RemoteLog.metric(.playerLoadBegins, ms: ms)
             }
             // Wiederholter Start nach neu aufgelöstem Link: dessen Adresse und Kopfzeilen.
             try await engine.load(resolvedURL ?? url, start: start, prefs: resolvedPrefs ?? prefs)
@@ -470,9 +471,9 @@ struct PlayerControls<E: PlaybackEngine>: View {
     /// Task 1.8: start of loading until the first frame (and from the press, if there was one); once per load.
     private func logFirstFrameMetric() {
         let t = PlaybackStability.shared.timing
-        guard let resolved = t.resolved, let frame = t.firstFrame else { return }
-        let press = t.tap.map { "\(Int(frame.timeIntervalSince($0) * 1000))" } ?? "-"
-        RemoteLog.metric(.playerFirstFrame, ms: Int(frame.timeIntervalSince(resolved) * 1000), fields: ["druck": press])
+        guard let ms = StartTiming.ms(t.resolvedUptime, t.firstFrameUptime) else { return }
+        let press = StartTiming.ms(t.tapUptime, t.firstFrameUptime).map { "\($0)" } ?? "-"
+        RemoteLog.metric(.playerFirstFrame, ms: ms, fields: ["druck": press])
     }
 
     /// Task 1.8: the start's audio reload is over once the engine has loaded and plays the chosen track.

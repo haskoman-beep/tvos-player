@@ -317,9 +317,10 @@ struct HeroButtons: View {
         guard !LaunchFocus.done else { return }
         let deadline = LaunchFocus.deadline ?? ContinuousClock.now + LaunchFocus.window
         LaunchFocus.deadline = deadline
+        if LaunchFocus.shownAt == nil { LaunchFocus.shownAt = ContinuousClock.now }
         var heldSince: ContinuousClock.Instant?
         while !Task.isCancelled, !LaunchFocus.done, ContinuousClock.now < deadline {
-            if focus.inRows { LaunchFocus.finish("Fokus in den Reihen"); return }
+            if focus.inRows { LaunchFocus.finish("Fokus in den Reihen", way: "reihen"); return }
             switch field {
             case nil:
                 if heldSince != nil { RemoteLog.info("fokus", "Start: Fokus vor dem Halten verloren, zurückholen") }
@@ -328,13 +329,20 @@ struct HeroButtons: View {
             case .play:
                 let since = heldSince ?? ContinuousClock.now
                 heldSince = since
-                if ContinuousClock.now - since >= LaunchFocus.hold { LaunchFocus.finish("Abspielen hält den Fokus"); return }
+                if LaunchFocus.firstPlayFocus == nil { LaunchFocus.firstPlayFocus = since }
+                if ContinuousClock.now - since >= LaunchFocus.hold {
+                    LaunchFocus.finish("Abspielen hält den Fokus", way: "hero", usableAt: since); return
+                }
             case .details:
                 heldSince = nil
             }
             try? await Task.sleep(for: .milliseconds(100))
         }
-        if !LaunchFocus.done, ContinuousClock.now >= deadline { LaunchFocus.finish("Startfenster vorbei") }
+        // Fenster vorbei: bedienbar seit dem ersten Fokus auf „Abspielen“, sonst seit die Knopfzeile erschien.
+        if !LaunchFocus.done, ContinuousClock.now >= deadline {
+            LaunchFocus.finish("Startfenster vorbei", way: "fenster",
+                               usableAt: LaunchFocus.firstPlayFocus ?? LaunchFocus.shownAt ?? ContinuousClock.now)
+        }
     }
 
     private func play() {
@@ -362,13 +370,16 @@ struct HeroButtons: View {
     /// So lange muss „Abspielen“ den Fokus halten, dann gilt der Start als erledigt.
     static let hold: Duration = .milliseconds(300)
     static var deadline: ContinuousClock.Instant?
+    /// Task 1.8: erstes Erscheinen der Knopfzeile und erster Fokus auf „Abspielen“ (für `start.usable`).
+    static var shownAt: ContinuousClock.Instant?
+    static var firstPlayFocus: ContinuousClock.Instant?
     private(set) static var done = false
 
-    static func finish(_ reason: String) {
+    static func finish(_ reason: String, way: String, usableAt: ContinuousClock.Instant = ContinuousClock.now) {
         guard !done else { return }
         done = true
         RemoteLog.info("fokus", "Start: \(reason)")
-        RemoteLog.metric(.startUsable, ms: RemoteLog.msSinceLaunch(), once: true)   // Task 1.8: once per start
+        RemoteLog.startUsable(way, at: usableAt)   // Task 1.8: once per start (other screens: RootView, HomeView)
     }
 }
 

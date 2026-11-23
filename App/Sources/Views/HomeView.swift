@@ -57,6 +57,9 @@ struct HomeView: View {
         }
         .environment(\.homeRowFocusMemory, rowFocus)
         .background { HomeTabBarRequest(watch: topWatch) }
+        // Task 1.8: start page without hero (none configured or no slides): usable as soon as it shows; with a hero
+        // the button row reports `start.usable` (`LaunchFocus`).
+        .onChange(of: showsHero, initial: true) { _, hero in if !hero { RemoteLog.startUsable("ohneHero") } }
         .onChange(of: "\(edge.rawValue)|\(appearance.navigation.rawValue)", initial: true) {
             topWatch.configure(edge: edge, navigation: appearance.navigation)
         }

@@ -18,7 +18,7 @@ Markers: **[U]** = decided by the user, **[C]** = Claude's decision (can be corr
 - Home screen editing: long-press menu and a row manager instead of the direct edit mode (W-10).
 - Persistence: all profiles in one block in UserDefaults plus file copies, the last two versions kept, a recovery
   page instead of a silent reset (W-4). Keys are in the profile, not in the Keychain; the normal export has no keys,
-  a backup with keys is encrypted with a 6-digit code shown on the TV (W-3).
+  a backup with keys is encrypted with a 12-character code (three groups of four, `XXXX-XXXX-XXXX`) shown on the TV (W-3).
 - Structure: no `PlaybackKit`/`PlayerEngine` package; the app uses the engine through `Packages/AetherFEL` (W-11).
   The app target builds in the Swift 5 language mode, `PlayerCore` in Swift 6 (W-18).
 - Not built: TVDB episode order (the key field was removed) and MDBList lists as rows (E-51, E-53).

@@ -95,22 +95,26 @@ final class PhoneServer: ObservableObject {
         if let c = confirmation, gate.current(now: now) == nil {
             confirmation = nil
             if c.commands.contains(.exportSecrets) { sealedOutcome = .lapsed }
-            RemoteLog.info("handy", "Bestätigung ohne Antwort verfallen")
+            RemoteLog.info("handy", c.logLine(.lapsed))
         }
         if let u = sealedUntil, now >= u { sealedFile = nil; sealedUntil = nil; sealedOutcome = .lapsed }
     }
 
     private func syncConnected() {
-        if connected != session.isConnected { connected = session.isConnected }
+        guard connected != session.isConnected else { return }
+        connected = session.isConnected
+        if connected { RemoteLog.info("handy", "Sitzung gebunden") }   // Task 1.8: QR address used by the first phone
     }
 
     /// „Erlauben“ / „Ablehnen“ on the card. `code` is the code typed for a sealed backup.
     func answer(allow: Bool, code: String) {
         let now = Date()
         let wantedExport = confirmation?.commands.contains(.exportSecrets) ?? false
+        let open = confirmation
         let cmds = gate.resolve(allow: allow, now: now)
         confirmation = nil
-        RemoteLog.info("handy", allow ? "Bestätigung: erlaubt (\(cmds.count) Befehl(e))" : "Bestätigung: abgelehnt")
+        // Task 1.8: allowed too late counts as lapsed (nothing runs).
+        if let open { RemoteLog.info("handy", open.logLine(!allow ? .declined : cmds.isEmpty ? .lapsed : .allowed)) }
         if wantedExport && !allow { sealedOutcome = .declined }
         guard let model else { return }
         if allow && cmds.isEmpty {

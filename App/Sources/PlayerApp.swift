@@ -77,8 +77,10 @@ struct RootView: View {
             if case .unreadable(let reason, let candidates) = model.storeState {
                 // Task 1.3: nothing is saved until the user picks a way out here.
                 ProfileRecoveryView(reason: reason, candidates: candidates)
+                    .onAppear { RemoteLog.startUsable("wiederherstellung") }   // Task 1.8
             } else if model.hasMultipleProfiles && !pickedProfile {
                 ProfilePickerView { pickedProfile = true }
+                    .onAppear { RemoteLog.startUsable("profilwahl") }   // Task 1.8
             } else {
                 styled(tabs)
                     .overlay(alignment: .topTrailing) {

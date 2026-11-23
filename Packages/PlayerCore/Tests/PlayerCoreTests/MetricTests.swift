@@ -28,3 +28,35 @@ import Testing
         #expect(LogRedact.text(Metric.line(m, ms: 1234)) == Metric.line(m, ms: 1234))
     }
 }
+
+@Test func startTimingKeepsMonotonicPoints() {
+    let d = Date(timeIntervalSince1970: 1_000)
+    var t = StartTiming()
+    t.markTap(d, uptime: 50)
+    t.markResolved(d.addingTimeInterval(0.4), uptime: 50.4)
+    t.markFirstFrame(d.addingTimeInterval(1.2), uptime: 51.2)
+    #expect(StartTiming.ms(t.tapUptime, t.resolvedUptime) == 400)
+    #expect(StartTiming.ms(t.resolvedUptime, t.firstFrameUptime) == 800)
+    #expect(StartTiming.ms(t.tapUptime, nil) == nil)
+    #expect(StartTiming.ms(10, 9) == 0)
+    // A stale press (older than maxTapAge on the monotonic clock) is dropped even if the wall clock jumped back.
+    var s = StartTiming()
+    s.markTap(d, uptime: 10)
+    s.markResolved(d.addingTimeInterval(1), uptime: 10 + StartTiming.maxTapAge + 1)
+    #expect(s.tap == nil && s.tapUptime == nil && s.resolvedUptime != nil)
+    _ = s.markPlaying(d.addingTimeInterval(2))
+    #expect(s.tapUptime == nil)
+}
+
+@Test func phoneConfirmationLogLine() {
+    let exp = Date(timeIntervalSince1970: 0)
+    let addon = PhoneConfirmation(commands: [.addAddon("https://example.invalid/manifest.json")], summary: [], expires: exp)
+    #expect(addon.logLine(.allowed) == "Bestätigung Addon erlaubt")
+    let keys = PhoneConfirmation(commands: [.setKey(service: "tmdb", value: "x"), .setKey(service: "mdblist", value: "y"),
+                                            .importBackup(Data())], summary: [], expires: exp)
+    #expect(keys.logLine(.declined) == "Bestätigung Schlüssel+Import abgelehnt")
+    #expect(PhoneConfirmation(commands: [.exportSecrets], summary: [], expires: exp).logLine(.lapsed)
+            == "Bestätigung Sicherung abgelaufen")
+    #expect(PhoneConfirmation(commands: [.setKey(service: AtvloadlyAddress.key, value: "h")], summary: [], expires: exp)
+                .logKind == "Adresse")
+}

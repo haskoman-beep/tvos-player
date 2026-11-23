@@ -4,7 +4,8 @@ import Foundation
 /// be compared line by line. The app logs them in the category `metric` as
 /// `<name> <ms>[ · <field> <value>]…`, e.g. `metric: start.usable 812` or `metric: start.catalog 140 · reihen 6`.
 public enum Metric: String, CaseIterable, Sendable, Hashable {
-    /// App start until the first focus on the home page is set (`LaunchFocus`); once per start.
+    /// App start until the first screen is usable, once per start on every path; field `weg`: `hero` / `reihen` /
+    /// `fenster` (home page with hero, `LaunchFocus`), `ohneHero`, `profilwahl`, `wiederherstellung`.
     case startUsable = "start.usable"
     /// Reading the profiles (and the progress of the active profile) in `AppModel.init`.
     case startProfiles = "start.profiles"
