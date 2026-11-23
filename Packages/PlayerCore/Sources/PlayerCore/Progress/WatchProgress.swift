@@ -49,6 +49,30 @@ public struct ProgressBook: Codable, Sendable, Equatable {
 
     public func lastSource(for id: String) -> LastSource? { sources?[Self.sourceKey(id)] }
 
+    /// Task 2.6 (S-10): entries younger than this many months are never pruned.
+    public static let pruneMonths = 18
+
+    /// Task 2.6 (S-10): keeps the book small. Of the finished entries the newest `keepFinished` stay, of the open
+    /// ones the newest `keepOpen`; an entry beyond its quota is dropped only when it is older than `pruneMonths`.
+    /// Everything else (sources, schema) is kept as it is. The stored format does not change.
+    public func pruned(now: Date = Date(), keepFinished: Int = 1500, keepOpen: Int = 500) -> ProgressBook {
+        guard entries.count > min(keepFinished, keepOpen) else { return self }
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC") ?? cal.timeZone
+        let cutoff = cal.date(byAdding: .month, value: -Self.pruneMonths, to: now) ?? now
+        func drops(_ list: [WatchProgress], keep: Int) -> [String] {
+            guard list.count > keep else { return [] }
+            return list.sorted { $0.updated != $1.updated ? $0.updated > $1.updated : $0.id < $1.id }
+                .dropFirst(max(0, keep)).filter { $0.updated < cutoff }.map(\.id)
+        }
+        let all = Array(entries.values)
+        let gone = drops(all.filter(\.finished), keep: keepFinished) + drops(all.filter { !$0.finished }, keep: keepOpen)
+        guard !gone.isEmpty else { return self }
+        var out = self
+        for id in gone { out.entries[id] = nil }
+        return out
+    }
+
     /// Speichert eine Position. Ab 92 % gilt der Titel als gesehen.
     public mutating func record(id: String, item: MetaPreview, season: Int? = nil, episode: Int? = nil,
                                 position: Double, duration: Double, now: Date = Date()) {
@@ -128,7 +152,11 @@ public struct ProgressBook: Codable, Sendable, Equatable {
 /// Eine Datei pro Profil: progress-<id>.json (atomar).
 public struct ProgressStore: Sendable {
     public let storage: BlobStorage
-    public init(storage: BlobStorage) { self.storage = storage }
+    /// Task 2.6: called with the number of entries dropped by `ProgressBook.pruned` before a save (only when > 0).
+    let onPruned: (@Sendable (Int) -> Void)?
+    public init(storage: BlobStorage, onPruned: (@Sendable (Int) -> Void)? = nil) {
+        self.storage = storage; self.onPruned = onPruned
+    }
     public init(directory: URL) { self.init(storage: FileBlobStorage(directory: directory)) }
     func name(_ profile: UUID) -> String { "progress-\(profile.uuidString).json" }
 
@@ -142,9 +170,13 @@ public struct ProgressStore: Sendable {
         return nil
     }
 
-    public func save(_ book: ProgressBook, profile: UUID) throws {
+    /// Task 2.6: prunes the book before every save (`ProgressBook.pruned`).
+    public func save(_ book: ProgressBook, profile: UUID, now: Date = Date()) throws {
+        let small = book.pruned(now: now)
+        let dropped = book.entries.count - small.entries.count
+        if dropped > 0 { onPruned?(dropped) }
         let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
-        try storage.write(name(profile), try enc.encode(book))
+        try storage.write(name(profile), try enc.encode(small))
     }
 }
 

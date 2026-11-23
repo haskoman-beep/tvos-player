@@ -25,6 +25,14 @@ struct DefaultsStorage: BlobStorage, BlobCopies {
                                        Task { @MainActor in
                                            RemoteLog.error("speicher", "Profile nur als Datei gespeichert (\(DefaultsStorage.kb(bytes)), nicht in UserDefaults)")
                                        }
+                                   },
+                                   onProgressFileOnly: { name in
+                                       // Task 2.6 (S-10): once per app run, visible under System › Diagnose (LogRing).
+                                       Task { @MainActor in
+                                           guard !DefaultsStorage.progressFileOnlyReported else { return }
+                                           DefaultsStorage.progressFileOnlyReported = true
+                                           RemoteLog.error("speicher", "Fortschritt nur als Datei gespeichert (\(name), nicht in UserDefaults) · Caches kann tvOS leeren")
+                                       }
                                    })
         let m = tiered.migrate()
         if !m.moved.isEmpty || !m.failed.isEmpty {
@@ -33,6 +41,9 @@ struct DefaultsStorage: BlobStorage, BlobCopies {
         RemoteLog.info("speicher", Self.summary(tiered: tiered, filesIn: supportOK ? "Application Support + Caches" : "Caches"))
         if tiered.read(TieredBlobStorage.profileName) == nil { RemoteLog.error("speicher", "Profile fehlen – Standard angelegt") }
     }
+
+    /// Task 2.6: the "Fortschritt nur als Datei" line was already logged in this run.
+    @MainActor static var progressFileOnlyReported = false
 
     func read(_ name: String) -> Data? { tiered.read(name) }
     func write(_ name: String, _ data: Data) throws { try tiered.write(name, data) }

@@ -67,16 +67,23 @@ public struct TieredBlobStorage: BlobStorage {
     let decompress: @Sendable (Data) -> Data?
     /// Meldung, wenn die Profile nur noch als Datei liegen (komprimierte Bytes).
     let onProfilesFileOnly: (@Sendable (Int) -> Void)?
+    /// Task 2.6 (S-10): a progress block (`progress-<Profil>.json`) no longer fits into UserDefaults (its name).
+    let onProgressFileOnly: (@Sendable (String) -> Void)?
 
     public init(defaults: KeyValueBlobs, directories: [FileBlobStorage], writeDirectories: [FileBlobStorage]? = nil,
                 compress: @escaping @Sendable (Data) -> Data? = { $0 },
                 decompress: @escaping @Sendable (Data) -> Data? = { $0 },
-                onProfilesFileOnly: (@Sendable (Int) -> Void)? = nil) {
+                onProfilesFileOnly: (@Sendable (Int) -> Void)? = nil,
+                onProgressFileOnly: (@Sendable (String) -> Void)? = nil) {
         self.defaults = defaults; self.directories = directories
         self.writeDirectories = writeDirectories ?? directories
         self.compress = compress; self.decompress = decompress
         self.onProfilesFileOnly = onProfilesFileOnly
+        self.onProgressFileOnly = onProgressFileOnly
     }
+
+    /// Task 2.6: `progress-<Profil>.json` (not its `.bak`, not `fileprogress-…`).
+    public static func isProgress(_ name: String) -> Bool { name.hasPrefix("progress-") && name.hasSuffix(".json") }
 
     /// Höchstgröße (komprimiert) eines Blocks in UserDefaults; 0 = nur Datei.
     public static func limit(_ name: String) -> Int {
@@ -110,6 +117,7 @@ public struct TieredBlobStorage: BlobStorage {
             defaults.remove(forKey: k)
         }
         if name == Self.profileName { onProfilesFileOnly?(z?.count ?? data.count) }
+        if Self.isProgress(name) { onProgressFileOnly?(name) }
         guard fileOK else { throw StorageFull(bytes: data.count) }
     }
 

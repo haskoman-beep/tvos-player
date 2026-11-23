@@ -72,7 +72,9 @@ final class AppModel: ObservableObject {
         case .loaded(let s, _), .fresh(let s): stored = s
         case .unreadable: stored = .makeDefault()   // only shown behind ProfileRecoveryView, never saved
         }
-        progressStore = ProgressStore(storage: storage)
+        progressStore = ProgressStore(storage: storage, onPruned: { n in
+            Task { @MainActor in RemoteLog.info("fortschritt", "beschnitten \(n)") }
+        })
         adoptProfileLoad(loaded)
         let progressStart = ContinuousClock.now
         progress = loadProgress(profile.id)
@@ -281,7 +283,8 @@ final class AppModel: ObservableObject {
     /// (saved only with the next progress).
     func loadProgress(_ id: UUID) -> ProgressBook {
         progressSaveHeld = false
-        if let b = progressStore.load(profile: id) { return b }
+        // Task 2.6: prune in memory too, so later saves do not report the same entries again.
+        if let b = progressStore.load(profile: id) { return b.pruned() }
         progressSaveHeld = true
         RemoteLog.error("speicher", "Fortschritt unlesbar, als .bak beiseitegelegt · leeres Buch bis zum nächsten Fortschritt")
         return ProgressBook()
