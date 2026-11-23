@@ -1,0 +1,52 @@
+{
+  "schema": "player.appearance.preset",
+  "version": 1,
+  "preset": "appletv",
+  "modified": false,
+  "exportedAt": "2026-11-23T00:00:00.000Z",
+  "values": {
+    "global": {
+      "navigation": "oben",
+      "clock": false,
+      "settingsLayout": "spalten",
+      "accent": "weiss",
+      "background": "schwarz",
+      "typeScale": "standard",
+      "typeCharacter": "neutral",
+      "motion": "standard"
+    },
+    "home": {
+      "heroStyle": "vollbild",
+      "heroInfo": "minimal",
+      "heroTitle": "logo",
+      "backdropFollowsFocus": false,
+      "cardShape": "querformat",
+      "cardSize": "gross",
+      "corners": "rund",
+      "rowSpacing": "luftig",
+      "rowTitle": "standard",
+      "cardTitles": "immer",
+      "expandPosters": false,
+      "focusScale": "kraeftig",
+      "focusBorder": "keiner",
+      "focusShadow": "tief",
+      "focusGlow": true
+    },
+    "detail": {
+      "layout": "kino",
+      "descriptionLines": 2,
+      "cast": "kreise",
+      "badgeStyle": "text",
+      "ratingStyle": "text",
+      "sourceList": "kompakt"
+    },
+    "player": {
+      "controlBar": "minimal",
+      "badges": "aus",
+      "timeDisplay": "rest",
+      "trackPanel": "unten",
+      "upNext": "karte",
+      "stillWatching": "dialog"
+    }
+  }
+}

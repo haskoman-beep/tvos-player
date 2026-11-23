@@ -1,0 +1,434 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Player Konfigurator</title>
+<style>
+/* Layout: Vorführraum. Links die Leinwand (16:9-Bühne, klebt beim Scrollen), rechts das Regiepult mit den Optionen. */
+:root{
+  color-scheme:dark;
+  --ink:#0d0e11; --panel:#16181d; --panel-2:#1e2128; --line:#2c3038;
+  --text:#ecebe6; --muted:#9a9ca3; --gold:#d4b87a; --warn:#e2a04a;
+  --ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;
+  --r:10px;
+}
+*{box-sizing:border-box}
+html,body{height:auto}
+body{background:var(--ink);color:var(--text);font-family:var(--ui);font-size:15px;line-height:1.45;margin:0}
+.wrap{max-width:1680px;margin:0 auto;padding-block:20px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+header.top{display:flex;flex-wrap:wrap;gap:16px 28px;align-items:flex-end;justify-content:space-between;padding-bottom:18px;border-bottom:1px solid var(--line)}
+h1{font-size:26px;font-weight:600;letter-spacing:-.01em;margin:0}
+.sub{color:var(--muted);margin:4px 0 0;max-width:62ch}
+.presets{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.presets span{color:var(--muted);margin-right:4px}
+button{font:inherit;color:inherit;cursor:pointer}
+.chip{background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:7px 14px}
+.chip:hover{border-color:#4a4f5a}
+.chip[aria-pressed="true"]{background:var(--gold);border-color:var(--gold);color:#17140c;font-weight:600}
+:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+main{display:grid;grid-template-columns:minmax(0,1.75fr) minmax(320px,1fr);gap:24px;margin-top:20px;align-items:start}
+@media (max-width:980px){main{grid-template-columns:minmax(0,1fr)}}
+.screen-col{position:sticky;top:max(12px,env(safe-area-inset-top,0px));min-width:0}
+@media (max-width:980px){.screen-col{position:static}}
+.tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.tab{background:none;border:0;border-bottom:2px solid transparent;padding:8px 12px;color:var(--muted)}
+.tab[aria-selected="true"]{color:var(--text);border-color:var(--gold)}
+.tv{background:#050506;border:1px solid #23262d;border-radius:14px;padding:10px;box-shadow:0 30px 80px rgba(0,0,0,.55)}
+.stage-box{position:relative;width:100%;max-width:100%;aspect-ratio:16/9;overflow:hidden;border-radius:6px;background:#000}
+.stage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;overflow:hidden}
+.scene-bar{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;align-items:center;color:var(--muted)}
+.hint{color:var(--muted);font-size:13px;margin-top:10px}
+.desk{min-width:0;display:grid;gap:16px}
+.group{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px}
+.group h2{font-size:16px;font-weight:600;margin:0 0 4px}
+.group>p{color:var(--muted);margin:0 0 12px;font-size:13px}
+.opt{padding:12px 0;border-top:1px solid var(--line)}
+.opt-head{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.opt-head b{font-weight:600}
+.cost{font-size:12px;color:#1c1508;background:var(--warn);border-radius:4px;padding:1px 6px;font-weight:600}
+.help{color:var(--muted);font-size:13px;margin:2px 0 8px}
+.cost-note{color:var(--warn);font-size:12.5px;margin:-4px 0 8px}
+.seg{display:flex;flex-wrap:wrap;gap:6px}
+.seg button{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:6px 11px}
+.seg button[aria-pressed="true"]{border-color:var(--gold);color:var(--gold);background:#231f15}
+.swatch{display:inline-block;width:12px;height:12px;border-radius:50%;margin-right:6px;vertical-align:-1px;border:1px solid rgba(255,255,255,.25)}
+.io textarea{width:100%;min-height:220px;background:#0a0b0d;color:#cfd3da;border:1px solid var(--line);border-radius:8px;padding:10px;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;resize:vertical}
+.io .row{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+.btn{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:8px 14px}
+.btn.primary{background:var(--gold);border-color:var(--gold);color:#17140c;font-weight:600}
+.status{min-height:1.4em;font-size:13px;color:var(--gold)}
+.status.err{color:#ff8f86}
+
+/* ---------- Bühne: alles in tvOS-Punkten (1920 × 1080) ---------- */
+.stage{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Helvetica Neue","Segoe UI",Roboto,Arial,sans-serif;color:#fff;background:var(--bg);
+  --accent:#d4b87a;--on-accent:#17140c;--bg:#0b0c0e;--surface:#17191d;--tint:20,22,26;--rad:14px;--ts:1;--dur:220ms;--gap:28px;--rowgap:56px;--cw:240px;--ch:360px}
+.stage *{box-sizing:border-box}
+.stage .t-display{font-size:calc(76px*var(--ts));font-weight:var(--w-display,700);letter-spacing:var(--ls-display,-.01em);line-height:1.02}
+.stage .t-title{font-size:calc(38px*var(--ts));font-weight:var(--w-title,600);letter-spacing:var(--ls-title,0)}
+.stage .t-body{font-size:calc(29px*var(--ts));font-weight:400;line-height:1.32}
+.stage .t-meta{font-size:calc(26px*var(--ts));font-weight:500;color:rgba(255,255,255,.68);letter-spacing:var(--ls-meta,.01em)}
+.stage .t-cap{font-size:calc(23px*var(--ts));font-weight:600}
+.backdrop{position:absolute;inset:0;transition:opacity var(--dur) ease,background var(--dur) ease}
+.shade{position:absolute;inset:0;background:linear-gradient(90deg,rgba(var(--tint),.92) 0%,rgba(var(--tint),.55) 38%,rgba(var(--tint),0) 70%),linear-gradient(0deg,rgba(var(--tint),1) 0%,rgba(var(--tint),.75) 22%,rgba(var(--tint),0) 55%)}
+.nav-side{position:absolute;left:0;top:0;bottom:0;width:128px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:34px;background:linear-gradient(90deg,rgba(var(--tint),.9),rgba(var(--tint),0));z-index:5}
+.nav-side i,.nav-top i{display:block;width:40px;height:40px;opacity:.55}
+.nav-side i.on{opacity:1;color:var(--accent)}
+.nav-top{position:absolute;left:0;right:0;top:44px;display:flex;justify-content:center;gap:10px;z-index:5}
+.nav-top span{padding:12px 30px;border-radius:999px;font-size:calc(27px*var(--ts));font-weight:500;color:rgba(255,255,255,.7)}
+.nav-top span.on{background:rgba(255,255,255,.16);color:#fff}
+.clock{position:absolute;right:80px;top:56px;font-size:calc(27px*var(--ts));font-weight:500;color:rgba(255,255,255,.75);z-index:6;font-variant-numeric:tabular-nums}
+.content{position:absolute;inset:0}
+.logo{font-weight:800;letter-spacing:.14em;text-transform:uppercase;font-size:calc(64px*var(--ts));line-height:1;text-shadow:0 4px 30px rgba(0,0,0,.5)}
+.logo small{display:block;font-size:.3em;letter-spacing:.5em;font-weight:500;opacity:.8;margin-top:14px}
+.btns{display:flex;gap:18px;margin-top:26px}
+.b{height:74px;padding:0 38px;border-radius:calc(var(--rad) + 4px);display:inline-flex;align-items:center;gap:12px;font-size:calc(28px*var(--ts));font-weight:600;background:rgba(255,255,255,.16);backdrop-filter:blur(20px)}
+.b.pri{background:#fff;color:#111}
+.b.acc{background:var(--accent);color:var(--on-accent)}
+.badges{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.bd{height:38px;padding:0 12px;display:inline-flex;align-items:center;font-size:calc(21px*var(--ts));font-weight:700;letter-spacing:.04em;border-radius:7px}
+.bd.umriss{border:2px solid rgba(255,255,255,.6);color:rgba(255,255,255,.9)}
+.bd.gefuellt{background:rgba(255,255,255,.2)}
+.bd.text{padding:0;color:rgba(255,255,255,.75);font-weight:600}
+.bd.text+.bd.text::before{content:"";width:5px;height:5px;border-radius:50%;background:rgba(255,255,255,.4);margin-right:12px}
+.bd.logos{background:#fff;color:#111;border-radius:5px;font-style:italic}
+.rate{display:flex;gap:22px;align-items:center;flex-wrap:wrap}
+.rate span{display:inline-flex;gap:8px;align-items:center;font-size:calc(26px*var(--ts));font-weight:600}
+.rate em{font-style:normal;width:30px;height:30px;border-radius:7px;display:inline-block}
+.rate.kacheln span{background:rgba(255,255,255,.1);padding:10px 16px;border-radius:12px;flex-direction:column;gap:0;align-items:flex-start;min-width:110px}
+.rate.kacheln small{font-size:.66em;color:rgba(255,255,255,.6);font-weight:500}
+.rows{position:absolute;left:0;right:0;display:flex;flex-direction:column;gap:var(--rowgap)}
+.row h3{margin:0 0 16px 0;padding-left:var(--edge)}
+.row h3.dezent{font-size:calc(27px*var(--ts));font-weight:500;color:rgba(255,255,255,.7);letter-spacing:.02em}
+.row h3.standard{font-size:calc(34px*var(--ts));font-weight:600}
+.row h3.gross{font-size:calc(44px*var(--ts));font-weight:700;letter-spacing:-.01em}
+.strip{display:flex;gap:var(--gap);padding-left:var(--edge);align-items:flex-start}
+.card{flex:none;position:relative;cursor:pointer;transition:transform var(--dur) cubic-bezier(.2,.7,.2,1),width var(--dur) ease}
+.card .img{border-radius:var(--rad);overflow:hidden;position:relative;transition:box-shadow var(--dur) ease,outline-color var(--dur) ease;outline:4px solid transparent;outline-offset:4px}
+.card .img b{position:absolute;left:8%;right:8%;bottom:9%;font-size:22px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;line-height:1.15;text-shadow:0 2px 12px rgba(0,0,0,.6)}
+.card .cap{margin-top:12px;font-size:calc(23px*var(--ts));color:rgba(255,255,255,.7);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:opacity var(--dur)}
+.card.f{z-index:3}
+.card.f .cap{color:#fff}
+.gloss::after{content:"";position:absolute;inset:0;background:linear-gradient(125deg,rgba(255,255,255,.34) 0%,rgba(255,255,255,.06) 32%,rgba(255,255,255,0) 50%);pointer-events:none}
+.dots{display:flex;gap:10px;margin-left:26px;align-items:center}
+.dots u{width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,.35)}
+.dots u.on{background:#fff;width:26px;border-radius:6px}
+.panel{background:rgba(var(--tint),.78);backdrop-filter:blur(30px);border-radius:calc(var(--rad) + 8px)}
+.src{display:flex;flex-direction:column;gap:12px}
+.src .s{background:rgba(255,255,255,.09);border-radius:var(--rad);padding:16px 20px}
+.src .s.f{background:#fff;color:#111}
+.src .s.f .t-meta{color:rgba(0,0,0,.6)}
+.src .s.f .bd.gefuellt{background:rgba(0,0,0,.1)} .src .s.f .bd.umriss{border-color:rgba(0,0,0,.5);color:#111} .src .s.f .bd.text{color:rgba(0,0,0,.7)}
+.cast{display:flex;gap:26px}
+.cast .p{width:150px;text-align:center}
+.cast .p i{display:block;width:150px;height:150px;border-radius:50%;margin-bottom:10px}
+.cast.karten .p{width:170px;text-align:left}.cast.karten .p i{width:170px;height:220px;border-radius:var(--rad)}
+.bar{height:8px;border-radius:4px;background:rgba(255,255,255,.25);position:relative}
+.bar>u{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:#fff}
+.bar>s{position:absolute;top:-4px;height:16px;width:4px;background:var(--accent);border-radius:2px}
+.dlg{position:absolute;background:rgba(var(--tint),.86);backdrop-filter:blur(40px);border-radius:calc(var(--rad) + 10px);padding:36px}
+.set-row{height:84px;border-radius:calc(var(--rad) + 4px);background:rgba(255,255,255,.08);display:flex;align-items:center;padding:0 26px;gap:20px;font-size:calc(29px*var(--ts))}
+.set-row.f{background:#fff;color:#111;transform:scale(1.02);box-shadow:0 10px 28px rgba(0,0,0,.4)}
+.set-row .v{margin-left:auto;opacity:.6}
+.ico{width:48px;height:48px;border-radius:12px;display:inline-flex;align-items:center;justify-content:center;flex:none}
+@media (prefers-reduced-motion:reduce){.stage *{transition:none!important}}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Player Konfigurator</h1>
+      <p class="sub">Stell hier zusammen, wie die App aussehen soll. Wähle eine Vorlage, ändere danach jede Einstellung frei und exportiere das Ergebnis als JSON. Bilder und Titel sind Platzhalter.</p>
+    </div>
+    <div class="presets" id="presets"><span>Vorlage</span></div>
+  </header>
+
+  <main>
+    <section class="screen-col" aria-label="Vorschau">
+      <div class="tabs" role="tablist" id="tabs"></div>
+      <div class="tv"><div class="stage-box" id="box"><div class="stage" id="stage"></div></div></div>
+      <div class="scene-bar" id="scenes"></div>
+      <p class="hint">Die Vorschau zeigt 1920 × 1080 Punkte, verkleinert. Klick auf eine Karte setzt den Fokus dorthin, so siehst du Fokus-Effekt, Hintergrund nach Fokus und das Aufklappen.</p>
+    </section>
+
+    <section class="desk" id="desk" aria-label="Optionen"></section>
+  </main>
+</div>
+
+<script>
+"use strict";
+/* ---------- Schema: Bereiche, Optionen, Vorlagen ---------- */
+const SCHEMA_ID="player.appearance.preset", SCHEMA_VERSION=1;
+const AREAS=[["home","Startseite & Hero"],["detail","Detailseite"],["player","Player"],["global","Navigation & Einstellungen"]];
+const ACCENTS={champagner:["#d4b87a","#17140c","Champagner"],weiss:["#f2f1ec","#111","Weiß"],eisblau:["#8fc7ff","#06121d","Eisblau"],blau:["#3b82f6","#fff","Blau"],rot:["#e5383b","#fff","Rot"],koralle:["#ff7a59","#1d0a04","Koralle"],salbei:["#9fc5a8","#0b160e","Salbei"],violett:["#a78bfa","#120a26","Violett"]};
+const BGS={schwarz:["#000000","#131314","0,0,0","Schwarz (OLED)"],graphit:["#0b0c0e","#17191d","11,12,14","Graphit"],tinte:["#070b14","#111827","7,11,20","Tinte (bläulich)"],warm:["#0e0b08","#1c1713","14,11,8","Warm (bräunlich)"]};
+const O=(key,label,help,options,cost)=>({key,label,help,options,cost});
+const T=(key,label,help,cost)=>({key,label,help,options:[[true,"An"],[false,"Aus"]],cost});
+const GROUPS={
+ home:[
+  ["Hero","Der große Bereich oben auf der Startseite.",[
+   O("heroStyle","Hero-Stil","Vollbild füllt den ganzen Bildschirm hinter den Reihen. Banner ist eine eigene Fläche über den Reihen. Karussell zeigt den Nachbartitel angeschnitten.",[["vollbild","Vollbild"],["banner","Banner"],["karussell","Karussell"],["aus","Aus"]]),
+   O("heroInfo","Info-Ebene","Wie viel Text über dem Hero-Bild steht.",[["minimal","Minimal"],["standard","Standard"],["ausfuehrlich","Ausführlich"]]),
+   O("heroTitle","Logo oder Titel","Logo nimmt das Titel-Logo aus den Metadaten, wenn es eines gibt. Titel setzt den Namen immer als Text.",[["logo","Logo"],["text","Titel als Text"]]),
+   T("backdropFollowsFocus","Hintergrund nach Fokus","Der Hintergrund wechselt auf den Titel, auf dem der Fokus kurz ruht.","Lädt pro Ruhepause ein großes Bild. Braucht Entprellung, sonst ruckelt das Scrollen.")]],
+  ["Karten und Reihen","Form, Größe und Abstände der Kacheln.",[
+   O("cardShape","Kartenform","Poster ist Hochformat, Querformat zeigt Szenenbilder. Mischung nutzt Querformat für Weiterschauen und Poster für den Rest.",[["poster","Poster"],["querformat","Querformat"],["mischung","Mischung"]]),
+   O("cardSize","Kartengröße","Größere Karten wirken ruhiger, zeigen aber weniger Titel pro Reihe.",[["klein","Klein"],["mittel","Mittel"],["gross","Groß"]]),
+   O("corners","Ecken","Radius der Karten und Flächen.",[["eckig","Eckig"],["leicht","Leicht"],["weich","Weich"],["rund","Rund"]]),
+   O("rowSpacing","Abstände","Abstand zwischen Karten und zwischen Reihen.",[["eng","Eng"],["normal","Normal"],["luftig","Luftig"]]),
+   O("rowTitle","Reihentitel","Dezent ist klein und zurückgenommen, Groß setzt kräftige Überschriften.",[["dezent","Dezent"],["standard","Standard"],["gross","Groß"]]),
+   O("cardTitles","Titel unter Karten","Zeigt den Namen unter der Karte: immer, nur bei Fokus oder nie.",[["immer","Immer"],["fokus","Nur bei Fokus"],["aus","Aus"]]),
+   T("expandPosters","Poster aufklappen","Das fokussierte Poster wächst nach kurzer Ruhe zum Querformat mit Szenenbild.","Verändert die Reihenbreite unter dem Fokus. Das ist die häufigste Ursache für springenden Fokus.")]],
+  ["Fokus-Effekt","Woran man die fokussierte Karte erkennt. Mindestens ein Effekt sollte an sein.",[
+   O("focusScale","Skalierung","Wie stark die fokussierte Karte wächst.",[["keine","Keine"],["dezent","Dezent"],["kraeftig","Kräftig"]]),
+   O("focusBorder","Rahmen","Ein Rahmen um die fokussierte Karte.",[["keiner","Keiner"],["weiss","Weiß"],["akzent","Akzentfarbe"]]),
+   O("focusShadow","Schatten","Schatten unter der fokussierten Karte.",[["keiner","Keiner"],["weich","Weich"],["tief","Tief"]]),
+   T("focusGlow","Glanz","Ein Lichtreflex auf der fokussierten Karte, wie bei den Postern der Apple-TV-App.","Den echten Glanz mit Neigung gibt es nur im Systemstil der Karte. Dann bestimmt tvOS Skalierung und Schatten selbst.")]]],
+ detail:[
+  ["Aufbau","Wie die Detailseite eines Titels gegliedert ist.",[
+   O("layout","Layout","Links stellt Text und Knöpfe an den linken Rand. Zentriert setzt alles mittig. Kino-Vollbild zeigt fast nur das Bild und schiebt den Rest nach unten.",[["links","Links"],["zentriert","Zentriert"],["kino","Kino-Vollbild"]]),
+   O("descriptionLines","Beschreibungslänge","Wie viele Zeilen der Beschreibung sofort sichtbar sind.",[[2,"2 Zeilen"],[3,"3 Zeilen"],[5,"5 Zeilen"]]),
+   O("cast","Besetzung","Runde Porträts, Karten mit Rolle, eine Textzeile oder gar nicht.",[["kreise","Kreise"],["karten","Karten"],["text","Textzeile"],["aus","Aus"]])]],
+  ["Plaketten und Bewertungen","Technik-Angaben wie 4K oder Dolby Vision und die Wertungen.",[
+   O("badgeStyle","Plakettenstil","Umriss ist fein, Gefüllt ist gut lesbar, Text kommt ohne Fläche aus. Logos zeichnet die Schriftzüge nach.",[["umriss","Umriss"],["gefuellt","Gefüllt"],["text","Nur Text"],["logos","Logos"]],"Logos müssen selbst gezeichnet werden und berühren Markenrechte. Nur als nachempfundene Schriftzüge.") ,
+   O("ratingStyle","Bewertungen","Symbole mit Zahl, reine Textzeile oder kleine Kacheln mit Quelle.",[["symbole","Symbol + Zahl"],["text","Textzeile"],["kacheln","Kacheln"]])]],
+  ["Quellenliste","Die Liste der abspielbaren Quellen.",[
+   O("sourceList","Darstellung","Kompakt zeigt eine Zeile pro Quelle. Ausführlich zeigt den Text des Addons. Karten trennt Plaketten und Text klar.",[["kompakt","Kompakt"],["ausfuehrlich","Ausführlich"],["karten","Karten"]])]]],
+ player:[
+  ["Steuerleiste","Was beim Abspielen eingeblendet wird.",[
+   O("controlBar","Umfang","Minimal zeigt nur Zeitleiste und Zeit. Standard ergänzt Titel und Knöpfe. Ausführlich zeigt zusätzlich Kapitelmarken und Technik.",[["minimal","Minimal"],["standard","Standard"],["ausfuehrlich","Ausführlich"]]),
+   O("badges","Plaketten","Technik-Plaketten in der Steuerleiste.",[["aus","Aus"],["kompakt","Kompakt"],["voll","Alle"]]),
+   O("timeDisplay","Zeitanzeige","Restzeit, Position und Gesamtdauer oder die Uhrzeit, zu der der Film endet.",[["rest","Restzeit"],["gesamt","Position / Dauer"],["ende","Endet um"]])]],
+  ["Panels und Hinweise","Ton, Untertitel und die Einblendungen am Ende einer Folge.",[
+   O("trackPanel","Ton- und Untertitel-Panel","Seite schiebt ein Panel von rechts herein. Unten legt es über die Steuerleiste. Mitte zeigt eine schwebende Karte.",[["seite","Seite"],["unten","Unten"],["mitte","Mitte"]]),
+   O("upNext","Nächste Folge","Karte unten rechts, schmale Leiste am unteren Rand oder Vollbild mit Vorschaubild.",[["karte","Karte"],["leiste","Leiste"],["vollbild","Vollbild"]]),
+   O("stillWatching","„Noch da?“","Dialog in der Mitte, der das Bild abdunkelt, oder eine ruhige Karte unten.",[["dialog","Dialog"],["karte","Karte"]])]]],
+ global:[
+  ["Navigation","Gilt für die ganze App.",[
+   O("navigation","Hauptnavigation","Seitenleiste links oder Leiste oben.",[["seitenleiste","Seitenleiste"],["oben","Obere Leiste"]]),
+   T("clock","Uhr","Zeigt die Uhrzeit oben rechts."),
+   O("settingsLayout","Einstellungs-Layout","Zweispaltig mit Kategorien links, große Kacheln oder eine einzige Liste.",[["spalten","Zwei Spalten"],["kacheln","Kacheln"],["liste","Liste"]],"Kacheln brauchen eine eigene Rasterseite. Die anderen beiden gibt es schon.")]],
+  ["Farbe","Akzent und Grundton der dunklen Oberfläche.",[
+   O("accent","Akzentfarbe","Markiert Gewähltes und den Hauptknopf. Der Fokus selbst bleibt weiß.",Object.entries(ACCENTS).map(([k,v])=>[k,v[2],v[0]])),
+   O("background","Hintergrundton","Schwarz nutzt OLED voll aus. Die getönten Varianten wirken weicher.",Object.entries(BGS).map(([k,v])=>[k,v[3],v[1]]))]],
+  ["Schrift und Bewegung","Die Systemschrift bleibt, nur ihr Satz ändert sich.",[
+   O("typeScale","Schriftgröße","Skaliert alle Texte gemeinsam.",[["kompakt","Kompakt"],["standard","Standard"],["gross","Groß"]]),
+   O("typeCharacter","Schriftcharakter","Neutral entspricht tvOS. Editorial setzt große Titel leichter und enger. Technisch setzt Metadaten kräftiger und weiter.",[["neutral","Neutral"],["editorial","Editorial"],["technisch","Technisch"]]),
+   O("motion","Bewegung","Dauer und Stärke der Übergänge. Aus schaltet Überblendungen ab.",[["aus","Aus"],["dezent","Dezent"],["standard","Standard"]])]]]
+};
+const PRESETS={
+ edel:{label:"Edel",values:{
+  global:{navigation:"seitenleiste",clock:true,settingsLayout:"spalten",accent:"champagner",background:"graphit",typeScale:"standard",typeCharacter:"editorial",motion:"dezent"},
+  home:{heroStyle:"vollbild",heroInfo:"standard",heroTitle:"logo",backdropFollowsFocus:true,cardShape:"mischung",cardSize:"mittel",corners:"weich",rowSpacing:"luftig",rowTitle:"dezent",cardTitles:"fokus",expandPosters:false,focusScale:"dezent",focusBorder:"weiss",focusShadow:"weich",focusGlow:false},
+  detail:{layout:"links",descriptionLines:3,cast:"kreise",badgeStyle:"umriss",ratingStyle:"symbole",sourceList:"karten"},
+  player:{controlBar:"standard",badges:"kompakt",timeDisplay:"rest",trackPanel:"seite",upNext:"karte",stillWatching:"karte"}}},
+ appletv:{label:"Apple TV",values:{
+  global:{navigation:"oben",clock:false,settingsLayout:"spalten",accent:"weiss",background:"schwarz",typeScale:"standard",typeCharacter:"neutral",motion:"standard"},
+  home:{heroStyle:"vollbild",heroInfo:"minimal",heroTitle:"logo",backdropFollowsFocus:false,cardShape:"querformat",cardSize:"gross",corners:"rund",rowSpacing:"luftig",rowTitle:"standard",cardTitles:"immer",expandPosters:false,focusScale:"kraeftig",focusBorder:"keiner",focusShadow:"tief",focusGlow:true},
+  detail:{layout:"kino",descriptionLines:2,cast:"kreise",badgeStyle:"text",ratingStyle:"text",sourceList:"kompakt"},
+  player:{controlBar:"minimal",badges:"aus",timeDisplay:"rest",trackPanel:"unten",upNext:"karte",stillWatching:"dialog"}}},
+ infuse:{label:"Infuse",values:{
+  global:{navigation:"oben",clock:true,settingsLayout:"liste",accent:"koralle",background:"graphit",typeScale:"kompakt",typeCharacter:"technisch",motion:"dezent"},
+  home:{heroStyle:"banner",heroInfo:"ausfuehrlich",heroTitle:"text",backdropFollowsFocus:true,cardShape:"poster",cardSize:"mittel",corners:"leicht",rowSpacing:"normal",rowTitle:"standard",cardTitles:"immer",expandPosters:false,focusScale:"dezent",focusBorder:"akzent",focusShadow:"weich",focusGlow:false},
+  detail:{layout:"links",descriptionLines:5,cast:"karten",badgeStyle:"gefuellt",ratingStyle:"symbole",sourceList:"ausfuehrlich"},
+  player:{controlBar:"ausfuehrlich",badges:"voll",timeDisplay:"ende",trackPanel:"seite",upNext:"leiste",stillWatching:"dialog"}}},
+ kino:{label:"Kino-Boutique",values:{
+  global:{navigation:"seitenleiste",clock:false,settingsLayout:"spalten",accent:"weiss",background:"warm",typeScale:"gross",typeCharacter:"editorial",motion:"dezent"},
+  home:{heroStyle:"banner",heroInfo:"minimal",heroTitle:"text",backdropFollowsFocus:false,cardShape:"poster",cardSize:"gross",corners:"eckig",rowSpacing:"luftig",rowTitle:"dezent",cardTitles:"aus",expandPosters:false,focusScale:"keine",focusBorder:"weiss",focusShadow:"keiner",focusGlow:false},
+  detail:{layout:"kino",descriptionLines:5,cast:"text",badgeStyle:"text",ratingStyle:"text",sourceList:"kompakt"},
+  player:{controlBar:"minimal",badges:"aus",timeDisplay:"gesamt",trackPanel:"mitte",upNext:"vollbild",stillWatching:"karte"}}},
+ streaming:{label:"Streaming",values:{
+  global:{navigation:"oben",clock:false,settingsLayout:"kacheln",accent:"rot",background:"schwarz",typeScale:"gross",typeCharacter:"neutral",motion:"standard"},
+  home:{heroStyle:"vollbild",heroInfo:"ausfuehrlich",heroTitle:"logo",backdropFollowsFocus:true,cardShape:"querformat",cardSize:"mittel",corners:"leicht",rowSpacing:"eng",rowTitle:"gross",cardTitles:"fokus",expandPosters:true,focusScale:"kraeftig",focusBorder:"keiner",focusShadow:"tief",focusGlow:false},
+  detail:{layout:"links",descriptionLines:3,cast:"karten",badgeStyle:"gefuellt",ratingStyle:"kacheln",sourceList:"karten"},
+  player:{controlBar:"standard",badges:"kompakt",timeDisplay:"rest",trackPanel:"unten",upNext:"vollbild",stillWatching:"dialog"}}}
+};
+const clone=o=>JSON.parse(JSON.stringify(o));
+let state={preset:"edel",values:clone(PRESETS.edel.values)};
+let ui={area:"home",scene:"leiste",focus:[0,1]};
+const LS="player-konfigurator-v1";
+try{const s=JSON.parse(localStorage.getItem(LS)||"null"); if(s&&s.values){applyImport(s,true)}}catch(e){}
+function persist(){try{localStorage.setItem(LS,JSON.stringify(buildExport()))}catch(e){}}
+
+/* ---------- Platzhalter-Inhalte (erfunden) ---------- */
+const TITLES=[["Nordlicht","Drama",2024,"2 h 08",212],["Die Kartografin","Abenteuer",2023,"1 h 54",28],["Salz & Asche","Thriller",2025,"8 Folgen",355],["Tiefenrausch","Dokumentation",2022,"1 h 31",195],["Morgen in Porto","Romanze",2024,"1 h 47",18],["Das stille Haus","Mystery",2021,"6 Folgen",265],["Polarkreis","Krimi",2025,"10 Folgen",230],["Letzte Fähre","Drama",2020,"1 h 59",160],["Glasgarten","Science-Fiction",2026,"2 h 21",300],["Ostwind","Western",2019,"2 h 02",40],["Kaltwasser","Thriller",2023,"1 h 43",185],["Zwischen den Jahren","Komödie",2022,"1 h 38",330]];
+const ROWS=[["Weiterschauen",[2,6,0,8,5,10,3]],["Neu im Katalog",[1,0,4,8,9,11,7,3,10]],["Ausgezeichnet",[5,3,7,2,6,1,4,9,11]]];
+function art(i,wide){const h=TITLES[i][4];const a=wide?"112deg":"168deg";
+  return `background:radial-gradient(120% 90% at ${wide?78:60}% ${wide?30:22}%,hsla(${(h+40)%360},70%,62%,.9) 0%,hsla(${(h+40)%360},70%,50%,0) 46%),radial-gradient(90% 70% at 15% 95%,hsla(${(h+300)%360},55%,26%,.95) 0%,hsla(${h},50%,20%,0) 60%),linear-gradient(${a},hsl(${h},48%,30%) 0%,hsl(${(h+25)%360},52%,14%) 100%)`}
+const ICON={home:"M4 11 12 4l8 7v9h-5v-6H9v6H4z",search:"M10.5 4a6.5 6.5 0 1 0 4 11.6l4.4 4.4 1.4-1.4-4.4-4.4A6.5 6.5 0 0 0 10.5 4zm0 2a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9z",lib:"M4 4h3v16H4zM9 4h3v16H9zM14.5 5.2l2.9-.8 4 14.6-2.9.8z",cal:"M5 5h14v15H5zM5 9h14M8 3v4M16 3v4",gear:"M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zM4 13v-2l2.2-.6.7-1.6-1.2-2 1.4-1.4 2 1.2 1.6-.7L11 3.7h2l.6 2.2 1.6.7 2-1.2 1.4 1.4-1.2 2 .7 1.6L20 11v2l-2.2.6-.7 1.6 1.2 2-1.4 1.4-2-1.2-1.6.7-.6 2.2h-2l-.6-2.2-1.6-.7-2 1.2-1.4-1.4 1.2-2-.7-1.6z",play:"M7 4l13 8-13 8z"};
+const ic=(n,stroke)=>`<svg viewBox="0 0 24 24" width="100%" height="100%" ${stroke?'fill="none" stroke="currentColor" stroke-width="2"':'fill="currentColor" fill-rule="evenodd"'}><path d="${ICON[n]}"/></svg>`;
+const navIcons=[["home",0],["search",0],["lib",0],["cal",1],["gear",0]], navNames=["Start","Suche","Bibliothek","Kalender","Einstellungen"];
+
+/* ---------- Bühne ---------- */
+const stage=document.getElementById("stage"), box=document.getElementById("box");
+function fit(){stage.style.transform=`scale(${box.clientWidth/1920})`}
+new ResizeObserver(fit).observe(box);
+function tokens(){
+  const g=state.values.global,h=state.values.home,s=stage.style;
+  const a=ACCENTS[g.accent]||ACCENTS.champagner,b=BGS[g.background]||BGS.graphit;
+  s.setProperty("--accent",a[0]);s.setProperty("--on-accent",a[1]);s.setProperty("--bg",b[0]);s.setProperty("--surface",b[1]);s.setProperty("--tint",b[2]);
+  s.setProperty("--rad",{eckig:"0px",leicht:"8px",weich:"14px",rund:"26px"}[h.corners]);
+  s.setProperty("--ts",{kompakt:.9,standard:1,gross:1.12}[g.typeScale]);
+  s.setProperty("--dur",{aus:"0ms",dezent:"240ms",standard:"380ms"}[g.motion]);
+  const sp={eng:[16,36],normal:[24,48],luftig:[32,64]}[h.rowSpacing];s.setProperty("--gap",sp[0]+"px");s.setProperty("--rowgap",sp[1]+"px");
+  const tc={neutral:[700,"-.01em",600,"0",".01em"],editorial:[300,"-.025em",500,".005em",".03em"],technisch:[800,"0",700,".01em",".05em"]}[g.typeCharacter];
+  s.setProperty("--w-display",tc[0]);s.setProperty("--ls-display",tc[1]);s.setProperty("--w-title",tc[2]);s.setProperty("--ls-title",tc[3]);s.setProperty("--ls-meta",tc[4]);
+  s.setProperty("--edge",(g.navigation==="seitenleiste"?150:80)+"px");
+}
+function nav(active){const g=state.values.global;
+  const n=g.navigation==="seitenleiste"
+   ?`<div class="nav-side">${navIcons.map((x,i)=>`<i class="${i===active?"on":""}">${ic(x[0],x[1])}</i>`).join("")}</div>`
+   :`<div class="nav-top">${navNames.map((x,i)=>`<span class="${i===active?"on":""}">${x}</span>`).join("")}</div>`;
+  return n+(g.clock?`<div class="clock">20:15</div>`:"")}
+function badge(t,style){return `<span class="bd ${style}">${t}</span>`}
+function ratings(style){const r=[["IMDb","7,9","#e6b91e"],["Tomatometer","92 %","#e5484d"],["Trakt","81 %","#b05cff"]];
+  if(style==="text")return `<div class="t-meta">${r.map(x=>x[0]+" "+x[1]).join("   ")}</div>`;
+  if(style==="kacheln")return `<div class="rate kacheln">${r.map(x=>`<span><small>${x[0]}</small>${x[1]}</span>`).join("")}</div>`;
+  return `<div class="rate">${r.map(x=>`<span><em style="background:${x[2]}"></em>${x[1]}</span>`).join("")}</div>`}
+function titleMark(i,kind,scale){const t=TITLES[i];
+  return kind==="logo"?`<div class="logo" style="font-size:calc(${64*(scale||1)}px*var(--ts))">${t[0]}<small>${t[1]}</small></div>`:`<div class="t-display" style="font-size:calc(${76*(scale||1)}px*var(--ts))">${t[0]}</div>`}
+const LOREM="Als die Fähre im Nebel ausbleibt, beginnt für die Inselbewohner ein Winter, der alte Rechnungen öffnet. Eine junge Lotsin findet im Logbuch ihres Vaters Einträge, die es nicht geben dürfte, und muss entscheiden, wem sie noch trauen kann.";
+function clamp(n){return `display:-webkit-box;-webkit-line-clamp:${n};-webkit-box-orient:vertical;overflow:hidden`}
+
+function cardHTML(i,r,c,wide,h){
+  const sc={klein:.85,mittel:1,gross:1.2}[h.cardSize];const f=ui.focus[0]===r&&ui.focus[1]===c;
+  let w=(wide?440:240)*sc,ht=(wide?248:360)*sc;const expanded=f&&h.expandPosters&&!wide;if(expanded)w=ht*16/9;
+  const scale=f?{keine:1,dezent:1.05,kraeftig:1.12}[h.focusScale]:1;
+  const sh=f?{keiner:"none",weich:"0 18px 40px rgba(0,0,0,.45)",tief:"0 34px 70px rgba(0,0,0,.75)"}[h.focusShadow]:"none";
+  const oc=f?{keiner:"transparent",weiss:"#fff",akzent:"var(--accent)"}[h.focusBorder]:"transparent";
+  const cap=h.cardTitles==="aus"?"":`<div class="cap" style="width:${w}px;opacity:${h.cardTitles==="immer"||f?1:0}">${TITLES[i][0]}</div>`;
+  return `<div class="card ${f?"f":""}" data-r="${r}" data-c="${c}" style="width:${w}px;transform:scale(${scale})">
+    <div class="img ${f&&h.focusGlow?"gloss":""}" style="height:${ht}px;${art(i,wide||expanded)};box-shadow:${sh};outline-color:${oc}"><b>${TITLES[i][0]}</b></div>${cap}</div>`}
+function rowsHTML(h,top){
+  return `<div class="rows" style="top:${top}px">${ROWS.map((row,r)=>{const wide=h.cardShape==="querformat"||(h.cardShape==="mischung"&&r===0);
+    return `<div class="row"><h3 class="${h.rowTitle}">${row[0]}</h3><div class="strip">${row[1].map((i,c)=>cardHTML(i,r,c,wide,h)).join("")}</div></div>`}).join("")}</div>`}
+function heroInfo(h,i,narrow){const t=TITLES[i],d=state.values.detail;
+  const meta=`<div class="t-meta" style="margin-top:20px">${t[2]} · ${t[3]} · FSK 12 · ${t[1]}</div>`;
+  const more=h.heroInfo==="minimal"?"":meta+`<div style="margin-top:14px">${ratings(d.ratingStyle)}</div>`+
+     `<div class="t-body" style="margin-top:16px;max-width:${narrow||860}px;color:rgba(255,255,255,.85);${clamp(2)}">${LOREM}</div>`+
+     (h.heroInfo==="ausfuehrlich"?`<div class="badges" style="margin-top:18px">${["4K","Dolby Vision","Atmos","5.1"].map(x=>badge(x,d.badgeStyle)).join("")}</div>`:"");
+  return titleMark(i,h.heroTitle)+more+`<div class="btns"><span class="b pri"><span style="width:26px;height:26px">${ic("play")}</span>Abspielen</span><span class="b">Details</span><span class="dots"><u class="on"></u><u></u><u></u><u></u></span></div>`}
+function sceneHome(){const h=state.values.home;const edge="var(--edge)";
+  const fRow=ROWS[ui.focus[0]]||ROWS[0];const focusedTitle=fRow[1][ui.focus[1]]??fRow[1][0];
+  const heroI=h.backdropFollowsFocus?focusedTitle:0;let html="",top;
+  if(h.heroStyle==="vollbild"){top=h.heroInfo==="minimal"?640:700;
+    html=`<div class="backdrop" style="${art(heroI,true)}"></div><div class="shade"></div><div style="position:absolute;left:${edge};top:${h.heroInfo==="ausfuehrlich"?150:h.heroInfo==="minimal"?330:210}px">${heroInfo(h,heroI)}</div>`}
+  else if(h.heroStyle==="banner"){top=640;
+    html=`<div style="position:absolute;left:${edge};right:80px;top:130px;height:460px;border-radius:calc(var(--rad) + 8px);overflow:hidden;${art(heroI,true)}"><div class="shade"></div><div style="position:absolute;left:56px;bottom:44px;transform:scale(.8);transform-origin:0 100%">${heroInfo(h,heroI,760)}</div></div>`}
+  else if(h.heroStyle==="karussell"){top=640;
+    html=`<div style="position:absolute;left:${edge};top:130px;width:1320px;height:460px;border-radius:calc(var(--rad) + 8px);overflow:hidden;${art(heroI,true)}"><div class="shade"></div><div style="position:absolute;left:56px;bottom:44px;transform:scale(.8);transform-origin:0 100%">${heroInfo(h,heroI,700)}</div></div>
+      <div style="position:absolute;left:calc(${edge} + 1352px);top:170px;width:700px;height:380px;border-radius:calc(var(--rad) + 8px);opacity:.55;${art(4,true)}"></div>`}
+  else{top=150;html=h.backdropFollowsFocus?`<div class="backdrop" style="${art(focusedTitle,true)};opacity:.35"></div><div class="shade"></div>`:""}
+  return html+rowsHTML(h,top)+nav(0)}
+function sourcesHTML(d){const S=[["2160p Remux","61,4 GB",["4K","DV","Atmos","7.1"],"Nordlicht.2024.2160p.UHD.BluRay.REMUX.DV.HDR.TrueHD.Atmos.7.1"],["2160p WEB-DL","18,2 GB",["4K","HDR10+","5.1"],"Nordlicht.2024.2160p.WEB-DL.DDP5.1.HDR10Plus.HEVC"],["1080p BluRay","9,8 GB",["HD","5.1"],"Nordlicht.2024.1080p.BluRay.DD5.1.x264"]];
+  return `<div class="src">${S.map((s,i)=>{const b=`<div class="badges">${s[2].map(x=>badge(x,d.badgeStyle==="logos"?"gefuellt":d.badgeStyle)).join("")}</div>`;
+    if(d.sourceList==="kompakt")return `<div class="s ${i?"":"f"}" style="display:flex;align-items:center;gap:18px"><span class="t-cap">${s[0]}</span>${b}<span class="t-meta" style="margin-left:auto">${s[1]}</span></div>`;
+    if(d.sourceList==="ausfuehrlich")return `<div class="s ${i?"":"f"}"><div class="t-cap">Sofort verfügbar · ${s[0]} · ${s[1]}</div><div class="t-meta" style="margin-top:6px;font-size:calc(21px*var(--ts));word-break:break-all">${s[3]}</div></div>`;
+    return `<div class="s ${i?"":"f"}"><div style="display:flex;justify-content:space-between"><span class="t-cap">${s[0]}</span><span class="t-meta">${s[1]}</span></div><div style="margin-top:10px">${b}</div><div class="t-meta" style="margin-top:8px;font-size:calc(21px*var(--ts))">Sofort verfügbar · Deutsch, Englisch</div></div>`}).join("")}</div>`}
+function castHTML(d){const P=[["A. Lindqvist","Mara"],["J. Okafor","Hafenmeister"],["S. Brandt","Elin"],["T. Marín","Der Fremde"],["R. Halvorsen","Vater"]];
+  if(d.cast==="aus")return "";
+  if(d.cast==="text")return `<div class="t-meta">Mit ${P.map(p=>p[0]).join(", ")}</div>`;
+  return `<div class="cast ${d.cast}">${P.map((p,i)=>`<div class="p"><i style="${art((i*2+1)%12,false)}"></i><div class="t-cap" style="font-size:calc(21px*var(--ts))">${p[0]}</div>${d.cast==="karten"?`<div class="t-meta" style="font-size:calc(20px*var(--ts))">${p[1]}</div>`:""}</div>`).join("")}</div>`}
+function sceneDetail(){const d=state.values.detail,h=state.values.home,t=TITLES[0];
+  const bs=`<div class="badges">${["4K","Dolby Vision","HDR10+","Atmos","7.1"].map(x=>badge(x,d.badgeStyle)).join("")}</div>`;
+  const meta=`<div class="t-meta">${t[2]} · ${t[3]} · FSK 12 · ${t[1]}</div>`;
+  const desc=`<div class="t-body" style="color:rgba(255,255,255,.85);${clamp(d.descriptionLines)}">${LOREM} ${LOREM}</div>`;
+  const btn=`<div class="btns" style="margin-top:0"><span class="b pri"><span style="width:26px;height:26px">${ic("play")}</span>Abspielen</span><span class="b">Trailer</span><span class="b">Merken</span></div>`;
+  const bg=`<div class="backdrop" style="${art(0,true)}"></div>`;const edge="var(--edge)";
+  if(d.layout==="zentriert")return bg+`<div class="shade" style="background:linear-gradient(0deg,rgba(var(--tint),1) 0%,rgba(var(--tint),.8) 45%,rgba(var(--tint),.25) 100%)"></div>
+    <div style="position:absolute;left:260px;right:260px;top:110px;display:flex;flex-direction:column;align-items:center;gap:20px;text-align:center">${titleMark(0,h.heroTitle)}${meta}${ratings(d.ratingStyle)}${bs}<div style="max-width:1100px">${desc}</div>${btn}</div>
+    <div style="position:absolute;left:${edge};bottom:60px;width:860px">${castHTML(d)}</div><div style="position:absolute;right:80px;bottom:60px;width:760px">${sourcesHTML(d)}</div>`+nav(-1);
+  if(d.layout==="kino")return bg+`<div class="shade" style="background:linear-gradient(0deg,rgba(var(--tint),.96) 0%,rgba(var(--tint),.5) 30%,rgba(var(--tint),0) 55%)"></div>
+    <div style="position:absolute;left:${edge};bottom:70px;width:900px;display:flex;flex-direction:column;gap:16px">${titleMark(0,h.heroTitle,.8)}${meta}${d.ratingStyle==="kacheln"?ratings("symbole"):ratings(d.ratingStyle)}${bs}<div style="${clamp(Math.min(d.descriptionLines,3))}" class="t-body">${LOREM}</div>${btn}${d.cast==="text"?castHTML(d):""}</div>
+    <div class="panel" style="position:absolute;right:80px;bottom:70px;width:720px;padding:24px"><div class="t-cap" style="margin-bottom:14px;color:rgba(255,255,255,.7)">Quellen</div>${sourcesHTML(d)}</div>`+nav(-1);
+  return bg+`<div class="shade"></div>
+    <div style="position:absolute;left:${edge};top:120px;width:880px;display:flex;flex-direction:column;gap:18px">${titleMark(0,h.heroTitle)}${meta}${ratings(d.ratingStyle)}${bs}${desc}${btn}</div>
+    <div style="position:absolute;left:${edge};bottom:56px"><div class="t-title" style="font-size:calc(30px*var(--ts));margin-bottom:14px">${d.cast==="aus"||d.cast==="text"?"":"Besetzung"}</div>${castHTML(d)}</div>
+    <div class="panel" style="position:absolute;right:80px;top:150px;width:720px;padding:26px"><div class="t-title" style="font-size:calc(32px*var(--ts));margin-bottom:16px">Quellen</div>${sourcesHTML(d)}</div>`+nav(-1)}
+function scenePlayer(){const p=state.values.player,d=state.values.detail;const sc=ui.scene;
+  const pb=p.badges==="aus"?"":`<div class="badges">${(p.badges==="voll"?["4K","Dolby Vision","Atmos","7.1","HEVC","61 Mbit/s"]:["4K","DV","Atmos"]).map(x=>badge(x,d.badgeStyle==="logos"?"gefuellt":d.badgeStyle)).join("")}</div>`;
+  const time={rest:["42:10","−1:25:50"],gesamt:["42:10","2:08:00"],ende:["42:10","Endet um 21:41"]}[p.timeDisplay];
+  const bar=`<div class="bar"><u style="width:33%"></u>${p.controlBar==="ausfuehrlich"?`<s style="left:6%"></s><s style="left:11%"></s><s style="left:91%"></s>`:""}</div><div style="display:flex;justify-content:space-between;margin-top:12px;font-variant-numeric:tabular-nums" class="t-meta"><span>${time[0]}</span><span>${time[1]}</span></div>`;
+  let ctl;
+  if(p.controlBar==="minimal")ctl=`<div style="position:absolute;left:80px;right:80px;bottom:60px">${bar}</div>`;
+  else ctl=`<div style="position:absolute;left:0;right:0;bottom:0;height:420px;background:linear-gradient(0deg,rgba(0,0,0,.85),rgba(0,0,0,0))"></div>
+    <div style="position:absolute;left:80px;right:80px;bottom:60px"><div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:22px;gap:30px"><div><div class="t-title">Salz &amp; Asche</div><div class="t-meta" style="margin-top:4px">S1 F3 · Das Logbuch${p.controlBar==="ausfuehrlich"?" · Deutsch 5.1 · Untertitel aus":""}</div></div>${pb}</div>${bar}
+    <div style="display:flex;gap:14px;margin-top:20px">${["Ton","Untertitel","Info"].concat(p.controlBar==="ausfuehrlich"?["Bild","Quelle wechseln"]:[]).map((x,i)=>`<span class="b" style="height:60px;padding:0 26px;font-size:calc(24px*var(--ts));${i?"":"background:#fff;color:#111"}">${x}</span>`).join("")}</div></div>`;
+  const list=(title,items,sel)=>`<div class="t-title" style="font-size:calc(32px*var(--ts));margin-bottom:16px">${title}</div>${items.map((x,i)=>`<div class="set-row ${i===sel?"f":""}" style="margin-bottom:10px;height:72px;font-size:calc(26px*var(--ts))">${x[0]}<span class="v">${x[1]}</span></div>`).join("")}`;
+  const audio=list("Ton",[["Deutsch","Dolby Digital 5.1"],["Englisch","Atmos · TrueHD 7.1"],["Englisch","Kommentar · Stereo"]],0), subs=list("Untertitel",[["Aus",""],["Deutsch","Erzwungen"],["Englisch","SDH"]],0);
+  let over="";
+  if(sc==="panel"){
+    if(p.trackPanel==="seite")over=`<div class="panel" style="position:absolute;right:0;top:0;bottom:0;width:640px;border-radius:0;padding:80px 50px">${audio}<div style="height:34px"></div>${subs}</div>`;
+    else if(p.trackPanel==="unten")over=`<div class="panel" style="position:absolute;left:80px;right:80px;bottom:60px;padding:36px;display:grid;grid-template-columns:1fr 1fr;gap:40px"><div>${audio}</div><div>${subs}</div></div>`;
+    else over=`<div style="position:absolute;inset:0;background:rgba(0,0,0,.45)"></div><div class="dlg" style="left:460px;top:190px;width:1000px;display:grid;grid-template-columns:1fr 1fr;gap:36px"><div>${audio}</div><div>${subs}</div></div>`}
+  if(sc==="upnext"){const cd=`<div class="t-meta">Nächste Folge in 20 s</div><div class="t-title" style="margin:6px 0 16px">S1 F4 · Kaltwasser</div><div style="display:flex;gap:12px"><span class="b acc" style="height:62px">Jetzt abspielen</span><span class="b" style="height:62px">Abbrechen</span></div>`;
+    if(p.upNext==="karte")over=`<div class="dlg" style="right:80px;bottom:80px;width:640px;padding:22px"><div style="height:200px;border-radius:var(--rad);margin-bottom:18px;${art(10,true)}"></div>${cd}</div>`;
+    else if(p.upNext==="leiste")over=`<div class="dlg" style="left:80px;right:80px;bottom:60px;padding:22px 30px;display:flex;align-items:center;justify-content:space-between"><div><div class="t-meta">Nächste Folge in 20 s</div><div class="t-title">S1 F4 · Kaltwasser</div></div><div style="display:flex;gap:12px"><span class="b acc" style="height:62px">Jetzt abspielen</span><span class="b" style="height:62px">Abbrechen</span></div></div>`;
+    else over=`<div class="backdrop" style="${art(10,true)}"></div><div class="shade"></div><div style="position:absolute;left:36px;top:36px;width:420px;height:236px;border-radius:var(--rad);${art(2,true)};box-shadow:0 20px 50px rgba(0,0,0,.6)"></div><div style="position:absolute;left:80px;bottom:90px">${cd}</div>`}
+  if(sc==="noch"){const q=`<div class="t-title">Noch da?</div><div class="t-body" style="color:rgba(255,255,255,.75);margin:8px 0 22px">Drei Folgen liefen ohne Eingabe. Die Wiedergabe ist angehalten.</div><div style="display:flex;gap:12px"><span class="b pri" style="height:62px">Weiterschauen</span><span class="b" style="height:62px">Beenden</span></div>`;
+    over=p.stillWatching==="dialog"?`<div style="position:absolute;inset:0;background:rgba(0,0,0,.6)"></div><div class="dlg" style="left:560px;top:360px;width:800px">${q}</div>`:`<div class="dlg" style="left:80px;bottom:80px;width:760px">${q}</div>`}
+  const hide=sc!=="leiste"&&!(sc==="panel"&&p.trackPanel==="seite");
+  return `<div class="backdrop" style="${art(2,true)};filter:saturate(1.15) brightness(1.1)"></div>`+(hide?"":ctl)+over}
+function sceneGlobal(){const g=state.values.global;const C=[["Profil","#3b82f6"],["Addons","#a855f7"],["Dienste & Schlüssel","#06b6d4"],["Startseite","#f59e0b"],["Aussehen","#ec4899"],["Wiedergabe","#22c55e"],["Über","#8b8f98"]];
+  const R=[["Navigation",g.navigation==="seitenleiste"?"Seitenleiste":"Obere Leiste"],["Akzentfarbe",(ACCENTS[g.accent]||[])[2]],["Kartengröße","Mittel"],["Hero","An"],["Poster aufklappen","Aus"],["Vorlage","Edel"]];
+  const ico=(c)=>`<span class="ico" style="background:${c}"><span style="width:28px;height:28px;color:#fff">${ic("gear")}</span></span>`;
+  const rows=R.map((r,i)=>`<div class="set-row ${i===1?"f":""}">${r[0]}<span class="v">${r[1]}</span></div>`).join("");
+  const edge="var(--edge)";let body;
+  if(g.settingsLayout==="spalten")body=`<div style="position:absolute;left:${edge};top:150px;width:520px;display:flex;flex-direction:column;gap:10px"><div class="t-title" style="font-size:calc(48px*var(--ts));margin-bottom:16px">Einstellungen</div>${C.map((c,i)=>`<div class="set-row" style="height:72px;${i===4?"background:rgba(255,255,255,.16);box-shadow:inset 6px 0 0 var(--accent)":"background:none"}">${ico(c[1])}${c[0]}</div>`).join("")}</div>
+     <div style="position:absolute;left:calc(${edge} + 600px);right:80px;top:150px;display:flex;flex-direction:column;gap:12px"><div class="t-title" style="margin-bottom:16px">Aussehen</div>${rows}</div>`;
+  else if(g.settingsLayout==="kacheln")body=`<div style="position:absolute;left:${edge};right:80px;top:150px"><div class="t-title" style="font-size:calc(48px*var(--ts));margin-bottom:30px">Einstellungen</div><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:26px">${C.map((c,i)=>`<div style="height:230px;border-radius:calc(var(--rad) + 6px);padding:26px;display:flex;flex-direction:column;justify-content:space-between;background:${i===4?"#fff":"rgba(255,255,255,.08)"};color:${i===4?"#111":"#fff"};${i===4?"transform:scale(1.05);box-shadow:0 24px 50px rgba(0,0,0,.5)":""}">${ico(c[1])}<div class="t-body" style="font-weight:600">${c[0]}</div></div>`).join("")}</div></div>`;
+  else body=`<div style="position:absolute;left:460px;right:460px;top:130px;display:flex;flex-direction:column;gap:12px"><div class="t-title" style="font-size:calc(48px*var(--ts));margin-bottom:10px">Einstellungen</div><div class="t-meta">Aussehen</div>${rows}<div class="t-meta" style="margin-top:14px">Wiedergabe</div><div class="set-row">Nächste Folge automatisch<span class="v">An</span></div></div>`;
+  return `<div class="backdrop" style="background:var(--surface)"></div>`+body+nav(4)}
+function render(){tokens();
+  stage.innerHTML=`<div class="content">${{home:sceneHome,detail:sceneDetail,player:scenePlayer,global:sceneGlobal}[ui.area]()}</div>`;
+  const sb=document.getElementById("scenes");
+  sb.innerHTML=ui.area==="player"?`<span>Szene</span>`+[["leiste","Steuerleiste"],["panel","Ton & Untertitel"],["upnext","Nächste Folge"],["noch","Noch da?"]].map(s=>`<button class="chip" data-scene="${s[0]}" aria-pressed="${ui.scene===s[0]}">${s[1]}</button>`).join(""):"";
+  fit()}
+stage.addEventListener("click",e=>{const c=e.target.closest(".card");if(c){ui.focus=[+c.dataset.r,+c.dataset.c];render()}});
+document.getElementById("scenes").addEventListener("click",e=>{const b=e.target.closest("[data-scene]");if(b){ui.scene=b.dataset.scene;render()}});
+
+/* ---------- Regiepult ---------- */
+const desk=document.getElementById("desk");
+function renderTabs(){document.getElementById("tabs").innerHTML=AREAS.map(a=>`<button class="tab" role="tab" id="tab-${a[0]}" aria-selected="${ui.area===a[0]}" data-area="${a[0]}">${a[1]}</button>`).join("");
+  document.getElementById("presets").innerHTML=`<span>Vorlage</span>`+Object.entries(PRESETS).map(([k,p])=>`<button class="chip" id="preset-${k}" data-preset="${k}" aria-pressed="${state.preset===k&&!isModified()}">${p.label}${state.preset===k&&isModified()?" (angepasst)":""}</button>`).join("")}
+function isModified(){return JSON.stringify(state.values)!==JSON.stringify(PRESETS[state.preset].values)}
+function renderDesk(){const v=state.values[ui.area];
+  desk.innerHTML=GROUPS[ui.area].map(g=>`<div class="group"><h2>${g[0]}</h2><p>${g[1]}</p>${g[2].map(o=>`<div class="opt"><div class="opt-head"><b>${o.label}</b>${o.cost?`<span class="cost">auf tvOS aufwendig</span>`:""}</div><div class="help">${o.help}</div>${o.cost?`<div class="cost-note">${o.cost}</div>`:""}
+    <div class="seg" role="group" aria-label="${o.label}">${o.options.map(x=>`<button id="o-${ui.area}-${o.key}-${x[0]}" data-key="${o.key}" data-val='${JSON.stringify(x[0])}' aria-pressed="${v[o.key]===x[0]}">${x[2]?`<span class="swatch" style="background:${x[2]}"></span>`:""}${x[1]}</button>`).join("")}</div></div>`).join("")}</div>`).join("")+
+   `<div class="group io"><h2>Export und Import</h2><p>Das JSON enthält die Vorlage als Basis und alle Werte. Speichere es als <code>docs/design/konfigurator/export.json</code> im Repo.</p>
+    <textarea id="json" spellcheck="false" aria-label="Konfiguration als JSON"></textarea>
+    <div class="row"><button class="btn primary" id="copy">JSON kopieren</button><button class="btn" id="dl">Als Datei laden</button><button class="btn" id="imp">Aus Textfeld importieren</button><label class="btn" for="file">Datei öffnen</label><input type="file" id="file" accept="application/json,.json" hidden></div>
+    <div class="status" id="status" role="status"></div>
+    <p class="help">Startet der Download nicht (in manchen eingebetteten Ansichten ist er gesperrt), kopiere das JSON und lege die Datei selbst an.</p></div>`;
+  document.getElementById("json").value=JSON.stringify(buildExport(),null,2)}
+function buildExport(){return {schema:SCHEMA_ID,version:SCHEMA_VERSION,preset:state.preset,modified:isModified(),exportedAt:new Date().toISOString(),values:clone(state.values)}}
+function say(t,err){const s=document.getElementById("status");if(s){s.textContent=t;s.className="status"+(err?" err":"")}}
+function applyImport(obj,silent){
+  if(!obj||typeof obj!=="object"||!obj.values)throw new Error("Kein gültiges Konfigurations-JSON: Das Feld „values“ fehlt.");
+  if(obj.schema&&obj.schema!==SCHEMA_ID)throw new Error("Unbekanntes Schema „"+obj.schema+"“.");
+  if(typeof obj.version==="number"&&obj.version>SCHEMA_VERSION)throw new Error("Die Datei hat Version "+obj.version+", dieser Konfigurator kennt nur Version "+SCHEMA_VERSION+".");
+  const base=PRESETS[obj.preset]?obj.preset:"edel";const vals=clone(PRESETS[base].values);let ignored=0;
+  for(const [area,groups] of Object.entries(GROUPS)){const src=obj.values[area]||{};
+    for(const g of groups)for(const o of g[2]){if(!(o.key in src))continue;
+      if(o.options.some(x=>x[0]===src[o.key]))vals[area][o.key]=src[o.key];else ignored++}}
+  state={preset:base,values:vals};
+  if(!silent)say(ignored?`Importiert. ${ignored} unbekannte Werte wurden durch den Wert der Vorlage ersetzt.`:"Importiert.")}
+function all(){renderTabs();renderDesk();render();persist()}
+document.addEventListener("click",e=>{
+  const t=e.target.closest("[data-area]");if(t){ui.area=t.dataset.area;all();return}
+  const p=e.target.closest("[data-preset]");if(p){state={preset:p.dataset.preset,values:clone(PRESETS[p.dataset.preset].values)};all();return}
+  const o=e.target.closest("[data-key]");if(o){state.values[ui.area][o.dataset.key]=JSON.parse(o.dataset.val);all();return}
+  if(e.target.id==="copy"){const ta=document.getElementById("json");const txt=ta.value;
+    (navigator.clipboard?navigator.clipboard.writeText(txt):Promise.reject()).then(()=>say("JSON kopiert.")).catch(()=>{ta.focus();ta.select();say("Text ist markiert. Kopiere ihn mit Strg/Cmd + C.")})}
+  if(e.target.id==="dl"){const txt=document.getElementById("json").value;
+    const local=()=>{try{const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([txt],{type:"application/json"}));a.download="export.json";document.body.appendChild(a);a.click();a.remove();say("Download gestartet: export.json")}catch(err){say("Download hier nicht möglich. Bitte das JSON kopieren.",true)}};
+    /* In der Artifact-Ansicht läuft das Speichern über die Plattform, als lokale Datei über einen normalen Download. */
+    if(window.claude&&typeof window.claude.use==="function"){say("Speichern wird vorbereitet …");
+      window.claude.use("downloads").then(d=>{if(!d){local();return}
+        return d.save({filename:"export.json",data:txt}).then(()=>say("Gespeichert: export.json"),er=>say(er&&er.code==="declined"?"Speichern abgebrochen.":"Speichern hier nicht möglich. Bitte das JSON kopieren.",!(er&&er.code==="declined")))}).catch(local)}
+    else local()}
+  if(e.target.id==="imp"){try{applyImport(JSON.parse(document.getElementById("json").value));const m=document.getElementById("status").textContent;all();say(m)}catch(err){say(err.message.startsWith("Unexpected")||err instanceof SyntaxError?"Das ist kein gültiges JSON. Prüfe Klammern und Anführungszeichen.":err.message,true)}}
+});
+document.addEventListener("change",e=>{if(e.target.id!=="file"||!e.target.files[0])return;const r=new FileReader();
+  r.onload=()=>{try{applyImport(JSON.parse(r.result));const m=document.getElementById("status").textContent;all();say(m)}catch(err){say(err instanceof SyntaxError?"Die Datei enthält kein gültiges JSON.":err.message,true)}};r.readAsText(e.target.files[0])});
+all();
+</script>
