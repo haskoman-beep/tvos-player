@@ -99,7 +99,7 @@ public enum PhoneCommand: Equatable, Sendable {
 /// Seitenlogik ohne Netzwerk: Token prüfen, Formular lesen, Befehle erzeugen.
 public struct PhoneInputPage: Sendable {
     public let token: String
-    public static let services = ["tmdb", "mdblist", "tvdb", "trakt_id", "trakt_secret", "simkl_id", "atvloadly", "torbox"]
+    public static let services = ["tmdb", "mdblist", "tvdb", "trakt_id", "trakt_secret", "simkl_id", "atvloadly", "torbox", "playerlog"]
 
     public init(token: String) { self.token = token }
 
@@ -187,6 +187,7 @@ public struct PhoneInputPage: Sendable {
         <p><a href="\(FusionKitCatalog.siteURL)">Kit-Katalog öffnen</a></p>
         \(orderSection(home, note: note))</section>
         <section id=\(PhoneSection.system.rawValue)>\(head(.system))\(field("key_atvloadly", "App-Update: atvloadly-Adresse (Pi)", "http://pi-name.local:5533"))
+        \(field("key_playerlog", "Fern-Log: gemeinsames Geheimnis (dasselbe wie PLAYERLOG_SECRET am Log-Rechner)", ""))
         \(field("icon_set", "Eigener Bewertungs-Icon-Satz (JSON-Adresse, nur https)", "https://…/icons.json"))
         <h3>Sicherung</h3><p><a href="/export?t=\(token)">Alle Profile herunterladen (JSON)</a></p>
         \(field("backup_json", "Sicherung wiederherstellen (ersetzt alle Profile!)", "{…}", area: true))</section>

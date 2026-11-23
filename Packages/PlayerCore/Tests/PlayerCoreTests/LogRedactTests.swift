@@ -22,7 +22,7 @@ import Testing
 @Test func redactTorBoxTokenInQuery() {
     let u = "https://api.torbox.app/v1/api/torrents/requestdl?token=0a1b2c3d-4e5f-6789-abcd-ef0123456789&torrent_id=123&file_id=4&redirect=true"
     let r = LogRedact.url(u)
-    #expect(r == "https://api.torbox.app/…/requestdl")
+    #expect(r == "https://api.torbox.app/…")   // task 1.5: no file name, no tt ID → hidden
     #expect(!r.contains("token"))
 }
 
@@ -40,7 +40,7 @@ import Testing
 
 @Test func redactRealDebridAPIWithAuthQuery() {
     let u = "https://api.real-debrid.com/rest/1.0/unrestrict/link?auth_token=SECRETSECRET123"
-    #expect(LogRedact.url(u) == "https://api.real-debrid.com/…/link")
+    #expect(LogRedact.url(u) == "https://api.real-debrid.com/…")
 }
 
 @Test func redactAIOStreamsUUIDAndConfig() {
@@ -66,7 +66,7 @@ import Testing
     #expect(LogRedact.url("https://example.com") == "https://example.com")
     #expect(LogRedact.url("https://example.com/") == "https://example.com")
     #expect(LogRedact.url("https://example.com/?apikey=1") == "https://example.com")
-    #expect(LogRedact.url("https://example.com/watch") == "https://example.com/watch")
+    #expect(LogRedact.url("https://example.com/watch") == "https://example.com/…")
     #expect(LogRedact.url(URL(string: "https://example.com/x/y.json?k=1")!) == "https://example.com/…/y.json")
 }
 
@@ -87,12 +87,12 @@ import Testing
     let line = "Error Domain=NSURLErrorDomain Code=-1001 UserInfo={NSErrorFailingURLStringKey=https://api.torbox.app/v1/api/torrents/requestdl?token=SECRET123&x=1, NSErrorFailingURLKey=https://api.torbox.app/v1/api/torrents/requestdl?token=SECRET123&x=1}"
     let r = LogRedact.text(line)
     #expect(!r.contains("SECRET123"))
-    #expect(r == "Error Domain=NSURLErrorDomain Code=-1001 UserInfo={NSErrorFailingURLStringKey=https://api.torbox.app/…/requestdl, NSErrorFailingURLKey=https://api.torbox.app/…/requestdl}")
+    #expect(r == "Error Domain=NSURLErrorDomain Code=-1001 UserInfo={NSErrorFailingURLStringKey=https://api.torbox.app/…, NSErrorFailingURLKey=https://api.torbox.app/…}")
 }
 
 @Test func redactTextKeepsTrailingPunctuationAndQuotes() {
     #expect(LogRedact.text("open url=\"https://h.example/a/b.mkv?sig=XYZ\".") == "open url=\"https://h.example/…/b.mkv\".")
-    #expect(LogRedact.text("(siehe https://h.example/watch).") == "(siehe https://h.example/watch).")
+    #expect(LogRedact.text("(siehe https://h.example/watch).") == "(siehe https://h.example/…).")
 }
 
 @Test func redactIsIdempotent() {
@@ -121,7 +121,7 @@ import Testing
 @Test func redactTextSchemelessAddonURL() {
     let line = "Addon torrentio.strem.fun/providers=yts|realdebrid=ABCDEF1234567890XYZ/manifest.json hinzugefügt"
     #expect(LogRedact.text(line) == "Addon torrentio.strem.fun/…/manifest.json hinzugefügt")
-    #expect(LogRedact.text("Port aio.example.org:8443/0a1b2c3d-4e5f-6789-abcd-ef0123456789/x") == "Port aio.example.org:8443/…/x")
+    #expect(LogRedact.text("Port aio.example.org:8443/0a1b2c3d-4e5f-6789-abcd-ef0123456789/x") == "Port aio.example.org:8443/…")
     // Kein Host → nichts anfassen
     #expect(LogRedact.text("Laden 3/4 · Fehler 1/2") == "Laden 3/4 · Fehler 1/2")
 }
@@ -249,7 +249,7 @@ import Testing
     #expect(LogRedact.text("Taste keyboard: K95, Keyboard=an, Schlüssel fehlt") == "Taste keyboard: K95, Keyboard=an, Schlüssel fehlt")
     // Schon gekürzte Adresse als Wert bleibt lesbar (NSError-UserInfo)
     #expect(LogRedact.text("NSErrorFailingURLStringKey=https://api.torbox.app/v1/x/requestdl?token=S1")
-            == "NSErrorFailingURLStringKey=https://api.torbox.app/…/requestdl")
+            == "NSErrorFailingURLStringKey=https://api.torbox.app/…")
 }
 
 @Test func redactSchemelessIPAndLocalhost() {
@@ -266,6 +266,64 @@ import Testing
     #expect(LogRedact.text("Authorization: Bearer eyJabc.def-ghi_jkl") == "Authorization: Bearer …")
     #expect(LogRedact.text("header authorization: bearer abc123") == "header authorization: bearer …")
     #expect(LogRedact.text(LogRedact.text("Authorization: Bearer x1")) == "Authorization: Bearer …")
+}
+
+// MARK: Task 1.5 (SEC-8)
+
+@Test func redactLastComponentOnlyFileNameOrIMDbID() {
+    // Short identifiers as the last path part used to stay visible; now only file names with a known extension
+    // and IMDb IDs remain.
+    #expect(LogRedact.url("https://cdn.example.com/d/Ab12Cd") == "https://cdn.example.com/…")
+    #expect(LogRedact.url("https://cdn.example.com/watch") == "https://cdn.example.com/…")
+    #expect(LogRedact.url("https://cdn.example.com/x/Film.2023.mkv") == "https://cdn.example.com/…/Film.2023.mkv")
+    #expect(LogRedact.url("https://cdn.example.com/x/poster.JPG") == "https://cdn.example.com/…/poster.JPG")
+    #expect(LogRedact.url("https://cdn.example.com/x/name.unknownext") == "https://cdn.example.com/…")
+    #expect(LogRedact.url("https://v3.example.org/meta/movie/tt0111161") == "https://v3.example.org/…/tt0111161")
+    #expect(LogRedact.url("https://v3.example.org/stream/series/tt0944947:1:2") == "https://v3.example.org/…/tt0944947:1:2")
+    #expect(LogRedact.url("https://v3.example.org/x/ttabc") == "https://v3.example.org/…")
+    #expect(LogRedact.text("Laden https://h.example/api/Ab12Cd fertig") == "Laden https://h.example/… fertig")
+    let once = LogRedact.text("a https://h.example/api/Ab12Cd b")
+    #expect(LogRedact.text(once) == once)
+}
+
+@Test func redactCredentialsUpToLastAtBeforeQuery() {
+    // A "/" in the password used to make the rest of the password the host.
+    #expect(LogRedact.url("https://user:pa/ss@Host.example/a/b.mkv") == "https://host.example/…/b.mkv")
+    #expect(LogRedact.url("https://user:p/w@host.example") == "https://host.example")
+    #expect(LogRedact.text("open https://u:a/b@c@host.example/x/c.mp4?k=1 jetzt") == "open https://host.example/…/c.mp4 jetzt")
+    // "@" only behind "?" is no credential: the host stays.
+    #expect(LogRedact.url("https://h.example/x/c.mkv?mail=a@b.example") == "https://h.example/…/c.mkv")
+    // "?" and "#" inside the password still work (credentials before the first "/").
+    #expect(LogRedact.url("https://user:p?a#ss@Host.example/a/b.mkv?x=1") == "https://host.example/…/b.mkv")
+}
+
+@Test func redactAdditionalKeyWords() {
+    #expect(LogRedact.text("auth=a1 sig=s2 signature: s3 code=c4 pin=1234 hash=h5 pass=p6 pwd: p7 session=s8")
+            == "auth=… sig=… signature: … code=… pin=… hash=… pass=… pwd: … session=…")
+    #expect(LogRedact.text("user_code=AB12CD, infoHash: abc, x-sig=q") == "user_code=…, infoHash: …, x-sig=…")
+    #expect(LogRedact.text(#"{"session":"abc","pin":"0000"}"#) == #"{"session":"…","pin":"…"}"#)
+    // Numeric status and error codes stay readable.
+    #expect(LogRedact.text("HTTP code: 404 · Code=-1001 · statusCode=503") == "HTTP code: 404 · Code=-1001 · statusCode=503")
+    // Words that merely contain a key word, without ":"/"=", stay.
+    #expect(LogRedact.text("Codec: hevc, Session läuft, Ping=3") == "Codec: hevc, Session läuft, Ping=3")
+}
+
+@Test func redactAuthorizationAndCookieHeaders() {
+    #expect(LogRedact.text("Cookie: sid=abc; theme=dark") == "Cookie: …")
+    #expect(LogRedact.text("Set-Cookie: sid=abc; Path=/; HttpOnly") == "Set-Cookie: …")
+    #expect(LogRedact.text("Authorization: Digest username=u, response=r1") == "Authorization: Digest …")
+    #expect(LogRedact.text("Authorization: abc def") == "Authorization: …")
+    #expect(LogRedact.text(#"{"Authorization":"Bearer x y","n":1}"#) == #"{"Authorization":"…","n":1}"#)
+    #expect(LogRedact.text("headers {Cookie: a=1; b=2} ok") == "headers {Cookie: …} ok")
+    let once = LogRedact.text("Cookie: sid=abc; theme=dark")
+    #expect(LogRedact.text(once) == once)
+}
+
+@Test func redactBasicLikeBearer() {
+    #expect(LogRedact.text("Authorization: Basic dXNlcjpwYXNz") == "Authorization: Basic …")
+    #expect(LogRedact.text("Proxy nutzt Basic YWxhZGRpbjpvcGVu ok") == "Proxy nutzt Basic … ok")
+    #expect(LogRedact.text(#"Authorization: basic "abc def""#) == "Authorization: basic …")
+    #expect(LogRedact.text(LogRedact.text("Authorization: Basic x1")) == "Authorization: Basic …")
 }
 
 @Test func imageBudgetScalesWithAvailableMemory() {

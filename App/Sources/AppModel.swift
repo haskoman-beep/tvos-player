@@ -4,7 +4,7 @@ import PlayerCore
 /// App-Zustand: Profile (persistiert), Clients, Katalog-Cache.
 @MainActor
 final class AppModel: ObservableObject {
-    @Published private(set) var stored: StoredProfiles { didSet { profileRevision &+= 1 } }
+    @Published private(set) var stored: StoredProfiles { didSet { profileRevision &+= 1; syncRemoteLog() } }
     /// Zählt Profiländerungen (Merker der Paket-Kachelbilder, Welle F-g).
     private var profileRevision = 0
     private var packageArt = PackageArtMemo()
@@ -81,6 +81,7 @@ final class AppModel: ObservableObject {
         RemoteLog.info("start", "App \(v) · \(stored.profiles.count) Profil(e) · Addons \(profile.addons.map(\.manifest.name)) · Reihen \(profile.home.rows.count) · Quelle \(profile.progressSource.rawValue)")
         observeCatalogWake()
         restoreCatalogSnapshot()
+        syncRemoteLog()
     }
 
     // MARK: Fortschritt
@@ -336,6 +337,15 @@ final class AppModel: ObservableObject {
     func updateDevice(_ change: (inout DeviceSettings) -> Void) {
         change(&device)
         do { try deviceStore.save(device) } catch { lastError = "Speichern fehlgeschlagen: \(error)" }
+        syncRemoteLog()
+    }
+
+    /// Task 1.5: remote log switch and receiver (device) plus the shared secret (phone page, key `playerlog`; like
+    /// the atvloadly address: active profile first, else any profile) to `RemoteLog`.
+    func syncRemoteLog() {
+        let k = LogSignature.secretKey
+        let secret = profile.apiKeys[k] ?? stored.profiles.lazy.compactMap { $0.apiKeys[k] }.first
+        RemoteLog.shared.configure(enabled: device.remoteLogEnabled, receiver: device.remoteLogReceiver, secret: secret)
     }
 
     // MARK: Profile
@@ -668,8 +678,8 @@ final class AppModel: ObservableObject {
             case .addAddon(let u): await installAddon(u)
             case .setKey(let s, let v):
                 update { $0.apiKeys[s] = v }
-                // Pi-Adresse für „App aktualisieren“ betrifft keine Katalog-/Quellendaten.
-                if s != AtvloadlyAddress.key { clearCatalogCache() }
+                // Pi-Adresse für „App aktualisieren“ und Fern-Log-Geheimnis betreffen keine Katalog-/Quellendaten.
+                if s != AtvloadlyAddress.key && s != LogSignature.secretKey { clearCatalogCache() }
             case .importNuvioURL(let u): await importNuvio(from: u)
             case .importNuvioJSON(let d): importNuvio(data: d)
             case .addTMDBLink(let l):

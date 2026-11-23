@@ -7,13 +7,19 @@ public struct DeviceSettings: Codable, Sendable, Equatable {
     public var audioShaping: AudioShapingSettings
     /// Bild: Dolby Vision fest, FEL, HDMI-Modus zwischen Folgen halten.
     public var displayMode: DisplayModeSettings
+    /// Task 1.5 (SEC-2): send the event log to the receiver below. Off by default, also after the update.
+    public var remoteLogEnabled: Bool
+    /// Bonjour service name (`_playerlog._tcp`) chosen on the TV; only this receiver gets the log.
+    public var remoteLogReceiver: String?
 
     public init(audioShaping: AudioShapingSettings = AudioShapingSettings(),
-                displayMode: DisplayModeSettings = DisplayModeSettings()) {
+                displayMode: DisplayModeSettings = DisplayModeSettings(),
+                remoteLogEnabled: Bool = false, remoteLogReceiver: String? = nil) {
         self.audioShaping = audioShaping; self.displayMode = displayMode
+        self.remoteLogEnabled = remoteLogEnabled; self.remoteLogReceiver = remoteLogReceiver
     }
 
-    enum CodingKeys: String, CodingKey { case audioShaping, displayMode }
+    enum CodingKeys: String, CodingKey { case audioShaping, displayMode, remoteLogEnabled, remoteLogReceiver }
 
     /// Missing or unreadable fields fall back to the defaults instead of dropping the whole block.
     public init(from decoder: Decoder) throws {
@@ -21,6 +27,8 @@ public struct DeviceSettings: Codable, Sendable, Equatable {
         let d = DeviceSettings()
         audioShaping = (try? c.decodeIfPresent(AudioShapingSettings.self, forKey: .audioShaping)) ?? nil ?? d.audioShaping
         displayMode = (try? c.decodeIfPresent(DisplayModeSettings.self, forKey: .displayMode)) ?? nil ?? d.displayMode
+        remoteLogEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .remoteLogEnabled)) ?? nil ?? d.remoteLogEnabled
+        remoteLogReceiver = (try? c.decodeIfPresent(String.self, forKey: .remoteLogReceiver)) ?? nil
     }
 
     /// One-time move: the values the active profile had before wave S round 2 (raw `profiles.json`).

@@ -144,3 +144,53 @@ private struct FailingStorage: BlobStorage {
     #expect(store.loadOrMigrate().settings.displayMode.keepModeBetweenEpisodes == false)
     #expect(!store.loadOrMigrate().settings.displayMode.panelPresentsDolbyVision)
 }
+
+// MARK: Task 1.5: remote log fields (additive)
+
+/// The device block as the app wrote it before task 1.5: only the picture and sound fields.
+private let deviceJSONBeforeRemoteLog = Data(#"""
+{"audioShaping":{"nightMode":true,"audioDelayMs":40},"displayMode":{"panelPresentsDolbyVision":true,"keepModeBetweenEpisodes":false}}
+"""#.utf8)
+
+/// The field set of `DeviceSettings` before task 1.5, with the same decoding as then.
+private struct DeviceSettingsBeforeRemoteLog: Decodable {
+    var audioShaping: AudioShapingSettings
+    var displayMode: DisplayModeSettings
+    enum CodingKeys: String, CodingKey { case audioShaping, displayMode }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        audioShaping = (try? c.decodeIfPresent(AudioShapingSettings.self, forKey: .audioShaping)) ?? nil ?? AudioShapingSettings()
+        displayMode = (try? c.decodeIfPresent(DisplayModeSettings.self, forKey: .displayMode)) ?? nil ?? DisplayModeSettings()
+    }
+}
+
+@Test func deviceSettingsOldBlockDecodesWithRemoteLogOff() throws {
+    let d = try JSONDecoder().decode(DeviceSettings.self, from: deviceJSONBeforeRemoteLog)
+    #expect(!d.remoteLogEnabled && d.remoteLogReceiver == nil)
+    #expect(d.audioShaping.nightMode && d.audioShaping.audioDelayMs == 40)
+    #expect(d.displayMode.panelPresentsDolbyVision && !d.displayMode.keepModeBetweenEpisodes)
+    #expect(!DeviceSettings().remoteLogEnabled && DeviceSettings().remoteLogReceiver == nil)
+    // Broken new fields fall back alone.
+    let broken = try JSONDecoder().decode(DeviceSettings.self, from: Data(#"{"remoteLogEnabled":"ja","remoteLogReceiver":5}"#.utf8))
+    #expect(!broken.remoteLogEnabled && broken.remoteLogReceiver == nil)
+}
+
+@Test func deviceSettingsNewBlockStillReadableByOldFieldSet() throws {
+    var d = try JSONDecoder().decode(DeviceSettings.self, from: deviceJSONBeforeRemoteLog)
+    d.remoteLogEnabled = true
+    d.remoteLogReceiver = "Player-Log"
+    let data = try JSONEncoder().encode(d)
+    // Round trip keeps everything.
+    #expect(try JSONDecoder().decode(DeviceSettings.self, from: data) == d)
+    // An older build ignores the extra keys and reads its fields unchanged.
+    let old = try JSONDecoder().decode(DeviceSettingsBeforeRemoteLog.self, from: data)
+    #expect(old.audioShaping == d.audioShaping && old.displayMode == d.displayMode)
+    // The existing fields keep their stored form: same keys and values as written by the old field set.
+    let obj = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    let oldObj = try #require(try JSONSerialization.jsonObject(with: try JSONEncoder().encode(DeviceSettings(
+        audioShaping: d.audioShaping, displayMode: d.displayMode))) as? [String: Any])
+    #expect(Set(obj.keys) == ["audioShaping", "displayMode", "remoteLogEnabled", "remoteLogReceiver"])
+    func canonical(_ v: Any?) throws -> Data { try JSONSerialization.data(withJSONObject: try #require(v), options: [.sortedKeys]) }
+    #expect(try canonical(obj["audioShaping"]) == canonical(oldObj["audioShaping"]))
+    #expect(try canonical(obj["displayMode"]) == canonical(oldObj["displayMode"]))
+}

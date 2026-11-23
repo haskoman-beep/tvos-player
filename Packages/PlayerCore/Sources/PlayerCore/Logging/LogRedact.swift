@@ -2,10 +2,11 @@ import Foundation
 
 /// Logzeilen entschärfen: Debrid-/Addon-Adressen tragen Schlüssel im Pfad
 /// (Torrentio `providers=…|realdebrid=…`, AIOStreams-UUID + Konfiguration) oder in der Query (TorBox `token=…`).
-/// Von einer Adresse bleibt Schema + Host (+ Port) und – wenn sie nicht nach Schlüssel aussieht – die letzte
-/// Pfadkomponente, gekürzt. Query, Fragment, Zugangsdaten und alle übrigen Pfadteile fallen weg.
-/// Im Freitext zusätzlich: Werte hinter `token=`, `apiKey:`, `refreshToken: Optional("…")` usw. und
-/// lange undurchsichtige Zeichenketten (≥ 32 Zeichen) werden zu „…“.
+/// Von einer Adresse bleibt Schema + Host (+ Port) und die letzte Pfadkomponente, gekürzt – aber nur, wenn sie
+/// wie ein Dateiname mit bekannter Endung oder eine IMDb-ID (`tt…`) aussieht und nicht nach Schlüssel
+/// (Task 1.5, SEC-8). Query, Fragment, Zugangsdaten und alle übrigen Pfadteile fallen weg.
+/// Im Freitext zusätzlich: Werte hinter `token=`, `apiKey:`, `refreshToken: Optional("…")`, `sig=`, `Cookie:` usw.,
+/// `Bearer …`/`Basic …` und lange undurchsichtige Zeichenketten (≥ 32 Zeichen) werden zu „…“.
 public enum LogRedact {
     /// Längste gezeigte letzte Pfadkomponente (danach „…“).
     public static let maxLastComponent = 40
@@ -31,7 +32,7 @@ public enum LogRedact {
         if out.contains("/") { out = replaceURLs(out) }
         let lower = out.lowercased()
         if keyWords.contains(where: { lower.contains($0) }) { out = maskKeyValues(out) }
-        if lower.contains("bearer") {
+        if lower.contains("bearer") || lower.contains("basic") {
             out = bearerPattern.stringByReplacingMatches(
                 in: out, range: NSRange(location: 0, length: (out as NSString).length), withTemplate: "$1 …")
         }
@@ -76,9 +77,14 @@ public enum LogRedact {
 
     /// Teil nach `schema://` (bzw. eine Adresse ohne Schema): Host + gekürzter Pfad.
     private static func redactAfterScheme(_ rest: Substring) -> String {
-        // Zugangsdaten (user:pass@) zuerst abtrennen – sie dürfen „?“/„#“ enthalten –, erst dann Query/Fragment.
+        // Zugangsdaten (user:pass@) zuerst abtrennen, erst dann Query/Fragment. Das Passwort darf „?“/„#“ enthalten
+        // (letztes „@“ vor dem ersten „/“) oder „/“ (Task 1.5: letztes „@“ vor dem ersten „?“/„#“); das spätere zählt.
         let firstSlash = rest.firstIndex(of: "/") ?? rest.endIndex
-        let hostStart = rest[..<firstSlash].lastIndex(of: "@").map { rest.index(after: $0) } ?? rest.startIndex
+        let firstQuery = rest.firstIndex(where: { $0 == "?" || $0 == "#" }) ?? rest.endIndex
+        let atBeforeSlash = rest[..<firstSlash].lastIndex(of: "@")
+        let atBeforeQuery = rest[..<firstQuery].lastIndex(of: "@")
+        let lastAt = [atBeforeSlash, atBeforeQuery].compactMap { $0 }.max()
+        let hostStart = lastAt.map { rest.index(after: $0) } ?? rest.startIndex
         let afterUser = rest[hostStart...]
         let hostEnd = afterUser.firstIndex(where: { $0 == "/" || $0 == "?" || $0 == "#" }) ?? afterUser.endIndex
         let base = afterUser[..<hostEnd].lowercased()
@@ -89,7 +95,8 @@ public enum LogRedact {
         let parts = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
         guard let last = parts.last else { return base }
         // Prüfen am entschlüsselten Text (realdebrid%3DKEY), zeigen roh (bleibt beim zweiten Durchlauf gleich).
-        if last == "…" || looksSecret(last.removingPercentEncoding ?? last) { return "\(base)/…" }
+        let plain = last.removingPercentEncoding ?? last
+        if last == "…" || looksSecret(plain) || !looksShowable(plain) { return "\(base)/…" }
         let shown = shorten(last)
         return parts.count > 1 ? "\(base)/…/\(shown)" : "\(base)/\(shown)"
     }
@@ -104,14 +111,29 @@ public enum LogRedact {
         var pos = 0
         for m in matches {
             let value = m.range(at: 4)
+            guard value.location >= pos else { continue }   // inside a header value masked before
+            let name = ns.substring(with: m.range(at: 1)).lowercased()
             let v = ns.substring(with: value)
+            var end = value.location + value.length
             let masked: String
             if v.hasPrefix("\"") { masked = "\"…\"" }
             else if v.hasPrefix("'") { masked = "'…'" }
+            else if headerNames.contains(where: { name.hasSuffix($0) }) {
+                // Task 1.5: `Authorization:`/`Cookie:` – the whole value up to the end of the line or a closing
+                // bracket (`a=1; b=2`, `Digest username=…, response=…`); the scheme word stays (`Bearer …`).
+                end = headerValueEnd(ns, from: value.location)
+                let rest = ns.substring(with: NSRange(location: value.location + value.length, length: end - value.location - value.length))
+                if authSchemes.contains(v.lowercased()) {
+                    masked = rest.trimmingCharacters(in: .whitespaces).isEmpty ? v : v + " …"
+                } else {
+                    masked = "…"
+                }
+            }
+            else if isNumericCode(name: name, value: v) { masked = v }
             else if v.range(of: #"^[A-Za-z][A-Za-z0-9+.\-]*://"#, options: .regularExpression) != nil { masked = v }
             else { masked = "…" }
             out += ns.substring(with: NSRange(location: pos, length: value.location - pos)) + masked
-            pos = value.location + value.length
+            pos = end
         }
         out += ns.substring(from: pos)
         return out
@@ -150,18 +172,42 @@ public enum LogRedact {
         pattern: #"(?<![A-Za-z0-9+.\-])[A-Za-z][A-Za-z0-9+.\-]*://[^\s"'<>]+|(?<![A-Za-z0-9_.@/:%\-])(?:(?:[A-Za-z0-9\-]+\.)+[A-Za-z]{2,}|(?:[0-9]{1,3}\.){3}[0-9]{1,3}|localhost)(?::[0-9]+)?/[^\s"'<>]*"#,
         options: [.caseInsensitive])
 
-    private static let keyWords = ["token", "key", "passwd", "password", "secret"]
+    /// Vorprüfung (Teiltext, kleingeschrieben); `pass` deckt `passwd`/`password`, `auth` `authorization`, `sig` `signature`.
+    private static let keyWords = ["token", "key", "pass", "secret", "auth", "cookie", "sig", "code", "pin", "hash",
+                                   "pwd", "session"]
+    /// Kopfzeilen, deren ganzer Wert (bis Zeilenende/Klammer) wegfällt.
+    private static let headerNames = ["authorization", "cookie"]
+    private static let authSchemes: Set<String> = ["bearer", "basic", "digest"]
+
+    /// Ende eines Kopfzeilenwerts: Zeilenumbruch, schließende Klammer oder Textende.
+    private static func headerValueEnd(_ ns: NSString, from start: Int) -> Int {
+        var i = start
+        while i < ns.length {
+            switch ns.character(at: i) {
+            case 0x0A, 0x0D, 0x7D, 0x5D, 0x29: return i   // \n \r } ] )
+            default: i += 1
+            }
+        }
+        return ns.length
+    }
+
+    /// `Code=-1001`, `HTTP code: 404`, `statusCode=503` bleiben lesbar (Fehler- und Statusnummern, keine Kennungen).
+    private static func isNumericCode(name: String, value: String) -> Bool {
+        guard name == "code" || ["errorcode", "statuscode", "error_code", "status_code", "error-code", "status-code"]
+            .contains(where: { name.hasSuffix($0) }) else { return false }
+        return value.range(of: #"^-?[0-9]{1,5}$"#, options: .regularExpression) != nil
+    }
 
     /// Schlüsselname (auch mit Vorsilbe/camelCase: `x_api_key`, `userToken`, `clientSecret`, `session_key`),
     /// direkt danach `:`/`=` (sonst kein Treffer – „keyboard“ bleibt). Wert: `"…"`, `'…'` (auch mit Leerzeichen),
     /// `Optional("…")` oder ungequotet bis zum nächsten Trenner. Groß/Klein egal.
     nonisolated(unsafe) private static let keyValuePattern = try! NSRegularExpression(
-        pattern: #"(?<![A-Za-z0-9_\-])([A-Za-z0-9_\-]*(?:token|key|passwd|password|secret))(["']?\s*[:=]\s*)(Optional\()?("[^"]*"|'[^']*'|"[^"]*$|'[^']*$|[^\s"',;&)}\]]+)"#,
+        pattern: #"(?<![A-Za-z0-9_\-])([A-Za-z0-9_\-]*(?:token|key|passwd|password|secret|authorization|auth|cookie|signature|sig|code|pin|hash|pass|pwd|session))(["']?\s*[:=]\s*)(Optional\()?("[^"]*"|'[^']*'|"[^"]*$|'[^']*$|[^\s"',;&)}\]]+)"#,
         options: [.caseInsensitive])
 
-    /// `Authorization: Bearer <Wert>`
+    /// `Bearer <Wert>`, `Basic <Wert>` (Task 1.5) auch ohne Kopfzeilennamen.
     nonisolated(unsafe) private static let bearerPattern = try! NSRegularExpression(
-        pattern: #"\b(Bearer)\s+(?:"[^"]*"|'[^']*'|"[^"]*$|'[^']*$|[A-Za-z0-9._~+/=\-]+)"#, options: [.caseInsensitive])
+        pattern: #"\b(Bearer|Basic)\s+(?:"[^"]*"|'[^']*'|"[^"]*$|'[^']*$|[A-Za-z0-9._~+/=\-]+)"#, options: [.caseInsensitive])
 
     nonisolated(unsafe) private static let opaquePattern = try! NSRegularExpression(
         pattern: "[A-Za-z0-9_-]{\(opaqueRun),}")
@@ -184,6 +230,26 @@ public enum LogRedact {
 
     private static func shorten(_ s: String) -> String {
         s.count > maxLastComponent ? String(s.prefix(maxLastComponent - 1)) + "…" : s
+    }
+
+    /// Task 1.5 (SEC-8): Endungen, mit denen die letzte Pfadkomponente als Dateiname sichtbar bleibt.
+    static let shownExtensions: Set<String> = [
+        "json", "xml", "html", "htm", "txt",
+        "mkv", "mp4", "m4v", "mov", "avi", "webm", "ts", "m2ts", "mts", "m3u8", "m3u", "mpd", "iso",
+        "mp3", "m4a", "aac", "ac3", "eac3", "flac", "opus",
+        "srt", "vtt", "ass", "ssa", "sub", "idx",
+        "jpg", "jpeg", "png", "webp", "gif", "svg", "avif", "heic",
+        "zip", "ipa",
+    ]
+
+    /// Darf die letzte Pfadkomponente stehen bleiben? Nur Dateinamen mit bekannter Endung und IMDb-IDs
+    /// (`tt0111161`, auch `tt0944947:1:2`); alles andere (kurze Kennungen, Befehle) wird zu „…“.
+    static func looksShowable(_ c: String) -> Bool {
+        if c.range(of: #"^tt[0-9]+(:[0-9]+){0,2}$"#, options: .regularExpression) != nil { return true }
+        // Already shortened by `shorten` (second pass): it was shown in the first pass.
+        if c.hasSuffix("…"), c.count == maxLastComponent { return true }
+        guard let dot = c.lastIndex(of: "."), dot != c.startIndex else { return false }
+        return shownExtensions.contains(c[c.index(after: dot)...].lowercased())
     }
 
     /// Sieht die Komponente nach Schlüssel/Konfiguration aus? (lieber zu viel weglassen als zu wenig)
