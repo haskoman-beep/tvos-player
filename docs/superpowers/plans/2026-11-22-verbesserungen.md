@@ -885,7 +885,7 @@ am Gerät prüfen und zurücknehmen:
 | Build | Inhalt | Tasks | Optionen |
 |---|---|---|---|
 | 5a | Startseite, Navigation, Einstellungs-Layout | 5.1, 5.2, 5.6 | 15 `home.*`, `navigation`, `clock`, `settingsLayout` |
-| 5b | Detailseite, Quellenliste | 5.3 | 6 `detail.*` |
+| 5b | Detailseite, Quellenliste | 5.3 | 6 `detail.*` + 2 eigene (`episodes`, `titleArt`) |
 | 5c | Player, übrige Bildschirme, Barrierefreiheit | 5.4, 5.5 | 6 `player.*` |
 
 Ruling [C]: Die auf tvOS aufwendigen Werte (`heroStyle = karussell`, `settingsLayout = kacheln`,
@@ -1044,6 +1044,18 @@ Varianten:
 - [ ] `sourceList = kompakt`: eine Zeile je Quelle (Name, Plaketten, Größe rechts). `ausfuehrlich`: Zeile „Sofort
   verfügbar · Name · Größe“ und darunter der volle Addon-Text (`meta`, umbrechend). `karten`: Karte je Quelle mit
   Plakettenzeile und Text getrennt.
+
+Nutzerwünsche vom Gerätetest Build 1 (23.11.), zwei eigene Optionen **zusätzlich** zu den 35 des Konfigurators
+(nicht in `export.json`, die Vorlage „Apple TV“ und `configuratorExportMatchesAppleTVPreset` bleiben unverändert).
+Sie stehen in `LookValues.detail` als additive Felder; fehlen sie, gilt der Standard (keine Formatänderung). In
+„Aussehen“ (Task 4.5) erscheinen sie unter Detail nach den 6 Konfigurator-Optionen:
+- [ ] `episodes` „Folgen“: `reihe` Nebeneinander (waagerechte Reihe, Karte mit Vorschaubild 16:9, Titel „1. Name“
+  darunter, Beschreibung erst bei Fokus als `meta`, Gesehen-Markierung auf dem Bild), `liste` Untereinander (heute).
+  Standard `reihe`. Die Staffelleiste bleibt darüber; Staffelwechsel setzt die Reihe auf die erste ungesehene Folge.
+- [ ] `titleArt` „Titel oben“: `logo` Titel-Logo aus den Metadaten anstelle des Posters, ohne Logo das Poster;
+  `poster` immer das Poster (heute). Standard `logo`. Gilt für Film und Serie. Bild nur über `RemoteImage`.
+- [ ] Tests: `episodesRowStartsAtFirstUnwatched`, `titleArtFallsBackToPosterWithoutLogo`,
+  `missingDetailExtrasDecodeToDefaults`.
 - [ ] Tests: `detailLayoutPicksOneVariant`, `descriptionLineLimit`, `castTextJoinsNames`,
   `logoBadgesFallBackToFilledInPlayer`.
 
@@ -1300,6 +1312,8 @@ Spalte „ab Build“ = ab wann die Option in den Einstellungen wirkt; vorher is
 | detail · Plaketten und Bewertungen | `badgeStyle` „Plakettenstil“ | `umriss` Umriss, `gefuellt` Gefüllt, `text` Nur Text, `logos` Logos | `text` | Umriss ist fein, Gefüllt ist gut lesbar, Text kommt ohne Fläche aus. Logos zeichnet die Schriftzüge nach. | 5b |
 | detail · Plaketten und Bewertungen | `ratingStyle` „Bewertungen“ | `symbole` Symbol + Zahl, `text` Textzeile, `kacheln` Kacheln | `text` | Symbole mit Zahl, reine Textzeile oder kleine Kacheln mit Quelle. | 5b |
 | detail · Quellenliste | `sourceList` „Darstellung“ | `kompakt` Kompakt, `ausfuehrlich` Ausführlich, `karten` Karten | `kompakt` | Kompakt zeigt eine Zeile pro Quelle. Ausführlich zeigt den Text des Addons. Karten trennt Plaketten und Text klar. | 5b |
+| detail · Aufbau (eigene, nicht im Konfigurator) | `episodes` „Folgen“ | `reihe` Nebeneinander, `liste` Untereinander | `reihe` | Nebeneinander zeigt die Folgen als waagerechte Reihe mit Vorschaubild, Untereinander als Liste mit Beschreibung. | 5b |
+| detail · Aufbau (eigene, nicht im Konfigurator) | `titleArt` „Titel oben“ | `logo` Logo, `poster` Poster | `logo` | Logo zeigt das Titel-Logo statt des Posters, wenn es eines gibt. Poster zeigt immer das Poster. | 5b |
 | player · Steuerleiste | `controlBar` „Umfang“ | `minimal` Minimal, `standard` Standard, `ausfuehrlich` Ausführlich | `minimal` | Minimal zeigt nur Zeitleiste und Zeit. Standard ergänzt Titel und Knöpfe. Ausführlich zeigt zusätzlich Kapitelmarken und Technik. | 5c |
 | player · Steuerleiste | `badges` „Plaketten“ | `aus` Aus, `kompakt` Kompakt, `voll` Alle | `aus` | Technik-Plaketten in der Steuerleiste. | 5c |
 | player · Steuerleiste | `timeDisplay` „Zeitanzeige“ | `rest` Restzeit, `gesamt` Position / Dauer, `ende` Endet um | `rest` | Restzeit, Position und Gesamtdauer oder die Uhrzeit, zu der der Film endet. | 5c |

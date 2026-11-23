@@ -95,3 +95,13 @@ longer opens.
       no duplicate addons afterwards.
 - [ ] A `.enc` file with one changed character is refused; a large profile (about 500 KB) restores from the iPhone.
 - [ ] A failed restore on the recovery screen shows the error alert.
+
+## 5. Observations during the device test
+
+- 23 Nov: in „Reihe hinzufügen“ the left list scrolled over the page title. Pre-existing since the F-0 design wave (also in
+  249/250). Fixed in 5b8710b: both `CategoryList` columns clip top and bottom, the sides stay open for the focus zoom.
+  - [ ] Check: „Reihe hinzufügen“ and the settings pages, scroll to the bottom, nothing covers the title; the focused
+        row still zooms without being cut at the sides or at the first/last row.
+- 23 Nov: fast scrolling on the home screen shows many grey placeholders that turn into posters late. Build 1 does not
+  touch image loading (`ImagePipeline`, `RemoteImage` unchanged), so this is not a regression. Open item for a later
+  build: measure with the metrics from 1.8 and compare with 250 before changing anything.
