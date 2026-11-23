@@ -44,6 +44,8 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     /// Welle F-e: am Handy ausgeblendete Reihen, vollständig (Stil, ID für den Hero-Bezug), neueste zuletzt,
     /// höchstens `HomeLayout.hiddenLimit`. „Wieder einblenden“ hängt sie unverändert unten an.
     public var hiddenRows: [HomeRow] = []
+    /// Task 1.2: hidden rows this build cannot read (newer build), kept as raw JSON and written back after `hiddenRows`.
+    public var unknownHiddenRows: [JSONValue] = []
     /// Wave U: look of text subtitles, with its own brightness for HDR/DV (default = the look before wave U).
     public var subtitleStyle: SubtitleStyle = SubtitleStyle()
     /// Wave P-a: skip action per segment type and the card after a movie.
@@ -100,21 +102,51 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         }
         subtitleLanguage = c.decodeLenient(String.self, forKey: .subtitleLanguage, default: d.subtitleLanguage, report: r)
         progressSource = c.decodeLenient(ProgressSource.self, forKey: .progressSource, default: d.progressSource, report: r)
-        addons = c.decodeLenient([InstalledAddon].self, forKey: .addons, default: [], report: r)
-        collections = c.decodeLenient([MediaCollection].self, forKey: .collections, default: [], report: r)
+        addons = c.decodeLenientList(InstalledAddon.self, forKey: .addons, report: r)
+        collections = c.decodeLenientList(MediaCollection.self, forKey: .collections, report: r)
         home = c.decodeLenient(HomeLayout.self, forKey: .home, default: d.home, report: r)
         apiKeys = c.decodeLenient([String: String].self, forKey: .apiKeys, default: [:], report: r)
         autoplayNext = c.decodeLenient(Bool.self, forKey: .autoplayNext, default: d.autoplayNext, report: r)
         stillWatchingAfter = c.decodeLenient(Int.self, forKey: .stillWatchingAfter, default: d.stillWatchingAfter, report: r)
-        syncTokens = c.decodeLenient([String: SyncToken].self, forKey: .syncTokens, default: [:], report: r)
+        syncTokens = c.decodeLenientMap(SyncToken.self, forKey: .syncTokens, report: r)
         appearance = c.decodeLenient(Appearance.self, forKey: .appearance, default: d.appearance, report: r)
         diskCache = c.decodeLenient(DiskCacheSettings.self, forKey: .diskCache, default: d.diskCache, report: r)
         addonTimeout = c.decodeLenient(Double.self, forKey: .addonTimeout, default: d.addonTimeout, report: r)
         sources = c.decodeLenient(SourceSettings.self, forKey: .sources, default: d.sources, report: r)
         player = c.decodeLenient(PlayerComfortSettings.self, forKey: .player, default: d.player, report: r)
-        hiddenRows = c.decodeLenient([HomeRow].self, forKey: .hiddenRows, default: [], report: r)
+        (hiddenRows, unknownHiddenRows) = c.decodeSalvagedList(HomeRow.self, forKey: .hiddenRows, report: r)
         subtitleStyle = c.decodeLenient(SubtitleStyle.self, forKey: .subtitleStyle, default: d.subtitleStyle, report: r)
         skip = c.decodeLenient(SkipSettings.self, forKey: .skip, default: d.skip, report: r)
+    }
+
+    /// Same keys, order and format as the former synthesized encoding; only `hiddenRows` gets the raw leftovers
+    /// (`unknownHiddenRows`) appended.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(language, forKey: .language)
+        try c.encode(audioPriority, forKey: .audioPriority)
+        try c.encode(subtitleMode, forKey: .subtitleMode)
+        try c.encode(subtitleLanguage, forKey: .subtitleLanguage)
+        try c.encode(progressSource, forKey: .progressSource)
+        try c.encode(addons, forKey: .addons)
+        try c.encode(collections, forKey: .collections)
+        try c.encode(home, forKey: .home)
+        try c.encode(apiKeys, forKey: .apiKeys)
+        try c.encode(autoplayNext, forKey: .autoplayNext)
+        try c.encode(stillWatchingAfter, forKey: .stillWatchingAfter)
+        try c.encode(syncTokens, forKey: .syncTokens)
+        try c.encode(appearance, forKey: .appearance)
+        try c.encode(diskCache, forKey: .diskCache)
+        try c.encode(addonTimeout, forKey: .addonTimeout)
+        try c.encode(sources, forKey: .sources)
+        try c.encode(player, forKey: .player)
+        var hidden = c.nestedUnkeyedContainer(forKey: .hiddenRows)
+        for row in hiddenRows { try hidden.encode(row) }
+        for raw in unknownHiddenRows { try hidden.encode(raw) }
+        try c.encode(subtitleStyle, forKey: .subtitleStyle)
+        try c.encode(skip, forKey: .skip)
     }
 
     public static func makeDefault(name: String = "Ich") -> Profile {

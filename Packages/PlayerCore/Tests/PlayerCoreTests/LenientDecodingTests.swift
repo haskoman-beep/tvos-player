@@ -209,3 +209,73 @@ private let knownRow = """
     #expect(loaded == s)
     #expect(loadReport == DecodeReport())
 }
+
+// Fix round 1: a broken entry costs only that entry.
+
+/// `build249-profiles.json` was written by the unchanged code of build 249 (`exportData`, synthetic values). This code
+/// must read it without any report and write it back byte for byte.
+@Test func build249FixtureRoundTripsUnchanged() throws {
+    let data = try fixture("build249-profiles.json")
+    let store = ProfileStore(directory: tempDir())
+    let (s, report) = try ProfileStore.decodeReporting(data)
+    #expect(report.ignored.isEmpty)
+    #expect(s.profiles.count == 2)
+    #expect(s.profiles[0].addons.count == 2)
+    #expect(s.profiles[0].syncTokens.keys.sorted() == ["simkl", "trakt"])
+    #expect(s.profiles[0].collections.first?.folders.count == 2)
+    #expect(s.profiles[0].hiddenRows.count == 1)
+    #expect(try store.exportData(s) == data)
+}
+
+@Test func unknownHiddenRowIsKeptAsRawAndWrittenBack() throws {
+    let json = """
+    {"id":"00000000-0000-4000-8000-000000000031","name":"Test","hiddenRows":[\(knownRow),\(mosaicRow)]}
+    """
+    let (p, report) = try decodeReporting(Profile.self, json)
+    #expect(p.hiddenRows.map(\.style) == [.landscape])
+    #expect(p.unknownHiddenRows.count == 1)
+    #expect(report.ignored == ["hiddenRows[1]"])
+
+    let written = try JSONEncoder().encode(p)
+    let hidden = try #require(try jsonObject(written)["hiddenRows"] as? [Any])
+    #expect(hidden.count == 2)
+    #expect(try canonical(hidden[1]) == canonical(JSONSerialization.jsonObject(with: Data(mosaicRow.utf8))))
+    #expect(try JSONDecoder().decode(Profile.self, from: written) == p)
+}
+
+@Test func oneBrokenAddonCollectionOrSyncTokenCostsOnlyThatEntry() throws {
+    let json = """
+    {"id":"00000000-0000-4000-8000-000000000041","name":"Test",
+     "addons":[
+       {"manifestURL":"https://addon.example/manifest.json","manifest":{"id":"org.example.a","name":"A","version":"1",
+        "resources":["stream"],"types":["movie"],"catalogs":[]}},
+       {"manifestURL":"https://broken.example/manifest.json"},
+       {"manifestURL":"https://addon3.example/manifest.json","manifest":{"id":"org.example.c","name":"C","version":"1",
+        "resources":["stream"],"types":["series"],"catalogs":[]}}],
+     "collections":[
+       {"id":"c1","title":"Eins","folders":[]},
+       {"id":"c2","folders":[]},
+       {"id":"c3","title":"Drei","folders":[]}],
+     "syncTokens":{"trakt":{"accessToken":"fake-access"},"simkl":{"accessToken":12345}}}
+    """
+    let (p, report) = try decodeReporting(Profile.self, json)
+    #expect(p.addons.map(\.manifest.id) == ["org.example.a", "org.example.c"])
+    #expect(p.collections.map(\.id) == ["c1", "c3"])
+    #expect(p.syncTokens.keys.sorted() == ["trakt"])
+    #expect(p.syncTokens["trakt"]?.accessToken == "fake-access")
+    #expect(Set(report.ignored) == ["addons[1]", "collections[1]", "syncTokens.simkl"])
+}
+
+@Test func brokenFolderCostsOnlyThatFolder() throws {
+    let source = #"{"id":"s1","title":"Liste","kind":{"watchlist":{}},"mediaType":"both"}"#
+    let json = """
+    {"id":"c1","title":"Sammlung","folders":[
+      {"id":"f1","title":"Gut","sources":[\(source)]},
+      {"id":"f2","title":"Ohne Quellen"},
+      {"id":"f3","sources":[\(source)]},
+      {"id":"f4","title":"Auch gut","sources":[]}]}
+    """
+    let (c, report) = try decodeReporting(MediaCollection.self, json)
+    #expect(c.folders.map(\.id) == ["f1", "f4"])
+    #expect(report.ignored == ["folders[1]", "folders[2]"])
+}

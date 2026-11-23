@@ -125,4 +125,15 @@ public struct MediaCollection: Codable, Sendable, Hashable, Identifiable {
     public init(id: String, title: String, folders: [Folder]) {
         self.id = id; self.title = title; self.folders = folders
     }
+
+    enum CodingKeys: String, CodingKey { case id, title, folders }
+
+    /// Task 1.2: folders are read one by one; an unreadable folder is dropped (path in the `DecodeReport`), the other
+    /// folders stay. Encoding stays synthesized, the format is unchanged.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        folders = c.decodeLenientList(Folder.self, forKey: .folders, report: DecodeReportBox.of(decoder))
+    }
 }

@@ -63,6 +63,26 @@ extension KeyedDecodingContainer {
     }
 }
 
+extension KeyedDecodingContainer {
+    /// A list read element by element: an unreadable element is dropped (path in the report), the rest stays.
+    /// Missing key, `null` or no list at all → `[]` (the latter reported). Never throws.
+    func decodeLenientList<T: Decodable>(_ type: T.Type, forKey key: Key, report: DecodeReportBox) -> [T] {
+        decodeLenient([FailableDecodable<T>].self, forKey: key, default: [], report: report).compactMap(\.value)
+    }
+
+    /// A string-keyed map read entry by entry: an unreadable entry is dropped (path `key.entry` in the report).
+    func decodeLenientMap<T: Decodable>(_ type: T.Type, forKey key: Key, report: DecodeReportBox) -> [String: T] {
+        decodeLenient([String: FailableDecodable<T>].self, forKey: key, default: [:], report: report)
+            .compactMapValues(\.value)
+    }
+
+    /// A list read element by element where unreadable elements are kept as raw JSON (to be written back).
+    func decodeSalvagedList<T: Decodable>(_ type: T.Type, forKey key: Key,
+                                          report: DecodeReportBox) -> (values: [T], raw: [JSONValue]) {
+        Salvaged.split(decodeLenient([Salvaged<T>].self, forKey: key, default: [], report: report))
+    }
+}
+
 /// One element of a list that may be unreadable: the value, or nil (path noted in the report).
 struct FailableDecodable<T: Decodable>: Decodable {
     let value: T?
