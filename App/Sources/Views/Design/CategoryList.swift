@@ -85,12 +85,15 @@ struct CategoryList<Item: Hashable, Header: View, Content: View>: View {
             }
             .scrollClipDisabled()
             .frame(width: Theme.Layout.categoryColumnWidth)
+            // Clip top and bottom so scrolled rows never draw over the page title; the sides stay open for the focus zoom.
+            .mask { Rectangle().padding(.horizontal, -Theme.Space.xl) }
             .focusSection()
             .defaultFocus($focused, .item(selected))
 
             content(selected)
                 .id(selected)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .mask { Rectangle().padding(.horizontal, -Theme.Space.xl) }   // same top/bottom clip for the right column
                 .focusSection()
         }
         .onChange(of: focused) { old, new in
