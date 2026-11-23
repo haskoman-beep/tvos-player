@@ -11,6 +11,11 @@ final class AppModel: ObservableObject {
     @Published var lastError: String? { didSet { if let e = lastError { RemoteLog.error("fehler", e) } } }
     @Published var notice: String?
     let store: ProfileStore
+    /// Task 2.2 (SEC-14): keys and sync logins also in the Keychain (stage 1: profiles keep them, format unchanged).
+    /// Read rule: Keychain, else profile (applied to `stored` on load); write rule: both (`save()`).
+    let secrets: SecretStore = KeychainSecretStore()
+    /// What the Keychain holds per profile after the last save; `save()` writes only the differences.
+    private var secretSnapshot: SecretSnapshot = [:]
     /// Task 1.3: `.unreadable` while the stored profiles cannot be read; RootView then shows ProfileRecoveryView and
     /// `save()` writes nothing until the user restores a version or starts again.
     @Published private(set) var storeState: StoreState = .ready
@@ -74,6 +79,7 @@ final class AppModel: ObservableObject {
         }
         progressStore = ProgressStore(storage: storage)
         adoptProfileLoad(loaded)
+        adoptSecrets()
         let progressStart = ContinuousClock.now
         progress = loadProgress(profile.id)
         RemoteLog.metric(.startProfiles, ms: Metric.ms(profilesStart.duration(to: progressStart)),
@@ -273,6 +279,28 @@ final class AppModel: ObservableObject {
             return
         }
         do { try store.save(stored) } catch { lastError = "Speichern fehlgeschlagen: \(error)" }
+        mirrorSecrets()
+    }
+
+    // MARK: Task 2.2: Keychain
+
+    /// After a load or a replacement of the profiles: takes newer values from the Keychain into the profiles (read rule)
+    /// and copies the rest into the Keychain (repeatable, runs at every start). Nothing while the profiles are unreadable.
+    private func adoptSecrets() {
+        guard storeState == .ready else { return }
+        var list = stored.profiles
+        let taken = SecretMigration.overlay(&list, store: secrets)
+        if taken > 0 { stored.profiles = list }
+        let copied = SecretMigration.copyIntoStore(profiles: stored.profiles, store: secrets)
+        secretSnapshot = SecretMigration.snapshot(stored.profiles)
+        RemoteLog.info("speicher", "Schlüsselbund: \(copied) Eintrag/Einträge kopiert, \(taken) Wert(e) aus dem Schlüsselbund übernommen")
+        if taken > 0 { save() }   // the profile gets the Keychain value too (both places agree again)
+    }
+
+    /// Write rule: changed secrets of every profile into the Keychain, removed ones and deleted profiles out.
+    private func mirrorSecrets() {
+        do { secretSnapshot = try SecretMigration.mirror(from: secretSnapshot, to: stored.profiles, store: secrets) }
+        catch { RemoteLog.error("speicher", "Schlüsselbund nicht aktualisiert: \(error) · Profil hält die Werte weiter") }
     }
 
     // MARK: Task 1.3: unreadable profiles
@@ -342,6 +370,7 @@ final class AppModel: ObservableObject {
     private func profilesReplaced(_ s: StoredProfiles) {
         clearCatalogCache()   // memory cache and snapshot of the stand-in default profile
         stored = s
+        adoptSecrets()   // Task 2.2: a restored older version gets the newer keys and logins back from the Keychain
         progress = loadProgress(profile.id)
         restoreCatalogSnapshot()
         Task { await syncRemoteProgress() }
