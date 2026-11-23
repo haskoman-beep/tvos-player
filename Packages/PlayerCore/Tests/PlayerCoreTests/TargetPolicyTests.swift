@@ -55,3 +55,24 @@ private func u(_ s: String) -> URL { URL(string: s)! }
     #expect(Set(h.keys) == ["user-agent", "Referer", "Origin", "Accept", "Accept-Language", "Range"])
     #expect(h["user-agent"] == "VLC")
 }
+
+@Test func streamProxyHeadersAreFilteredWhenDecoded() throws {
+    let json = #"{"url":"https://cdn.example.com/a.mkv","behaviorHints":{"proxyHeaders":{"request":{"User-Agent":"X","Cookie":"s=1","Authorization":"t"}}}}"#
+    let s = try JSONDecoder().decode(StreamItem.self, from: Data(json.utf8))
+    #expect(s.behaviorHints?.proxyHeaders?.request == ["User-Agent": "X"])
+}
+
+@Test func addonStreamsLogRefusedTargetsInShadowMode() async throws {
+    final class Lines: @unchecked Sendable { var all: [String] = [] }
+    let lines = Lines()
+    let http = FakeHTTP(routes: [
+        "https://a.example.com/manifest.json": manifestJSON,
+        "https://a.example.com/stream/movie/tt1.json":
+            #"{"streams":[{"url":"https://cdn.example.com/1.mkv"},{"url":"http://192.168.0.9/2.mkv"},{"url":"file:///x"}]}"#,
+    ])
+    let c = AddonClient(http: http, log: { _, m in lines.all.append(m) })
+    let a = try await c.install(manifestURL: "https://a.example.com/manifest.json")
+    let s = try await c.streams(a, type: "movie", id: "tt1")
+    #expect(s.count == 3)
+    #expect(lines.all.contains { $0.contains("2 von 3") })
+}

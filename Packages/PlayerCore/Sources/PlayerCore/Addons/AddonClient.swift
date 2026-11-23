@@ -113,7 +113,14 @@ public struct AddonClient: Sendable {
         if r.streams.count > AddonListCaps.streams {
             log("streams", "\(addon.manifest.name) \(type)/\(id): \(r.streams.count) Streams, gekappt auf \(AddonListCaps.streams)")
         }
-        return AddonListCaps.cap(r.streams, AddonListCaps.streams)
+        let streams = AddonListCaps.cap(r.streams, AddonListCaps.streams)
+        // Task 2.3, shadow build: count stream addresses the TargetPolicy would refuse; nothing is dropped yet.
+        let origin = URL(string: addon.manifestURL)
+        let refused = streams.filter { s in s.url.flatMap(URL.init(string:)).map { !TargetPolicy.allows($0, origin: origin) } ?? false }
+        if !refused.isEmpty {
+            log("streams", "\(addon.manifest.name) \(type)/\(id): Zielprüfung würde \(refused.count) von \(streams.count) Streams ablehnen (Schattenbetrieb)")
+        }
+        return streams
     }
 
     public func catalog(_ addon: InstalledAddon, type: String, id: String, extra: [String: String] = [:]) async throws -> [MetaPreview] {
