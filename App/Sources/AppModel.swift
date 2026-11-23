@@ -831,6 +831,7 @@ final class AppModel: ObservableObject {
                     // stored (a failed save ends in the catch: nothing is removed).
                     try store.save(imported)
                     stored = imported
+                    mirrorSecrets()   // Task 2.2 write rule also after a restore (Keychain follows the saved profiles)
                     for gone in ProfileBlocks.removedByRestore(before: before, after: imported.profiles.map(\.id)) {
                         removeProfileData(gone)
                     }
