@@ -243,7 +243,7 @@ private func ids(_ l: HomeLayout) -> [String] { l.rows.map { FusionImport.kitID(
 // MARK: Handy-Seite und Trakt
 
 @Test func phoneKitURLBecomesCommand() {
-    let page = PhoneInputPage(token: "tok")
+    let page = PhoneInputPage()
     let body = "kit_url=+https%3A%2F%2Fraw.githubusercontent.com%2Fa%2Fb.json+"
     let raw = "POST /submit?t=tok HTTP/1.1\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)"
     guard case .complete(let r) = HTTPRequest.parse(Data(raw.utf8)) else { Issue.record("parse"); return }

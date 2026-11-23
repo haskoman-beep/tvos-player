@@ -4,53 +4,177 @@ import CoreImage.CIFilterBuiltins
 import PlayerCore
 
 /// Kleiner Web-Server im Heimnetz, solange die Seite offen ist (Spec §5, Handy-Eingabe).
+/// Task 1.4: one-time QR address plus session cookie (`PhoneSession`), head checked before any body, at most
+/// `PhoneLimits.maxConnections` connections with `PhoneLimits.requestDeadline` each, and a confirmation on the TV for
+/// restore, addons, keys and the export with secrets (`PhoneConfirmGate`).
 @MainActor
 final class PhoneServer: ObservableObject {
+    /// QR address (with the one-time token).
     @Published var address: String?
+    /// Address as text on screen, without the token (SEC-16).
+    @Published var shownAddress: String?
     @Published var failure: String?
-    let page = PhoneInputPage(token: PhoneInputPage.randomToken())
+    @Published private(set) var confirmation: PhoneConfirmation?
+    /// Code of the last sealed backup; only on this screen, never sent and never stored.
+    @Published private(set) var exportCode: String?
+    @Published private(set) var connected = false
+    let page = PhoneInputPage()
+    private var session = PhoneSession(token: PhoneInputPage.randomToken(), now: Date())
+    private var gate = PhoneConfirmGate()
+    private var sealedFile: Data?
+    private var sealedUntil: Date?
+    private var sealedDelivered = false
     private var listener: NWListener?
+    private var connections: [ObjectIdentifier: NWConnection] = [:]
+    private var ticker: Task<Void, Never>?
     weak var model: AppModel?
     static let port: UInt16 = 8765
+    /// The sealed file waits this long for its one download.
+    static let sealedLifetime: TimeInterval = 5 * 60
 
     func start(model: AppModel) {
         self.model = model
         guard listener == nil else { return }
         do {
             let l = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: Self.port)!)
-            l.newConnectionHandler = { [weak self] c in Task { @MainActor in self?.serve(c) } }
+            l.newConnectionHandler = { [weak self] c in Task { @MainActor in self?.accept(c) } }
             l.stateUpdateHandler = { [weak self] s in
                 Task { @MainActor in if case .failed(let e) = s { self?.failure = "Server-Fehler: \(e)" } }
             }
             l.start(queue: .main)
             listener = l
-            if let ip = Self.localIPv4() { address = "http://\(ip):\(Self.port)/?t=\(page.token)" } else { failure = "Keine WLAN/LAN-Adresse gefunden." }
+            newSession()
+            ticker = Task { @MainActor [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    guard let self else { return }
+                    self.tick()
+                }
+            }
         } catch { failure = "Server startet nicht: \(error)" }
     }
 
-    func stop() { listener?.cancel(); listener = nil }
-
-    private func serve(_ c: NWConnection) {
-        c.start(queue: .main)
-        receive(c, buffer: Data())
+    /// Closing the view (or the app leaving the foreground) ends the session, open connections and any open request.
+    func stop() {
+        listener?.cancel(); listener = nil
+        ticker?.cancel(); ticker = nil
+        session.end()
+        for c in connections.values { c.cancel() }
+        connections = [:]
+        _ = gate.resolve(allow: false, now: Date())
+        confirmation = nil
+        sealedFile = nil; sealedUntil = nil; sealedDelivered = false; exportCode = nil
+        address = nil; shownAddress = nil; connected = false
     }
 
-    private func receive(_ c: NWConnection, buffer: Data) {
+    /// „Neuer QR-Code“ and after expiry: new token, the old session (cookie) ends.
+    func newSession() {
+        guard listener != nil else { return }
+        session.end()
+        session = PhoneSession(token: PhoneInputPage.randomToken(), now: Date())
+        connected = false
+        if let ip = Self.localIPv4() {
+            let base = "http://\(ip):\(Self.port)"
+            shownAddress = base
+            address = "\(base)/?t=\(session.token)"
+        } else { failure = "Keine WLAN/LAN-Adresse gefunden." }
+    }
+
+    private func tick() {
+        let now = Date()
+        if session.needsNewCode(now: now) {
+            RemoteLog.info("handy", "QR-Code erneuert (abgelaufen)")
+            newSession()
+        }
+        syncConnected()
+        if confirmation != nil, gate.current(now: now) == nil {
+            confirmation = nil
+            RemoteLog.info("handy", "Bestätigung ohne Antwort verfallen")
+        }
+        if let u = sealedUntil, now >= u { sealedFile = nil; sealedUntil = nil }
+    }
+
+    private func syncConnected() {
+        if connected != session.isConnected { connected = session.isConnected }
+    }
+
+    /// „Erlauben“ / „Ablehnen“ on the card. `code` is the code typed for a sealed backup.
+    func answer(allow: Bool, code: String) {
+        let now = Date()
+        let cmds = gate.resolve(allow: allow, now: now)
+        confirmation = nil
+        RemoteLog.info("handy", allow ? "Bestätigung: erlaubt (\(cmds.count) Befehl(e))" : "Bestätigung: abgelehnt")
+        guard let model else { return }
+        if allow && cmds.isEmpty { model.lastError = "Die Anfrage ist abgelaufen. Bitte am Handy erneut senden."; return }
+        var run: [PhoneCommand] = []
+        for c in cmds {
+            switch c {
+            case .exportSecrets:
+                if let s = model.sealedBackup() {
+                    sealedFile = s.file; sealedUntil = now.addingTimeInterval(Self.sealedLifetime); sealedDelivered = false
+                    exportCode = s.code
+                }
+            case .importBackup(let d) where c.needsBackupCode:
+                if let plain = model.openSealedBackup(d, code: code) { run.append(.importBackup(plain)) }
+            default:
+                run.append(c)
+            }
+        }
+        if !run.isEmpty { Task { await model.apply(run) } }
+    }
+
+    private func accept(_ c: NWConnection) {
+        guard listener != nil, connections.count < PhoneLimits.maxConnections else { c.cancel(); return }
+        connections[ObjectIdentifier(c)] = c
+        c.start(queue: .main)
+        DispatchQueue.main.asyncAfter(deadline: .now() + PhoneLimits.requestDeadline) { [weak self] in
+            Task { @MainActor in self?.close(c) }
+        }
+        receive(c, buffer: Data(), bodyLength: nil)
+    }
+
+    private func close(_ c: NWConnection) {
+        guard connections.removeValue(forKey: ObjectIdentifier(c)) != nil else { return }
+        c.cancel()
+    }
+
+    /// Address of the device (without port); the session cookie only counts from the first device.
+    private static func peer(_ c: NWConnection) -> String {
+        if case .hostPort(let host, _) = c.endpoint { return "\(host)" }
+        return "\(c.endpoint)"
+    }
+
+    /// `bodyLength` is nil until the head was admitted; a body is only read after that.
+    private func receive(_ c: NWConnection, buffer: Data, bodyLength: Int?) {
         c.receive(minimumIncompleteLength: 1, maximumLength: 256 * 1024) { [weak self] data, _, done, err in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.connections[ObjectIdentifier(c)] != nil else { return }
                 var buf = buffer; if let data { buf.append(data) }
+                var admitted = bodyLength
+                if admitted == nil {
+                    switch HTTPRequest.parseHead(buf) {
+                    case .incomplete:
+                        if done || err != nil { self.close(c) } else { self.receive(c, buffer: buf, bodyLength: nil) }
+                        return
+                    case .invalid:
+                        self.send(c, HTTPResponse(status: 400, body: Data("Ungültig".utf8)))
+                        return
+                    case .complete(let head):
+                        switch self.session.admit(head, peer: Self.peer(c), now: Date()) {
+                        case .respond(let r):
+                            self.syncConnected()
+                            self.send(c, r)
+                            return
+                        case .readBody(let n):
+                            admitted = n
+                        }
+                    }
+                }
                 switch HTTPRequest.parse(buf) {
-                case .incomplete where !done && err == nil:
-                    self.receive(c, buffer: buf)
                 case .complete(let r):
-                    let (resp, cmds) = self.page.handle(r, profileName: self.model?.profile.name ?? "",
-                                                        home: self.model?.phoneHomeState() ?? .empty) { self.model?.backupData() ?? Data() }
-                    // Welle F-e: „Startseite ordnen“ vor der Antwort übernehmen, damit die Folgeseite den neuen Stand zeigt.
-                    let home = cmds.filter(\.isHomeEdit), rest = cmds.filter { !$0.isHomeEdit }
-                    if !home.isEmpty { self.model?.applyHome(home) }
-                    self.send(c, resp)
-                    if !rest.isEmpty, let m = self.model { await m.apply(rest) }
+                    self.handle(r, on: c)
+                case .incomplete where !done && err == nil:
+                    self.receive(c, buffer: buf, bodyLength: admitted)
                 case .tooLarge:
                     self.send(c, HTTPResponse(status: 413, body: Data("Zu groß".utf8)))
                 default:
@@ -60,8 +184,38 @@ final class PhoneServer: ObservableObject {
         }
     }
 
+    private func handle(_ r: HTTPRequest, on c: NWConnection) {
+        guard let model else { send(c, HTTPResponse(status: 503, body: Data())); return }
+        let backups = PhoneBackupState(blocked: model.storeState != .ready, sealedFile: sealedFile, sealedDelivered: sealedDelivered)
+        let (resp, cmds) = page.handle(r, profileName: model.profile.name, home: model.phoneHomeState(), backups: backups) {
+            model.backupData()
+        }
+        // One download of the sealed file; the code stays on screen until the view closes.
+        if r.path == PhoneInputPage.sealedPath, resp.status == 200, let f = sealedFile, resp.body == f {
+            sealedFile = nil; sealedUntil = nil; sealedDelivered = true
+            RemoteLog.info("handy", "Verschlüsselte Sicherung abgeholt")
+        }
+        // Welle F-e: „Startseite ordnen“ vor der Antwort übernehmen, damit die Folgeseite den neuen Stand zeigt.
+        let home = cmds.filter(\.isHomeEdit), rest = cmds.filter { !$0.isHomeEdit }
+        if !home.isEmpty { model.applyHome(home) }
+        send(c, resp)
+        guard !rest.isEmpty else { return }
+        let now = Date()
+        let (plain, refused) = gate.offer(rest, now: now)
+        if let open = gate.current(now: now), open != confirmation {
+            confirmation = open
+            RemoteLog.info("handy", "Bestätigung am Fernseher angefragt: \(open.commands.count) Befehl(e)")
+        }
+        if !refused.isEmpty { model.lastError = "Am Fernseher wartet schon eine Anfrage. Bitte zuerst dort antworten und dann erneut senden." }
+        if !plain.isEmpty { Task { await model.apply(plain) } }
+    }
+
     private func send(_ c: NWConnection, _ r: HTTPResponse) {
-        c.send(content: r.serialized, completion: .contentProcessed { _ in c.cancel() })
+        c.send(content: r.serialized, completion: .contentProcessed { [weak self] _ in
+            Task { @MainActor in
+                if let self { self.close(c) } else { c.cancel() }
+            }
+        })
     }
 
     /// Erste private IPv4 (en0 = WLAN/LAN am Apple TV).
@@ -88,37 +242,122 @@ struct PhoneInputView: View {
     var section: PhoneSection? = nil
     @EnvironmentObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var server = PhoneServer()
     @FocusState private var doneFocused: Bool
+    @State private var backupCode = ""
 
     private var link: String? { server.address.map { PhoneSection.url($0, section: section) } }
 
     var body: some View {
-        HStack(spacing: 80) {
-            if let a = link, let img = qr(a) {
-                Image(uiImage: img).interpolation(.none).resizable().frame(width: 480, height: 480)
-                    .padding(24).background(.white, in: RoundedRectangle(cornerRadius: 24))
+        ZStack {
+            HStack(spacing: 80) {
+                if let a = link, let img = qr(a) {
+                    Image(uiImage: img).interpolation(.none).resizable().frame(width: 480, height: 480)
+                        .padding(24).background(.white, in: RoundedRectangle(cornerRadius: 24))
+                }
+                VStack(alignment: .leading, spacing: 24) {
+                    Text("Am Handy eingeben").font(.title2.bold())
+                    Text("QR-Code mit der iPhone-Kamera scannen. Auf der Seite Addon-URLs, Schlüssel, Nuvio-Export oder TMDB-Links einfügen und senden. Unter „Startseite ordnen“ Reihen per Finger verschieben und ausblenden. Dort kannst du auch alle Profile sichern.")
+                        .frame(maxWidth: 900, alignment: .leading)
+                    if let a = server.shownAddress { Text(a).font(.caption.monospaced()).foregroundStyle(.secondary) }
+                    if server.connected {
+                        Text("Handy verbunden. Der QR-Code gilt nur einmal; für ein anderes Gerät „Neuer QR-Code“ wählen.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let code = server.exportCode {
+                        Text("Code der Sicherung: " + String(code.prefix(3)) + " " + String(code.suffix(3))).font(.title3.monospacedDigit().bold())
+                        Text("Jetzt notieren: Ohne diesen Code lässt sich die Datei nicht wiederherstellen. Er wird nirgends gespeichert.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let f = server.failure { Text(f).foregroundStyle(.red) }
+                    if let n = model.notice { Text("✓ " + n).foregroundStyle(.green) }
+                    Text("Das Handy muss im selben WLAN sein. Die Seite ist nur erreichbar, solange diese Ansicht offen ist; nach 30 Minuten braucht es einen neuen QR-Code. Sichern, Wiederherstellen, Addons und Schlüssel bestätigst du hier am Fernseher.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: Theme.Space.l) {
+                        // Sichtbarer Fokusanker (A4/N6): ohne ihn hat die Seite nichts Fokussierbares.
+                        Button("Fertig") { dismiss() }
+                            .focused($doneFocused)
+                            .accessibilityHint("Schließt die Handy-Eingabe")
+                        Button("Neuer QR-Code") { server.newSession() }
+                            .accessibilityHint("Die bisherige Adresse und Sitzung gelten danach nicht mehr")
+                    }
+                }
             }
-            VStack(alignment: .leading, spacing: 24) {
-                Text("Am Handy eingeben").font(.title2.bold())
-                Text("QR-Code mit der iPhone-Kamera scannen. Auf der Seite Addon-URLs, Schlüssel, Nuvio-Export oder TMDB-Links einfügen und senden. Unter „Startseite ordnen“ Reihen per Finger verschieben und ausblenden. Dort kannst du auch alle Profile sichern.")
-                    .frame(maxWidth: 900, alignment: .leading)
-                if let a = link { Text(a).font(.caption.monospaced()).foregroundStyle(.secondary) }
-                if let f = server.failure { Text(f).foregroundStyle(.red) }
-                if let n = model.notice { Text("✓ " + n).foregroundStyle(.green) }
-                Text("Das Handy muss im selben WLAN sein. Die Seite ist nur erreichbar, solange diese Ansicht offen ist.")
-                    .font(.caption).foregroundStyle(.secondary)
-                // Sichtbarer Fokusanker (A4/N6): ohne ihn hat die Seite nichts Fokussierbares.
-                Button("Fertig") { dismiss() }
-                    .focused($doneFocused)
-                    .accessibilityHint("Schließt die Handy-Eingabe")
+            .padding(80)
+            .disabled(server.confirmation != nil)
+            // Task 1.4: the confirmation card lies over the QR code; focus starts on „Ablehnen“.
+            if let c = server.confirmation {
+                PhoneConfirmationCard(confirmation: c, code: $backupCode) { allow in
+                    server.answer(allow: allow, code: backupCode)
+                    backupCode = ""
+                }
             }
         }
-        .padding(80)
         .onAppear { model.notice = nil; server.start(model: model); doneFocused = true }
         .onDisappear { server.stop() }
+        // SEC-16: no server while the app is not in front (screen saver, Home button).
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { server.start(model: model) } else { server.stop() }
+        }
+        .onChange(of: server.confirmation == nil) { _, closed in if closed { doneFocused = true } }
     }
 
+}
+
+/// Task 1.4: „Erlauben“ / „Ablehnen“ for a request from the phone. Same layout as `SettingsConfirmationView`;
+/// the cautious answer comes first and gets the focus, Menu answers „Ablehnen“. The request lapses after 60 s
+/// (`PhoneConfirmGate`), then the card disappears.
+private struct PhoneConfirmationCard: View {
+    let confirmation: PhoneConfirmation
+    @Binding var code: String
+    let answer: (Bool) -> Void
+
+    private enum Choice: Hashable { case deny, code, allow }
+    @FocusState private var focus: Choice?
+
+    private var codeMissing: Bool { confirmation.needsCode && BackupCrypto.normalizedCode(code) == nil }
+
+    var body: some View {
+        ZStack {
+            Theme.Palette.scrim.ignoresSafeArea()
+            VStack(alignment: .leading, spacing: Theme.Space.m) {
+                Text("Anfrage vom Handy").textRole(.sectionTitle)
+                ForEach(Array(confirmation.summary.enumerated()), id: \.offset) { _, line in
+                    Text(line).textRole(.rowDetail)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text("Ohne Antwort verfällt die Anfrage nach einer Minute.").textRole(.rowDetail)
+                VStack(spacing: Theme.Space.s) {
+                    Button { answer(false) } label: {
+                        SettingsRowLabel(symbol: "xmark", tint: Theme.CategoryTint.system.color, title: "Ablehnen",
+                                         reserveDetailSpace: false)
+                    }
+                    .buttonStyle(ThemeRowButtonStyle(maxWidth: .infinity))
+                    .focused($focus, equals: .deny)
+                    if confirmation.needsCode {
+                        TextField("Code der Sicherung (6 Ziffern)", text: $code)
+                            .focused($focus, equals: .code)
+                    }
+                    Button { answer(true) } label: {
+                        SettingsRowLabel(symbol: "checkmark", tint: Theme.Tone.ok.color, title: "Erlauben",
+                                         reserveDetailSpace: false)
+                    }
+                    .buttonStyle(ThemeRowButtonStyle(maxWidth: .infinity))
+                    .focused($focus, equals: .allow)
+                    .disabled(codeMissing)
+                }
+                .padding(.top, Theme.Space.s)
+            }
+            .padding(Theme.Space.l)
+            .frame(maxWidth: Theme.Layout.confirmationWidth)
+            .background(Theme.Palette.overlayCard, in: RoundedRectangle(cornerRadius: Theme.Radius.overlayCard))
+            .focusSection()
+        }
+        .defaultFocus($focus, .deny)
+        .onAppear { focus = .deny }
+        .onExitCommand { answer(false) }
+    }
 }
 
 func qr(_ s: String) -> UIImage? {

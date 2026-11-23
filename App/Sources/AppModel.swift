@@ -654,7 +654,34 @@ final class AppModel: ObservableObject {
 
     // MARK: Handy-Eingabe
 
-    func backupData() -> Data { (try? store.exportData(stored)) ?? Data() }
+    /// Task 1.4: `GET /export` – all profiles without keys, sync logins and the access part of addon addresses.
+    func backupData() -> Data { (try? store.exportData(stored, includeSecrets: false)) ?? Data() }
+
+    /// Task 1.4: the full backup sealed under a fresh 6-digit code (only after „Erlauben“ on the TV); the code is shown
+    /// on the TV and never sent to the phone.
+    func sealedBackup() -> (file: Data, code: String)? {
+        guard storeState == .ready else { lastError = Self.backupLockedText; return nil }
+        let code = BackupCrypto.makeCode()
+        do {
+            let plain = try store.exportData(stored, includeSecrets: true)
+            let file = try BackupCrypto(cipher: CryptoKitBackupCipher()).seal(plain, code: code)
+            return (file, code)
+        } catch { lastError = "Sicherung nicht verschlüsselt: \(error)"; return nil }
+    }
+
+    /// Task 1.4: opens a sealed backup with the code typed on the TV; nil (and a message) for a wrong code.
+    func openSealedBackup(_ file: Data, code: String) -> Data? {
+        do { return try BackupCrypto(cipher: CryptoKitBackupCipher()).open(file, code: code) } catch {
+            switch error as? BackupCryptoError {
+            case .some(.invalidCode): lastError = "Sicherung nicht geöffnet: Der Code hat 6 Ziffern."
+            case .some(.unsupportedVersion(_)): lastError = "Sicherung nicht geöffnet: Sie stammt aus einer neueren Version der App."
+            default: lastError = "Sicherung nicht geöffnet: Code falsch oder Datei beschädigt."
+            }
+            return nil
+        }
+    }
+
+    static let backupLockedText = "Die Profile sind gerade nicht lesbar. Sichern und Wiederherstellen über das Handy gehen erst wieder, wenn hier eine Fassung geladen oder neu angefangen wurde."
 
     func apply(_ commands: [PhoneCommand]) async {
         RemoteLog.info("handy", "Befehle: " + commands.map { c -> String in
@@ -670,6 +697,7 @@ final class AppModel: ObservableObject {
             case .setRatingIconSet: return "icon-satz"   // Welle F-a
             case .importCollectionLink(let u): return "collection-link \(URL(string: u)?.host ?? "?")"   // wave F-o round 2
             case .importCollectionCode: return "collection-code"
+            case .exportSecrets: return "sicherung-verschlüsselt"
             }
         }.joined(separator: ", "))
         let noticeBefore = notice
@@ -686,11 +714,13 @@ final class AppModel: ObservableObject {
                 if let s = TMDBLink.source(from: l) ?? TraktLink.source(from: l) { addHomeRow(.list(s), style: .poster, via: "Handy-Link") }
                 else { lastError = "Link nicht erkannt: \(l)" }
             case .importBackup(let d):
+                // Task 1.4: while the stored profiles are unreadable the phone restores nothing (ProfileRecoveryView decides);
+                // a sealed file arrives here already opened (PhoneServer.answer).
+                guard storeState == .ready else { lastError = Self.backupLockedText; continue }
+                guard !BackupCrypto.isSealed(d) else { lastError = "Verschlüsselte Sicherung: bitte den Code am Fernseher eingeben."; continue }
                 do {
                     let before = stored.profiles.map(\.id)
                     let imported = try store.importData(d)
-                    // Task 1.3: a deliberate import also ends the unreadable state (that state is kept in profiles.json.unreadable.bak first).
-                    if storeState != .ready { try store.keepUnreadableAside(); storeState = .ready }
                     stored = imported; save(); clearCatalogCache()
                     removeCatalogFiles(profiles: before + stored.profiles.map(\.id))
                     progress = loadProgress(profile.id)
@@ -700,6 +730,7 @@ final class AppModel: ObservableObject {
             case .setRatingIconSet(let u): setRatingIconSet(u)   // Welle F-a (Views/Settings/SourceSettingsRows.swift)
             case .importCollectionLink(let u): await CollectionLinkStore.shared.importLink(u, model: self)   // wave F-o round 2
             case .importCollectionCode(let d): await CollectionLinkStore.shared.importCode(d, model: self)
+            case .exportSecrets: break   // PhoneServer.answer seals the file after „Erlauben“
             }
         }
         // An import's own result line ("Import: 3 Reihen, …") stays.

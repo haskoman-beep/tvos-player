@@ -12,10 +12,15 @@ public struct HTTPRequest: Equatable, Sendable {
 
     public static let maxBody = 8 * 1024 * 1024
 
-    public static func parse(_ data: Data) -> ParseResult {
+    public enum HeadResult: Equatable, Sendable { case incomplete, invalid, complete(RequestHead) }
+
+    /// Task 1.4 (SEC-5): request line and headers only, before any body is accepted. The server checks access and the
+    /// body limit of the path (`PhoneLimits`) on this, so a body is read only for an admitted request.
+    public static func parseHead(_ data: Data) -> HeadResult {
         let sep = Data("\r\n\r\n".utf8)
-        guard let r = data.range(of: sep) else { return data.count > 64 * 1024 ? .invalid : .incomplete }
-        guard let head = String(data: data[..<r.lowerBound], encoding: .utf8) else { return .invalid }
+        guard let r = data.range(of: sep) else { return data.count > PhoneLimits.maxHead ? .invalid : .incomplete }
+        guard r.lowerBound - data.startIndex <= PhoneLimits.maxHead,
+              let head = String(data: data[..<r.lowerBound], encoding: .utf8) else { return .invalid }
         var lines = head.components(separatedBy: "\r\n")
         let first = lines.removeFirst().split(separator: " ")
         guard first.count >= 2 else { return .invalid }
@@ -26,15 +31,26 @@ public struct HTTPRequest: Equatable, Sendable {
         }
         let len = Int(headers["content-length"] ?? "0") ?? -1
         guard len >= 0 else { return .invalid }
-        guard len <= maxBody else { return .tooLarge }
-        let bodyStart = r.upperBound
-        guard data.count - bodyStart >= len else { return .incomplete }
         let target = String(first[1])
         let comps = URLComponents(string: target)
         var q: [String: String] = [:]
         for i in comps?.queryItems ?? [] { q[i.name] = i.value ?? "" }
-        return .complete(HTTPRequest(method: String(first[0]), path: comps?.path ?? target, query: q, headers: headers,
-                                     body: data.subdata(in: bodyStart..<(bodyStart + len))))
+        return .complete(RequestHead(method: String(first[0]), path: comps?.path ?? target, query: q, headers: headers,
+                                     contentLength: len, bodyStart: r.upperBound - data.startIndex))
+    }
+
+    public static func parse(_ data: Data) -> ParseResult {
+        let h: RequestHead
+        switch parseHead(data) {
+        case .incomplete: return .incomplete
+        case .invalid: return .invalid
+        case .complete(let x): h = x
+        }
+        guard h.contentLength <= maxBody else { return .tooLarge }
+        let bodyStart = data.startIndex + h.bodyStart
+        guard data.count - h.bodyStart >= h.contentLength else { return .incomplete }
+        return .complete(HTTPRequest(method: h.method, path: h.path, query: h.query, headers: h.headers,
+                                     body: data.subdata(in: bodyStart..<(bodyStart + h.contentLength))))
     }
 
     /// application/x-www-form-urlencoded
@@ -49,6 +65,17 @@ public struct HTTPRequest: Equatable, Sendable {
     }
 }
 
+/// Task 1.4: request line and headers of a request whose body has not been read yet.
+public struct RequestHead: Equatable, Sendable {
+    public var method: String
+    public var path: String
+    public var query: [String: String]
+    public var headers: [String: String]   // Schlüssel klein geschrieben
+    public var contentLength: Int
+    /// Offset of the body in the received bytes.
+    public var bodyStart: Int
+}
+
 public struct HTTPResponse: Equatable, Sendable {
     public var status: Int
     public var contentType: String
@@ -60,7 +87,7 @@ public struct HTTPResponse: Equatable, Sendable {
     }
 
     public var serialized: Data {
-        let reason = [200: "OK", 303: "See Other", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 413: "Payload Too Large"][status] ?? "OK"
+        let reason = [200: "OK", 303: "See Other", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 409: "Conflict", 413: "Payload Too Large", 503: "Service Unavailable"][status] ?? "OK"
         var h = "HTTP/1.1 \(status) \(reason)\r\nContent-Type: \(contentType)\r\nContent-Length: \(body.count)\r\nConnection: close\r\nCache-Control: no-store\r\n"
         for (k, v) in extraHeaders.sorted(by: { $0.key < $1.key }) { h += "\(k): \(v)\r\n" }
         return Data((h + "\r\n").utf8) + body
@@ -94,31 +121,65 @@ public enum PhoneCommand: Equatable, Sendable {
     case importCollectionLink(String)
     /// Wave F-o round 2: pasted collection code (same formats as the link).
     case importCollectionCode(Data)
+    /// Task 1.4: `GET /export?secrets=1` – after the TV allowed it, the TV seals the full backup with a code it shows
+    /// and the phone fetches the file from `PhoneInputPage.sealedPath`.
+    case exportSecrets
 }
 
-/// Seitenlogik ohne Netzwerk: Token prüfen, Formular lesen, Befehle erzeugen.
-public struct PhoneInputPage: Sendable {
-    public let token: String
-    public static let services = ["tmdb", "mdblist", "tvdb", "trakt_id", "trakt_secret", "simkl_id", "atvloadly", "torbox", "playerlog"]
+/// Task 1.4: what the page may do with backups right now.
+public struct PhoneBackupState: Equatable, Sendable {
+    /// Task 1.3 interface: the stored profiles are unreadable (`AppModel.storeState`). Then the profiles in memory are
+    /// the stand-in default profile: no export and no restore over the phone until the TV has chosen a version.
+    public var blocked: Bool
+    /// The sealed full backup after the TV allowed it (`PhoneCommand.exportSecrets`), ready for one download.
+    public var sealedFile: Data?
+    /// The sealed file was fetched already: the download page stops waiting.
+    public var sealedDelivered: Bool
 
-    public init(token: String) { self.token = token }
+    public init(blocked: Bool = false, sealedFile: Data? = nil, sealedDelivered: Bool = false) {
+        self.blocked = blocked; self.sealedFile = sealedFile; self.sealedDelivered = sealedDelivered
+    }
+}
+
+/// Seitenlogik ohne Netzwerk: Formular lesen, Befehle erzeugen. Task 1.4: access is checked before, on the request
+/// head (`PhoneSession.admit`); the page never carries the token.
+public struct PhoneInputPage: Sendable {
+    public static let services = ["tmdb", "mdblist", "tvdb", "trakt_id", "trakt_secret", "simkl_id", "atvloadly", "torbox", "playerlog"]
+    /// Download address of the sealed backup (waits with a refresh until the TV allowed it).
+    public static let sealedPath = "/export/sicherung"
+    static let blockedText = "Die Profile am Fernseher sind gerade nicht lesbar. Sichern und Wiederherstellen sind gesperrt, bis dort eine Fassung geladen oder neu angefangen wurde."
+
+    public init() {}
 
     public static func randomToken() -> String {
         let chars = Array("abcdefghjkmnpqrstuvwxyz23456789")
         return String((0..<10).map { _ in chars.randomElement()! })
     }
 
-    /// `backup` liefert den Profil-Export für GET /export; `home` den Stand für „Startseite ordnen“.
+    /// `backup` liefert den Profil-Export ohne Geheimnisse für GET /export; `home` den Stand für „Startseite ordnen“.
     public func handle(_ r: HTTPRequest, profileName: String, home: PhoneHomeState = .empty,
-                       backup: () -> Data) -> (HTTPResponse, [PhoneCommand]) {
-        guard r.query["t"] == token || r.form["t"] == token else {
-            return (HTTPResponse(status: 403, body: Data(Self.html("Kein Zugang", "<p>Bitte den QR-Code am Fernseher neu scannen.</p>").utf8)), [])
-        }
+                       backups: PhoneBackupState = PhoneBackupState(), backup: () -> Data) -> (HTTPResponse, [PhoneCommand]) {
         switch (r.method, r.path) {
         case ("GET", "/"):
             return (HTTPResponse(status: 200, body: Data(page(profileName: profileName, note: r.query["ok"], importNote: r.query["imp"],
-                                                              home: home).utf8)), [])
-        case ("GET", "/export"):
+                                                              home: home, backupBlocked: backups.blocked).utf8)), [])
+        case ("GET", "/export"), ("GET", Self.sealedPath):
+            guard !backups.blocked else {
+                return (HTTPResponse(status: 409, body: Data(Self.html("Gesperrt", "<p>\(Self.blockedText)</p>").utf8)), [])
+            }
+            if r.path == Self.sealedPath {
+                guard let file = backups.sealedFile else {
+                    if backups.sealedDelivered {
+                        return (HTTPResponse(status: 200, body: Data(Self.html("Sicherung", "<p>Die Datei \(BackupCrypto.fileName) wurde geladen. Den Code zeigt der Fernseher.</p><p><a href=\"/\">Zurück</a></p>").utf8)), [])
+                    }
+                    return (HTTPResponse(status: 200, body: Data(Self.html("Sicherung", Self.sealedWaitBody, refresh: 3).utf8)), [])
+                }
+                return (HTTPResponse(status: 200, contentType: "application/octet-stream", body: file,
+                                     extraHeaders: ["Content-Disposition": "attachment; filename=\"\(BackupCrypto.fileName)\""]), [])
+            }
+            if r.query["secrets"] == "1" {
+                return (HTTPResponse(status: 200, body: Data(Self.html("Sicherung", Self.sealedWaitBody, refresh: 3).utf8)), [.exportSecrets])
+            }
             return (HTTPResponse(status: 200, contentType: "application/json", body: backup(),
                                  extraHeaders: ["Content-Disposition": "attachment; filename=\"player-profile.json\""]), [])
         case ("POST", "/submit"):
@@ -139,26 +200,37 @@ public struct PhoneInputPage: Sendable {
             if let n = val("nuvio_url") { cmds.append(.importCollectionLink(n)) }
             if let j = val("nuvio_json") { cmds.append(.importCollectionCode(Data(j.utf8))) }
             if let l = val("tmdb_link") { cmds.append(.addTMDBLink(l)) }
-            if let b = val("backup_json") { cmds.append(.importBackup(Data(b.utf8))) }
+            var backupRefused = false
+            if let b = val("backup_json") {
+                if backups.blocked { backupRefused = true } else { cmds.append(.importBackup(Data(b.utf8))) }
+            }
             if let k = val("kit_url") { cmds.append(.importFusionURL(k)) }
             if let i = val("icon_set") { cmds.append(.setRatingIconSet(i)) }
             let note = cmds.isEmpty ? "leer" : "\(cmds.count)"
             // Rückmeldung zum Schnell-Import immer mitgeben; „Nichts ausgefüllt“ entfällt, wenn nur er etwas meldet.
-            var loc = "/?t=\(token)"
-            if !(cmds.isEmpty && importNote != nil) { loc += "&ok=\(note)" }
-            if let importNote { loc += "&imp=\(importNote)" }
+            var params: [String] = []
+            if !(cmds.isEmpty && (importNote != nil || backupRefused)) { params.append("ok=\(note)") }
+            if let importNote { params.append("imp=\(importNote)") }
+            if backupRefused { params.append("bk=gesperrt") }
+            let loc = "/" + (params.isEmpty ? "" : "?" + params.joined(separator: "&"))
             return (HTTPResponse(status: 303, body: Data(), extraHeaders: ["Location": loc]), cmds)
         case ("POST", "/home"):
             // Welle F-e: ein Zug je Anfrage (Knopf oder Ziehen); Stand vom Fernseher, nicht vom Handy.
             let cmds = home.command(op: r.form["op"] ?? "").map { [$0] } ?? []
-            let loc = "/?t=\(token)&ok=\(cmds.isEmpty ? "home0" : "home")#order"
+            let loc = "/?ok=\(cmds.isEmpty ? "home0" : "home")#order"
             return (HTTPResponse(status: 303, body: Data(), extraHeaders: ["Location": loc]), cmds)
         default:
             return (HTTPResponse(status: 404, body: Data(Self.html("Nicht gefunden", "").utf8)), [])
         }
     }
 
-    func page(profileName: String, note: String?, importNote: String? = nil, home: PhoneHomeState = .empty) -> String {
+    static let sealedWaitBody = """
+    <p>Am Fernseher „Erlauben“ wählen. Danach lädt diese Seite die verschlüsselte Datei von selbst \
+    (<a href="\(sealedPath)">sonst hier tippen</a>).</p><p>Den Code zeigt nur der Fernseher; zum Wiederherstellen wird er dort eingegeben.</p>
+    """
+
+    func page(profileName: String, note: String?, importNote: String? = nil, home: PhoneHomeState = .empty,
+              backupBlocked: Bool = false) -> String {
         var msg: String
         switch note {
         case nil, "home", "home0": msg = ""   // Rückmeldung von „Startseite ordnen“ steht in dessen Abschnitt
@@ -166,15 +238,22 @@ public struct PhoneInputPage: Sendable {
         case let n?: msg = "<p class=ok>✓ \(Self.escape(n)) Eingabe(n) an den Fernseher geschickt. Ergebnis siehst du dort.</p>"
         }
         if let t = importNote.flatMap(PhoneImportDetect.noteText) { msg += "<p class=ok>\(Self.escape(t))</p>" }
+        if backupBlocked { msg += "<p class=ok>\(Self.blockedText)</p>" }
         func field(_ name: String, _ label: String, _ ph: String, area: Bool = false) -> String {
             area ? "<label>\(label)<textarea name=\(name) rows=4 placeholder=\"\(ph)\"></textarea></label>"
                  : "<label>\(label)<input name=\(name) autocapitalize=off autocorrect=off placeholder=\"\(ph)\"></label>"
         }
         func head(_ s: PhoneSection) -> String { "<h2>\(s.title)</h2>" }
+        let backupPart = backupBlocked ? "<h3>Sicherung</h3><p class=hint>\(Self.blockedText)</p>" : """
+        <h3>Sicherung</h3><p><a href="/export">Alle Profile ohne Schlüssel herunterladen (JSON)</a></p>
+        <p><a href="/export?secrets=1">Alle Profile mit Schlüsseln herunterladen (verschlüsselt, Bestätigung am Fernseher)</a></p>
+        <label>Sicherungsdatei wählen (.json oder .enc)<input type=file id=backupfile accept=".json,.enc,application/json,application/octet-stream"></label>
+        \(field("backup_json", "Sicherung wiederherstellen (ersetzt alle Profile, Bestätigung am Fernseher)", "{…}", area: true))
+        """
         let nav = PhoneSection.allCases.map { "<a href=\"#\($0.rawValue)\">\($0.title)</a>" }.joined(separator: " · ")
         let body = """
         \(msg)<nav>\(nav)</nav>
-        <form method=post action="/submit?t=\(token)">
+        <form method=post action="/submit">
         <section id=\(PhoneSection.quickImport.rawValue)>\(head(.quickImport))\(field("import", "Link oder Code einfügen – wird erkannt (Addon, TMDB-/Trakt-Liste, Widget-Export, Preview Pack, Collection-Export)", "https://…", area: true))</section>
         <section id=\(PhoneSection.addon.rawValue)>\(head(.addon))\(field("addon", "Addon hinzufügen: Manifest-URL", "https://…/manifest.json"))</section>
         <section id=\(PhoneSection.keys.rawValue)>\(head(.keys))\(field("key_tmdb", "TMDB-API-Key", ""))\(field("key_mdblist", "MDBList-Key", ""))\(field("key_tvdb", "TVDB-Key", ""))
@@ -189,12 +268,11 @@ public struct PhoneInputPage: Sendable {
         <section id=\(PhoneSection.system.rawValue)>\(head(.system))\(field("key_atvloadly", "App-Update: atvloadly-Adresse (Pi)", "http://pi-name.local:5533"))
         \(field("key_playerlog", "Fern-Log: gemeinsames Geheimnis (dasselbe wie PLAYERLOG_SECRET am Log-Rechner)", ""))
         \(field("icon_set", "Eigener Bewertungs-Icon-Satz (JSON-Adresse, nur https)", "https://…/icons.json"))
-        <h3>Sicherung</h3><p><a href="/export?t=\(token)">Alle Profile herunterladen (JSON)</a></p>
-        \(field("backup_json", "Sicherung wiederherstellen (ersetzt alle Profile!)", "{…}", area: true))</section>
+        \(backupPart)</section>
         <button>An den Fernseher senden</button>
         </form>
-        <form id=homeform method=post action="/home?t=\(token)"></form>
-        <script>\(Self.orderScript)</script>
+        <form id=homeform method=post action="/home"></form>
+        <script>\(Self.orderScript)\(Self.fileScript)</script>
         """
         return Self.html("Player · \(Self.escape(profileName))", body)
     }
@@ -258,7 +336,7 @@ public struct PhoneInputPage: Sendable {
     /// ein Fehler lädt die Seite neu, statt den Zug noch einmal zu senden.
     static let orderScript = """
     (function(){var f=document.getElementById('homeform');if(!f||!window.fetch)return;var busy=false;
-    function reload(){location.replace(f.action.replace('/home?','/?')+'&r='+Date.now()+'#order');}
+    function reload(){location.replace('/?r='+Date.now()+'#order');}
     function send(op){if(busy)return;busy=true;var o=document.getElementById('order');if(o)o.classList.add('busy');
     fetch(f.action,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'op='+encodeURIComponent(op)})
     .then(function(r){if(!r.ok)throw 0;return r.text();}).then(function(h){var n=new DOMParser().parseFromString(h,'text/html').getElementById('order'),o=document.getElementById('order');
@@ -278,13 +356,19 @@ public struct PhoneInputPage: Sendable {
     bind();})();
     """
 
+    /// Task 1.4: a chosen backup file goes as text into „Sicherung wiederherstellen“ (both formats are text).
+    static let fileScript = """
+    (function(){var i=document.getElementById('backupfile'),t=document.querySelector('textarea[name=backup_json]');if(!i||!t||!window.FileReader)return;
+    i.addEventListener('change',function(){var f=i.files&&i.files[0];if(!f)return;var r=new FileReader();r.onload=function(){t.value=r.result;};r.readAsText(f);});})();
+    """
+
     static func escape(_ s: String) -> String {
         s.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;")
     }
 
-    static func html(_ title: String, _ body: String) -> String {
+    static func html(_ title: String, _ body: String, refresh: Int? = nil) -> String {
         """
-        <!doctype html><html lang=de><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer">
+        <!doctype html><html lang=de><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer">\(refresh.map { "<meta http-equiv=\"refresh\" content=\"\($0);url=\(sealedPath)\">" } ?? "")
         <title>\(title)</title><style>
         body{font:17px -apple-system,system-ui,sans-serif;margin:0 auto;max-width:640px;padding:16px;background:#111;color:#eee}
         h1{font-size:24px}h2{font-size:18px;margin-top:28px;color:#aaa}label{display:block;margin:10px 0}

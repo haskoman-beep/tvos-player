@@ -147,7 +147,13 @@ public final class ProfileStore: @unchecked Sendable {
         try storage.write(Self.name, data)
     }
 
-    public func exportData(_ s: StoredProfiles) throws -> Data {
+    /// Full export (with all keys); the format of build 249.
+    public func exportData(_ s: StoredProfiles) throws -> Data { try exportData(s, includeSecrets: true) }
+
+    /// Task 1.4: `includeSecrets: false` leaves out `apiKeys`, `syncTokens` and the access part of addon addresses
+    /// (`StoredProfiles.withoutSecrets`); same encoder, same keys.
+    public func exportData(_ s: StoredProfiles, includeSecrets: Bool) throws -> Data {
+        let s = includeSecrets ? s : s.withoutSecrets()
         let e = JSONEncoder()
         e.outputFormatting = [.prettyPrinted, .sortedKeys]
         return try e.encode(s)

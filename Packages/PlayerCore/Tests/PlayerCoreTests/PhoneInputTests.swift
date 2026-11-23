@@ -38,7 +38,7 @@ private func state() -> PhoneHomeState {
     #expect(PhoneSection.allCases.map(\.rawValue) == ["import", "addon", "keys", "home", "system"])
     #expect(PhoneSection.url("http://h/?t=x", section: .home) == "http://h/?t=x#home")
     #expect(PhoneSection.url("http://h/?t=x", section: nil) == "http://h/?t=x")
-    let page = PhoneInputPage(token: "tok")
+    let page = PhoneInputPage()
     let (resp, _) = page.handle(req("GET /?t=tok HTTP/1.1\r\n\r\n"), profileName: "Ich", home: state()) { Data() }
     let html = String(data: resp.body, encoding: .utf8)!
     let pos = ["id=import>", "id=addon>", "id=keys>", "id=home>", "id=order>", "id=system>"].map { html.range(of: $0)?.lowerBound }
@@ -59,11 +59,11 @@ private func state() -> PhoneHomeState {
 }
 
 @Test func orderSectionListsRowsEscapedWithButtons() {
-    let page = PhoneInputPage(token: "tok")
+    let page = PhoneInputPage()
     let (resp, cmds) = page.handle(req("GET /?t=tok HTTP/1.1\r\n\r\n"), profileName: "Ich", home: state()) { Data() }
     let html = String(data: resp.body, encoding: .utf8)!
     #expect(cmds.isEmpty)
-    #expect(html.contains("Startseite ordnen") && html.contains("action=\"/home?t=tok\""))
+    #expect(html.contains("Startseite ordnen") && html.contains("action=\"/home\""))
     // Knöpfe senden nur absolute Ziele.
     #expect(html.contains("value=\"to:\(b.uuidString):0\" aria-label=\"Nach oben\""))
     #expect(html.contains("value=\"to:\(b.uuidString):2\" aria-label=\"Nach unten\"") && html.contains("value=\"hide:\(c.uuidString)\""))
@@ -84,7 +84,7 @@ private func state() -> PhoneHomeState {
 }
 
 @Test func orderSectionEmptyAndNotes() {
-    let page = PhoneInputPage(token: "tok")
+    let page = PhoneInputPage()
     let (r1, _) = page.handle(req("GET /?t=tok&ok=home HTTP/1.1\r\n\r\n"), profileName: "Ich") { Data() }
     let h1 = String(data: r1.body, encoding: .utf8)!
     #expect(h1.contains("Keine Reihen auf der Startseite.") && h1.contains("✓ Am Fernseher geändert.") && !h1.contains("Eingabe(n)"))
@@ -95,12 +95,12 @@ private func state() -> PhoneHomeState {
 }
 
 @Test func homePostProducesOneCommandAndRedirectsToOrder() {
-    let page = PhoneInputPage(token: "tok")
+    let page = PhoneInputPage()
     func run(_ op: String) -> (HTTPResponse, [PhoneCommand]) {
         page.handle(post("/home?t=tok", "op=" + op.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!), profileName: "Ich", home: state()) { Data() }
     }
     let (resp, cmds) = run("to:\(b.uuidString):0")
-    #expect(cmds == [.moveRow(id: b, to: 0)] && resp.status == 303 && resp.extraHeaders["Location"] == "/?t=tok&ok=home#order")
+    #expect(cmds == [.moveRow(id: b, to: 0)] && resp.status == 303 && resp.extraHeaders["Location"] == "/?ok=home#order")
     #expect(run("to:\(a.uuidString):1").1 == [.moveRow(id: a, to: 1)])
     #expect(run("to:\(a.uuidString.lowercased()):99").1 == [.moveRow(id: a, to: 2)])
     #expect(run("to:\(c.uuidString):-3").1 == [.moveRow(id: c, to: 0)])
@@ -109,15 +109,13 @@ private func state() -> PhoneHomeState {
     #expect(run("show:list:builtin.upcoming").1 == [.addRow(key: "list:builtin.upcoming")])
     // Leerlauf und Unbekanntes: kein Befehl, eigene Rückmeldung. Relative Züge gibt es nicht mehr.
     let (r0, c0) = run("to:\(a.uuidString):0")
-    #expect(c0.isEmpty && r0.extraHeaders["Location"] == "/?t=tok&ok=home0#order")
+    #expect(c0.isEmpty && r0.extraHeaders["Location"] == "/?ok=home0#order")
     for bad in ["show:list:builtin.continue", "show:collection:zz", "show:list:tmdb:list:7", "hide:\(UUID().uuidString)", "hide:\(d.uuidString)",
                 "restore:\(a.uuidString)", "restore:kaputt", "up:\(b.uuidString)", "top:\(c.uuidString)", "to:\(a.uuidString):x",
                 "to:kaputt:1", "fly:\(a.uuidString)", "", "top"] {
         #expect(run(bad).1.isEmpty, "\(bad)")
     }
-    // Ohne Token kein Befehl.
-    let (forbidden, none) = page.handle(post("/home?t=falsch", "op=hide:\(b.uuidString)"), profileName: "Ich", home: state()) { Data() }
-    #expect(forbidden.status == 403 && none.isEmpty)
+    // Task 1.4: without access no command – decided before the page, on the head (phoneBodyIsNotReadForWrongToken).
     #expect(cmds.allSatisfy(\.isHomeEdit) && !PhoneCommand.addAddon("x").isHomeEdit && PhoneCommand.removeRow(a).isHomeEdit
             && PhoneCommand.restoreRow(a).isHomeEdit)
 }
@@ -180,7 +178,7 @@ private func state() -> PhoneHomeState {
 
 // Welle F-a (E7): Icon-Satz-Adresse nur noch am Handy, im Abschnitt „System“.
 @Test func phoneIconSetFieldBecomesCommand() {
-    let page = PhoneInputPage(token: "tok")
+    let page = PhoneInputPage()
     let (_, cmds) = page.handle(post("/submit?t=tok", "icon_set=+https%3A%2F%2Fexample.com%2Ficons.json+"), profileName: "Ich") { Data() }
     #expect(cmds == [.setRatingIconSet("https://example.com/icons.json")])
     let (_, none) = page.handle(post("/submit?t=tok", "icon_set=+"), profileName: "Ich") { Data() }
@@ -194,7 +192,7 @@ private func state() -> PhoneHomeState {
 
 // Welle F-f: Löschen vom Handy – Knopf mit Rückfrage, eigener Befehl, Reihe landet nicht unter „Ausgeblendet“.
 @Test func phoneDeleteRowAsksAndDeletesForGood() {
-    let page = PhoneInputPage(token: "tok")
+    let page = PhoneInputPage()
     let (resp, _) = page.handle(req("GET /?t=tok HTTP/1.1\r\n\r\n"), profileName: "Ich", home: state()) { Data() }
     let html = String(data: resp.body, encoding: .utf8)!
     #expect(html.contains("value=\"delete:\(b.uuidString)\" aria-label=\"Löschen\"") && html.contains("data-confirm="))

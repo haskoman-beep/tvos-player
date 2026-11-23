@@ -108,7 +108,7 @@ private func body(_ r: APIRequest) -> [String: Any] { (try? JSONSerialization.js
 }
 
 @Test func phonePageAcceptsSyncKeys() {
-    let page = PhoneInputPage(token: "tok")
+    let page = PhoneInputPage()
     let req = HTTPRequest(method: "POST", path: "/submit", query: ["t": "tok"], headers: [:],
                           body: Data("key_trakt_id=abc&key_simkl_id=xyz".utf8))
     let cmds = page.handle(req, profileName: "P") { Data() }.1

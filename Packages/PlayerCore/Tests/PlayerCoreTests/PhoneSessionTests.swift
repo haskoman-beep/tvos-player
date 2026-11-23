@@ -1,0 +1,287 @@
+import Foundation
+import Testing
+@testable import PlayerCore
+
+// Task 1.4: phone page session (one-time address, cookie), limits before the body, confirmation on the TV,
+// export without secrets, encrypted backup file.
+
+private let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+private let phone = "192.0.2.10"
+
+private func head(_ s: String) -> RequestHead {
+    guard case .complete(let h) = HTTPRequest.parseHead(Data(s.utf8)) else { fatalError("head") }
+    return h
+}
+
+private func cookieHeader(_ auth: PhoneAuth) -> String {
+    guard case .firstUse(let set) = auth else { fatalError("no cookie") }
+    return String(set.split(separator: ";")[0])   // "name=value", as the browser sends it back
+}
+
+/// Deterministic stand-in for CryptoKit (test target only): keystream and tag from FNV-1a over code, salt and nonce.
+/// Not secure; it only lets the file format, the round trip and the error paths run on Linux.
+private struct ToyCipher: BackupCipher {
+    struct Mismatch: Error {}
+    static func fnv(_ parts: [Data], seed: UInt64 = 0xcbf2_9ce4_8422_2325) -> UInt64 {
+        var h = seed
+        for p in parts { for b in p { h ^= UInt64(b); h = h &* 0x0000_0100_0000_01b3 } ; h ^= 0xff; h = h &* 0x0000_0100_0000_01b3 }
+        return h
+    }
+    func stream(_ n: Int, code: String, salt: Data, nonce: Data) -> [UInt8] {
+        var x = Self.fnv([Data(code.utf8), salt, nonce]) | 1
+        return (0..<n).map { _ in x ^= x << 13; x ^= x >> 7; x ^= x << 17; return UInt8(truncatingIfNeeded: x) }
+    }
+    func tag(_ c: Data, code: String, salt: Data, nonce: Data, header: Data) -> Data {
+        let a = Self.fnv([Data(code.utf8), salt, nonce, header, c]), b = Self.fnv([c, header, Data(code.utf8)], seed: a)
+        return withUnsafeBytes(of: a.bigEndian) { Data($0) } + withUnsafeBytes(of: b.bigEndian) { Data($0) }
+    }
+    func seal(_ plaintext: Data, code: String, salt: Data, nonce: Data, header: Data) throws -> (ciphertext: Data, tag: Data) {
+        let c = Data(zip(plaintext, stream(plaintext.count, code: code, salt: salt, nonce: nonce)).map { $0 ^ $1 })
+        return (c, tag(c, code: code, salt: salt, nonce: nonce, header: header))
+    }
+    func open(_ ciphertext: Data, tag t: Data, code: String, salt: Data, nonce: Data, header: Data) throws -> Data {
+        guard tag(ciphertext, code: code, salt: salt, nonce: nonce, header: header) == t else { throw Mismatch() }
+        return Data(zip(ciphertext, stream(ciphertext.count, code: code, salt: salt, nonce: nonce)).map { $0 ^ $1 })
+    }
+}
+
+private let crypto = BackupCrypto(cipher: ToyCipher())
+
+// MARK: Brief step 1 (10 tests)
+
+@Test func phoneTokenWorksExactlyOnce() {
+    var s = PhoneSession(token: "tok", now: t0)
+    let first = s.authorize(queryToken: "tok", cookie: nil, peer: phone, now: t0)
+    guard case .firstUse(let set) = first else { Issue.record("first use expected"); return }
+    #expect(set.contains("HttpOnly") && set.contains("SameSite=Lax") && set.contains("Path=/"))
+    #expect(s.authorize(queryToken: nil, cookie: cookieHeader(first), peer: phone, now: t0 + 5) == .ok)
+    // The address in the QR code is spent: the same token again (other device or other browser) gets nothing.
+    #expect(s.authorize(queryToken: "tok", cookie: nil, peer: "192.0.2.11", now: t0 + 6) == .denied)
+}
+
+@Test func phoneSecondCallWithoutCookieIsDenied() {
+    var s = PhoneSession(token: "tok", now: t0)
+    _ = s.authorize(queryToken: "tok", cookie: nil, peer: phone, now: t0)
+    #expect(s.authorize(queryToken: "tok", cookie: nil, peer: phone, now: t0 + 1) == .denied)
+    #expect(s.authorize(queryToken: nil, cookie: nil, peer: phone, now: t0 + 1) == .denied)
+    #expect(s.authorize(queryToken: nil, cookie: "\(PhoneSession.cookieName)=geraten", peer: phone, now: t0 + 1) == .denied)
+}
+
+@Test func phoneTokenExpiresAfterTenMinutes() {
+    var late = PhoneSession(token: "tok", now: t0)
+    #expect(late.authorize(queryToken: "tok", cookie: nil, peer: phone, now: t0 + 10 * 60) == .denied)
+    #expect(late.needsNewCode(now: t0 + 10 * 60))
+    var inTime = PhoneSession(token: "tok", now: t0)
+    #expect(!inTime.needsNewCode(now: t0 + 599))
+    if case .firstUse = inTime.authorize(queryToken: "tok", cookie: nil, peer: phone, now: t0 + 599) {} else { Issue.record("still valid at 9:59") }
+}
+
+@Test func phoneBodyIsNotReadForWrongToken() {
+    var s = PhoneSession(token: "tok", now: t0)
+    let h = head("POST /submit?t=falsch HTTP/1.1\r\nContent-Length: 4000000\r\n\r\n")
+    guard case .respond(let r) = s.admit(h, peer: phone, now: t0) else { Issue.record("must answer before the body"); return }
+    #expect(r.status == 403)
+    // The token is not spent by a wrong try.
+    if case .respond(let ok) = s.admit(head("GET /?t=tok HTTP/1.1\r\n\r\n"), peer: phone, now: t0 + 1) {
+        #expect(ok.status == 303 && ok.extraHeaders["Set-Cookie"] != nil && ok.extraHeaders["Location"] == "/")
+    } else { Issue.record("first use redirects") }
+}
+
+@Test func phoneHomeBodyOverLimitIs413() {
+    var s = PhoneSession(token: "tok", now: t0)
+    let c = cookieHeader(s.authorize(queryToken: "tok", cookie: nil, peer: phone, now: t0))
+    let big = s.admit(head("POST /home HTTP/1.1\r\nCookie: \(c)\r\nContent-Length: \(20 * 1024)\r\n\r\n"), peer: phone, now: t0 + 1)
+    guard case .respond(let r) = big else { Issue.record("413 expected"); return }
+    #expect(r.status == 413)
+    #expect(s.admit(head("POST /home HTTP/1.1\r\nCookie: \(c)\r\nContent-Length: 30\r\n\r\n"), peer: phone, now: t0 + 2) == .readBody(30))
+    #expect(PhoneLimits.maxBody(for: "/home") == 16 * 1024 && PhoneLimits.maxBody(for: "/submit") == 8 * 1024 * 1024)
+    #expect(PhoneLimits.maxConnections == 4 && PhoneLimits.requestDeadline == 10)
+}
+
+@Test func plainExportHoldsNoneOfTheFixtureSecrets() throws {
+    let data = try fixture("build249-profiles.json")
+    var s = try ProfileStore.decode(data)
+    s.profiles[0].addons.append(InstalledAddon(manifestURL: "https://nutzer:FAKE-PASS-0003@addon3.example/eyJGQUtFLUNPTkZJRy0wMDA0Ijp0cnVlfQ/manifest.json?key=FAKE-KEY-0005",
+                                               manifest: s.profiles[0].addons[0].manifest))
+    let store = ProfileStore(directory: tempDir())
+    let out = String(data: try store.exportData(s, includeSecrets: false), encoding: .utf8)!
+    for secret in ["FAKE-KEY-0000", "FAKE-KEY-0001", "fake-access", "fake-refresh", "FAKE-PASS-0003", "nutzer",
+                   "eyJGQUtFLUNPTkZJRy0wMDA0Ijp0cnVlfQ", "FAKE-KEY-0005"] {
+        #expect(!out.contains(secret), "\(secret)")
+    }
+    #expect(out.contains("addon3.example") && out.contains("Beispiel-Quellen"))
+}
+
+@Test func sealedExportIsUnreadableWithoutCode() throws {
+    let plain = Data(#"{"apiKeys":{"tmdb":"FAKE-KEY-0000"}}"#.utf8)
+    let file = try crypto.seal(plain, code: "123456")
+    let text = String(data: file, encoding: .utf8)!
+    #expect(text.hasPrefix(BackupCrypto.armorLine + "\n") && !text.contains("FAKE-KEY") && BackupCrypto.isSealed(file))
+    #expect(throws: BackupCryptoError.invalidCode) { try crypto.open(file, code: "") }
+    #expect(try crypto.open(file, code: " 123 456 ") == plain)
+}
+
+@Test func sealedExportWithWrongCodeFails() throws {
+    let file = try crypto.seal(Data("geheim".utf8), code: "123456")
+    #expect(throws: BackupCryptoError.wrongCodeOrDamaged) { try crypto.open(file, code: "123457") }
+}
+
+@Test func backupJsonNeedsConfirmation() {
+    let page = PhoneInputPage()
+    let json = #"{"schemaVersion":1,"profiles":[{"id":"00000000-0000-4000-8000-000000000001","name":"A"}]}"#
+    let body = "backup_json=" + json.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
+    let (_, cmds) = page.handle(req("POST /submit HTTP/1.1\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)"), profileName: "Ich") { Data() }
+    #expect(cmds == [.importBackup(Data(json.utf8))])
+    guard case .needsConfirmation(let summary) = cmds[0].sensitivity else { Issue.record("confirmation expected"); return }
+    #expect(summary.contains("ersetzt alle Profile") && summary.contains("1 Profil"))
+}
+
+@Test func addonCommandNeedsConfirmation() {
+    guard case .needsConfirmation(let summary) = PhoneCommand.addAddon("https://addon.example/FAKE-CONFIG-0006/manifest.json").sensitivity else {
+        Issue.record("confirmation expected"); return
+    }
+    #expect(summary.contains("addon.example") && !summary.contains("FAKE-CONFIG"))
+    guard case .needsConfirmation(let http) = PhoneCommand.addAddon("http://192.0.2.20:7000/manifest.json").sensitivity else { return }
+    #expect(http.contains("unverschlüsselt"))
+}
+
+// MARK: Additional rules
+
+@Test func phoneSessionEndsAfterThirtyMinutesOnCloseAndForOtherDevices() {
+    var s = PhoneSession(token: "tok", now: t0)
+    let c = cookieHeader(s.authorize(queryToken: "tok", cookie: nil, peer: phone, now: t0))
+    #expect(s.isConnected && !s.needsNewCode(now: t0 + 60))
+    #expect(s.authorize(queryToken: nil, cookie: "a=b; \(c)", peer: phone, now: t0 + 29 * 60) == .ok)
+    #expect(s.authorize(queryToken: nil, cookie: c, peer: "192.0.2.99", now: t0 + 29 * 60) == .denied)   // bound to the first device
+    #expect(s.authorize(queryToken: nil, cookie: c, peer: phone, now: t0 + 30 * 60) == .denied)
+    #expect(s.needsNewCode(now: t0 + 30 * 60))
+    var closed = PhoneSession(token: "tok", now: t0)
+    let c2 = cookieHeader(closed.authorize(queryToken: "tok", cookie: nil, peer: phone, now: t0))
+    closed.end()
+    #expect(closed.authorize(queryToken: nil, cookie: c2, peer: phone, now: t0 + 1) == .denied && closed.needsNewCode(now: t0 + 1))
+    #expect(PhoneInputPage.randomToken().count == 10 && PhoneSession.randomCookie() != PhoneSession.randomCookie())
+}
+
+@Test func headIsParsedBeforeTheBody() {
+    #expect(HTTPRequest.parseHead(Data("GET /?t=x HTTP/1.1\r\nHost: a".utf8)) == .incomplete)
+    #expect(HTTPRequest.parseHead(Data("MÜLL\r\n\r\n".utf8)) == .invalid)
+    #expect(HTTPRequest.parseHead(Data("POST /a HTTP/1.1\r\nContent-Length: -1\r\n\r\n".utf8)) == .invalid)
+    #expect(HTTPRequest.parseHead(Data(repeating: 65, count: 70 * 1024)) == .invalid)
+    let h = head("POST /submit?t=x&y=1 HTTP/1.1\r\nCookie: k=v\r\nContent-Length: 12\r\n\r\naddon=")
+    #expect(h.method == "POST" && h.path == "/submit" && h.query == ["t": "x", "y": "1"] && h.headers["cookie"] == "k=v")
+    #expect(h.contentLength == 12 && h.bodyStart == 66)
+}
+
+@Test func sensitiveCommandsAndSummaries() {
+    func summary(_ c: PhoneCommand) -> String? { if case .needsConfirmation(let s) = c.sensitivity { s } else { nil } }
+    let key = summary(.setKey(service: "torbox", value: "FAKE-KEY-0007-abcd"))
+    #expect(key?.contains("TorBox") == true && key?.contains("…cd") == true && key?.contains("FAKE-KEY-0007") == false)
+    #expect(summary(.setKey(service: "atvloadly", value: "http://pi.example:5533"))?.contains("pi.example") == true)
+    #expect(summary(.setKey(service: "playerlog", value: "FAKE-SECRET-0008"))?.contains("Fern-Log") == true)
+    #expect(summary(.setKey(service: "tmdb", value: "abc"))?.contains("abc") == false)
+    #expect(summary(.exportSecrets) != nil)
+    let sealed = (try? crypto.seal(Data("{}".utf8), code: "000000")) ?? Data()
+    #expect(summary(.importBackup(sealed))?.contains("Code") == true && PhoneCommand.importBackup(sealed).needsBackupCode)
+    #expect(!PhoneCommand.importBackup(Data("{}".utf8)).needsBackupCode)
+    for plain: PhoneCommand in [.addTMDBLink("list:5"), .importCollectionLink("https://a.example/x.json"), .moveRow(id: UUID(), to: 0),
+                                .setRatingIconSet("https://a.example/i.json"), .importFusionURL("https://a.example/k.json")] {
+        #expect(plain.sensitivity == .plain, "\(plain)")
+    }
+}
+
+@Test func confirmGateHoldsOneRequestForSixtySeconds() {
+    var g = PhoneConfirmGate()
+    let addon = PhoneCommand.addAddon("https://addon.example/manifest.json"), link = PhoneCommand.addTMDBLink("list:5")
+    let first = g.offer([link, addon, .setKey(service: "tmdb", value: "FAKE-KEY-0009")], now: t0)
+    #expect(first.plain == [link] && first.refused.isEmpty)
+    #expect(g.current(now: t0 + 1)?.commands == [addon, .setKey(service: "tmdb", value: "FAKE-KEY-0009")])
+    #expect(g.current(now: t0 + 1)?.summary.count == 2)
+    // Only one open request: a second sensitive command is refused, plain ones still go through.
+    let second = g.offer([.setKey(service: "mdblist", value: "x"), link], now: t0 + 2)
+    #expect(second.plain == [link] && second.refused == [.setKey(service: "mdblist", value: "x")])
+    #expect(g.resolve(allow: true, now: t0 + 3) == [addon, .setKey(service: "tmdb", value: "FAKE-KEY-0009")] && g.current(now: t0 + 3) == nil)
+    _ = g.offer([addon], now: t0 + 10)
+    #expect(g.resolve(allow: false, now: t0 + 11).isEmpty && g.current(now: t0 + 11) == nil)
+    _ = g.offer([addon], now: t0 + 20)
+    #expect(g.current(now: t0 + 80) == nil && g.resolve(allow: true, now: t0 + 80).isEmpty)   // expired after 60 s
+}
+
+@Test func sealedFileFormatRoundTripAndTamper() throws {
+    let plain = Data((0..<300).map { UInt8($0 % 251) })
+    let a = try crypto.seal(plain, code: "654321"), b = try crypto.seal(plain, code: "654321")
+    #expect(a != b)   // fresh salt and nonce each time
+    #expect(try crypto.open(a, code: "654321") == plain)
+    let bin = try BackupCrypto.unarmor(a)
+    #expect(bin.prefix(4) == Data("PLYS".utf8) && bin[4] == 1 && bin[5] == 1)
+    #expect(bin.count == 4 + 1 + 1 + 16 + 12 + plain.count + 16)
+    func rearm(_ d: Data) -> Data { Data((BackupCrypto.armorLine + "\n" + d.base64EncodedString() + "\n").utf8) }
+    for i in [6, 30, 40, bin.count - 1] {   // salt, nonce, ciphertext, tag
+        var t = bin; t[i] ^= 0x01
+        #expect(throws: BackupCryptoError.wrongCodeOrDamaged) { try crypto.open(rearm(t), code: "654321") }
+    }
+    var v = bin; v[4] = 2
+    #expect(throws: BackupCryptoError.unsupportedVersion(2)) { try crypto.open(rearm(v), code: "654321") }
+    #expect(throws: BackupCryptoError.damaged) { try crypto.open(rearm(bin.prefix(40)), code: "654321") }
+    #expect(throws: BackupCryptoError.notSealed) { try crypto.open(Data("{}".utf8), code: "654321") }
+    #expect(throws: BackupCryptoError.invalidCode) { try crypto.seal(plain, code: "12345") }
+    let code = BackupCrypto.makeCode()
+    #expect(code.count == 6 && code.allSatisfy(\.isNumber))
+}
+
+@Test func plainExportStaysCompatibleWithBuild249() throws {
+    let data = try fixture("build249-profiles.json")
+    let s = try ProfileStore.decode(data)
+    let store = ProfileStore(directory: tempDir())
+    #expect(try store.exportData(s, includeSecrets: true) == data)   // full export unchanged, byte for byte
+    let plain = try store.exportData(s, includeSecrets: false)
+    let back = try store.importData(plain)
+    #expect(back.profiles.map(\.id) == s.profiles.map(\.id) && back.profiles[0].collections == s.profiles[0].collections)
+    #expect(back.profiles.allSatisfy { $0.apiKeys.isEmpty && $0.syncTokens.isEmpty })
+    #expect(back.profiles[0].addons.map(\.manifestURL) == s.profiles[0].addons.map(\.manifestURL))   // no access part there
+    // Same keys as build 249 writes (empty maps stay present), so build 249 reads the file.
+    let keys = { (d: Data) throws -> [String] in
+        let o = try JSONSerialization.jsonObject(with: d) as! [String: Any]
+        return ((o["profiles"] as! [[String: Any]])[0]).keys.sorted()
+    }
+    #expect(try keys(plain) == keys(data))
+    #expect(AddonAccess.publicManifestURL("https://u:p@a.example/c/providers=yts|realdebrid=X/manifest.json?v=1#f") == "https://a.example/c/manifest.json")
+    #expect(AddonAccess.publicManifestURL("https://a.example/stremio/v1/manifest.json") == "https://a.example/stremio/v1/manifest.json")
+}
+
+@Test func phonePageRoutesForSessionExportAndLockedProfiles() {
+    let page = PhoneInputPage()
+    let (plain, none) = page.handle(req("GET /export HTTP/1.1\r\n\r\n"), profileName: "Ich") { Data("{}".utf8) }
+    #expect(plain.status == 200 && none.isEmpty && plain.extraHeaders["Content-Disposition"]?.contains("player-profile.json") == true)
+    let (wait, cmds) = page.handle(req("GET /export?secrets=1 HTTP/1.1\r\n\r\n"), profileName: "Ich") { Data() }
+    #expect(wait.status == 200 && cmds == [.exportSecrets] && String(data: wait.body, encoding: .utf8)!.contains(PhoneInputPage.sealedPath))
+    let (pending, _) = page.handle(req("GET \(PhoneInputPage.sealedPath) HTTP/1.1\r\n\r\n"), profileName: "Ich") { Data() }
+    #expect(pending.status == 200 && pending.contentType.hasPrefix("text/html") && String(data: pending.body, encoding: .utf8)!.contains("refresh"))
+    let file = Data("PLAYER-SICHERUNG-1\nAAAA\n".utf8)
+    let (ready, _) = page.handle(req("GET \(PhoneInputPage.sealedPath) HTTP/1.1\r\n\r\n"), profileName: "Ich",
+                                 backups: PhoneBackupState(sealedFile: file)) { Data() }
+    #expect(ready.body == file && ready.extraHeaders["Content-Disposition"]?.contains(BackupCrypto.fileName) == true)
+    let (done, doneCmds) = page.handle(req("GET \(PhoneInputPage.sealedPath) HTTP/1.1\r\n\r\n"), profileName: "Ich",
+                                       backups: PhoneBackupState(sealedDelivered: true)) { Data() }
+    #expect(doneCmds.isEmpty && !String(data: done.body, encoding: .utf8)!.contains("refresh"))
+    // Task 1.3 interface: while the profiles are unreadable, no backup leaves and none comes in.
+    let locked = PhoneBackupState(blocked: true)
+    for path in ["/export", "/export?secrets=1", PhoneInputPage.sealedPath] {
+        let (r, c) = page.handle(req("GET \(path) HTTP/1.1\r\n\r\n"), profileName: "Ich", backups: locked) { Data("{}".utf8) }
+        #expect(r.status == 409 && c.isEmpty && String(data: r.body, encoding: .utf8)!.contains("nicht lesbar"), "\(path)")
+    }
+    let body = "backup_json=%7B%7D&key_tmdb=K"
+    let (r, c) = page.handle(req("POST /submit HTTP/1.1\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)"), profileName: "Ich", backups: locked) { Data() }
+    #expect(c == [.setKey(service: "tmdb", value: "K")] && r.extraHeaders["Location"] == "/?ok=1&bk=gesperrt")
+    let (shown, _) = page.handle(req("GET /?ok=1&bk=gesperrt HTTP/1.1\r\n\r\n"), profileName: "Ich", backups: locked) { Data() }
+    let html = String(data: shown.body, encoding: .utf8)!
+    #expect(html.contains("nicht lesbar") && !html.contains("href=\"/export"))
+    // The page itself never carries the token any more.
+    let (open, _) = page.handle(req("GET / HTTP/1.1\r\n\r\n"), profileName: "Ich") { Data() }
+    let openHTML = String(data: open.body, encoding: .utf8)!
+    #expect(openHTML.contains("action=\"/submit\"") && openHTML.contains("/export?secrets=1") && !openHTML.contains("?t="))
+}
+
+private func req(_ s: String) -> HTTPRequest {
+    guard case .complete(let r) = HTTPRequest.parse(Data(s.utf8)) else { fatalError("parse") }
+    return r
+}

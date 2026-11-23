@@ -22,26 +22,25 @@ private func req(_ s: String) -> HTTPRequest {
     #expect(r.form["key_tmdb"] == "a b" && r.form["addon"] == "")
 }
 
-@Test func tokenIsRequired() {
-    let page = PhoneInputPage(token: "tok")
-    let (resp, cmds) = page.handle(req("GET /?t=falsch HTTP/1.1\r\n\r\n"), profileName: "Ich") { Data() }
-    #expect(resp.status == 403 && cmds.isEmpty)
+/// Task 1.4: access is decided on the request head (`PhoneSession`, PhoneSessionTests); the page carries no token.
+@Test func pageEscapesNameAndCarriesNoToken() {
+    let page = PhoneInputPage()
     let (ok, _) = page.handle(req("GET /?t=tok HTTP/1.1\r\n\r\n"), profileName: "<Ich>") { Data() }
     let html = String(data: ok.body, encoding: .utf8)!
-    #expect(ok.status == 200 && html.contains("&lt;Ich&gt;") && html.contains("/submit?t=tok"))
+    #expect(ok.status == 200 && html.contains("&lt;Ich&gt;") && html.contains("action=\"/submit\"") && !html.contains("tok"))
 }
 
 @Test func submitProducesCommandsAndRedirects() {
-    let page = PhoneInputPage(token: "tok")
+    let page = PhoneInputPage()
     let body = "addon=+https%3A%2F%2Fa%2Fmanifest.json+&key_tmdb=K1&key_tvdb=&tmdb_link=list%3A5&nuvio_json=%7B%7D"
     let (resp, cmds) = page.handle(req("POST /submit?t=tok HTTP/1.1\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)"), profileName: "Ich") { Data() }
-    #expect(resp.status == 303 && resp.extraHeaders["Location"] == "/?t=tok&ok=4")
+    #expect(resp.status == 303 && resp.extraHeaders["Location"] == "/?ok=4")
     #expect(cmds == [.addAddon("https://a/manifest.json"), .setKey(service: "tmdb", value: "K1"),
                      .importCollectionCode(Data("{}".utf8)), .addTMDBLink("list:5")])
 }
 
 @Test func exportServesBackup() {
-    let page = PhoneInputPage(token: "tok")
+    let page = PhoneInputPage()
     let (resp, _) = page.handle(req("GET /export?t=tok HTTP/1.1\r\n\r\n"), profileName: "Ich") { Data("{\"a\":1}".utf8) }
     #expect(resp.contentType == "application/json" && resp.body == Data("{\"a\":1}".utf8))
     let raw = String(data: resp.serialized, encoding: .utf8)!
@@ -66,14 +65,14 @@ private func req(_ s: String) -> HTTPRequest {
     #expect(PhoneImportDetect.detect("stremio://a.example/catalog") == .unknown)
     #expect(PhoneImportDetect.detect("hallo") == .unknown)
     // Über die Seite: unerkannt → eigene Rückmeldung, kein Befehl.
-    let page = PhoneInputPage(token: "tok")
+    let page = PhoneInputPage()
     let body = "import=hallo"
     let (resp, cmds) = page.handle(req("POST /submit?t=tok HTTP/1.1\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)"), profileName: "Ich") { Data() }
-    #expect(cmds.isEmpty && resp.extraHeaders["Location"] == "/?t=tok&imp=unknown")
+    #expect(cmds.isEmpty && resp.extraHeaders["Location"] == "/?imp=unknown")
     // Rückmeldung bleibt, auch wenn ein anderes Feld etwas liefert; die Seite zeigt den Grund.
     let body2 = "import=%7B%22profiles%22%3A%5B%5D%7D&key_tmdb=K"
     let (resp2, cmds2) = page.handle(req("POST /submit?t=tok HTTP/1.1\r\nContent-Length: \(body2.utf8.count)\r\n\r\n\(body2)"), profileName: "Ich") { Data() }
-    #expect(cmds2 == [.setKey(service: "tmdb", value: "K")] && resp2.extraHeaders["Location"] == "/?t=tok&ok=1&imp=backup")
+    #expect(cmds2 == [.setKey(service: "tmdb", value: "K")] && resp2.extraHeaders["Location"] == "/?ok=1&imp=backup")
     let (shown, _) = page.handle(req("GET /?t=tok&ok=1&imp=backup HTTP/1.1\r\n\r\n"), profileName: "Ich") { Data() }
     #expect(String(data: shown.body, encoding: .utf8)!.contains("Sicherung wiederherstellen“ nutzen"))
 }
