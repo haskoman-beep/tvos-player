@@ -401,6 +401,7 @@ struct DetailView: View {
         badgesLogged = true
         let ms = appeared.map { Int(Date().timeIntervalSince($0) * 1000) } ?? -1
         RemoteLog.info("detail", "erste Plaketten nach \(ms) ms (\(source))")
+        if ms >= 0 { RemoteLog.metric(.detailBadges, ms: ms, fields: ["quelle": source]) }   // Task 1.8
     }
 
     /// Wave F-p: the TMDB text fills in while the meta loads (catalogue entries without a description), so the
@@ -724,6 +725,9 @@ struct StreamListView: View {
     /// Review Q I3/N1: the user chose on the chip bar (pressed a chip or moved between chips): the entry focus
     /// leaves them there. Focus that tvOS puts on "Alle" by itself (loading line gone) does not count.
     @State private var filterTouched = false
+    /// Task 1.8: list opened (first creation of this view) and the `streams.firstRow` line written.
+    @State private var listOpened = ContinuousClock.now
+    @State private var firstRowLogged = false
 
     private static func traitKey(_ s: StreamItem) -> String {
         "\(s.id)|\(s.behaviorHints?.cached.map(String.init) ?? "-")|\(s.behaviorHints?.videoSize ?? -1)|\(s.behaviorHints?.filename ?? "")"
@@ -834,6 +838,12 @@ struct StreamListView: View {
         .tint(Color?.none)
         .settingsSurface()
         .streamSearchPartials(id: request.id, loading: loading && current == nil) { streams = model.orderedStreams($0) }
+        .onChange(of: streams.isEmpty) { _, empty in
+            guard !empty, !firstRowLogged else { return }
+            firstRowLogged = true
+            RemoteLog.metric(.streamsFirstRow, ms: Metric.ms(listOpened.duration(to: ContinuousClock.now)),
+                             fields: ["quellen": "\(streams.count)", "teilstand": loading ? "ja" : "nein"])
+        }
         .task {
             // Start of the push transition (the list appears as the push begins); see `autostartAfterPush`.
             let appeared = ProcessInfo.processInfo.systemUptime

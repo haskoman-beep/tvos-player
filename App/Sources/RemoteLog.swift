@@ -49,6 +49,22 @@ final class RemoteLog {
     static func info(_ cat: String, _ msg: String) { shared.add("info", cat, msg) }
     static func error(_ cat: String, _ msg: String) { shared.add("error", cat, msg) }
 
+    // MARK: Messpunkte (Task 1.8)
+
+    /// Startzeitpunkt der `start.*`-Messpunkte; `AppModel.init` setzt ihn als Erstes.
+    static var launch = ContinuousClock.now
+    /// Schon gemeldete Einmal-Messpunkte (`once: true`), je Prozess.
+    private static var metricsOnce: Set<Metric> = []
+
+    /// Messzeile `metric: <name> <ms> · <feld> <wert> …` (Namen und Format in PlayerCore `Metric`).
+    static func metric(_ m: Metric, ms: Int, fields: KeyValuePairs<String, String> = [:], once: Bool = false) {
+        if once { guard metricsOnce.insert(m).inserted else { return } }
+        info(Metric.category, Metric.line(m, ms: ms, fields: fields))
+    }
+
+    /// Millisekunden seit `launch`.
+    static func msSinceLaunch() -> Int { Metric.ms(launch.duration(to: ContinuousClock.now)) }
+
     // MARK: Einstellungen
 
     /// Vom AppModel bei jeder Änderung der Geräte-Einstellungen oder der Profile (Geheimnis `playerlog`).

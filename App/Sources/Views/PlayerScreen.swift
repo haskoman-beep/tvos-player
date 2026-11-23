@@ -216,6 +216,9 @@ struct PlayerControls<E: PlaybackEngine>: View {
     @State private var audioSwitch = AudioSwitchWatch()
     /// R2 N2: Takt der Zeitgrenzen; als gehaltener Task, nicht `.task`, denn dieses View verschwindet unterm Panel.
     @State private var audioSwitchTick: Task<Void, Never>?
+    /// Task 1.8: audio choice at the start differs from the engine's (second session build): target track, time of
+    /// the choice and whether the engine has been loading since; ends with the `player.audioReload` line.
+    @State private var startAudioReload: (target: Int, at: ContinuousClock.Instant, sawLoading: Bool)?
     @State private var hideTask: Task<Void, Never>?
     @State private var loadError: String?
     @State private var tick = 0
@@ -339,7 +342,12 @@ struct PlayerControls<E: PlaybackEngine>: View {
             stabilityTick(blocked: failureNotice != nil || loadError != nil)
             idleTick(failed: failureNotice != nil || loadError != nil)
         }
-        .onChange(of: engine.loadActivity.hasFirstFrame) { _, f in if f { stabilityFirstFrame() } }
+        .onChange(of: engine.loadActivity.hasFirstFrame) { _, f in
+            guard f else { return }
+            let counted = !stab.firstFrameSeen
+            stabilityFirstFrame()
+            if counted { logFirstFrameMetric() }
+        }
         .onChange(of: stability.isOnline) { _, on in stabilityNetworkChanged(on) }
         .onAppear {
             surfaceFocused = true
@@ -401,8 +409,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
                                  onRemember: onRemember, onCoverBottom: { coverBottom = $0 })
             }
         }
-        .onChange(of: engine.isLoading) { _, _ in checkAudioSwitch() }
-        .onChange(of: engine.activeAudioID) { _, _ in checkAudioSwitch() }
+        .onChange(of: engine.isLoading) { _, _ in checkAudioSwitch(); noteStartAudioReload() }
+        .onChange(of: engine.activeAudioID) { _, _ in checkAudioSwitch(); noteStartAudioReload() }
         // Play von außen (Siri, Kontrollzentrum) nach dem Hintergrund: erst neu aufbauen.
         .onChange(of: engine.isPlaying) { _, p in if p { stabilityPlaying(); pauseCard.noteInput() }; if p, restorePending { restoreAndPlay() } }
         .onPlayerLifecycle { handlePhase($0) }
@@ -415,6 +423,10 @@ struct PlayerControls<E: PlaybackEngine>: View {
         do {
             RemoteLog.info("player", "Laden \(title) · Start \(start.map { Int($0) } ?? 0)s · \(url.host ?? "?")")
             stabilityLoadBegins()
+            // Task 1.8: press on the source until loading begins (a stale press is dropped by `markResolved`).
+            if let tap = PlaybackStability.shared.timing.tap {
+                RemoteLog.metric(.playerLoadBegins, ms: Int(Date().timeIntervalSince(tap) * 1000))
+            }
             // Wiederholter Start nach neu aufgelöstem Link: dessen Adresse und Kopfzeilen.
             try await engine.load(resolvedURL ?? url, start: start, prefs: resolvedPrefs ?? prefs)
             // Während des Ladens verlassen (oder Start vom Lade-Wächter abgebrochen): nicht mehr wählen und nicht starten.
@@ -431,7 +443,11 @@ struct PlayerControls<E: PlaybackEngine>: View {
             // Spur-Gedächtnis (Welle D-a) vor der Automatik, nur wenn die Sprache da ist.
             let best = rememberedAudio() ?? preferredAudioTrack(engine.audioTracks, priority: profile.audioPriority)
             if let best, best.id != engine.activeAudioID {
+                startAudioReload = (target: best.id, at: ContinuousClock.now, sawLoading: false)
                 engine.selectAudio(best.id)
+            } else {
+                startAudioReload = nil
+                RemoteLog.metric(.playerAudioReload, ms: 0, fields: ["neu": "nein"])
             }
             // Tonwahl läuft asynchron: die Sprache der gewählten Spur direkt mitgeben (auch an die Addon-UT).
             let startAudio = (best ?? engine.audioTracks.first(where: { $0.id == engine.activeAudioID }))?.language
@@ -449,6 +465,23 @@ struct PlayerControls<E: PlaybackEngine>: View {
             let shown = LogRedact.text("\(error)")
             if fallsBackOnLoadError { engine.stop(); leave { onFallback("Laden fehlgeschlagen: \(shown)") } } else { loadError = shown }
         }
+    }
+
+    /// Task 1.8: start of loading until the first frame (and from the press, if there was one); once per load.
+    private func logFirstFrameMetric() {
+        let t = PlaybackStability.shared.timing
+        guard let resolved = t.resolved, let frame = t.firstFrame else { return }
+        let press = t.tap.map { "\(Int(frame.timeIntervalSince($0) * 1000))" } ?? "-"
+        RemoteLog.metric(.playerFirstFrame, ms: Int(frame.timeIntervalSince(resolved) * 1000), fields: ["druck": press])
+    }
+
+    /// Task 1.8: the start's audio reload is over once the engine has loaded and plays the chosen track.
+    private func noteStartAudioReload() {
+        guard var r = startAudioReload else { return }
+        if engine.isLoading { r.sawLoading = true; startAudioReload = r; return }
+        guard r.sawLoading, engine.activeAudioID == r.target else { return }
+        startAudioReload = nil
+        RemoteLog.metric(.playerAudioReload, ms: Metric.ms(r.at.duration(to: ContinuousClock.now)), fields: ["neu": "ja"])
     }
 
     /// Jeder Ausgang aus dem Player (Menü, Ende, nächste Folge, nächste Quelle) geht hier durch.

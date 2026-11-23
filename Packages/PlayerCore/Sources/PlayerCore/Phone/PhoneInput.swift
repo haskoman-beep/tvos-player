@@ -172,7 +172,7 @@ public enum PhoneSealedOutcome: String, Equatable, Sendable {
 /// Seitenlogik ohne Netzwerk: Formular lesen, Befehle erzeugen. Task 1.4: access is checked before, on the request
 /// head (`PhoneSession.admit`); the page never carries the token.
 public struct PhoneInputPage: Sendable {
-    public static let services = ["tmdb", "mdblist", "tvdb", "trakt_id", "trakt_secret", "simkl_id", "atvloadly", "torbox", "playerlog"]
+    public static let services = ["tmdb", "mdblist", "trakt_id", "trakt_secret", "simkl_id", "atvloadly", "torbox", "playerlog"]
     /// Download address of the sealed backup (waits with a refresh until the TV allowed it).
     public static let sealedPath = "/export/sicherung"
     static let blockedText = "Die Profile am Fernseher sind gerade nicht lesbar. Sichern und Wiederherstellen sind gesperrt, bis dort eine Fassung geladen oder neu angefangen wurde."
@@ -305,7 +305,7 @@ public struct PhoneInputPage: Sendable {
         <form method=post action="/submit">
         <section id=\(PhoneSection.quickImport.rawValue)>\(head(.quickImport))\(field("import", "Link oder Code einfügen – wird erkannt (Addon, TMDB-/Trakt-Liste, Widget-Export, Preview Pack, Collection-Export)", "https://…", area: true))</section>
         <section id=\(PhoneSection.addon.rawValue)>\(head(.addon))\(field("addon", "Addon hinzufügen: Manifest-URL", "https://…/manifest.json"))</section>
-        <section id=\(PhoneSection.keys.rawValue)>\(head(.keys))\(field("key_tmdb", "TMDB-API-Key", ""))\(field("key_mdblist", "MDBList-Key", ""))\(field("key_tvdb", "TVDB-Key", ""))
+        <section id=\(PhoneSection.keys.rawValue)>\(head(.keys))\(field("key_tmdb", "TMDB-API-Key", ""))\(field("key_mdblist", "MDBList-Key", ""))
         \(field("key_trakt_id", "Trakt Client ID", ""))\(field("key_trakt_secret", "Trakt Client Secret", ""))\(field("key_simkl_id", "Simkl Client ID", ""))
         \(field("key_torbox", "TorBox-API-Key (Bibliothek „Meine TorBox-Dateien“)", ""))</section>
         <section id=\(PhoneSection.home.rawValue)>\(head(.home))<h3>Collections importieren</h3>

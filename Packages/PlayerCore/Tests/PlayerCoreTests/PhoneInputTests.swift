@@ -45,10 +45,12 @@ private func state() -> PhoneHomeState {
     #expect(pos.allSatisfy { $0 != nil })
     #expect(pos.compactMap { $0 } == pos.compactMap { $0 }.sorted())
     // Bestehende Felder bleiben (Namen unverändert), alle Schlüssel samt TorBox im Abschnitt „Konten & Schlüssel“ (wave S).
-    for name in ["import", "addon", "key_tmdb", "key_mdblist", "key_tvdb", "key_trakt_id", "key_trakt_secret", "key_simkl_id",
+    for name in ["import", "addon", "key_tmdb", "key_mdblist", "key_trakt_id", "key_trakt_secret", "key_simkl_id",
                  "key_torbox", "key_atvloadly", "key_playerlog", "nuvio_url", "nuvio_json", "tmdb_link", "kit_url", "backup_json"] {
         #expect(html.contains("name=\(name)"), "Feld \(name)")
     }
+    // Task 1.8 (E-51): no TVDB key field, the app has no TVDB client.
+    #expect(!html.contains("key_tvdb") && !PhoneInputPage.services.contains("tvdb"))
     // Wave S: the TorBox key sits with the other keys, the addon section only takes manifest URLs.
     let keys = html.range(of: "id=keys>")!.lowerBound, home = html.range(of: "id=home>")!.lowerBound
     let torbox = html.range(of: "name=key_torbox")!.lowerBound

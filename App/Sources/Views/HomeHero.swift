@@ -368,6 +368,7 @@ struct HeroButtons: View {
         guard !done else { return }
         done = true
         RemoteLog.info("fokus", "Start: \(reason)")
+        RemoteLog.metric(.startUsable, ms: RemoteLog.msSinceLaunch(), once: true)   // Task 1.8: once per start
     }
 }
 

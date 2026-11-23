@@ -1,25 +1,44 @@
 # tvOS Player – Design (as of 21 Nov 2026)
 
-Status: written by Claude overnight after the user ended the question phase
-("move all decisions you need from me to tomorrow"). **Not yet approved by the user.**
+Status: **historical.** This is the first design, written by Claude overnight after the user ended the question
+phase ("move all decisions you need from me to tomorrow"). The app was built from it and has moved on since; where
+the app differs, the list below and [docs/entscheidungen.md](../../entscheidungen.md) are the current state
+(checked on 23 Nov 2026 against the code; analysis in `docs/superpowers/analysis/2026-11-22/`, contradictions
+W-1 to W-20 in `03-engineering-entscheidungen.md`). Setup details of the user's home are written neutrally.
 Markers: **[U]** = decided by the user, **[C]** = Claude's decision (can be corrected),
 **[OPEN]** = needs the user.
+
+**Where the app differs today**
+- Non-goals lifted: direct TorBox integration (own client, library row, cached sources first; W-2) and audio
+  passthrough (Dolby Digital, DD+ and Atmos in DD+ are passed through by default; W-1).
+- Language: the interface is German only; the profile language sets titles, descriptions and trailers (W-5).
+- Sound: TrueHD, DTS and DTS-HD MA are converted to Dolby Digital Plus 5.1 by default, not to multichannel PCM (W-12).
+- Subtitles: default „Nur erzwungene“ (forced only) instead of off (W-6).
+- Source order: the list shows the addon order (or „Smart (App)“), the automatic choice uses the app's ranking (W-7).
+- Home screen editing: long-press menu and a row manager instead of the direct edit mode (W-10).
+- Persistence: all profiles in one block in UserDefaults plus file copies, the last two versions kept, a recovery
+  page instead of a silent reset (W-4). Keys are in the profile, not in the Keychain; the normal export has no keys,
+  a backup with keys is encrypted with a 6-digit code shown on the TV (W-3).
+- Structure: no `PlaybackKit`/`PlayerEngine` package; the app uses the engine through `Packages/AetherFEL` (W-11).
+  The app target builds in the Swift 5 language mode, `PlayerCore` in Swift 6 (W-18).
+- Not built: TVDB episode order (the key field was removed) and MDBList lists as rows (E-51, E-53).
+- The repository is public (W-16).
 
 ## 1. Intent and why
 
 A personal Apple TV app, only for the user, to replace the Stremio-style clients in use today. [U]
 The main pain today: **arranging** addons and collections on the home screen is clumsy (not the
 setup). [U] The app should feel like a native Apple app, the home screen should be built from
-collections chosen beforehand, and it should output all high-quality formats cleanly on the LG OLED
-and the Z906 speakers.
+collections chosen beforehand, and it should output all high-quality formats cleanly on the user's Dolby Vision TV
+and 5.1 speaker system.
 
 Success means: the user rearranges the home screen in a few clicks on the TV, starts a remux with
-Dolby Vision, hears 5.1 from the Z906, and "continue watching" matches Trakt.
+Dolby Vision, hears 5.1 from the speakers, and "continue watching" matches Trakt.
 
 ## 2. Goals, non-goals, anti-goals
 
 **Goals**
-- Stremio addon protocol; AIOStreams as the main source (TorBox, torrents + Usenet). [U]
+- Stremio addon protocol; AIOStreams as the main source. [U]
 - Home screen built from collections; widget style per row from 6 styles (hero, poster,
   landscape + progress, top 10, logo tiles, collection tiles). [U]
 - Editing on the TV: long press → move the selected row directly (▲▼ move, ◀▶ change style live,
@@ -39,8 +58,8 @@ Dolby Vision, hears 5.1 from the Z906, and "continue watching" matches Trakt.
   source). [U]
 - Language: app German/English, switchable per profile [U]; audio track priority German → English →
   original [C, not objected to]; subtitles off by default, option available. [U]
-- Picture/sound: Dolby Vision (P5, P8, P7→8.1) on the LG; decode TrueHD/DTS-HD on the device, output
-  multichannel PCM → TV → optical Dolby Digital 5.1 to the Z906 (surround works today). [U setup]
+- Picture/sound: Dolby Vision (P5, P8, P7→8.1) on a Dolby Vision TV; surround for a 5.1 speaker system that
+  takes Dolby Digital from the TV over an optical link. [U setup]
 - Autoplay of the next episode with the same source (Stremio `bingeGroup`), carrying over the audio
   and subtitle choice. [C]
 
@@ -48,25 +67,26 @@ Dolby Vision, hears 5.1 from the Z906, and "continue watching" matches Trakt.
 - iPad app, a second Apple TV outside the home, iCloud/CloudKit sync, developer account. [U "only at
   home at first"] The data model must allow this later without a rebuild. [U]
 - A collection editor of our own ("fiddly"). [U]
-- Direct TorBox integration in the app (login, cache check) – everything goes through AIOStreams. [C]
-- Atmos height channels / bitstream passthrough – the Z906 cannot do it. [C from U setup]
+- ~~Direct TorBox integration in the app (login, cache check) – everything goes through AIOStreams. [C]~~
+  Lifted: the app has its own TorBox client (W-2).
+- ~~Atmos height channels / bitstream passthrough – the speakers cannot do it. [C from U setup]~~
+  Lifted: passthrough is the default (W-1); height channels still depend on the sound system.
 - Live TV, DVR, music.
 
 **Anti-goals (would be a failure even if it works technically)**
 - Arranging stays clumsy (menus, many clicks per step).
-- Playback stutters / wrong picture (no DV logo) / only stereo on the Z906.
+- Playback stutters / wrong picture (no DV logo) / only stereo on the speakers.
 - Settings are lost on a reinstall (7-day signing).
 - Having to type long URLs / API keys with the remote.
 
 ## 3. Constraints
 
-- No Mac, no developer account. Apple TV 4K, tvOS 26.6 (home network). [U]
-- Signing + installing: atvloadly on the Pi (home network), Apple ID signing, automatic 7-day
-  refresh. [U] Free Apple ID: limited number of apps at the same time (another sideloaded app already
-  uses one slot).
-- Build: GitHub Actions macOS (private repo `haskoman-beep/…`). macOS minutes count 10× in private
-  repos (≈ 200 Mac minutes/month free) → bundle builds; test the platform-independent core locally on
-  Linux (Swift container). [C]
+- No Mac, no developer account. One Apple TV 4K on a current tvOS in the home network. [U]
+- Signing + installing: a sideloading service (atvloadly) in the home network, Apple ID signing, automatic
+  7-day refresh. [U] Free Apple ID: limited number of apps at the same time.
+- Build: GitHub Actions macOS. At first a private repo, where macOS minutes count 10× (≈ 200 Mac
+  minutes/month free) → bundle builds; test the platform-independent core locally on Linux (Swift
+  container). [C] The repository is public today (W-16), and CI runs the core tests on Linux before every build.
 - According to its own docs, AetherEngine requires Xcode 27 / Swift 6.4; compatibility with
   Xcode 26.3 is "best effort". GitHub's standard runners only have Xcode 26.x (as of the spike).
   → Risk, see §9.
@@ -101,14 +121,14 @@ app/
 ```
 
 - **Persistence:** Codable JSON per profile in Application Support, schema version in the document,
-  atomic writes. Reason: testable on Linux, easy to back up to the Pi, can later be mirrored as
+  atomic writes. Reason: testable on Linux, easy to back up, can later be mirrored as
   documents in CloudKit. Secrets (tokens, API keys) in the Keychain, encrypted/optional in the export.
   [C] (SwiftData rejected: not testable on Linux.)
 - **Entering long text:** when needed, the app starts a small web server on the home network and shows
   a QR code; on the phone a page opens for pasting manifest URLs, API keys and import files (for
   example Nuvio JSON). Trakt/Simkl via their device-code login. [C]
-- **Backup to the Pi:** a phase after the core; a small service next to AIOStreams (its own
-  sub-project "AIOStreams on the Pi"). Until then: export/import via the phone page. [C]
+- **Backup to a home server:** a phase after the core; a small service in the home network (its own
+  sub-project). Until then: export/import via the phone page. [C]
 - **Design language:** native tvOS focus engine, parallax, Top Shelf later; styles from the mockups
   `mockups/widget-stile.html` and `mockups/prototyp.html`.
 
@@ -132,7 +152,7 @@ app/
 - **P2** Edit mode + plus selection + ready-made packs + Trakt/MDBList/TMDB import.
 - **P3** Profiles + settings + phone input page (QR).
 - **P4** Sync: Trakt/Simkl (device login, scrobble, continue watching), progress source.
-- **P5** TVDB episodes, MDBList ratings, autoplay/bingeGroup, polish, Pi backup.
+- **P5** TVDB episodes, MDBList ratings, autoplay/bingeGroup, polish, home-server backup.
 
 ## 7a. Answers to the builder check [C]
 
@@ -152,7 +172,7 @@ app/
   badges. So `Ranking` stays small.
 - **Text input in P1:** via the tvOS system keyboard (the iPhone offers the input as a notification).
   The QR page comes in P3.
-- **App slots:** a free Apple ID allows 3 apps (one other sideloaded app, Player-Probe, the main app).
+- **App slots:** a free Apple ID allows only a few apps at the same time (Player-Probe and the main app need two).
   The main app gets its own bundle ID `de.haskoman.player`; the probe can be removed after the test.
 
 ## 8. Left to the builder
@@ -165,8 +185,10 @@ animations, error message texts, test split.
 - Xcode 27 for AetherEngine vs. Xcode 26.x on GitHub runners → if needed, pin an older AetherEngine
   version or use another runner. (The spike clarifies this.)
 - DV/5.1 on real hardware not confirmed yet (the spike clarifies this, the user tests).
-- **[OPEN]** Make the repo public (unlimited Mac minutes) or keep it private (≈ 15–20 builds/month)?
+- ~~**[OPEN]** Make the repo public (unlimited Mac minutes) or keep it private (≈ 15–20 builds/month)?~~
+  Closed: public.
 - **[OPEN]** App name / icon.
 - **[OPEN]** Which 2 ready-made packs? Proposal [C]: "Streaming services DE" (Netflix, Prime, Disney+,
   Apple TV+, WOW … from TMDB watch providers) and "Genres & moods".
-- **[OPEN]** API keys: the user's TMDB/MDBList/TVDB keys or our own? (TVDB requires its own key.)
+- ~~**[OPEN]** API keys: the user's TMDB/MDBList/TVDB keys or our own? (TVDB requires its own key.)~~
+  Closed: the user's own keys, entered on the phone page; TVDB is not used.

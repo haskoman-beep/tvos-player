@@ -15,22 +15,29 @@ The app does not provide any content itself. It only shows what the configured a
   library.
 - **Video:** Dolby Vision (Profiles 5, 8 and 7, with conversion to 8.1; for FEL titles the
   enhancement layer is applied), HDR10/HDR10+/HLG, AV1 and HEVC.
-- **Audio:** 5.1 and Atmos as passthrough; TrueHD and DTS-HD are decoded to multichannel PCM. Dolby Digital tracks
-  are preferred.
+- **Audio:** Dolby Digital, Dolby Digital Plus and Atmos in DD+ are passed through unchanged. By default TrueHD, DTS
+  and DTS-HD MA are converted to Dolby Digital Plus 5.1, so surround also reaches a sound system over optical or ARC;
+  7.1 becomes 5.1 and the Atmos/DTS:X height channels are dropped. Dolby Digital tracks are preferred.
 - **Player:** custom control bar with readable badges, an audio and subtitle panel, subtitles from addons
   (also matched by file hash) with offset and character-encoding detection, scrubbing with preview via the
   touch surface, „Intro überspringen“ (skip intro), autoplay of the next episode from the same release, the „Noch da?“
   (still there?) prompt and per-series track memory.
 - **Home screen:** rows and styles can be arranged freely (hero, poster, landscape, top 10,
-  logo and collection tiles). Ready-made packs as well as lists from TMDB, Trakt and MDBList are available, and Fusion
-  or betterer home-screen kits are imported as rows.
+  logo and collection tiles). Ready-made packs as well as lists from TMDB and Trakt are available, and Fusion
+  or betterer home-screen kits are imported as rows. MDBList is used for ratings; MDBList lists cannot be imported.
 - **Detail page:** ratings via MDBList, tech badges (4K, Dolby Vision, HDR, Atmos, channels),
   German text and images from TMDB, cast, person page, similar titles and trailers.
 - **Sync:** Trakt and Simkl with device login, scrobbling, Continue Watching sync, watchlist and lists.
   You can choose where progress and watched state are kept: locally, on Trakt or on Simkl.
 - **Calendar and library:** new episodes with air date and time, the „Heute neu“ (new today) row and the watchlist.
-- **Profiles:** each profile is self-contained, with its own home screen, addons, accounts and settings.
-  The interface is available in German and English.
+- **Profiles:** each profile is self-contained, with its own home screen, addons, accounts and settings. Picture and
+  sound settings („Bild & Ton“) are stored per device.
+- **Language:** the interface is in German. Titles, descriptions and trailers come in German or English, chosen per
+  profile.
+- **Safe profiles:** if the stored profiles cannot be read, the app never overwrites them. It opens „Profile nicht
+  lesbar“ (profiles not readable) and saves nothing until you choose: „Erneut versuchen“ (try again), „Diese Fassung
+  laden“ (load one of the two previous versions or the safety copy) or „Neu anfangen“ (start over; the unreadable
+  state is kept as a copy).
 
 ## Installation
 
@@ -58,11 +65,35 @@ All credentials are entered **only in the app**, using the phone input page:
    restore all profiles.
 4. Then connect Trakt and Simkl in the app using a device code.
 
+The TV stays in control of the phone page:
+
+- The address in the QR code works once and only for the first phone that opens it; another device needs a new QR
+  code. The session ends after 30 minutes.
+- Adding an addon, setting a key and restoring a backup only take effect after you confirm them on the TV
+  („Erlauben“ / „Ablehnen“, allow / decline).
+- The normal backup is a JSON file **without** keys and tokens. A backup **with** keys is only offered as the
+  encrypted file `player-sicherung.enc`: the TV shows a 6-digit code, and the file can only be restored with that
+  code. The phone never sees the code.
+
 The repository contains no keys, tokens or addresses, and none should be added. The app's logs
 redact keys and tokens before they are written.
 
-Optional: `tools/logcollector.py` receives the app's remote log on the local network (via Bonjour) and writes it to
-a file, for example for debugging.
+### Remote log (optional, for debugging)
+
+The app keeps its event log on the device: Settings › System › „Verlauf“ (history, in the „Diagnose“ section)
+shows the latest lines. Sending the log to a computer on the local network is **off** by default. To use it:
+
+1. Start `tools/logcollector.py` on the computer with a shared secret of your own, for example
+   `PLAYERLOG_SECRET=<secret> python3 tools/logcollector.py` (or `--secret-file <file>`). It announces itself via
+   Bonjour and writes the lines to a file.
+2. Enter the same secret on the phone page (section System).
+3. On the TV, open Settings › System › „Fern-Log“ (remote log), turn on „Ereignis-Log senden“ (send event log) and
+   choose the receiver by name.
+
+The app sends only to the chosen receiver, and every request is signed with the secret. Measuring points appear as
+`metric: <name> <ms>`, followed by details such as `· reihen 6`: `start.usable`, `start.profiles`,
+`start.catalog`, `detail.badges`, `streams.firstRow`, `streams.order`, `player.loadBegins`, `player.firstFrame`,
+`player.audioReload` and `sync.merged`. Keys, tokens and addresses are redacted before a line is stored or sent.
 
 ## Building
 
@@ -79,7 +110,8 @@ xcodebuild -project Player.xcodeproj -scheme Player -configuration Release \
 
 CI (`.github/workflows/build.yml`, GitHub Actions on macOS) builds on changes under `App/`,
 `Packages/`, `.github/workflows/` or the release tools (`tools/release_notes.sh`, `tools/check_ipa.sh`); tags do
-not start a build. A run builds the IPA, checks the app contents and the Dolby Vision FEL trait,
+not start a build. A run first runs the `PlayerCore` tests on Linux, then builds the IPA, checks the app contents and
+the Dolby Vision FEL trait,
 and publishes the IPA for `main` as the `app-main` release and for `integ`/`main` as a `build-<number>` release (see
 [Releases / Version history](#releases--version-history)). The app's build number is the CI run number.
 
@@ -99,7 +131,7 @@ cd Packages/PlayerCore && swift test
 | `Packages/PlayerCore/` | core logic with tests: addon client, models, profiles and storage, sync (Trakt/Simkl), progress, source ordering, phone page, update check |
 | `Packages/AetherFEL/` | thin wrapper around the playback engine [AetherEngine](https://github.com/superuser404notfound/AetherEngine) that enables the `DolbyVisionFelCurves` trait |
 | `tools/` | helper tools, for example the remote log receiver |
-| `docs/` | design and planning documents |
+| `docs/` | design and planning documents; decisions in [`docs/entscheidungen.md`](docs/entscheidungen.md) |
 
 ## Status and branches
 

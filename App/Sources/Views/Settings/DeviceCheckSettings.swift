@@ -50,7 +50,7 @@ struct DeviceCheckPage: View {
     /// Stand AetherEngine 7.71.2 mit unseren Ladeoptionen (Tonbrücke „surroundCompat“, Engine stellt den Bildmodus).
     static let formats: [(String, String)] = [
         ("Dolby Vision Profil 5 / 8.1", "nativ als Dolby Vision"),
-        ("Dolby Vision Profil 7 (UHD-Remux)", "live in Profil 8.1 umgewandelt: MEL verlustfrei, bei FEL wird die Zusatzschicht verworfen"),
+        ("Dolby Vision Profil 7 (UHD-Remux)", "live in Profil 8.1 umgewandelt: MEL verlustfrei, bei FEL wird die Zusatzschicht mit angewendet"),
         ("HDR10 / HDR10+ / HLG", "nativ; HDR nur, wenn der Fernseher HDR meldet"),
         ("HEVC / H.264", "nativ über den Hardware-Dekoder"),
         ("AV1", "Software-Dekoder auf jedem Apple TV: 4K-AV1 kann ruckeln, darum sortiert die Quellenliste es nach hinten"),

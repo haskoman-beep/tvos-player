@@ -17,6 +17,7 @@ extension AppModel {
 
     /// Angezeigte Quellenliste: ohne Dubletten, Reihenfolge nach „Quellen sortieren“.
     func orderedStreams(_ list: [(addon: String, stream: StreamItem)]) -> [(addon: String, stream: StreamItem)] {
+        let started = ContinuousClock.now   // Task 1.8: streams.order
         let mode = profile.sources.order
         let ctx = sourceRankContext
         let unique = StreamDedupe.unique(list)   // einmal berechnet, auch für die Log-Zeile (Review E-b M3)
@@ -29,6 +30,10 @@ extension AppModel {
             if moved > 0 {
                 RemoteLog.info("streams", "Sortiert: \(moved)/\(out.count) verschoben · Sprache \(ctx.primaryLanguage ?? "-") · AV1-HW \(ctx.av1Hardware ? "ja" : "nein")")
             }
+        }
+        if !list.isEmpty {
+            RemoteLog.metric(.streamsOrder, ms: Metric.ms(started.duration(to: ContinuousClock.now)),
+                             fields: ["quellen": "\(list.count)", "modus": mode.rawValue])
         }
         return out
     }

@@ -48,6 +48,7 @@ final class AppModel: ObservableObject {
                                 resources: [AddonResource(name: "meta")], types: ["movie", "series"], idPrefixes: ["tt"]))
 
     init() {
+        RemoteLog.launch = ContinuousClock.now   // Task 1.8: origin of the start.* measuring points
         let storage = DefaultsStorage()
         // Before anything saves the profiles: the one-time move reads the old fields from profiles.json.
         let flag = DeviceSettingsStore.migratedFlagKey
@@ -65,6 +66,7 @@ final class AppModel: ObservableObject {
         }
         if let e = dev.writeError { RemoteLog.error("speicher", "Bild & Ton: Gerätewerte nicht gespeichert: \(e)") }
         store = ProfileStore(storage: storage)
+        let profilesStart = ContinuousClock.now
         let loaded = store.loadResult()
         switch loaded {
         case .loaded(let s, _), .fresh(let s): stored = s
@@ -72,7 +74,11 @@ final class AppModel: ObservableObject {
         }
         progressStore = ProgressStore(storage: storage)
         adoptProfileLoad(loaded)
+        let progressStart = ContinuousClock.now
         progress = loadProgress(profile.id)
+        RemoteLog.metric(.startProfiles, ms: Metric.ms(profilesStart.duration(to: progressStart)),
+                         fields: ["profile": "\(stored.profiles.count)",
+                                  "fortschritt": "\(Metric.ms(progressStart.duration(to: ContinuousClock.now)))"], once: true)
         CollectionLinkStore.shared.attach(storage)   // wave F-o round 4: import blobs in the size-bounded storage
         FusionKitStore.shared.attach(self, storage: storage)   // Welle A e: Kit-Reihen der Startseite (AppModel+FusionKit)
         PlaybackStability.shared.attach(storage)   // Welle C-a: Netz, Ton-Route, fehlgeschlagene Quellen
@@ -206,7 +212,11 @@ final class AppModel: ObservableObject {
         guard let t = await token(s) else { return }
         do {
             let remote = s == "trakt" ? try await trakt?.playback(token: t) : try await simkl?.playback(token: t)
+            let mergeStart = ContinuousClock.now
+            let before = progress
             progress.merge(remote: applySyncQueue(remote ?? []))
+            RemoteLog.metric(.syncMerged, ms: Metric.ms(mergeStart.duration(to: ContinuousClock.now)),
+                             fields: ["eintraege": "\(remote?.count ?? 0)", "geaendert": progress == before ? "nein" : "ja"])
             RemoteLog.info("sync", "\(s): \(remote?.count ?? 0) angefangene Titel geholt")
             if progressSaveHeld { RemoteLog.info("speicher", "Fortschritt nach Abgleich nicht gespeichert: Datei war unlesbar, wartet auf nächsten Fortschritt") }
             else { try progressStore.save(progress, profile: profile.id) }

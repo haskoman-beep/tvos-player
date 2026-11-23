@@ -55,9 +55,13 @@ extension AppModel {
         catalogDisk.pending = nil
         guard catalogDisk.pendingProfile == profile.id, let snap else {
             RemoteLog.info("katalog", "Plattencache: kein Stand")
+            RemoteLog.metric(.startCatalog, ms: RemoteLog.msSinceLaunch(), fields: ["reihen": "0"], once: true)
             return
         }
         let n = snap.restore(into: &cache, generation: catalogDisk.pendingGeneration)
+        // Task 1.8: first snapshot of this start (a later profile switch does not count).
+        RemoteLog.metric(.startCatalog, ms: RemoteLog.msSinceLaunch(),
+                         fields: ["reihen": "\(n)", "warten": "\(Int(Date().timeIntervalSince(t0) * 1000))"], once: true)
         let age = snap.oldestAge().map { " · ältester \(Int($0 / 60)) min" } ?? ""
         RemoteLog.info("katalog", "Plattencache: \(n) Reihen sofort gezeigt (\(Int(Date().timeIntervalSince(t0) * 1000)) ms)\(age), Erneuerung im Hintergrund")
     }

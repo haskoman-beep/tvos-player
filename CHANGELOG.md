@@ -17,6 +17,41 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
 
 ## [Unreleased]
 
+<!-- Build 1 of the improvement plan (maintainers): CI runs the PlayerCore tests before every build; profile decoding never fails on a single value; fixed measuring points for the remote log. -->
+
+### Added
+- „Profile nicht lesbar“ (profiles not readable): if the stored profiles cannot be read, the app shows this page
+  instead of starting with an empty profile, and saves nothing until you choose „Erneut versuchen“ (try again),
+  „Diese Fassung laden“ (load an older version) or „Neu anfangen“ (start over). The unreadable state is always kept
+  as a copy. The app keeps the two previous versions of the profiles for this.
+- Phone page: a backup **with** keys is offered as the encrypted file `player-sicherung.enc`. The TV shows a
+  6-digit code; the file can only be restored with it.
+- Settings › System › „Verlauf“ (history): the latest lines of the event log, kept on the device, also without a
+  log receiver.
+- Remote log measuring points as `metric: <name> <ms>` lines (`start.usable`, `start.profiles`, `start.catalog`,
+  `detail.badges`, `streams.firstRow`, `streams.order`, `player.loadBegins`, `player.firstFrame`,
+  `player.audioReload`, `sync.merged`), so builds can be compared.
+
+### Changed
+- Phone page: the QR address works once and only for the first phone; another device needs a new QR code, and the
+  session ends after 30 minutes. Adding an addon, setting a key and restoring a backup only take effect after
+  „Erlauben“ (allow) on the TV. The normal backup no longer contains keys or tokens.
+- Remote log: off after the update. Turn it on under Settings › System › „Fern-Log“ (remote log), choose the receiver
+  by name, and set a shared secret on the phone page; `tools/logcollector.py` needs the same secret
+  (`PLAYERLOG_SECRET` or `--secret-file`). The app sends only to the chosen receiver and signs every request.
+- „App aktualisieren“ (update app): the network search shows the atvloadly instances it found to choose from, and
+  installing first shows the build and commit (and the package's SHA256, when the release has one) for confirmation.
+- Phone page: the TVDB key field is gone; the app has no TVDB function.
+- „Was spielt wie“ (what plays how) in the device check: Dolby Vision Profile 7 FEL now correctly says that the
+  enhancement layer is applied.
+- README: the interface is in German (content in German or English per profile), TrueHD and DTS-HD are converted to
+  Dolby Digital Plus 5.1 by default, and MDBList lists cannot be imported.
+
+### Fixed
+- Profiles: one damaged or unknown value (for example from a newer build) no longer makes all profiles unreadable;
+  everything else loads.
+- No more crashes from unusual source names (very long numbers before „GB“) or from bad intro data.
+
 ## [Build 249] – 2026-11-22 (integ)
 
 <!-- X1 (maintainers): CI now converts the SFace face model to Core ML and bundles SFace.mlmodelc; no visible change yet. -->
