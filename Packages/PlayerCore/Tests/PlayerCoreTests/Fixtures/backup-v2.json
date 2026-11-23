@@ -1,0 +1,355 @@
+{
+  "activeProfileID": "00000000-0000-4000-8000-000000000101",
+  "backupVersion": 2,
+  "collectionLinks": {
+    "00000000-0000-4000-8000-000000000101": "W10="
+  },
+  "device": {
+    "remoteLogEnabled": false
+  },
+  "fusionKits": {
+    "00000000-0000-4000-8000-000000000101": "eyJlbmFibGVkIjp0cnVlLCJwbGFjZWQiOltdLCJzZWxlY3RlZCI6WyJmdXNpb24uYmVpc3BpZWwucmVpaGUiXSwic291cmNlcyI6W119"
+  },
+  "profiles": [
+    {
+      "addonTimeout": 15,
+      "addons": [
+        {
+          "manifest": {
+            "catalogs": [],
+            "id": "org.example.streams",
+            "idPrefixes": [
+              "tt"
+            ],
+            "name": "Beispiel-Quellen",
+            "resources": [
+              "stream"
+            ],
+            "types": [
+              "movie",
+              "series"
+            ],
+            "version": "1.0.0"
+          },
+          "manifestURL": "https://addon.example/manifest.json"
+        },
+        {
+          "manifest": {
+            "catalogs": [],
+            "id": "org.example.meta",
+            "name": "Beispiel-Metadaten",
+            "resources": [
+              "meta"
+            ],
+            "types": [
+              "movie"
+            ],
+            "version": "2.0.0"
+          },
+          "manifestURL": "https://addon2.example/manifest.json"
+        }
+      ],
+      "apiKeys": {
+        "mdblist": "FAKE-KEY-0001",
+        "tmdb": "FAKE-KEY-0000"
+      },
+      "appearance": {
+        "accent": "orange",
+        "badges": {
+          "audio": true,
+          "cacheStatus": true,
+          "channels": true,
+          "hdr": true,
+          "languages": true,
+          "resolution": true,
+          "size": true,
+          "source": true,
+          "style": "text",
+          "videoCodec": true
+        },
+        "cardSize": "large",
+        "expandPosters": true,
+        "heroEnabled": false,
+        "heroRowID": "00000000-0000-4000-8000-0000000001A2",
+        "navigation": "top",
+        "prefetchStreams": true,
+        "tileAnimationSound": false,
+        "titles": {
+          "addonImages": true,
+          "posterBadges": "bottom",
+          "ratingSources": [
+            "imdb",
+            "tomatoes"
+          ]
+        }
+      },
+      "audioPriority": [
+        "en",
+        "orig",
+        "de"
+      ],
+      "autoplayNext": false,
+      "collections": [
+        {
+          "folders": [
+            {
+              "coverImage": "https://img.example/a.jpg",
+              "focusGif": "https://img.example/a.gif",
+              "hideTitle": false,
+              "id": "f1",
+              "sources": [
+                {
+                  "id": "s1",
+                  "kind": {
+                    "tmdbList": {
+                      "id": "1000"
+                    }
+                  },
+                  "limit": 20,
+                  "mediaType": "movie",
+                  "sortBy": "popularity.desc",
+                  "title": "Liste A"
+                },
+                {
+                  "id": "s2",
+                  "kind": {
+                    "trakt": {
+                      "list": "fake-list",
+                      "user": "fake-user"
+                    }
+                  },
+                  "mediaType": "series",
+                  "title": "Liste B"
+                }
+              ],
+              "title": "Ordner A"
+            },
+            {
+              "id": "f2",
+              "sources": [
+                {
+                  "id": "s3",
+                  "kind": {
+                    "tmdbDiscover": {
+                      "filters": {
+                        "with_genres": "28"
+                      }
+                    }
+                  },
+                  "mediaType": "movie",
+                  "title": "Entdecken"
+                }
+              ],
+              "title": "Ordner B"
+            }
+          ],
+          "id": "c1",
+          "title": "Testsammlung"
+        }
+      ],
+      "diskCache": {
+        "enabled": false,
+        "limitGB": 8
+      },
+      "hiddenRows": [
+        {
+          "content": {
+            "list": {
+              "_0": {
+                "id": "builtin.upcoming",
+                "kind": {
+                  "upcoming": {}
+                },
+                "mediaType": "series",
+                "title": "Heute neu"
+              }
+            }
+          },
+          "id": "00000000-0000-4000-8000-0000000001B1",
+          "style": "poster"
+        }
+      ],
+      "home": {
+        "rows": [
+          {
+            "content": {
+              "list": {
+                "_0": {
+                  "id": "builtin.continue",
+                  "kind": {
+                    "continueWatching": {}
+                  },
+                  "mediaType": "both",
+                  "title": "Weiterschauen"
+                }
+              }
+            },
+            "id": "00000000-0000-4000-8000-0000000001A1",
+            "style": "landscape"
+          },
+          {
+            "content": {
+              "list": {
+                "_0": {
+                  "id": "builtin.watchlist",
+                  "kind": {
+                    "watchlist": {}
+                  },
+                  "mediaType": "both",
+                  "title": "Merkliste"
+                }
+              }
+            },
+            "id": "00000000-0000-4000-8000-0000000001A2",
+            "style": "poster"
+          },
+          {
+            "content": {
+              "collection": {
+                "id": "c1"
+              }
+            },
+            "id": "00000000-0000-4000-8000-0000000001A3",
+            "style": "collectionTiles"
+          }
+        ]
+      },
+      "id": "00000000-0000-4000-8000-000000000101",
+      "language": "en",
+      "name": "Testprofil Alt",
+      "player": {
+        "instantPlay": false,
+        "rememberTracks": true,
+        "remoteSkipSeconds": 10,
+        "screensaverPauseMinutes": 30,
+        "trackPanelStyle": "topBar"
+      },
+      "progressSource": "trakt",
+      "skip": {
+        "credits": "off",
+        "intro": "button",
+        "postPlayCard": true,
+        "preview": "off",
+        "recap": "button"
+      },
+      "sources": {
+        "appBadges": "compact",
+        "blurUnwatchedStills": false,
+        "order": "addon",
+        "tvmazeAirtimes": true
+      },
+      "stillWatchingAfter": 2,
+      "subtitleLanguage": "en",
+      "subtitleMode": "always",
+      "subtitleStyle": {
+        "background": "shadow",
+        "hdrBrightness": 100,
+        "outline": "normal",
+        "position": "standard",
+        "size": "normal"
+      },
+      "syncTokens": {
+        "simkl": {
+          "accessToken": "fake-access-2"
+        },
+        "trakt": {
+          "accessToken": "fake-access",
+          "expiresAt": 921692800,
+          "refreshToken": "fake-refresh"
+        }
+      }
+    },
+    {
+      "addonTimeout": 15,
+      "addons": [],
+      "apiKeys": {},
+      "appearance": {
+        "accent": "blue",
+        "badges": {
+          "audio": true,
+          "cacheStatus": true,
+          "channels": true,
+          "hdr": true,
+          "languages": true,
+          "resolution": true,
+          "size": true,
+          "source": true,
+          "style": "logo",
+          "videoCodec": false
+        },
+        "cardSize": "medium",
+        "expandPosters": true,
+        "heroEnabled": true,
+        "navigation": "sidebar",
+        "prefetchStreams": true,
+        "tileAnimationSound": false,
+        "titles": {
+          "addonImages": true,
+          "posterBadges": "off",
+          "ratingSources": [
+            "imdb",
+            "tomatoes",
+            "trakt"
+          ]
+        }
+      },
+      "audioPriority": [
+        "de",
+        "en",
+        "orig"
+      ],
+      "autoplayNext": true,
+      "collections": [],
+      "diskCache": {
+        "enabled": false,
+        "limitGB": 8
+      },
+      "hiddenRows": [],
+      "home": {
+        "rows": []
+      },
+      "id": "00000000-0000-4000-8000-000000000102",
+      "language": "de",
+      "name": "Testprofil Zwei",
+      "player": {
+        "instantPlay": false,
+        "rememberTracks": true,
+        "remoteSkipSeconds": 10,
+        "screensaverPauseMinutes": 30,
+        "trackPanelStyle": "topBar"
+      },
+      "progressSource": "local",
+      "skip": {
+        "credits": "off",
+        "intro": "button",
+        "postPlayCard": true,
+        "preview": "off",
+        "recap": "button"
+      },
+      "sources": {
+        "appBadges": "compact",
+        "blurUnwatchedStills": false,
+        "order": "addon",
+        "tvmazeAirtimes": true
+      },
+      "stillWatchingAfter": 3,
+      "subtitleLanguage": "de",
+      "subtitleMode": "forcedOnly",
+      "subtitleStyle": {
+        "background": "shadow",
+        "hdrBrightness": 100,
+        "outline": "normal",
+        "position": "standard",
+        "size": "normal"
+      },
+      "syncTokens": {}
+    }
+  ],
+  "progress": {
+    "00000000-0000-4000-8000-000000000101": {
+      "entries": {},
+      "schemaVersion": 1
+    }
+  },
+  "schemaVersion": 1
+}

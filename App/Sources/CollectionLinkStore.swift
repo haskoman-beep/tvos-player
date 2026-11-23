@@ -91,6 +91,23 @@ final class CollectionLinkStore: ObservableObject {
     /// Preview pack of one import (small ones may stay in UserDefaults, inside the storage budget).
     private func packFile(_ profile: UUID, _ id: String) -> String { "linkpack-\(profile.uuidString)-\(id).json" }
 
+    /// Task 2.4: stored link list of a profile (backup) and writing it back (restore, delete). Packs and media
+    /// snapshots are blobs `linkpack-<profile>-<id>.json` / `media-<profile>-<id>.json` and are not in the backup.
+    nonisolated static func storedLinks(_ id: UUID) -> Data? { UserDefaults.standard.data(forKey: "collectionlinkmeta.\(id.uuidString)") }
+    nonisolated static func setStoredLinks(_ d: Data?, for id: UUID) {
+        let k = "collectionlinkmeta.\(id.uuidString)"
+        if let d { UserDefaults.standard.set(d, forKey: k) } else {
+            UserDefaults.standard.removeObject(forKey: k)
+            UserDefaults.standard.removeObject(forKey: "collectionlinks.\(id.uuidString)")
+        }
+    }
+
+    /// Task 2.4: after a restore the links of the active profile are read again.
+    func profileScopeChanged(_ model: AppModel) {
+        profile = nil
+        ensure(model)
+    }
+
     /// Links of the active profile (re-read after a profile switch).
     func ensure(_ model: AppModel) {
         self.model = model
