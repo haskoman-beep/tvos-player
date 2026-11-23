@@ -657,7 +657,7 @@ final class AppModel: ObservableObject {
     /// Task 1.4: `GET /export` – all profiles without keys, sync logins and the access part of addon addresses.
     func backupData() -> Data { (try? store.exportData(stored, includeSecrets: false)) ?? Data() }
 
-    /// Task 1.4: the full backup sealed under a fresh 6-digit code (only after „Erlauben“ on the TV); the code is shown
+    /// Task 1.4: the full backup sealed under a fresh 12-character code (only after „Erlauben“ on the TV); the code is shown
     /// on the TV and never sent to the phone.
     func sealedBackup() -> (file: Data, code: String)? {
         guard storeState == .ready else { lastError = Self.backupLockedText; return nil }
@@ -673,8 +673,9 @@ final class AppModel: ObservableObject {
     func openSealedBackup(_ file: Data, code: String) -> Data? {
         do { return try BackupCrypto(cipher: CryptoKitBackupCipher()).open(file, code: code) } catch {
             switch error as? BackupCryptoError {
-            case .some(.invalidCode): lastError = "Sicherung nicht geöffnet: Der Code hat 6 Ziffern."
+            case .some(.invalidCode): lastError = "Sicherung nicht geöffnet: Der Code hat 12 Zeichen in drei Vierergruppen, zum Beispiel K7QM-2XPA-9DRT."
             case .some(.unsupportedVersion(_)): lastError = "Sicherung nicht geöffnet: Sie stammt aus einer neueren Version der App."
+            case .some(.unsupportedCode(_)): lastError = "Sicherung nicht geöffnet: Diese Datei nutzt ein Code-Verfahren, das diese Version nicht liest. Bitte eine neue Sicherung anlegen."
             default: lastError = "Sicherung nicht geöffnet: Code falsch oder Datei beschädigt."
             }
             return nil

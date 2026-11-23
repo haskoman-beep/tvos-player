@@ -114,16 +114,57 @@ private let crypto = BackupCrypto(cipher: ToyCipher())
 
 @Test func sealedExportIsUnreadableWithoutCode() throws {
     let plain = Data(#"{"apiKeys":{"tmdb":"FAKE-KEY-0000"}}"#.utf8)
-    let file = try crypto.seal(plain, code: "123456")
+    let file = try crypto.seal(plain, code: "K7QM-2XPA-9DRT")
     let text = String(data: file, encoding: .utf8)!
     #expect(text.hasPrefix(BackupCrypto.armorLine + "\n") && !text.contains("FAKE-KEY") && BackupCrypto.isSealed(file))
     #expect(throws: BackupCryptoError.invalidCode) { try crypto.open(file, code: "") }
-    #expect(try crypto.open(file, code: " 123 456 ") == plain)
+    // Fix round 1: case, dashes and spaces do not matter.
+    for typed in ["K7QM-2XPA-9DRT", "k7qm-2xpa-9drt", "K7QM2XPA9DRT", " k7qm 2xpa 9drt ", "K7Qm 2xPA-9dRT"] {
+        #expect(try crypto.open(file, code: typed) == plain, "\(typed)")
+    }
 }
 
 @Test func sealedExportWithWrongCodeFails() throws {
-    let file = try crypto.seal(Data("geheim".utf8), code: "123456")
-    #expect(throws: BackupCryptoError.wrongCodeOrDamaged) { try crypto.open(file, code: "123457") }
+    let file = try crypto.seal(Data("geheim".utf8), code: "K7QM-2XPA-9DRT")
+    #expect(throws: BackupCryptoError.wrongCodeOrDamaged) { try crypto.open(file, code: "K7QM-2XPA-9DRU") }
+    #expect(throws: BackupCryptoError.wrongCodeOrDamaged) { try crypto.open(file, code: "ABCD-EFGH-JKMN") }
+}
+
+@Test func backupCodeNormalisationAndShape() {
+    #expect(BackupCrypto.normalizedCode("k7qm-2xpa-9drt") == "K7QM2XPA9DRT")
+    #expect(BackupCrypto.normalizedCode(" K7QM 2XPA\t9DRT ") == "K7QM2XPA9DRT")
+    #expect(BackupCrypto.groupedCode("k7qm2xpa9drt") == "K7QM-2XPA-9DRT")
+    // Too short, too long, the six digits of the first draft, and the look-alikes 0/O/1/I/L.
+    for bad in ["", "123456", "K7QM-2XPA-9DR", "K7QM-2XPA-9DRTX", "K7QM-2XPA-9DR0", "K7QM-2XPA-9DRO", "K7QM-2XPA-9DR1",
+                "K7QM-2XPA-9DRI", "K7QM-2XPA-9DRL", "K7QM-2XPA-9DR!", "K7QM-2XPA-9DRÄ"] {
+        #expect(BackupCrypto.normalizedCode(bad) == nil, "\(bad)")
+    }
+    #expect(BackupCrypto.codeAlphabet.count == 31 && !BackupCrypto.codeAlphabet.contains(where: { "0O1IL".contains($0) }))
+    var seen = Set<String>()
+    for _ in 0..<200 {
+        let code = BackupCrypto.makeCode()
+        let groups = code.split(separator: "-")
+        #expect(code.count == 14 && groups.count == 3 && groups.allSatisfy { $0.count == 4 }, "\(code)")
+        #expect(BackupCrypto.normalizedCode(code) != nil && BackupCrypto.groupedCode(code) == code, "\(code)")
+        seen.insert(code)
+    }
+    #expect(seen.count == 200)
+    // Uniform over the alphabet: a fixed generator reaches every character.
+    var g = SplitMix(seed: 7), chars = Set<Character>()
+    for _ in 0..<100 { chars.formUnion(BackupCrypto.makeCode(using: &g).filter { $0 != "-" }) }
+    #expect(chars == Set(BackupCrypto.codeAlphabet))
+}
+
+private struct SplitMix: RandomNumberGenerator {
+    var state: UInt64
+    init(seed: UInt64) { state = seed }
+    mutating func next() -> UInt64 {
+        state &+= 0x9E37_79B9_7F4A_7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return z ^ (z >> 31)
+    }
 }
 
 @Test func backupJsonNeedsConfirmation() {
@@ -180,7 +221,7 @@ private let crypto = BackupCrypto(cipher: ToyCipher())
     #expect(summary(.setKey(service: "playerlog", value: "FAKE-SECRET-0008"))?.contains("Fern-Log") == true)
     #expect(summary(.setKey(service: "tmdb", value: "abc"))?.contains("abc") == false)
     #expect(summary(.exportSecrets) != nil)
-    let sealed = (try? crypto.seal(Data("{}".utf8), code: "000000")) ?? Data()
+    let sealed = (try? crypto.seal(Data("{}".utf8), code: "ABCD-EFGH-JKMN")) ?? Data()
     #expect(summary(.importBackup(sealed))?.contains("Code") == true && PhoneCommand.importBackup(sealed).needsBackupCode)
     #expect(!PhoneCommand.importBackup(Data("{}".utf8)).needsBackupCode)
     for plain: PhoneCommand in [.addTMDBLink("list:5"), .importCollectionLink("https://a.example/x.json"), .moveRow(id: UUID(), to: 0),
@@ -208,24 +249,29 @@ private let crypto = BackupCrypto(cipher: ToyCipher())
 
 @Test func sealedFileFormatRoundTripAndTamper() throws {
     let plain = Data((0..<300).map { UInt8($0 % 251) })
-    let a = try crypto.seal(plain, code: "654321"), b = try crypto.seal(plain, code: "654321")
+    let a = try crypto.seal(plain, code: "K7QM-2XPA-9DRT"), b = try crypto.seal(plain, code: "K7QM-2XPA-9DRT")
     #expect(a != b)   // fresh salt and nonce each time
-    #expect(try crypto.open(a, code: "654321") == plain)
+    #expect(try crypto.open(a, code: "K7QM-2XPA-9DRT") == plain)
     let bin = try BackupCrypto.unarmor(a)
-    #expect(bin.prefix(4) == Data("PLYS".utf8) && bin[4] == 1 && bin[5] == 1)
+    #expect(bin.prefix(4) == Data("PLYS".utf8) && bin[4] == 1 && bin[5] == 2)
     #expect(bin.count == 4 + 1 + 1 + 16 + 12 + plain.count + 16)
     func rearm(_ d: Data) -> Data { Data((BackupCrypto.armorLine + "\n" + d.base64EncodedString() + "\n").utf8) }
     for i in [6, 30, 40, bin.count - 1] {   // salt, nonce, ciphertext, tag
         var t = bin; t[i] ^= 0x01
-        #expect(throws: BackupCryptoError.wrongCodeOrDamaged) { try crypto.open(rearm(t), code: "654321") }
+        #expect(throws: BackupCryptoError.wrongCodeOrDamaged) { try crypto.open(rearm(t), code: "K7QM-2XPA-9DRT") }
     }
     var v = bin; v[4] = 2
-    #expect(throws: BackupCryptoError.unsupportedVersion(2)) { try crypto.open(rearm(v), code: "654321") }
-    #expect(throws: BackupCryptoError.damaged) { try crypto.open(rearm(bin.prefix(40)), code: "654321") }
-    #expect(throws: BackupCryptoError.notSealed) { try crypto.open(Data("{}".utf8), code: "654321") }
+    #expect(throws: BackupCryptoError.unsupportedVersion(2)) { try crypto.open(rearm(v), code: "K7QM-2XPA-9DRT") }
+    #expect(throws: BackupCryptoError.damaged) { try crypto.open(rearm(bin.prefix(40)), code: "K7QM-2XPA-9DRT") }
+    #expect(throws: BackupCryptoError.notSealed) { try crypto.open(Data("{}".utf8), code: "K7QM-2XPA-9DRT") }
     #expect(throws: BackupCryptoError.invalidCode) { try crypto.seal(plain, code: "12345") }
-    let code = BackupCrypto.makeCode()
-    #expect(code.count == 6 && code.allSatisfy(\.isNumber))
+    #expect(throws: BackupCryptoError.invalidCode) { try crypto.seal(plain, code: "123456") }
+    // Fix round 1: a file of the six-digit draft (key derivation 1) is refused explicitly, also with a valid code.
+    var old = bin; old[5] = 1
+    #expect(throws: BackupCryptoError.unsupportedCode(1)) { try crypto.open(rearm(old), code: "K7QM-2XPA-9DRT") }
+    #expect(throws: BackupCryptoError.invalidCode) { try crypto.open(rearm(old), code: "123456") }
+    var other = bin; other[5] = 9
+    #expect(throws: BackupCryptoError.unsupportedCode(9)) { try crypto.open(rearm(other), code: "K7QM-2XPA-9DRT") }
 }
 
 @Test func plainExportStaysCompatibleWithBuild249() throws {
@@ -246,6 +292,12 @@ private let crypto = BackupCrypto(cipher: ToyCipher())
     #expect(try keys(plain) == keys(data))
     #expect(AddonAccess.publicManifestURL("https://u:p@a.example/c/providers=yts|realdebrid=X/manifest.json?v=1#f") == "https://a.example/c/manifest.json")
     #expect(AddonAccess.publicManifestURL("https://a.example/stremio/v1/manifest.json") == "https://a.example/stremio/v1/manifest.json")
+    // Fix round 1: a last segment other than manifest.json goes through the same filter as the others.
+    #expect(AddonAccess.publicManifestURL("https://a.example/c/FAKE-CONFIG-0009-abcdefghijklmnop") == "https://a.example/c")
+    #expect(AddonAccess.publicManifestURL("https://a.example/c/providers=yts|debrid=FAKE-KEY-0010") == "https://a.example/c")
+    #expect(AddonAccess.publicManifestURL("https://a.example/stremio/v1/catalog") == "https://a.example/stremio/v1/catalog")
+    #expect(AddonAccess.publicManifestURL("https://a.example/FAKE-CONFIG-0011-abcdefghijkl/Manifest.JSON") == "https://a.example/Manifest.JSON")
+    #expect(AddonAccess.publicManifestURL("https://a.example/eyJGQUtFLUNPTkZJRy0wMDEyIjp0cnVlfQ") == "https://a.example")
 }
 
 @Test func phonePageRoutesForSessionExportAndLockedProfiles() {
@@ -263,6 +315,34 @@ private let crypto = BackupCrypto(cipher: ToyCipher())
     let (done, doneCmds) = page.handle(req("GET \(PhoneInputPage.sealedPath) HTTP/1.1\r\n\r\n"), profileName: "Ich",
                                        backups: PhoneBackupState(sealedDelivered: true)) { Data() }
     #expect(doneCmds.isEmpty && !String(data: done.body, encoding: .utf8)!.contains("refresh"))
+    // Fix round 1: declined, lapsed, refused or failed on the TV – the waiting page ends with a message.
+    for o: PhoneSealedOutcome in [.declined, .lapsed, .busy, .failed] {
+        let (end, endCmds) = page.handle(req("GET \(PhoneInputPage.sealedPath) HTTP/1.1\r\n\r\n"), profileName: "Ich",
+                                         backups: PhoneBackupState(sealedOutcome: o)) { Data() }
+        let text = String(data: end.body, encoding: .utf8)!
+        #expect(end.status == 200 && endCmds.isEmpty && !text.contains("refresh") && text.contains(PhoneInputPage.escape(o.text)), "\(o)")
+    }
+    // A file that is ready wins over an older outcome.
+    let (again, _) = page.handle(req("GET \(PhoneInputPage.sealedPath) HTTP/1.1\r\n\r\n"), profileName: "Ich",
+                                 backups: PhoneBackupState(sealedFile: file, sealedOutcome: .declined)) { Data() }
+    #expect(again.body == file)
+    // Fix round 1: while a request waits on the TV, the phone hears it at once.
+    let waiting = PhoneBackupState(requestOpen: true)
+    let (busyExport, busyCmds) = page.handle(req("GET /export?secrets=1 HTTP/1.1\r\n\r\n"), profileName: "Ich", backups: waiting) { Data() }
+    let busyText = String(data: busyExport.body, encoding: .utf8)!
+    #expect(busyCmds.isEmpty && !busyText.contains("refresh") && busyText.contains("wartet schon"))
+    let mixed = "addon=https%3A%2F%2Faddon.example%2Fmanifest.json&tmdb_link=list%3A5"
+    let (busySubmit, kept) = page.handle(req("POST /submit HTTP/1.1\r\nContent-Length: \(mixed.utf8.count)\r\n\r\n\(mixed)"),
+                                         profileName: "Ich", backups: waiting) { Data() }
+    #expect(kept == [.addTMDBLink("list:5")] && busySubmit.extraHeaders["Location"] == "/?ok=1&wt=offen")
+    let onlySensitive = "key_tmdb=K"
+    let (busyOnly, none2) = page.handle(req("POST /submit HTTP/1.1\r\nContent-Length: \(onlySensitive.utf8.count)\r\n\r\n\(onlySensitive)"),
+                                        profileName: "Ich", backups: waiting) { Data() }
+    #expect(none2.isEmpty && busyOnly.extraHeaders["Location"] == "/?wt=offen")
+    let (busyPage, _) = page.handle(req("GET /?wt=offen HTTP/1.1\r\n\r\n"), profileName: "Ich") { Data() }
+    #expect(String(data: busyPage.body, encoding: .utf8)!.contains("wartet schon"))
+    let (calm, _) = page.handle(req("GET /?ok=1 HTTP/1.1\r\n\r\n"), profileName: "Ich") { Data() }
+    #expect(!String(data: calm.body, encoding: .utf8)!.contains("wartet schon"))
     // Task 1.3 interface: while the profiles are unreadable, no backup leaves and none comes in.
     let locked = PhoneBackupState(blocked: true)
     for path in ["/export", "/export?secrets=1", PhoneInputPage.sealedPath] {

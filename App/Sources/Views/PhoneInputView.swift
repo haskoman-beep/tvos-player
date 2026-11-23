@@ -24,6 +24,8 @@ final class PhoneServer: ObservableObject {
     private var sealedFile: Data?
     private var sealedUntil: Date?
     private var sealedDelivered = false
+    /// Fix round 1: why the last sealed export ended without a file (shown on the phone's download page).
+    private var sealedOutcome: PhoneSealedOutcome?
     private var listener: NWListener?
     private var connections: [ObjectIdentifier: NWConnection] = [:]
     private var ticker: Task<Void, Never>?
@@ -54,8 +56,10 @@ final class PhoneServer: ObservableObject {
         } catch { failure = "Server startet nicht: \(error)" }
     }
 
-    /// Closing the view (or the app leaving the foreground) ends the session, open connections and any open request.
-    func stop() {
+    /// Closing the view or the app going to the background ends the session, open connections and any open request.
+    /// Fix round 1: the code of a sealed backup stays on screen until the view closes (`closing`), so a trip to the
+    /// background does not lose it.
+    func stop(closing: Bool = true) {
         listener?.cancel(); listener = nil
         ticker?.cancel(); ticker = nil
         session.end()
@@ -63,7 +67,8 @@ final class PhoneServer: ObservableObject {
         connections = [:]
         _ = gate.resolve(allow: false, now: Date())
         confirmation = nil
-        sealedFile = nil; sealedUntil = nil; sealedDelivered = false; exportCode = nil
+        sealedFile = nil; sealedUntil = nil; sealedDelivered = false; sealedOutcome = nil
+        if closing { exportCode = nil }
         address = nil; shownAddress = nil; connected = false
     }
 
@@ -87,11 +92,12 @@ final class PhoneServer: ObservableObject {
             newSession()
         }
         syncConnected()
-        if confirmation != nil, gate.current(now: now) == nil {
+        if let c = confirmation, gate.current(now: now) == nil {
             confirmation = nil
+            if c.commands.contains(.exportSecrets) { sealedOutcome = .lapsed }
             RemoteLog.info("handy", "Bestätigung ohne Antwort verfallen")
         }
-        if let u = sealedUntil, now >= u { sealedFile = nil; sealedUntil = nil }
+        if let u = sealedUntil, now >= u { sealedFile = nil; sealedUntil = nil; sealedOutcome = .lapsed }
     }
 
     private func syncConnected() {
@@ -101,11 +107,16 @@ final class PhoneServer: ObservableObject {
     /// „Erlauben“ / „Ablehnen“ on the card. `code` is the code typed for a sealed backup.
     func answer(allow: Bool, code: String) {
         let now = Date()
+        let wantedExport = confirmation?.commands.contains(.exportSecrets) ?? false
         let cmds = gate.resolve(allow: allow, now: now)
         confirmation = nil
         RemoteLog.info("handy", allow ? "Bestätigung: erlaubt (\(cmds.count) Befehl(e))" : "Bestätigung: abgelehnt")
+        if wantedExport && !allow { sealedOutcome = .declined }
         guard let model else { return }
-        if allow && cmds.isEmpty { model.lastError = "Die Anfrage ist abgelaufen. Bitte am Handy erneut senden."; return }
+        if allow && cmds.isEmpty {
+            if wantedExport { sealedOutcome = .lapsed }
+            model.lastError = "Die Anfrage ist abgelaufen. Bitte am Handy erneut senden."; return
+        }
         var run: [PhoneCommand] = []
         for c in cmds {
             switch c {
@@ -113,7 +124,7 @@ final class PhoneServer: ObservableObject {
                 if let s = model.sealedBackup() {
                     sealedFile = s.file; sealedUntil = now.addingTimeInterval(Self.sealedLifetime); sealedDelivered = false
                     exportCode = s.code
-                }
+                } else { sealedOutcome = .failed }
             case .importBackup(let d) where c.needsBackupCode:
                 if let plain = model.openSealedBackup(d, code: code) { run.append(.importBackup(plain)) }
             default:
@@ -186,7 +197,9 @@ final class PhoneServer: ObservableObject {
 
     private func handle(_ r: HTTPRequest, on c: NWConnection) {
         guard let model else { send(c, HTTPResponse(status: 503, body: Data())); return }
-        let backups = PhoneBackupState(blocked: model.storeState != .ready, sealedFile: sealedFile, sealedDelivered: sealedDelivered)
+        let now = Date()
+        let backups = PhoneBackupState(blocked: model.storeState != .ready, sealedFile: sealedFile, sealedDelivered: sealedDelivered,
+                                       sealedOutcome: sealedOutcome, requestOpen: gate.current(now: now) != nil)
         let (resp, cmds) = page.handle(r, profileName: model.profile.name, home: model.phoneHomeState(), backups: backups) {
             model.backupData()
         }
@@ -200,13 +213,20 @@ final class PhoneServer: ObservableObject {
         if !home.isEmpty { model.applyHome(home) }
         send(c, resp)
         guard !rest.isEmpty else { return }
-        let now = Date()
         let (plain, refused) = gate.offer(rest, now: now)
         if let open = gate.current(now: now), open != confirmation {
             confirmation = open
+            // A new sealed export starts from scratch: no old file, no old result.
+            if open.commands.contains(.exportSecrets) {
+                sealedFile = nil; sealedUntil = nil; sealedDelivered = false; sealedOutcome = nil
+            }
             RemoteLog.info("handy", "Bestätigung am Fernseher angefragt: \(open.commands.count) Befehl(e)")
         }
-        if !refused.isEmpty { model.lastError = "Am Fernseher wartet schon eine Anfrage. Bitte zuerst dort antworten und dann erneut senden." }
+        // The page already refuses while a request is open (`requestOpen`); this only catches a race.
+        if !refused.isEmpty {
+            if refused.contains(.exportSecrets) { sealedOutcome = .busy }
+            model.lastError = PhoneInputPage.busyText
+        }
         if !plain.isEmpty { Task { await model.apply(plain) } }
     }
 
@@ -266,7 +286,7 @@ struct PhoneInputView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     if let code = server.exportCode {
-                        Text("Code der Sicherung: " + String(code.prefix(3)) + " " + String(code.suffix(3))).font(.title3.monospacedDigit().bold())
+                        Text("Code der Sicherung: " + (BackupCrypto.groupedCode(code) ?? code)).font(.title3.monospaced().bold())
                         Text("Jetzt notieren: Ohne diesen Code lässt sich die Datei nicht wiederherstellen. Er wird nirgends gespeichert.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
@@ -296,9 +316,14 @@ struct PhoneInputView: View {
         }
         .onAppear { model.notice = nil; server.start(model: model); doneFocused = true }
         .onDisappear { server.stop() }
-        // SEC-16: no server while the app is not in front (screen saver, Home button).
+        // SEC-16: no server while the app is in the background (Home button). Fix round 1: only `.background` stops it;
+        // `.inactive` (keyboard for the code, a short overlay) keeps the open request, the sealed file and the code.
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { server.start(model: model) } else { server.stop() }
+            switch phase {
+            case .active: server.start(model: model)
+            case .background: server.stop(closing: false)
+            default: break
+            }
         }
         .onChange(of: server.confirmation == nil) { _, closed in if closed { doneFocused = true } }
     }
@@ -336,7 +361,9 @@ private struct PhoneConfirmationCard: View {
                     .buttonStyle(ThemeRowButtonStyle(maxWidth: .infinity))
                     .focused($focus, equals: .deny)
                     if confirmation.needsCode {
-                        TextField("Code der Sicherung (6 Ziffern)", text: $code)
+                        TextField("Code der Sicherung (12 Zeichen, z. B. K7QM-2XPA-9DRT)", text: $code)
+                            .textInputAutocapitalization(.characters)
+                            .autocorrectionDisabled()
                             .focused($focus, equals: .code)
                     }
                     Button { answer(true) } label: {

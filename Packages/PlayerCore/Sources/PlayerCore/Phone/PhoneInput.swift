@@ -135,9 +135,37 @@ public struct PhoneBackupState: Equatable, Sendable {
     public var sealedFile: Data?
     /// The sealed file was fetched already: the download page stops waiting.
     public var sealedDelivered: Bool
+    /// Fix round 1: the sealed export ended without a file; the download page stops waiting and says why.
+    public var sealedOutcome: PhoneSealedOutcome?
+    /// Fix round 1: a request already waits on the TV (`PhoneConfirmGate.current`). New requests that need a
+    /// confirmation are refused with a note on the phone instead of only on the TV.
+    public var requestOpen: Bool
 
-    public init(blocked: Bool = false, sealedFile: Data? = nil, sealedDelivered: Bool = false) {
+    public init(blocked: Bool = false, sealedFile: Data? = nil, sealedDelivered: Bool = false,
+                sealedOutcome: PhoneSealedOutcome? = nil, requestOpen: Bool = false) {
         self.blocked = blocked; self.sealedFile = sealedFile; self.sealedDelivered = sealedDelivered
+        self.sealedOutcome = sealedOutcome; self.requestOpen = requestOpen
+    }
+}
+
+/// Fix round 1: why the sealed export ended without a file.
+public enum PhoneSealedOutcome: String, Equatable, Sendable {
+    /// „Ablehnen“ on the TV (or Menu).
+    case declined
+    /// No answer on the TV within `PhoneConfirmGate.lifetime`, or the file was not fetched in time.
+    case lapsed
+    /// Another request was still waiting on the TV.
+    case busy
+    /// The TV could not seal the backup (it says why).
+    case failed
+
+    public var text: String {
+        switch self {
+        case .declined: return "Am Fernseher abgelehnt. Es wurde keine Sicherung erstellt."
+        case .lapsed: return "Die Anfrage ist abgelaufen. Bitte erneut auf „verschlüsselt herunterladen“ tippen."
+        case .busy: return PhoneInputPage.busyText
+        case .failed: return "Die Sicherung konnte am Fernseher nicht erstellt werden. Der Grund steht dort."
+        }
     }
 }
 
@@ -148,6 +176,7 @@ public struct PhoneInputPage: Sendable {
     /// Download address of the sealed backup (waits with a refresh until the TV allowed it).
     public static let sealedPath = "/export/sicherung"
     static let blockedText = "Die Profile am Fernseher sind gerade nicht lesbar. Sichern und Wiederherstellen sind gesperrt, bis dort eine Fassung geladen oder neu angefangen wurde."
+    public static let busyText = "Am Fernseher wartet schon eine Anfrage. Bitte zuerst dort antworten und dann erneut senden."
 
     public init() {}
 
@@ -162,7 +191,8 @@ public struct PhoneInputPage: Sendable {
         switch (r.method, r.path) {
         case ("GET", "/"):
             return (HTTPResponse(status: 200, body: Data(page(profileName: profileName, note: r.query["ok"], importNote: r.query["imp"],
-                                                              home: home, backupBlocked: backups.blocked).utf8)), [])
+                                                              home: home, backupBlocked: backups.blocked,
+                                                              requestWaiting: r.query["wt"] == "offen").utf8)), [])
         case ("GET", "/export"), ("GET", Self.sealedPath):
             guard !backups.blocked else {
                 return (HTTPResponse(status: 409, body: Data(Self.html("Gesperrt", "<p>\(Self.blockedText)</p>").utf8)), [])
@@ -172,12 +202,15 @@ public struct PhoneInputPage: Sendable {
                     if backups.sealedDelivered {
                         return (HTTPResponse(status: 200, body: Data(Self.html("Sicherung", "<p>Die Datei \(BackupCrypto.fileName) wurde geladen. Den Code zeigt der Fernseher.</p><p><a href=\"/\">Zurück</a></p>").utf8)), [])
                     }
+                    // Fix round 1: declined, lapsed, refused or failed – no further refresh.
+                    if let o = backups.sealedOutcome { return (Self.sealedEnd(o.text), []) }
                     return (HTTPResponse(status: 200, body: Data(Self.html("Sicherung", Self.sealedWaitBody, refresh: 3).utf8)), [])
                 }
                 return (HTTPResponse(status: 200, contentType: "application/octet-stream", body: file,
                                      extraHeaders: ["Content-Disposition": "attachment; filename=\"\(BackupCrypto.fileName)\""]), [])
             }
             if r.query["secrets"] == "1" {
+                if backups.requestOpen { return (Self.sealedEnd(Self.busyText), []) }
                 return (HTTPResponse(status: 200, body: Data(Self.html("Sicherung", Self.sealedWaitBody, refresh: 3).utf8)), [.exportSecrets])
             }
             return (HTTPResponse(status: 200, contentType: "application/json", body: backup(),
@@ -206,12 +239,21 @@ public struct PhoneInputPage: Sendable {
             }
             if let k = val("kit_url") { cmds.append(.importFusionURL(k)) }
             if let i = val("icon_set") { cmds.append(.setRatingIconSet(i)) }
+            // Fix round 1: while a request waits on the TV, everything that needs a confirmation is refused here, so
+            // the phone hears of it; plain entries still go through.
+            var busy = false
+            if backups.requestOpen {
+                let kept = cmds.filter { if case .plain = $0.sensitivity { return true } else { return false } }
+                busy = kept.count != cmds.count
+                cmds = kept
+            }
             let note = cmds.isEmpty ? "leer" : "\(cmds.count)"
             // Rückmeldung zum Schnell-Import immer mitgeben; „Nichts ausgefüllt“ entfällt, wenn nur er etwas meldet.
             var params: [String] = []
-            if !(cmds.isEmpty && (importNote != nil || backupRefused)) { params.append("ok=\(note)") }
+            if !(cmds.isEmpty && (importNote != nil || backupRefused || busy)) { params.append("ok=\(note)") }
             if let importNote { params.append("imp=\(importNote)") }
             if backupRefused { params.append("bk=gesperrt") }
+            if busy { params.append("wt=offen") }
             let loc = "/" + (params.isEmpty ? "" : "?" + params.joined(separator: "&"))
             return (HTTPResponse(status: 303, body: Data(), extraHeaders: ["Location": loc]), cmds)
         case ("POST", "/home"):
@@ -226,11 +268,17 @@ public struct PhoneInputPage: Sendable {
 
     static let sealedWaitBody = """
     <p>Am Fernseher „Erlauben“ wählen. Danach lädt diese Seite die verschlüsselte Datei von selbst \
-    (<a href="\(sealedPath)">sonst hier tippen</a>).</p><p>Den Code zeigt nur der Fernseher; zum Wiederherstellen wird er dort eingegeben.</p>
+    (<a href="\(sealedPath)">sonst hier tippen</a>).</p><p>Den Code (12 Zeichen in drei Vierergruppen, etwa K7QM-2XPA-9DRT) \
+    zeigt nur der Fernseher; zum Wiederherstellen wird er dort eingegeben.</p>
     """
 
+    /// Fix round 1: end of the sealed-export wait, without a refresh.
+    static func sealedEnd(_ text: String) -> HTTPResponse {
+        HTTPResponse(status: 200, body: Data(html("Sicherung", "<p>\(escape(text))</p><p><a href=\"/\">Zurück</a></p>").utf8))
+    }
+
     func page(profileName: String, note: String?, importNote: String? = nil, home: PhoneHomeState = .empty,
-              backupBlocked: Bool = false) -> String {
+              backupBlocked: Bool = false, requestWaiting: Bool = false) -> String {
         var msg: String
         switch note {
         case nil, "home", "home0": msg = ""   // Rückmeldung von „Startseite ordnen“ steht in dessen Abschnitt
@@ -239,6 +287,7 @@ public struct PhoneInputPage: Sendable {
         }
         if let t = importNote.flatMap(PhoneImportDetect.noteText) { msg += "<p class=ok>\(Self.escape(t))</p>" }
         if backupBlocked { msg += "<p class=ok>\(Self.blockedText)</p>" }
+        if requestWaiting { msg += "<p class=ok>\(Self.busyText)</p>" }
         func field(_ name: String, _ label: String, _ ph: String, area: Bool = false) -> String {
             area ? "<label>\(label)<textarea name=\(name) rows=4 placeholder=\"\(ph)\"></textarea></label>"
                  : "<label>\(label)<input name=\(name) autocapitalize=off autocorrect=off placeholder=\"\(ph)\"></label>"
