@@ -393,6 +393,18 @@ final class AppModel: ObservableObject {
         Task { await syncRemoteProgress() }
     }
 
+    /// Task 2.4 (S-9): everything stored for a profile that is gone (deleted, or not in a restored backup): catalog
+    /// files, sync queue, every block `*-<profile>.json` (progress, trackmemory, fileprogress, link packs, import-media,
+    /// …) and the per-profile UserDefaults entries. Sync logins live in the profile itself (no Keychain entries yet).
+    func removeProfileData(_ id: UUID) {
+        removeCatalogFile(profile: id)
+        removeSyncQueue(profile: id)   // Welle L
+        let removed = ProfileBlocks.remove(profile: id, from: progressStore.storage)
+        FusionKitStore.setStoredSettings(nil, for: id)
+        CollectionLinkStore.setStoredLinks(nil, for: id)
+        RemoteLog.info("speicher", "Profildaten entfernt · \(removed.count) Block/Blöcke")
+    }
+
     func addProfile(name: String) {
         let p = Profile.makeDefault(name: name)
         stored.profiles.append(p)
@@ -402,8 +414,7 @@ final class AppModel: ObservableObject {
     func deleteProfile(_ id: UUID) {
         guard stored.profiles.count > 1 else { return }
         stored.profiles.removeAll { $0.id == id }
-        removeCatalogFile(profile: id)
-        removeSyncQueue(profile: id)   // Welle L
+        removeProfileData(id)
         // Aktives Profil gelöscht: über den Profilwechsel (Cache leeren, Stand des neuen Profils lesen).
         if stored.activeProfileID == id, let next = stored.profiles.first?.id { switchProfile(next) } else { save() }
     }
@@ -680,7 +691,35 @@ final class AppModel: ObservableObject {
     // MARK: Handy-Eingabe
 
     /// Task 1.4: `GET /export` – all profiles without keys, sync logins and the access part of addon addresses.
-    func backupData() -> Data { (try? store.exportData(stored, includeSecrets: false)) ?? Data() }
+    /// Task 2.4: backup version 2 (profiles, progress, kit settings, collection links, device settings). The profile
+    /// keys stay at the top level, so build 249/250 and Build 1 still restore the profiles from it.
+    func backupData() -> Data { (try? makeBackup(includeSecrets: false)) ?? Data() }
+
+    /// Task 2.4: the complete backup; without secrets the profiles go through `withoutSecrets` (Task 1.4).
+    func makeBackup(includeSecrets: Bool) throws -> Data {
+        // Fix round 1: the plain export goes through `Backup.withoutSecrets` (profiles, URLs in progress, custom kit
+        // sources and links scrubbed or left out, no remote log receiver); the sealed backup keeps everything.
+        let s = stored
+        var b = Backup(profiles: s, device: device)
+        for p in s.profiles {
+            let book: ProgressBook? = p.id == profile.id ? progress : progressStore.load(profile: p.id)
+            if let book, !book.entries.isEmpty {
+                b.progress[p.id] = book
+            }
+            if let k = FusionKitStore.storedSettings(p.id) { b.fusionKits[p.id] = k }
+            if let l = CollectionLinkStore.storedLinks(p.id) { b.collectionLinks[p.id] = l }
+        }
+        return try (includeSecrets ? b : b.withoutSecrets()).encoded()
+    }
+
+    /// Task 2.4: everything cached for the old profile set is dropped after a restore (Build 3 replaces this with
+    /// `ProfileScope`): catalog caches, a running token renewal, the kit and link state of the active profile.
+    func profileScopeChanged() {
+        clearCatalogCache()
+        traktRefresh?.cancel(); traktRefresh = nil
+        FusionKitStore.shared.profileScopeChanged()
+        CollectionLinkStore.shared.profileScopeChanged(self)
+    }
 
     /// Task 1.4: the full backup sealed under a fresh 12-character code (only after „Erlauben“ on the TV); the code is shown
     /// on the TV and never sent to the phone.
@@ -688,7 +727,7 @@ final class AppModel: ObservableObject {
         guard storeState == .ready else { lastError = Self.backupLockedText; return nil }
         let code = BackupCrypto.makeCode()
         do {
-            let plain = try store.exportData(stored, includeSecrets: true)
+            let plain = try makeBackup(includeSecrets: true)
             let file = try BackupCrypto(cipher: CryptoKitBackupCipher()).seal(plain, code: code)
             return (file, code)
         } catch { lastError = "Sicherung nicht verschlüsselt: \(error)"; return nil }
@@ -748,12 +787,32 @@ final class AppModel: ObservableObject {
                 guard !BackupCrypto.isSealed(d) else { lastError = "Verschlüsselte Sicherung: bitte den Code am Fernseher eingeben."; continue }
                 do {
                     let before = stored.profiles.map(\.id)
-                    let (imported, report) = try store.importDataReporting(d)
+                    // Task 2.4: version 2 (with progress, kits, links, device) or an old plain profile backup.
+                    let (backup, report) = try Backup.decodeReporting(d)
                     // Final review: like the load line, paths only (a backup from a newer build).
                     if !report.isEmpty { RemoteLog.info("speicher", "Import · ignoriert: \(report.ignored.joined(separator: ", "))") }
-                    stored = imported; save(); clearCatalogCache()
+                    let (imported, expired) = backup.profiles.droppingExpiredTokens()
+                    // Fix round 2: saved directly, so the cleanup below runs only after the restored profiles are
+                    // stored (a failed save ends in the catch: nothing is removed).
+                    try store.save(imported)
+                    stored = imported
+                    for gone in ProfileBlocks.removedByRestore(before: before, after: imported.profiles.map(\.id)) {
+                        removeProfileData(gone)
+                    }
+                    // Parts of version 2 overwrite only what the backup contains; a version 1 file leaves them as they are.
+                    for (id, book) in backup.progress where backup.profileIDs.contains(id) {
+                        try? progressStore.save(book, profile: id)
+                    }
+                    for (id, k) in backup.fusionKits where backup.profileIDs.contains(id) { FusionKitStore.setStoredSettings(k, for: id) }
+                    for (id, l) in backup.collectionLinks where backup.profileIDs.contains(id) { CollectionLinkStore.setStoredLinks(l, for: id) }
+                    // Picture and sound come back; the remote log switch and receiver stay as set on this TV (SEC-2).
+                    if let dev = backup.device {
+                        updateDevice { $0.audioShaping = dev.audioShaping; $0.displayMode = dev.displayMode }
+                    }
                     removeCatalogFiles(profiles: before + stored.profiles.map(\.id))
+                    profileScopeChanged()
                     progress = loadProgress(profile.id)
+                    RemoteLog.info("speicher", "Sicherung v\(backup.backupVersion) eingespielt · \(backup.progress.count) Fortschritt, \(backup.fusionKits.count) Kits, \(backup.collectionLinks.count) Links" + (expired > 0 ? " · \(expired) abgelaufene Anmeldung(en) entfernt" : ""))
                 } catch { lastError = "Sicherung ungültig: \(error)" }
             case .importFusionURL(let u): await importFusionKit(from: u)
             case .moveRow, .removeRow, .deleteRow, .restoreRow, .addRow: applyHome([c])   // Welle F-e; PhoneServer übernimmt sie sonst schon vorab

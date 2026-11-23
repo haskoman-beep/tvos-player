@@ -169,6 +169,19 @@ public struct FusionKitSyncResult: Equatable, Sendable {
 /// Gleicht die Kit-Reihen der Startseite mit den Einstellungen ab. Eigene Reihen des Nutzers bleiben unberührt,
 /// vorhandene Kit-Reihen behalten Platz und Stil; neue kommen ans Ende.
 public enum FusionKitSync {
+    /// Task 2.4 (S-12): rule for kit rows when the settings may be missing (e.g. right after restoring a backup
+    /// without kit settings). `nil` = no settings stored for the profile → the layout stays as it is. Kit rows are
+    /// removed only when settings were loaded and the selection is explicitly empty (kit off or nothing chosen).
+    /// The app calls it only for the `nil` case (FusionKitStore without stored settings); for loaded settings the full
+    /// `apply(layout:settings:contents:…)` below behaves the same way (kit off or empty selection → no kit rows), and
+    /// this function is its specification in the tests.
+    public static func apply(settings: FusionKitSettings?, layout: HomeLayout) -> HomeLayout {
+        guard let settings, !settings.enabled || settings.selected.isEmpty else { return layout }
+        var l = layout
+        l.rows.removeAll { FusionImport.kitID(of: $0) != nil }
+        return l
+    }
+
     /// - Parameter contents: geladene Kit-Dateien je Quellen-Schlüssel. Ist eine Quelle (noch) nicht geladen,
     ///   bleiben ihre Reihen, wie sie sind – sonst gingen Platz und Stil bei jedem Start ohne Netz verloren.
     public static func apply(layout: inout HomeLayout, settings: inout FusionKitSettings,

@@ -169,9 +169,14 @@ public final class ProfileStore: @unchecked Sendable {
 
     static func decodeReporting(_ data: Data) throws -> (profiles: StoredProfiles, report: DecodeReport) {
         let (s, report) = try JSONDecoder().decodeReporting(StoredProfiles.self, from: data)
+        try validate(s)
+        return (s, report)
+    }
+
+    /// Checks of every profile load and import (also `Backup.decodeReporting`).
+    static func validate(_ s: StoredProfiles) throws {
         if s.schemaVersion > StoredProfiles.currentSchema { throw StoreError.newerSchema(s.schemaVersion) }
         if s.profiles.isEmpty { throw StoreError.empty }
-        return (s, report)
     }
 
     static func isReadable(_ data: Data) -> Bool { (try? decode(data)) != nil }

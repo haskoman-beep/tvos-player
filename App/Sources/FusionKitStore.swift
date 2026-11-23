@@ -24,6 +24,9 @@ final class FusionKitStore: ObservableObject {
     private var watch: AnyCancellable?
     private var syncQueued = false
     private var settingsProfile: UUID?
+    /// Task 2.4: false while no settings are stored for the profile (e.g. a restored backup without kit settings):
+    /// then the start page keeps its kit rows (`FusionKitSync.apply(settings: nil, layout:)`) and nothing is persisted.
+    private var settingsStored = false
     /// Sichtbare Kit-Collections (ohne Trakt-Kacheln, wenn die Client ID fehlt), beim Abgleich berechnet.
     private var visible: [String: MediaCollection] = [:]
     private var loggedHidden = false
@@ -205,11 +208,26 @@ final class FusionKitStore: ObservableObject {
         sync()
     }
 
-    private func settingsKey(_ id: UUID) -> String { "fusionkit.\(id.uuidString)" }
+    private func settingsKey(_ id: UUID) -> String { Self.defaultsKey(id) }
+    nonisolated static func defaultsKey(_ id: UUID) -> String { "fusionkit.\(id.uuidString)" }
 
     private func persist() {
         guard let id = settingsProfile, let d = try? JSONEncoder().encode(settings) else { return }
         UserDefaults.standard.set(d, forKey: settingsKey(id))
+        settingsStored = true
+    }
+
+    /// Task 2.4: stored kit settings of a profile (backup) and writing them back (restore, delete).
+    nonisolated static func storedSettings(_ id: UUID) -> Data? { UserDefaults.standard.data(forKey: defaultsKey(id)) }
+    nonisolated static func setStoredSettings(_ d: Data?, for id: UUID) {
+        if let d { UserDefaults.standard.set(d, forKey: defaultsKey(id)) }
+        else { UserDefaults.standard.removeObject(forKey: defaultsKey(id)) }
+    }
+
+    /// Task 2.4: after a restore the settings of the active profile are read again.
+    func profileScopeChanged() {
+        settingsProfile = nil
+        scheduleSync()
     }
 
     /// Einstellungen des aktiven Profils (nach Profilwechsel neu) samt Zwischenspeicher seiner Quellen.
@@ -218,8 +236,10 @@ final class FusionKitStore: ObservableObject {
         CollectionLinkStore.shared.ensure(model)
         let first = settingsProfile == nil
         settingsProfile = id
-        settings = UserDefaults.standard.data(forKey: settingsKey(id))
-            .flatMap { try? JSONDecoder().decode(FusionKitSettings.self, from: $0) } ?? FusionKitSettings()
+        let loaded = UserDefaults.standard.data(forKey: settingsKey(id))
+            .flatMap { try? JSONDecoder().decode(FusionKitSettings.self, from: $0) }
+        settingsStored = loaded != nil
+        settings = loaded ?? FusionKitSettings()
         for s in settings.sources where contents[s.id] == nil {
             if let c = cached(s) { contents[s.id] = c }
         }
@@ -401,9 +421,12 @@ final class FusionKitStore: ObservableObject {
             Task { await loadPackageArt() }
         }
 
-        if s != settings { settings = s; persist() }
+        // Task 2.4: without stored settings the kit rows stay (layout unchanged, nothing persisted).
+        if !settingsStored {
+            layout = FusionKitSync.apply(settings: nil, layout: model.profile.home)
+        } else if s != settings { settings = s; persist() }
         if layout != model.profile.home { model.update { $0.home = layout } }
-        if !r.added.isEmpty || !r.removed.isEmpty || !r.deselected.isEmpty {
+        if settingsStored, !r.added.isEmpty || !r.removed.isEmpty || !r.deselected.isEmpty {
             RemoteLog.info("kit", "Startseite: +\(r.added.count) −\(r.removed.count) Reihen" + (r.deselected.isEmpty ? "" : " · \(r.deselected.count) im Editor entfernt → abgewählt"))
         }
         if !loggedHidden, !r.hidden.isEmpty || hiddenTiles > 0 {
