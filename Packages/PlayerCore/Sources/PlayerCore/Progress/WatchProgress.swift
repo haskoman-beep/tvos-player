@@ -82,14 +82,55 @@ public struct ProgressBook: Codable, Sendable, Equatable {
         return out
     }
 
+    /// Task 2.1 (W-B-1): a watched entry loses its checkmark only after the new session ran past both limits.
+    public static let unfinishFraction = 0.05
+    /// Task 2.1 (W-B-1): seconds a session must run before it clears "watched" or the next-episode hint.
+    public static let markerSeconds = 120.0
+
     /// Speichert eine Position. Ab 92 % gilt der Titel als gesehen.
     public mutating func record(id: String, item: MetaPreview, season: Int? = nil, episode: Int? = nil,
                                 position: Double, duration: Double, now: Date = Date()) {
-        guard duration > 0, position.isFinite else { return }
-        let done = position / duration >= Self.finishedAt
-        clearSeriesMarker(itemID: item.id, episodeID: id, updated: now)
-        entries[id] = WatchProgress(id: id, item: item, season: season, episode: episode,
-                                    position: done ? 0 : position, duration: duration, updated: now, finished: done)
+        record(WatchProgress(id: id, item: item, season: season, episode: episode,
+                             position: position, duration: duration, updated: now), now: now)
+    }
+
+    /// Merges a new position into the existing entry instead of replacing it (Task 2.1, W-B-1):
+    /// - a watched entry stays watched unless the new session ran more than 5 % and more than 120 s;
+    /// - the next-episode hint stays until the episode itself ran more than 120 s;
+    /// - `remoteFraction`, title and artwork of the old entry stay when the new one does not bring them.
+    public mutating func record(_ new: WatchProgress, now: Date = Date()) {
+        guard new.duration > 0, new.position.isFinite else { return }
+        let old = entries[new.id]
+        let done = new.position / new.duration >= Self.finishedAt
+        let ranLong = new.position > Self.markerSeconds
+        if let old, old.finished, !done, !(ranLong && new.position > Self.unfinishFraction * new.duration) { return }
+        clearSeriesMarker(itemID: new.item.id, episodeID: new.id, updated: now)
+        var e = new
+        e.item = Self.filled(new.item, from: old?.item)
+        e.position = done ? 0 : new.position
+        e.updated = now
+        e.finished = done
+        e.nextUp = !done && (new.nextUp == true || (old?.nextUp == true && !ranLong)) ? true : nil
+        e.remoteFraction = new.remoteFraction ?? old?.remoteFraction
+        entries[new.id] = e
+    }
+
+    /// Fills empty title and missing artwork/text of `item` from `fallback` (same id only).
+    static func filled(_ item: MetaPreview, from fallback: MetaPreview?) -> MetaPreview {
+        guard let f = fallback, f.id == item.id else { return item }
+        func pick(_ a: String?, _ b: String?) -> String? {
+            if let a, !a.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return a }
+            return b
+        }
+        var r = item
+        r.name = pick(item.name, f.name) ?? item.name
+        r.poster = pick(item.poster, f.poster)
+        r.background = pick(item.background, f.background)
+        r.logo = pick(item.logo, f.logo)
+        r.description = pick(item.description, f.description)
+        r.releaseInfo = pick(item.releaseInfo, f.releaseInfo)
+        r.imdbRating = pick(item.imdbRating, f.imdbRating)
+        return r
     }
 
     /// Merkt die nächste Folge vor (überschreibt keinen echten Fortschritt).
@@ -149,11 +190,22 @@ public struct ProgressBook: Codable, Sendable, Equatable {
             if let l = entries[r.id], l.updated >= r.updated { continue }
             // Wave L: an episode paused before the series was marked as watched stays out.
             if r.id != r.item.id, let m = entries[r.item.id], m.season == nil, m.finished, m.updated >= r.updated { continue }
-            clearSeriesMarker(itemID: r.item.id, episodeID: r.id, updated: r.updated)
             let dur = entries[r.id]?.duration ?? 0
-            entries[r.id] = WatchProgress(id: r.id, item: r.item, season: r.season, episode: r.episode,
+            let done = r.fraction >= Self.finishedAt
+            // Task 2.1 fix round 1 (W-B-1 via sync): the same rules as `record`. A short remote session
+            // (the service echoes our own scrobble) neither reopens a watched entry nor drops the next-episode hint.
+            let seconds: Double? = dur > 0 ? r.fraction * dur : nil
+            if let l = entries[r.id], l.finished, !done,
+               !(r.fraction > Self.unfinishFraction && (seconds ?? .infinity) > Self.markerSeconds) { continue }
+            let keepNextUp = !done && entries[r.id]?.nextUp == true && (seconds ?? 0) <= Self.markerSeconds
+            clearSeriesMarker(itemID: r.item.id, episodeID: r.id, updated: r.updated)
+            // Task 2.1 (S-13): take position and time from the service, keep the local title and artwork;
+            // the service only fills what is missing locally.
+            let item = entries[r.id].map { Self.filled($0.item, from: r.item) } ?? r.item
+            entries[r.id] = WatchProgress(id: r.id, item: item, season: r.season, episode: r.episode,
                                           position: dur > 0 ? r.fraction * dur : 0, duration: dur, updated: r.updated,
-                                          finished: r.fraction >= Self.finishedAt, remoteFraction: dur > 0 ? nil : r.fraction)
+                                          finished: done, nextUp: keepNextUp ? true : nil,
+                                          remoteFraction: dur > 0 ? nil : r.fraction)
         }
     }
 }
