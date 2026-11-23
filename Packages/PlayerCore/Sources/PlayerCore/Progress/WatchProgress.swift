@@ -50,10 +50,11 @@ public struct ProgressBook: Codable, Sendable, Equatable {
     public func lastSource(for id: String) -> LastSource? { sources?[Self.sourceKey(id)] }
 
     /// Speichert eine Position. Ab 92 % gilt der Titel als gesehen.
+    /// `finishedAt`: watched threshold (80 % while a sync service is connected, as there; else 92 %).
     public mutating func record(id: String, item: MetaPreview, season: Int? = nil, episode: Int? = nil,
-                                position: Double, duration: Double, now: Date = Date()) {
+                                position: Double, duration: Double, now: Date = Date(), finishedAt: Double = ProgressBook.finishedAt) {
         guard duration > 0, position.isFinite else { return }
-        let done = position / duration >= Self.finishedAt
+        let done = position / duration >= finishedAt
         clearSeriesMarker(itemID: item.id, episodeID: id, updated: now)
         entries[id] = WatchProgress(id: id, item: item, season: season, episode: episode,
                                     position: done ? 0 : position, duration: duration, updated: now, finished: done)

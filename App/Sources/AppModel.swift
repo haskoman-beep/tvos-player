@@ -94,7 +94,10 @@ final class AppModel: ObservableObject {
 
     func recordProgress(_ r: PlayRequest, position: Double, duration: Double) {
         progressSaveHeld = false
-        progress.record(id: r.id, item: r.item, season: r.season, episode: r.episode, position: position, duration: duration)
+        // Build 2 (2.5): same watched rule as the scrobble stop, so a close-time save cannot undo the stop's mark.
+        let threshold = ProgressBook.finishedThreshold(syncConnected: Self.syncServices.contains(where: isConnected))
+        progress.record(id: r.id, item: r.item, season: r.season, episode: r.episode, position: position, duration: duration,
+                        finishedAt: threshold)
         if progress.isWatched(r.id), let n = r.nextRequest, let s = n.season, let e = n.episode {
             progress.recordNextUp(id: n.id, item: n.item, season: s, episode: e)
         }
@@ -232,24 +235,32 @@ final class AppModel: ObservableObject {
         let services = Self.syncServices.filter(isConnected)
         guard !events.isEmpty, !services.isEmpty else { return }
         // Build 2 (2.5): a stop from 80 % on counts as watched at the services, so locally too.
-        for e in events where e.watched { editProgress { $0.markFinished(id: e.item.id) } }
+        for e in events where e.watched {
+            let r = e.item
+            editProgress { b in
+                b.markFinished(id: r.id)
+                if let n = r.nextRequest, let s = n.season, let ep = n.episode { b.recordNextUp(id: n.id, item: n.item, season: s, episode: ep) }
+            }
+        }
         let previous = scrobbleChain
         scrobbleChain = Task {
             await previous?.value
             for e in events {
                 let r = e.item, imdb = r.item.id, pct = e.fraction * 100
                 for s in services {
-                    guard let t = await token(s) else { continue }
+                    let stopID = [imdb, r.season.map(String.init), r.episode.map(String.init)].compactMap { $0 }.joined(separator: ":")
+                    guard let t = await token(s) else {
+                        // No token (e.g. refresh failed offline): a watched stop still must not get lost.
+                        if e.watched { queueScrobbleStop(id: stopID, progress: e.fraction, service: s) }
+                        continue
+                    }
                     do {
                         if s == "trakt" { try await trakt?.scrobble(e.action, imdb: imdb, season: r.season, episode: r.episode, percent: pct, token: t) }
                         else { try await simkl?.scrobble(e.action, imdb: imdb, season: r.season, episode: r.episode, percent: pct, token: t) }
                     } catch {
                         RemoteLog.error("sync", "\(s) \(e.action.rawValue): \(error)")
                         // Build 2 (2.5): a lost watched stop goes to the queue and is sent later as a history entry.
-                        if e.watched {
-                            let id = [imdb, r.season.map(String.init), r.episode.map(String.init)].compactMap { $0 }.joined(separator: ":")
-                            queueScrobbleStop(id: id, progress: e.fraction, service: s)
-                        }
+                        if e.watched { queueScrobbleStop(id: stopID, progress: e.fraction, service: s) }
                     }
                 }
             }

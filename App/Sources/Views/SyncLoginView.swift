@@ -56,7 +56,7 @@ struct SyncLoginView: View {
                     try? await Task.sleep(for: .seconds(2)); dismiss(); return
                 case .slowDown: wait += 2
                 // Build 2 (2.5): server trouble is no answer; keep waiting until the code expires.
-                case .failed(let s) where s == 0 || s == 408 || s >= 500: break
+                case .failed(let s) where s == 408 || s >= 500: break
                 case .expired: status = "Code abgelaufen – bitte neu öffnen."; return
                 case .denied: status = "Abgelehnt."; return
                 case .failed(let s): status = "Fehler \(s) – Client ID/Secret prüfen."; return

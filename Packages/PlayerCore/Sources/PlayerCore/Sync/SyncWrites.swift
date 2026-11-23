@@ -9,6 +9,10 @@ enum SyncWriteBody {
         return [series ? "shows" : "movies": [o]]
     }
 
+    /// How far a history entry may lie from the queued time and still count as the same play (the scrobble's
+    /// server time lies before the queue time by the failed request plus its retry).
+    static let historyWindow: TimeInterval = 180
+
     /// ISO-8601 UTC with milliseconds, as Trakt and Simkl write `watched_at`.
     static func iso(_ d: Date) -> String {
         let f = ISO8601DateFormatter()
@@ -33,11 +37,15 @@ enum SyncWriteBody {
                            "seasons": [["number": season, "episodes": [["number": episode, "watched_at": at]]]]]]]
     }
 
-    /// Does a `GET /sync/history/{type}/{id}` answer hold this entry (same episode, watched within a minute)?
-    static func historyContains(_ data: Data, season: Int?, episode: Int?, at: Date) -> Bool {
+    /// Does a `GET /sync/history/{movies|episodes}?start_at…` answer hold this entry (same IMDb ID, same episode,
+    /// watched within the window)? `imdb` is the movie's or the show's ID.
+    static func historyContains(_ data: Data, imdb: String, season: Int?, episode: Int?, at: Date,
+                                window: TimeInterval = historyWindow) -> Bool {
         let arr = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] ?? []
         return arr.contains { o in
-            guard let w = (o["watched_at"] as? String).flatMap(TraktClient.date), abs(w.timeIntervalSince(at)) < 60 else { return false }
+            guard let w = (o["watched_at"] as? String).flatMap(TraktClient.date), abs(w.timeIntervalSince(at)) <= window else { return false }
+            let title = (o["movie"] ?? o["show"]) as? [String: Any]
+            guard (title?["ids"] as? [String: Any])?["imdb"] as? String == imdb else { return false }
             guard let season, let episode else { return true }
             let ep = o["episode"] as? [String: Any]
             return ep?["season"] as? Int == season && ep?["number"] as? Int == episode
@@ -89,7 +97,7 @@ extension TraktClient {
                     try await perform(request("DELETE", "/sync/playback/\(id)", token: token), token: token).status
                 }
             }
-        } catch { return .retry }
+        } catch { return SyncWriteResult.failure(error) }
     }
 
     /// Sends a queued action (a failed scrobble stop becomes a history entry). Never throws.
@@ -98,20 +106,22 @@ extension TraktClient {
         guard case .scrobbleStop(let id, _, let at) = e.action else { return .skipped("nichts zu senden") }
         let (imdb, season, episode) = SyncWriteBody.splitID(id)
         do {
-            if e.attempts > 0, try await inHistory(imdb: imdb, series: season != nil, season: season, episode: episode, at: at, token: token) {
+            // Always a resend: the stop scrobble itself may have reached the service without its answer.
+            if try await inHistory(imdb: imdb, series: season != nil, season: season, episode: episode, at: at, token: token) {
                 return .confirmed
             }
             return try await post("/sync/history", SyncWriteBody.history(id: id, watchedAt: at), token)
-        } catch { return .retry }
+        } catch { return SyncWriteResult.failure(error) }
     }
 
-    /// `GET /sync/history/{movies|shows}/{imdb}` around `at`. A failed check counts as "not there" (send again):
-    /// a duplicate is better than a lost entry.
+    /// `GET /sync/history/{movies|episodes}?start_at=…&end_at=…` around `at`, matched by IMDb ID in the answer (the
+    /// path takes no IMDb ID). A failed check counts as "not there" (send again): a duplicate is better than a loss.
     func inHistory(imdb: String, series: Bool, season: Int?, episode: Int?, at: Date, token: SyncToken) async throws -> Bool {
-        let window = "?start_at=\(SyncWriteBody.iso(at.addingTimeInterval(-60)))&end_at=\(SyncWriteBody.iso(at.addingTimeInterval(60)))"
-        let r = try await perform(request("GET", "/sync/history/\(series ? "shows" : "movies")/\(imdb)\(window)", token: token), token: token)
+        let w = SyncWriteBody.historyWindow
+        let query = "?start_at=\(SyncWriteBody.iso(at.addingTimeInterval(-w)))&end_at=\(SyncWriteBody.iso(at.addingTimeInterval(w)))&limit=100"
+        let r = try await perform(request("GET", "/sync/history/\(series ? "episodes" : "movies")\(query)", token: token), token: token)
         guard (200..<300).contains(r.status) else { return false }
-        return SyncWriteBody.historyContains(r.data, season: season, episode: episode, at: at)
+        return SyncWriteBody.historyContains(r.data, imdb: imdb, season: season, episode: episode, at: at)
     }
 
     private func post(_ path: String, _ body: [String: Any], _ token: SyncToken) async throws -> SyncWriteResult {
@@ -173,7 +183,7 @@ extension SimklClient {
                     try await http.sendRespectingRateLimit(request("DELETE", "/sync/playback/\(id)", token: token), sleep: sleep).status
                 }
             }
-        } catch { return .retry }
+        } catch { return SyncWriteResult.failure(error) }
     }
 
     /// Sends a queued action (a failed scrobble stop becomes a history entry). Never throws.
@@ -181,7 +191,7 @@ extension SimklClient {
     public func apply(_ e: SyncQueue.Entry, token: SyncToken) async -> SyncWriteResult {
         guard case .scrobbleStop(let id, _, let at) = e.action else { return .skipped("nichts zu senden") }
         do { return try await post("/sync/history", SyncWriteBody.history(id: id, watchedAt: at), token) }
-        catch { return .retry }
+        catch { return SyncWriteResult.failure(error) }
     }
 
     private func post(_ path: String, _ body: [String: Any], _ token: SyncToken) async throws -> SyncWriteResult {

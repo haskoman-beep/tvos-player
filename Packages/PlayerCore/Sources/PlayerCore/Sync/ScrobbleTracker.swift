@@ -82,3 +82,11 @@ public struct ScrobbleTracker<Item> {
         return [ScrobbleEvent(action: .stop, item: s.item, fraction: s.fraction)]
     }
 }
+
+extension ProgressBook {
+    /// One watched rule for the progress save and the scrobble stop: with a sync service the services' 80 %,
+    /// else the local 92 %.
+    public static func finishedThreshold(syncConnected: Bool) -> Double {
+        syncConnected ? ScrobbleTracker<String>.watchedThreshold : finishedAt
+    }
+}

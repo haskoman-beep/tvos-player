@@ -393,34 +393,104 @@ private struct OldQueue: Codable { var schemaVersion: Int; var changes: [String:
 }
 
 @Test func traktSendsFailedStopAsHistoryWithWatchedAt() async {
-    let http = FakeSender([(201, "{}")])
+    let http = FakeSender([(200, "[]"), (201, "{}")])
     let t = TraktClient(clientID: "C", clientSecret: "S", http: http)
     let e = SyncQueue.Entry(action: .scrobbleStop(id: "tt14452776:1:2", progress: 0.85, at: t0), createdAt: t0, pending: ["trakt"])
     #expect(await t.apply(e, token: SyncToken(accessToken: "A")) == .confirmed)
-    #expect(http.sent.count == 1 && http.sent[0].method == "POST" && http.sent[0].url.path == "/sync/history")
-    let show = (jsonBody(http.sent[0])["shows"] as? [[String: Any]])?.first
+    #expect(http.sent.count == 2 && http.sent[0].method == "GET" && http.sent[1].method == "POST" && http.sent[1].url.path == "/sync/history")
+    let show = (jsonBody(http.sent[1])["shows"] as? [[String: Any]])?.first
     let ep = ((show?["seasons"] as? [[String: Any]])?.first?["episodes"] as? [[String: Any]])?.first
     #expect((show?["ids"] as? [String: String]) == ["imdb": "tt14452776"] && ep?["number"] as? Int == 2)
     #expect((ep?["watched_at"] as? String).flatMap(TraktClient.date) == t0)
 }
 
-@Test func traktResendChecksHistoryFirst() async {
+/// Answers like Trakt: history by type with a time window; an IMDb ID in the path is no valid Trakt ID (404).
+private final class HistoryFake: APISending, @unchecked Sendable {
+    var sent: [APIRequest] = []
+    let history: String
+    init(history: String) { self.history = history }
+    func send(_ r: APIRequest) async throws -> (status: Int, data: Data) {
+        sent.append(r)
+        if r.method == "GET" {
+            let path = r.url.path
+            guard path == "/sync/history/movies" || path == "/sync/history/episodes",
+                  r.url.query?.contains("start_at=") == true, r.url.query?.contains("end_at=") == true else { return (404, Data()) }
+            return (200, Data(history.utf8))
+        }
+        return (201, Data("{}".utf8))
+    }
+}
+
+@Test func traktQueuedStopChecksHistoryByWindowEvenOnFirstSend() async {
+    let at = SyncWriteBody.iso(t0.addingTimeInterval(-40))   // the scrobble's server time lies before the queue time
+    let http = HistoryFake(history: #"[{"id":1,"watched_at":"\#(at)","type":"movie","movie":{"ids":{"imdb":"tt1160419"}}}]"#)
+    let t = TraktClient(clientID: "C", clientSecret: "S", http: http)
+    let e = SyncQueue.Entry(action: .scrobbleStop(id: "tt1160419", progress: 0.95, at: t0), createdAt: t0, pending: ["trakt"])
+    #expect(e.attempts == 0)
+    #expect(await t.apply(e, token: SyncToken(accessToken: "A")) == .confirmed)   // already there: no second play
+    #expect(http.sent.count == 1 && http.sent[0].method == "GET" && http.sent[0].url.path == "/sync/history/movies")
+}
+
+@Test func traktHistoryCheckMatchesIMDbAndEpisode() async {
     let at = SyncWriteBody.iso(t0)
-    let http = FakeSender([(200, #"[{"id":1,"watched_at":"\#(at)","type":"movie","movie":{"ids":{"imdb":"tt1160419"}}}]"#),
-                           (200, "[]"), (201, "{}")])
+    // In the window, but another movie and another episode of the show: not there, so it is sent.
+    let other = #"[{"watched_at":"\#(at)","type":"movie","movie":{"ids":{"imdb":"tt0000001"}}},{"watched_at":"\#(at)","type":"episode","episode":{"season":1,"number":3},"show":{"ids":{"imdb":"tt14452776"}}}]"#
+    let http = HistoryFake(history: other)
     let t = TraktClient(clientID: "C", clientSecret: "S", http: http)
     let tok = SyncToken(accessToken: "A")
-    var e = SyncQueue.Entry(action: .scrobbleStop(id: "tt1160419", progress: 0.95, at: t0), createdAt: t0, pending: ["trakt"])
-    e.attempts = 1
-    #expect(await t.apply(e, token: tok) == .confirmed)   // already in the history: no second entry
-    #expect(http.sent.count == 1 && http.sent[0].method == "GET" && http.sent[0].url.path == "/sync/history/movies/tt1160419")
+    let movie = SyncQueue.Entry(action: .scrobbleStop(id: "tt1160419", progress: 0.9, at: t0), createdAt: t0, pending: ["trakt"])
+    #expect(await t.apply(movie, token: tok) == .confirmed)
+    #expect(http.sent.count == 2 && http.sent[1].method == "POST" && http.sent[1].url.path == "/sync/history")
+    let ep = SyncQueue.Entry(action: .scrobbleStop(id: "tt14452776:1:2", progress: 0.9, at: t0), createdAt: t0, pending: ["trakt"])
+    #expect(await t.apply(ep, token: tok) == .confirmed)
+    #expect(http.sent[2].url.path == "/sync/history/episodes" && http.sent[3].method == "POST")
+    let hit = HistoryFake(history: other)
+    let ep3 = SyncQueue.Entry(action: .scrobbleStop(id: "tt14452776:1:3", progress: 0.9, at: t0), createdAt: t0, pending: ["trakt"])
+    #expect(await TraktClient(clientID: "C", clientSecret: "S", http: hit).apply(ep3, token: tok) == .confirmed)
+    #expect(hit.sent.count == 1)   // same show and episode in the window: found, nothing posted
+    // A resent tile "watched" checks the same way and carries watched_at.
+    let w = HistoryFake(history: "[]")
     var q = SyncQueue()
     var c = q.record(.markWatched, item: dune, imdb: dune.id, series: false, services: ["trakt"], now: t0)
     c.attempts = 1
-    #expect(await t.apply(c, token: tok) == .confirmed)
-    #expect(http.sent.count == 3 && http.sent[1].method == "GET" && http.sent[2].url.path == "/sync/history")
-    let movie = (jsonBody(http.sent[2])["movies"] as? [[String: Any]])?.first
-    #expect((movie?["watched_at"] as? String).flatMap(TraktClient.date) == t0)
+    #expect(await TraktClient(clientID: "C", clientSecret: "S", http: w).apply(c, token: tok) == .confirmed)
+    #expect(w.sent.count == 2 && w.sent[0].url.path == "/sync/history/movies" && w.sent[1].url.path == "/sync/history")
+    #expect(((jsonBody(w.sent[1])["movies"] as? [[String: Any]])?.first?["watched_at"] as? String).flatMap(TraktClient.date) == t0)
+}
+
+@Test func syncQueueOfflineAndRepeatedFailuresInOnePassBurnNoAttempts() {
+    var q = SyncQueue()
+    let e = q.enqueue(.scrobbleStop(id: "tt1160419", progress: 0.9, at: t0), services: ["trakt", "simkl"], now: t0)!
+    for _ in 0..<20 { let r = q.fail(e.id, service: "trakt", result: .offline); #expect(!r) }
+    #expect(q.actions[0].attempts == 0 && q.deadLetters.isEmpty)
+    #expect(SyncWriteResult.failure(URLError(.notConnectedToInternet)) == .offline && SyncWriteResult.failure(URLError(.timedOut)) == .offline)
+    #expect(SyncWriteResult.failure(APIError.status(503)) == .retry && SyncWriteResult.failure(APIError.status(422)) == .rejected(422))
+    let a = q.fail(e.id, service: "trakt", result: .retry)
+    let b = q.fail(e.id, service: "simkl", result: .retry, countAttempt: false)   // same pass, second service
+    #expect(!a && !b && q.actions[0].attempts == 1)
+    let c = q.record(.markWatched, item: dune, imdb: dune.id, series: false, services: ["trakt"], now: t0)
+    for _ in 0..<20 { let r = q.failChange(c.id, service: "trakt", createdAt: c.createdAt, result: .offline); #expect(!r) }
+    let d = q.failChange(c.id, service: "trakt", createdAt: c.createdAt, result: .retry, countAttempt: false)
+    #expect(!d && (q.changes[c.id]?.attempts ?? 0) == 0 && q.due(for: "trakt").count == 1)
+}
+
+@Test func progressSaveUsesTheScrobbleWatchedThreshold() {
+    #expect(ProgressBook.finishedThreshold(syncConnected: true) == 0.8)
+    #expect(ProgressBook.finishedThreshold(syncConnected: false) == ProgressBook.finishedAt)
+    let show = MetaPreview(id: "tt14452776", type: "series", name: "The Bear")
+    var b = ProgressBook()
+    b.record(id: "tt14452776:1:2", item: show, season: 1, episode: 2, position: 1500, duration: 1800)
+    b.markFinished(id: "tt14452776:1:2")   // the stop ran first …
+    // … then the player's close-time save at 85 % with the same threshold keeps it watched.
+    b.record(id: "tt14452776:1:2", item: show, season: 1, episode: 2, position: 1530, duration: 1800,
+             finishedAt: ProgressBook.finishedThreshold(syncConnected: true))
+    #expect(b.isWatched("tt14452776:1:2"))
+    b.recordNextUp(id: "tt14452776:1:3", item: show, season: 1, episode: 3)
+    #expect(b.continueWatching().first?.id == "tt14452776:1:3")
+    // Without a service the local 92 % rule stays.
+    var l = ProgressBook()
+    l.record(id: "tt1160419", item: dune, position: 85, duration: 100, finishedAt: ProgressBook.finishedThreshold(syncConnected: false))
+    #expect(!l.isWatched("tt1160419"))
 }
 
 @Test func simklSendsFailedStopAsHistory() async {

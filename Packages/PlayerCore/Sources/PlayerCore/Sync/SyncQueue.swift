@@ -140,6 +140,7 @@ public struct SyncQueue: Codable, Sendable, Equatable {
     /// Is this failed send the end of the line (permanent error, or the last allowed attempt)?
     static func givesUp(_ r: SyncWriteResult, attempts: Int) -> Bool {
         if case .rejected = r { return true }
+        if r == .offline { return false }
         return attempts >= maxAttempts
     }
 
@@ -171,9 +172,9 @@ public struct SyncQueue: Codable, Sendable, Equatable {
 
     /// A send failed. Returns true when the entry was given up for this service (moved to `deadLetters`).
     @discardableResult
-    public mutating func fail(_ id: String, service: String, result: SyncWriteResult) -> Bool {
+    public mutating func fail(_ id: String, service: String, result: SyncWriteResult, countAttempt: Bool = true) -> Bool {
         guard let i = actions.firstIndex(where: { $0.id == id }) else { return false }
-        actions[i].attempts += 1
+        if countAttempt, result != .offline { actions[i].attempts += 1 }
         if case .rejected(let s) = result { actions[i].lastStatus = s } else { actions[i].lastStatus = 0 }
         guard Self.givesUp(result, attempts: actions[i].attempts) else { return false }
         var dead = actions[i]
@@ -186,10 +187,10 @@ public struct SyncQueue: Codable, Sendable, Equatable {
     /// A tile change failed to send. Returns true when it was given up for this service: it then counts as done
     /// there (the local state stays as the user left it) and a copy goes to `deadLetters`.
     @discardableResult
-    public mutating func failChange(_ id: String, service: String, createdAt: Date, result: SyncWriteResult,
+    public mutating func failChange(_ id: String, service: String, createdAt: Date, result: SyncWriteResult, countAttempt: Bool = true,
                                     now: Date = Date()) -> Bool {
         guard var c = changes[id], c.createdAt == createdAt else { return false }
-        let n = (c.attempts ?? 0) + 1
+        let n = (c.attempts ?? 0) + (countAttempt && result != .offline ? 1 : 0)
         c.attempts = n
         changes[id] = c
         guard Self.givesUp(result, attempts: n) else { return false }
@@ -212,7 +213,7 @@ public struct SyncQueue: Codable, Sendable, Equatable {
             guard case .resolveThen(_, let type, let kind) = e.action else { continue }
             let old = changes.values.first { $0.kind == kind && $0.matches(tmdbID) && $0.createdAt == e.createdAt }
             // A newer change in the slot made meanwhile wins (the user changed their mind).
-            if old == nil, changes.values.contains(where: { $0.kind.slot == kind.slot && ($0.matches(imdb) || $0.matches(tmdbID)) }) { continue }
+            if old == nil, changes.values.contains(where: { $0.createdAt > e.createdAt && $0.kind.slot == kind.slot && ($0.matches(imdb) || $0.matches(tmdbID)) }) { continue }
             var c = old ?? SyncChange(kind: kind, itemID: tmdbID, imdb: nil, item: MetaPreview(id: tmdbID, type: type, name: tmdbID),
                                       series: ContentKind.isEpisodic(type: type), createdAt: e.createdAt, pending: [])
             if let old { changes[old.id] = nil }
@@ -341,14 +342,24 @@ public struct SyncQueue: Codable, Sendable, Equatable {
 public enum SyncWriteResult: Sendable, Equatable {
     /// Done (2xx, or 404 when deleting something that is already gone).
     case confirmed
-    /// Try again later (network, 401, 408, 429, 5xx).
+    /// Try again later (401, 408, 429, 5xx).
     case retry
+    /// No answer at all (no network, the request failed on the device): try again later, counts as no attempt.
+    case offline
     /// The service will never accept it (other 4xx); stop asking.
     case rejected(Int)
     /// Deliberately not sent (no safe call for it); counts as done. The text is a German log line.
     case skipped(String)
     /// Sent, but nothing could be changed remotely (no entry or no entry ID): stays pending until it expires.
     case unconfirmed(String)
+
+    /// A thrown send: an HTTP status is classified as usual; a transport error (no network, timeout) is `.offline`;
+    /// anything else (broken answer) is `.retry`.
+    public static func failure(_ error: Error) -> SyncWriteResult {
+        if case APIError.status(let s) = error { return classify(status: s) }
+        if error is URLError { return .offline }
+        return .retry
+    }
 
     public static func classify(status: Int, deleting: Bool = false) -> SyncWriteResult {
         if (200..<300).contains(status) || (deleting && status == 404) { return .confirmed }

@@ -140,9 +140,17 @@ extension AppModel {
         syncQueue = q
         await resolveWaitingTiles()
         guard profile.id == profileID else { return }
+        // Build 2 (2.5): an attempt counts once per entry and pass, however many services fail it.
+        var counted = Set<String>()
         for s in Self.syncServices where isConnected(s) {
             let due = syncQueue.due(for: s)
-            guard !due.isEmpty, let t = await token(s) else { await processActions(service: s, profileID: profileID); continue }
+            guard !due.isEmpty else {
+                await processActions(service: s, profileID: profileID, counted: &counted)
+                guard profile.id == profileID else { return }
+                continue
+            }
+            guard let t = await token(s) else { continue }
+            var reached = true
             for c in due {
                 let r: SyncWriteResult
                 if s == "trakt", let trakt { r = await trakt.apply(c, token: t) }
@@ -163,25 +171,30 @@ extension AppModel {
                 case .rejected(let status):
                     RemoteLog.error("sync", "\(name): vom Dienst abgelehnt (HTTP \(status)), wird nicht erneut gesendet")
                     syncQueue.failChange(c.id, service: s, createdAt: c.createdAt, result: r)
+                case .offline:
+                    RemoteLog.info("sync", "\(name): kein Netz, später erneut (zählt nicht als Versuch)")
                 case .retry:
                     // Build 2 (2.5): after 8 attempts the change is given up, so it blocks the service no longer.
-                    if syncQueue.failChange(c.id, service: s, createdAt: c.createdAt, result: r) {
+                    let count = counted.insert(c.id).inserted
+                    if syncQueue.failChange(c.id, service: s, createdAt: c.createdAt, result: r, countAttempt: count) {
                         RemoteLog.error("sync", "\(name): nach \(SyncQueue.maxAttempts) Versuchen aufgegeben")
                     } else {
                         RemoteLog.info("sync", "\(name): nicht erreicht, später erneut")
                     }
                 }
                 saveSyncQueue()
-                if r == .retry { break }
+                if r == .retry || r == .offline { reached = false; break }
             }
-            await processActions(service: s, profileID: profileID)
+            // The service just failed: its queued actions wait for the next pass.
+            guard reached else { continue }
+            await processActions(service: s, profileID: profileID, counted: &counted)
             guard profile.id == profileID else { return }
         }
         saveSyncQueue()
     }
 
     /// Build 2 (2.5): queued actions besides tile changes (failed watched stops), oldest first.
-    private func processActions(service s: String, profileID: UUID) async {
+    private func processActions(service s: String, profileID: UUID, counted: inout Set<String>) async {
         let due = syncQueue.dueActions(for: s).filter { if case .scrobbleStop = $0.action { true } else { false } }
         guard !due.isEmpty, let t = await token(s) else { return }
         for e in due {
@@ -195,15 +208,18 @@ extension AppModel {
             case .confirmed, .skipped, .unconfirmed:
                 RemoteLog.info("sync", "\(name): bestätigt")
                 syncQueue.finish(e.id, service: s)
+            case .offline:
+                RemoteLog.info("sync", "\(name): kein Netz, später erneut (zählt nicht als Versuch)")
             case .rejected, .retry:
-                if syncQueue.fail(e.id, service: s, result: r) {
+                let count = counted.insert(e.id).inserted
+                if syncQueue.fail(e.id, service: s, result: r, countAttempt: count) {
                     RemoteLog.error("sync", "\(name): aufgegeben (\(r == .retry ? "\(SyncQueue.maxAttempts) Versuche" : "\(r)"))")
                 } else {
                     RemoteLog.info("sync", "\(name): nicht erreicht, später erneut")
                 }
             }
             saveSyncQueue()
-            if r == .retry { return }
+            if r == .retry || r == .offline { return }
         }
     }
 
@@ -222,11 +238,8 @@ extension AppModel {
             if let imdb {
                 syncQueue.resolve(tmdbID: w.tmdb, imdb: imdb, services: services)
                 RemoteLog.info("sync", "\(w.tmdb) → \(imdb): wartende Kachel-Aktion geht an die Dienste")
-            } else {
-                for s in w.entry.pending where syncQueue.fail(w.entry.id, service: s, result: .retry) {
-                    RemoteLog.error("sync", "\(w.tmdb): keine IMDb-ID nach \(SyncQueue.maxAttempts) Versuchen, bleibt lokal")
-                }
             }
+            // Not resolved yet: it keeps waiting without burning attempts (it expires after 30 days).
         }
         saveSyncQueue()
     }
