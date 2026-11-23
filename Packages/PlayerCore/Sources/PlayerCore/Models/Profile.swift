@@ -78,37 +78,43 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     private enum LegacyKeys: String, CodingKey { case subtitlesEnabled }
 
     /// Fehlende Felder (ältere Sicherungen, neue Einstellungen) bekommen Standardwerte statt das Profil zu verwerfen.
+    /// Task 1.2: ein unlesbarer Wert (unbekannter Enum-Fall eines neueren Builds, falscher Typ) fällt ebenfalls auf
+    /// den Standard und steht im `DecodeReport`. Nur ohne lesbare `id` wirft das Profil (`StoredProfiles` überspringt es).
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        let r = DecodeReportBox.of(decoder)
         let d = Profile(name: "")
         id = try c.decode(UUID.self, forKey: .id)
-        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Profil"
-        language = try c.decodeIfPresent(AppLanguage.self, forKey: .language) ?? d.language
-        audioPriority = try c.decodeIfPresent([String].self, forKey: .audioPriority) ?? d.audioPriority
+        name = c.decodeLenient(String.self, forKey: .name, default: "Profil", report: r)
+        language = c.decodeLenient(AppLanguage.self, forKey: .language, default: d.language, report: r)
+        audioPriority = c.decodeLenient([String].self, forKey: .audioPriority, default: d.audioPriority, report: r)
         if let mode = try? c.decodeIfPresent(SubtitleMode.self, forKey: .subtitleMode) {
             subtitleMode = mode
         } else {
-            let legacy = try decoder.container(keyedBy: LegacyKeys.self)
-            let wasOn = (try? legacy.decodeIfPresent(Bool.self, forKey: .subtitlesEnabled)) ?? nil
+            if c.contains(.subtitleMode), (try? c.decodeNil(forKey: .subtitleMode)) != true {
+                r.note(c.codingPath + [CodingKeys.subtitleMode])
+            }
+            let legacy = try? decoder.container(keyedBy: LegacyKeys.self)
+            let wasOn = (try? legacy?.decodeIfPresent(Bool.self, forKey: .subtitlesEnabled)) ?? nil
             subtitleMode = wasOn == true ? .always : d.subtitleMode
         }
-        subtitleLanguage = try c.decodeIfPresent(String.self, forKey: .subtitleLanguage) ?? d.subtitleLanguage
-        progressSource = try c.decodeIfPresent(ProgressSource.self, forKey: .progressSource) ?? d.progressSource
-        addons = try c.decodeIfPresent([InstalledAddon].self, forKey: .addons) ?? []
-        collections = try c.decodeIfPresent([MediaCollection].self, forKey: .collections) ?? []
-        home = try c.decodeIfPresent(HomeLayout.self, forKey: .home) ?? d.home
-        apiKeys = try c.decodeIfPresent([String: String].self, forKey: .apiKeys) ?? [:]
-        autoplayNext = try c.decodeIfPresent(Bool.self, forKey: .autoplayNext) ?? d.autoplayNext
-        stillWatchingAfter = try c.decodeIfPresent(Int.self, forKey: .stillWatchingAfter) ?? d.stillWatchingAfter
-        syncTokens = try c.decodeIfPresent([String: SyncToken].self, forKey: .syncTokens) ?? [:]
-        appearance = try c.decodeIfPresent(Appearance.self, forKey: .appearance) ?? d.appearance
-        diskCache = try c.decodeIfPresent(DiskCacheSettings.self, forKey: .diskCache) ?? d.diskCache
-        addonTimeout = try c.decodeIfPresent(Double.self, forKey: .addonTimeout) ?? d.addonTimeout
-        sources = (try? c.decodeIfPresent(SourceSettings.self, forKey: .sources)) ?? nil ?? d.sources
-        player = (try? c.decodeIfPresent(PlayerComfortSettings.self, forKey: .player)) ?? nil ?? d.player
-        hiddenRows = (try? c.decodeIfPresent([HomeRow].self, forKey: .hiddenRows)) ?? nil ?? []
-        subtitleStyle = (try? c.decodeIfPresent(SubtitleStyle.self, forKey: .subtitleStyle)) ?? nil ?? d.subtitleStyle
-        skip = (try? c.decodeIfPresent(SkipSettings.self, forKey: .skip)) ?? nil ?? d.skip
+        subtitleLanguage = c.decodeLenient(String.self, forKey: .subtitleLanguage, default: d.subtitleLanguage, report: r)
+        progressSource = c.decodeLenient(ProgressSource.self, forKey: .progressSource, default: d.progressSource, report: r)
+        addons = c.decodeLenient([InstalledAddon].self, forKey: .addons, default: [], report: r)
+        collections = c.decodeLenient([MediaCollection].self, forKey: .collections, default: [], report: r)
+        home = c.decodeLenient(HomeLayout.self, forKey: .home, default: d.home, report: r)
+        apiKeys = c.decodeLenient([String: String].self, forKey: .apiKeys, default: [:], report: r)
+        autoplayNext = c.decodeLenient(Bool.self, forKey: .autoplayNext, default: d.autoplayNext, report: r)
+        stillWatchingAfter = c.decodeLenient(Int.self, forKey: .stillWatchingAfter, default: d.stillWatchingAfter, report: r)
+        syncTokens = c.decodeLenient([String: SyncToken].self, forKey: .syncTokens, default: [:], report: r)
+        appearance = c.decodeLenient(Appearance.self, forKey: .appearance, default: d.appearance, report: r)
+        diskCache = c.decodeLenient(DiskCacheSettings.self, forKey: .diskCache, default: d.diskCache, report: r)
+        addonTimeout = c.decodeLenient(Double.self, forKey: .addonTimeout, default: d.addonTimeout, report: r)
+        sources = c.decodeLenient(SourceSettings.self, forKey: .sources, default: d.sources, report: r)
+        player = c.decodeLenient(PlayerComfortSettings.self, forKey: .player, default: d.player, report: r)
+        hiddenRows = c.decodeLenient([HomeRow].self, forKey: .hiddenRows, default: [], report: r)
+        subtitleStyle = c.decodeLenient(SubtitleStyle.self, forKey: .subtitleStyle, default: d.subtitleStyle, report: r)
+        skip = c.decodeLenient(SkipSettings.self, forKey: .skip, default: d.skip, report: r)
     }
 
     public static func makeDefault(name: String = "Ich") -> Profile {

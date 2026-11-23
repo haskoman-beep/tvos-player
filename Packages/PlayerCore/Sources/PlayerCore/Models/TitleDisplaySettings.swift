@@ -30,10 +30,11 @@ public struct TitleDisplaySettings: Codable, Sendable, Hashable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        let r = DecodeReportBox.of(decoder)
         let d = TitleDisplaySettings()
-        posterBadges = (try? c.decodeIfPresent(PosterBadgePlacement.self, forKey: .posterBadges)) ?? d.posterBadges
-        ratingSources = try c.decodeIfPresent([String].self, forKey: .ratingSources) ?? d.ratingSources
-        addonImages = try c.decodeIfPresent(Bool.self, forKey: .addonImages) ?? d.addonImages
+        posterBadges = c.decodeLenient(PosterBadgePlacement.self, forKey: .posterBadges, default: d.posterBadges, report: r)
+        ratingSources = c.decodeLenient([String].self, forKey: .ratingSources, default: d.ratingSources, report: r)
+        addonImages = c.decodeLenient(Bool.self, forKey: .addonImages, default: d.addonImages, report: r)
     }
 
     /// Ob eine Bewertungsquelle gezeigt wird.

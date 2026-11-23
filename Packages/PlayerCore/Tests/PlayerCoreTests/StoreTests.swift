@@ -13,11 +13,11 @@ func tempDir() -> URL {
     var s = StoredProfiles.makeDefault()
     s.profiles[0].name = "Test"
     try store.save(s)
-    #expect(store.load() == s)
+    #expect(store.load().profiles == s)
 }
 
 @Test func missingFileGivesDefault() {
-    let s = ProfileStore(directory: tempDir()).load()
+    let s = ProfileStore(directory: tempDir()).load().profiles
     #expect(s.profiles.count == 1 && s.profiles[0].name == "Ich")
     #expect(s.active?.id == s.profiles[0].id)
 }
@@ -25,7 +25,7 @@ func tempDir() -> URL {
 @Test func corruptFileFallsBackAndKeepsBackup() throws {
     let store = ProfileStore(directory: tempDir())
     try Data("kaputt{".utf8).write(to: store.fileURL)
-    let s = store.load()
+    let s = store.load().profiles
     #expect(s.profiles.count == 1)
     #expect(try String(contentsOf: store.backupURL, encoding: .utf8) == "kaputt{")
 }

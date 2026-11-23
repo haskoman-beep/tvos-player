@@ -196,7 +196,7 @@ private func blockedDir() -> FileBlobStorage {
     let ps = ProfileStore(storage: s)
     var p = StoredProfiles.makeDefault(); p.profiles[0].name = "Gestuft"
     try ps.save(p)
-    #expect(ps.load() == p)
+    #expect(ps.load().profiles == p)
     let prog = ProgressStore(storage: s)
     let id = UUID()
     var book = ProgressBook()

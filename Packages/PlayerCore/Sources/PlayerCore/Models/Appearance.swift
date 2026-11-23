@@ -54,20 +54,21 @@ public struct Appearance: Codable, Sendable, Hashable {
         case navigation, accent, cardSize, heroEnabled, heroRowID, expandPosters, prefetchStreams, badges, titles, tileAnimationSound
     }
 
-    /// Fehlende Felder bekommen Standardwerte.
+    /// Fehlende oder unlesbare Felder bekommen Standardwerte (unlesbare stehen im `DecodeReport`).
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        let r = DecodeReportBox.of(decoder)
         let d = Appearance()
-        navigation = try c.decodeIfPresent(NavigationStyle.self, forKey: .navigation) ?? d.navigation
-        accent = try c.decodeIfPresent(AccentChoice.self, forKey: .accent) ?? d.accent
-        cardSize = try c.decodeIfPresent(CardSize.self, forKey: .cardSize) ?? d.cardSize
-        heroEnabled = try c.decodeIfPresent(Bool.self, forKey: .heroEnabled) ?? d.heroEnabled
-        heroRowID = try c.decodeIfPresent(UUID.self, forKey: .heroRowID)
-        expandPosters = try c.decodeIfPresent(Bool.self, forKey: .expandPosters) ?? d.expandPosters
-        prefetchStreams = try c.decodeIfPresent(Bool.self, forKey: .prefetchStreams) ?? d.prefetchStreams
-        badges = try c.decodeIfPresent(BadgeSettings.self, forKey: .badges) ?? d.badges
-        titles = try c.decodeIfPresent(TitleDisplaySettings.self, forKey: .titles) ?? d.titles
-        tileAnimationSound = try c.decodeIfPresent(Bool.self, forKey: .tileAnimationSound) ?? d.tileAnimationSound
+        navigation = c.decodeLenient(NavigationStyle.self, forKey: .navigation, default: d.navigation, report: r)
+        accent = c.decodeLenient(AccentChoice.self, forKey: .accent, default: d.accent, report: r)
+        cardSize = c.decodeLenient(CardSize.self, forKey: .cardSize, default: d.cardSize, report: r)
+        heroEnabled = c.decodeLenient(Bool.self, forKey: .heroEnabled, default: d.heroEnabled, report: r)
+        heroRowID = c.decodeLenient(UUID?.self, forKey: .heroRowID, default: nil, report: r)
+        expandPosters = c.decodeLenient(Bool.self, forKey: .expandPosters, default: d.expandPosters, report: r)
+        prefetchStreams = c.decodeLenient(Bool.self, forKey: .prefetchStreams, default: d.prefetchStreams, report: r)
+        badges = c.decodeLenient(BadgeSettings.self, forKey: .badges, default: d.badges, report: r)
+        titles = c.decodeLenient(TitleDisplaySettings.self, forKey: .titles, default: d.titles, report: r)
+        tileAnimationSound = c.decodeLenient(Bool.self, forKey: .tileAnimationSound, default: d.tileAnimationSound, report: r)
     }
 }
 

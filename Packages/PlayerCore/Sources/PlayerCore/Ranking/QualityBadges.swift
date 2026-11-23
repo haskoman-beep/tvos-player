@@ -57,18 +57,19 @@ public struct BadgeSettings: Codable, Sendable, Hashable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        let r = DecodeReportBox.of(decoder)
         let d = BadgeSettings()
-        func b(_ k: CodingKeys, _ def: Bool) throws -> Bool { try c.decodeIfPresent(Bool.self, forKey: k) ?? def }
-        resolution = try b(.resolution, d.resolution)
-        hdr = try b(.hdr, d.hdr)
-        source = try b(.source, d.source)
-        videoCodec = try b(.videoCodec, d.videoCodec)
-        audio = try b(.audio, d.audio)
-        channels = try b(.channels, d.channels)
-        languages = try b(.languages, d.languages)
-        size = try b(.size, d.size)
-        cacheStatus = try b(.cacheStatus, d.cacheStatus)
-        style = try c.decodeIfPresent(BadgeStyle.self, forKey: .style) ?? d.style
+        func b(_ k: CodingKeys, _ def: Bool) -> Bool { c.decodeLenient(Bool.self, forKey: k, default: def, report: r) }
+        resolution = b(.resolution, d.resolution)
+        hdr = b(.hdr, d.hdr)
+        source = b(.source, d.source)
+        videoCodec = b(.videoCodec, d.videoCodec)
+        audio = b(.audio, d.audio)
+        channels = b(.channels, d.channels)
+        languages = b(.languages, d.languages)
+        size = b(.size, d.size)
+        cacheStatus = b(.cacheStatus, d.cacheStatus)
+        style = c.decodeLenient(BadgeStyle.self, forKey: .style, default: d.style, report: r)
     }
 
     public func shows(_ t: BadgeType) -> Bool {

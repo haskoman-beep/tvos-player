@@ -48,5 +48,24 @@ public struct HomeRow: Codable, Sendable, Hashable, Identifiable {
 
 public struct HomeLayout: Codable, Sendable, Hashable {
     public var rows: [HomeRow]
+    /// Task 1.2: rows this build cannot read (unknown `style`, `SourceKind` or other content from a newer build),
+    /// kept as raw JSON in their original order. Not shown; `encode` writes them back unchanged after `rows`.
+    public var unknownRows: [JSONValue] = []
     public init(rows: [HomeRow] = []) { self.rows = rows }
+
+    enum CodingKeys: String, CodingKey { case rows }
+
+    /// Same format as before (`{"rows":[…]}`); an unreadable row is set aside instead of failing the layout.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let items = try c.decodeIfPresent([Salvaged<HomeRow>].self, forKey: .rows) ?? []
+        (rows, unknownRows) = Salvaged.split(items)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        var list = c.nestedUnkeyedContainer(forKey: .rows)
+        for row in rows { try list.encode(row) }
+        for raw in unknownRows { try list.encode(raw) }
+    }
 }

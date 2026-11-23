@@ -67,12 +67,50 @@ public struct Folder: Codable, Sendable, Hashable, Identifiable {
     public var focusVideo: String?
     /// Wave F-o: video for the large hero area (`heroVideoUrl`), kept from imports; not played yet.
     public var heroVideo: String?
+    /// Task 1.2: sources this build cannot read (unknown `SourceKind` or `MediaType` from a newer build), kept as raw
+    /// JSON in their original order. Not shown; `encode` writes them back unchanged after `sources`.
+    public var unknownSources: [JSONValue] = []
 
     public init(id: String, title: String, coverImage: String? = nil, logo: String? = nil, backdrop: String? = nil,
                 sources: [CatalogSource], hideTitle: Bool? = nil, focusGif: String? = nil,
                 focusVideo: String? = nil, heroVideo: String? = nil) {
         self.id = id; self.title = title; self.coverImage = coverImage; self.logo = logo; self.backdrop = backdrop; self.sources = sources
         self.hideTitle = hideTitle; self.focusGif = focusGif; self.focusVideo = focusVideo; self.heroVideo = heroVideo
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, coverImage, logo, backdrop, sources, hideTitle, focusGif, focusVideo, heroVideo
+    }
+
+    /// Same keys and format as the former synthesized coding; an unreadable source is set aside, not fatal.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        coverImage = try c.decodeIfPresent(String.self, forKey: .coverImage)
+        logo = try c.decodeIfPresent(String.self, forKey: .logo)
+        backdrop = try c.decodeIfPresent(String.self, forKey: .backdrop)
+        (sources, unknownSources) = Salvaged.split(try c.decode([Salvaged<CatalogSource>].self, forKey: .sources))
+        hideTitle = try c.decodeIfPresent(Bool.self, forKey: .hideTitle)
+        focusGif = try c.decodeIfPresent(String.self, forKey: .focusGif)
+        focusVideo = try c.decodeIfPresent(String.self, forKey: .focusVideo)
+        heroVideo = try c.decodeIfPresent(String.self, forKey: .heroVideo)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(title, forKey: .title)
+        try c.encodeIfPresent(coverImage, forKey: .coverImage)
+        try c.encodeIfPresent(logo, forKey: .logo)
+        try c.encodeIfPresent(backdrop, forKey: .backdrop)
+        var list = c.nestedUnkeyedContainer(forKey: .sources)
+        for source in sources { try list.encode(source) }
+        for raw in unknownSources { try list.encode(raw) }
+        try c.encodeIfPresent(hideTitle, forKey: .hideTitle)
+        try c.encodeIfPresent(focusGif, forKey: .focusGif)
+        try c.encodeIfPresent(focusVideo, forKey: .focusVideo)
+        try c.encodeIfPresent(heroVideo, forKey: .heroVideo)
     }
 
     /// Titel über dem Kachelbild zeigen: ohne Bild immer, mit Bild nur bei `hideTitle == false`.

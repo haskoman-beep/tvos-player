@@ -1,0 +1,90 @@
+{
+  "schemaVersion" : 1,
+  "activeProfileID" : "00000000-0000-4000-8000-000000000001",
+  "futureTopLevel" : { "syncedAt" : "2099-01-01T00:00:00Z" },
+  "profiles" : [
+    {
+      "id" : "00000000-0000-4000-8000-000000000001",
+      "name" : "Testprofil A",
+      "language" : "fr",
+      "audioPriority" : [ "en", "orig" ],
+      "subtitleMode" : "sometimes",
+      "subtitleLanguage" : "en",
+      "progressSource" : "letterboxd",
+      "addons" : [ ],
+      "apiKeys" : { "tmdb" : "FAKE-KEY-0000" },
+      "autoplayNext" : false,
+      "stillWatchingAfter" : 2,
+      "syncTokens" : { },
+      "futureProfileField" : 42,
+      "appearance" : {
+        "navigation" : "bottom",
+        "accent" : "gold",
+        "cardSize" : "huge",
+        "heroEnabled" : false,
+        "expandPosters" : false,
+        "prefetchStreams" : false,
+        "tileAnimationSound" : true,
+        "futureAppearance" : [ 1, 2 ],
+        "badges" : { "style" : "hologram", "hdr" : false, "futureBadge" : true },
+        "titles" : { "posterBadges" : "left", "ratingSources" : [ "imdb" ], "addonImages" : false, "futureTitle" : "x" }
+      },
+      "home" : {
+        "futureHomeField" : "ignored",
+        "rows" : [
+          {
+            "id" : "00000000-0000-4000-8000-0000000000a1",
+            "content" : { "list" : { "_0" : { "id" : "builtin.continue", "title" : "Weiterschauen",
+                                              "kind" : { "continueWatching" : { } }, "mediaType" : "both" } } },
+            "style" : "landscape",
+            "futureRowField" : true
+          },
+          {
+            "id" : "00000000-0000-4000-8000-0000000000a2",
+            "content" : { "list" : { "_0" : { "id" : "builtin.watchlist", "title" : "Merkliste",
+                                              "kind" : { "watchlist" : { } }, "mediaType" : "both" } } },
+            "style" : "mosaic",
+            "tiles" : [ 1, 2.5, -3, null, "x", { "nested" : [ true, false ] } ]
+          },
+          {
+            "id" : "00000000-0000-4000-8000-0000000000a3",
+            "content" : { "list" : { "_0" : { "id" : "future.row", "title" : "Zukunft",
+                                              "kind" : { "futureKind" : { "ref" : "fake-ref-1" } }, "mediaType" : "movie" } } },
+            "style" : "poster"
+          },
+          {
+            "id" : "00000000-0000-4000-8000-0000000000a4",
+            "content" : { "collection" : { "id" : "c1" } },
+            "style" : "collectionTiles"
+          }
+        ]
+      },
+      "collections" : [
+        {
+          "id" : "c1",
+          "title" : "Testsammlung",
+          "futureCollectionField" : "x",
+          "folders" : [
+            {
+              "id" : "f1",
+              "title" : "Ordner A",
+              "futureFolderField" : 7,
+              "sources" : [
+                { "id" : "s1", "title" : "Liste A", "kind" : { "tmdbList" : { "id" : "1000" } }, "mediaType" : "movie" },
+                { "id" : "s2", "title" : "Liste B", "kind" : { "futureSource" : { "id" : "fake-2" } }, "mediaType" : "series" },
+                { "id" : "s3", "title" : "Liste C", "kind" : { "watchlist" : { } }, "mediaType" : "comics" }
+              ]
+            }
+          ]
+        }
+      ],
+      "player" : { "futurePlayer" : true }
+    },
+    {
+      "id" : "00000000-0000-4000-8000-000000000002",
+      "name" : "Testprofil B",
+      "appearance" : { "accent" : "purple" },
+      "home" : { "rows" : [ ] }
+    }
+  ]
+}

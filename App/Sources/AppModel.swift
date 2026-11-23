@@ -55,7 +55,7 @@ final class AppModel: ObservableObject {
         }
         if let e = dev.writeError { RemoteLog.error("speicher", "Bild & Ton: Gerätewerte nicht gespeichert: \(e)") }
         store = ProfileStore(storage: storage)
-        stored = store.load()
+        stored = store.load().profiles
         progressStore = ProgressStore(storage: storage)
         progress = progressStore.load(profile: profile.id)
         CollectionLinkStore.shared.attach(storage)   // wave F-o round 4: import blobs in the size-bounded storage
