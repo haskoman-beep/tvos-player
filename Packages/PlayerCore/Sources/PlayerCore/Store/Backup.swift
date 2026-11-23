@@ -53,8 +53,7 @@ public struct Backup: Codable, Sendable, Equatable {
 
     public static func decodeReporting(_ data: Data) throws -> (backup: Backup, report: DecodeReport) {
         let (b, report) = try JSONDecoder().decodeReporting(Backup.self, from: data)
-        if b.profiles.schemaVersion > StoredProfiles.currentSchema { throw StoreError.newerSchema(b.profiles.schemaVersion) }
-        if b.profiles.profiles.isEmpty { throw StoreError.empty }
+        try ProfileStore.validate(b.profiles)
         return (b, report)
     }
 
@@ -158,5 +157,74 @@ extension TieredBlobStorage: BlobNames {
     public func blobNames() -> [String] {
         let keys = defaults.keys(withPrefix: Self.prefix).map { String($0.dropFirst(Self.prefix.count)) }
         return Array(Set(keys + directories.flatMap { $0.blobNames() })).sorted()
+    }
+}
+
+// MARK: Fix round 1: plain export without secrets
+
+extension AddonAccess {
+    /// A user or addon URL that may go into the plain export unchanged: the Task 1.4 rule
+    /// (`publicManifestURL`) leaves it as it is. Anything with user info, query, fragment or a configuration-like path
+    /// segment is not safe.
+    public static func isPublic(_ raw: String) -> Bool {
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !t.isEmpty && publicManifestURL(t) == t
+    }
+}
+
+extension Backup {
+    /// Fix round 1: the parts of the plain export (`GET /export`) without secrets. Profiles go through
+    /// `StoredProfiles.withoutSecrets` (Task 1.4); progress images whose address is not public are left out (the meta
+    /// comes back from the addon), addon addresses of the last sources are scrubbed like the addon list (an entry
+    /// without a readable host is left out); custom kit sources and collection links whose address is not public are
+    /// left out (a kit source with its rows). The remote log receiver is not exported. The sealed backup keeps all.
+    public func withoutSecrets() -> Backup {
+        var b = self
+        b.profiles = profiles.withoutSecrets()
+        b.progress = progress.mapValues(Self.scrubbed)
+        b.fusionKits = fusionKits.compactMapValues(Self.scrubbedKit)
+        b.collectionLinks = collectionLinks.compactMapValues(Self.scrubbedLinks)
+        b.device = device.map { DeviceSettings(audioShaping: $0.audioShaping, displayMode: $0.displayMode) }
+        return b
+    }
+
+    static func publicOrNil(_ s: String?) -> String? { s.flatMap { AddonAccess.isPublic($0) ? $0 : nil } }
+
+    static func scrubbed(_ book: ProgressBook) -> ProgressBook {
+        var b = book
+        for (k, var e) in b.entries {
+            e.item.poster = publicOrNil(e.item.poster)
+            e.item.background = publicOrNil(e.item.background)
+            e.item.logo = publicOrNil(e.item.logo)
+            b.entries[k] = e
+        }
+        if let src = b.sources {
+            b.sources = src.compactMapValues { s in
+                guard s.addon.contains("://") else { return s }
+                var s = s
+                s.addon = AddonAccess.publicManifestURL(s.addon)
+                return s.addon.isEmpty ? nil : s
+            }
+        }
+        return b
+    }
+
+    /// Kit settings bytes → same settings without custom sources whose URL is not public; unreadable bytes are left out.
+    static func scrubbedKit(_ data: Data) -> Data? {
+        guard var k = try? JSONDecoder().decode(FusionKitSettings.self, from: data) else { return nil }
+        for s in k.sources where s.custom && !AddonAccess.isPublic(s.url) { k.removeSource(s.id) }
+        return try? JSONEncoder().encode(k)
+    }
+
+    /// Link list bytes (array of objects with an optional `url`) → entries with a public or no URL (pasted code);
+    /// unreadable bytes are left out. Other keys of an entry stay as they are.
+    static func scrubbedLinks(_ data: Data) -> Data? {
+        guard let list = try? JSONSerialization.jsonObject(with: data) as? [Any] else { return nil }
+        let kept = list.filter { e in
+            guard let o = e as? [String: Any] else { return false }
+            guard let u = o["url"] else { return true }
+            return (u as? String).map(AddonAccess.isPublic) ?? false
+        }
+        return try? JSONSerialization.data(withJSONObject: kept, options: [.sortedKeys])
     }
 }

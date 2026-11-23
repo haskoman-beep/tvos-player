@@ -82,8 +82,10 @@ final class CollectionLinkStore: ObservableObject {
     // MARK: Profile
 
     /// Key of round 2/3: whole entries with pack and media snapshot (migrated once, then removed).
-    private func legacyKey(_ id: UUID) -> String { "collectionlinks.\(id.uuidString)" }
-    private func key(_ id: UUID) -> String { "collectionlinkmeta.\(id.uuidString)" }
+    private func legacyKey(_ id: UUID) -> String { Self.legacyLinksKey(id) }
+    private func key(_ id: UUID) -> String { Self.linksKey(id) }
+    nonisolated static func legacyLinksKey(_ id: UUID) -> String { "collectionlinks.\(id.uuidString)" }
+    nonisolated static func linksKey(_ id: UUID) -> String { "collectionlinkmeta.\(id.uuidString)" }
     /// File-only blob: media addresses of the last import of a link (`TieredBlobStorage.fileOnlyPrefix`).
     private func mediaFile(_ profile: UUID, _ id: String) -> String {
         "\(TieredBlobStorage.fileOnlyPrefix)media-\(profile.uuidString)-\(id).json"
@@ -93,12 +95,12 @@ final class CollectionLinkStore: ObservableObject {
 
     /// Task 2.4: stored link list of a profile (backup) and writing it back (restore, delete). Packs and media
     /// snapshots are blobs `linkpack-<profile>-<id>.json` / `media-<profile>-<id>.json` and are not in the backup.
-    nonisolated static func storedLinks(_ id: UUID) -> Data? { UserDefaults.standard.data(forKey: "collectionlinkmeta.\(id.uuidString)") }
+    nonisolated static func storedLinks(_ id: UUID) -> Data? { UserDefaults.standard.data(forKey: linksKey(id)) }
     nonisolated static func setStoredLinks(_ d: Data?, for id: UUID) {
-        let k = "collectionlinkmeta.\(id.uuidString)"
+        let k = linksKey(id)
         if let d { UserDefaults.standard.set(d, forKey: k) } else {
             UserDefaults.standard.removeObject(forKey: k)
-            UserDefaults.standard.removeObject(forKey: "collectionlinks.\(id.uuidString)")
+            UserDefaults.standard.removeObject(forKey: legacyLinksKey(id))
         }
     }
 

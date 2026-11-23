@@ -92,11 +92,48 @@ private func kitRow(_ id: String) -> HomeRow { HomeRow(content: .collection(id: 
     let storage = TieredBlobStorage(defaults: mem, directories: [files])
     let gone = UUID(), kept = UUID()
     let mine = ["progress-\(gone.uuidString).json", "progress-\(gone.uuidString).json.bak", "catalog-\(gone.uuidString).json",
-                "linkpack-\(gone.uuidString)-x1.json", "media-\(gone.uuidString)-x2.json"]
+                "linkpack-\(gone.uuidString)-x1.json", "\(TieredBlobStorage.fileOnlyPrefix)media-\(gone.uuidString)-x2.json"]
     let others = ["progress-\(kept.uuidString).json", "profiles.json", "device-settings.json"]
     for n in mine + others { try storage.write(n, Data("{}".utf8)) }
     let removed = ProfileBlocks.remove(profile: gone, from: storage)
     #expect(Set(removed) == Set(mine))
     for n in mine { #expect(storage.read(n) == nil) }
     for n in others { #expect(storage.read(n) != nil) }
+}
+
+@Test func plainBackupHoldsNoSecretURLs() throws {
+    let secret = "GEHEIM0123456789abcdefXYZ"
+    var s = StoredProfiles.makeDefault()
+    let id = try #require(s.activeProfileID)
+    s.profiles[0].apiKeys = ["tmdb": secret]
+    var book = ProgressBook()
+    let item = MetaPreview(id: "tt1", type: "movie", name: "Film", poster: "https://img.example.org/p.jpg?apikey=\(secret)",
+                           background: "https://img.example.org/b.jpg", logo: "https://u:\(secret)@img.example.org/l.png")
+    book.entries["tt1"] = WatchProgress(id: "tt1", item: item, position: 1, duration: 10, updated: Date(timeIntervalSince1970: 0))
+    let kit = FusionKitSettings(enabled: true, selected: ["fusion.mine.a", "fusion.pub.b"], sources: [
+        FusionKitSource(id: "mine", title: "Mein Kit", url: "https://kits.example.org/\(secret)/kit.json", custom: true),
+        FusionKitSource(id: "pub", title: "Kit", url: "https://kits.example.org/kit.json", custom: true)])
+    let links: [[String: Any]] = [["id": "a", "url": "https://lists.example.org/x?token=\(secret)", "format": "f", "summary": "s", "at": 0],
+                                  ["id": "b", "url": "https://lists.example.org/list.json", "format": "f", "summary": "s", "at": 0],
+                                  ["id": "c", "format": "f", "summary": "code", "at": 0]]
+    let full = Backup(profiles: s, progress: [id: book], fusionKits: [id: try JSONEncoder().encode(kit)],
+                      collectionLinks: [id: try JSONSerialization.data(withJSONObject: links)],
+                      device: DeviceSettings(remoteLogEnabled: true, remoteLogReceiver: "Empfaenger"))
+    // Sealed backup keeps everything.
+    #expect(String(decoding: try full.encoded(), as: UTF8.self).contains(secret))
+
+    let plainData = try full.withoutSecrets().encoded()
+    let text = String(decoding: plainData, as: UTF8.self)
+    #expect(!text.contains(secret))
+    let plain = try Backup.decode(plainData)
+    for d in Array(plain.fusionKits.values) + Array(plain.collectionLinks.values) { #expect(!String(decoding: d, as: UTF8.self).contains(secret)) }
+    let e = try #require(plain.progress[id]?.entries["tt1"])
+    #expect(e.item.poster == nil && e.item.logo == nil && e.item.background == "https://img.example.org/b.jpg")
+    let kitData = try #require(plain.fusionKits[id])
+    let k = try JSONDecoder().decode(FusionKitSettings.self, from: kitData)
+    #expect(k.sources.map(\.id) == ["pub"] && k.selected == ["fusion.pub.b"])
+    let linkData = try #require(plain.collectionLinks[id])
+    let l = try #require(try JSONSerialization.jsonObject(with: linkData) as? [[String: Any]])
+    #expect(l.compactMap { $0["id"] as? String } == ["b", "c"])
+    #expect(plain.device?.remoteLogReceiver == nil && plain.device?.remoteLogEnabled == false)
 }

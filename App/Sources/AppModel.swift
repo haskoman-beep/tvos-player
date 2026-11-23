@@ -681,10 +681,10 @@ final class AppModel: ObservableObject {
 
     /// Task 2.4: the complete backup; without secrets the profiles go through `withoutSecrets` (Task 1.4).
     func makeBackup(includeSecrets: Bool) throws -> Data {
-        let s = includeSecrets ? stored : stored.withoutSecrets()
-        // The remote log receiver goes only into the sealed backup (restore keeps the TV's own log setting anyway).
-        let dev = includeSecrets ? device : DeviceSettings(audioShaping: device.audioShaping, displayMode: device.displayMode)
-        var b = Backup(profiles: s, device: dev)
+        // Fix round 1: the plain export goes through `Backup.withoutSecrets` (profiles, URLs in progress, custom kit
+        // sources and links scrubbed or left out, no remote log receiver); the sealed backup keeps everything.
+        let s = stored
+        var b = Backup(profiles: s, device: device)
         for p in s.profiles {
             let book: ProgressBook? = p.id == profile.id ? progress : progressStore.load(profile: p.id)
             if let book, !book.entries.isEmpty {
@@ -693,7 +693,7 @@ final class AppModel: ObservableObject {
             if let k = FusionKitStore.storedSettings(p.id) { b.fusionKits[p.id] = k }
             if let l = CollectionLinkStore.storedLinks(p.id) { b.collectionLinks[p.id] = l }
         }
-        return try b.encoded()
+        return try (includeSecrets ? b : b.withoutSecrets()).encoded()
     }
 
     /// Task 2.4: everything cached for the old profile set is dropped after a restore (Build 3 replaces this with

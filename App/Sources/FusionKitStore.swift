@@ -208,7 +208,8 @@ final class FusionKitStore: ObservableObject {
         sync()
     }
 
-    private func settingsKey(_ id: UUID) -> String { "fusionkit.\(id.uuidString)" }
+    private func settingsKey(_ id: UUID) -> String { Self.defaultsKey(id) }
+    nonisolated static func defaultsKey(_ id: UUID) -> String { "fusionkit.\(id.uuidString)" }
 
     private func persist() {
         guard let id = settingsProfile, let d = try? JSONEncoder().encode(settings) else { return }
@@ -217,10 +218,10 @@ final class FusionKitStore: ObservableObject {
     }
 
     /// Task 2.4: stored kit settings of a profile (backup) and writing them back (restore, delete).
-    nonisolated static func storedSettings(_ id: UUID) -> Data? { UserDefaults.standard.data(forKey: "fusionkit.\(id.uuidString)") }
+    nonisolated static func storedSettings(_ id: UUID) -> Data? { UserDefaults.standard.data(forKey: defaultsKey(id)) }
     nonisolated static func setStoredSettings(_ d: Data?, for id: UUID) {
-        if let d { UserDefaults.standard.set(d, forKey: "fusionkit.\(id.uuidString)") }
-        else { UserDefaults.standard.removeObject(forKey: "fusionkit.\(id.uuidString)") }
+        if let d { UserDefaults.standard.set(d, forKey: defaultsKey(id)) }
+        else { UserDefaults.standard.removeObject(forKey: defaultsKey(id)) }
     }
 
     /// Task 2.4: after a restore the settings of the active profile are read again.
