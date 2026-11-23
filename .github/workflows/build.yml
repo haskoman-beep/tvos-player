@@ -20,7 +20,9 @@ jobs:
     # PlayerCore tests on Linux in the same Swift image as the local runs; "build" (and so every release) waits for it.
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    container: swift:6.2
+    # Pinned to the multi-arch index digest of swift:6.2 (6.2.4, 2026-11-20) like the actions below; local runs use
+    # the same tag. Update tag and digest together.
+    container: swift:6.2@sha256:576698469fd3cf95b2abdeb91a7571d3afcd91806c87283dd01d564803554c0f
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -212,9 +214,11 @@ jobs:
               echo "Release already has build $prev - nothing to do"
               exit 0
             fi
-            # Text first, then the package: the build number in the text never lags behind the package.
-            gh release edit app-main --title "$title" --notes "$notes"
+            # Package first, then the text: a failed upload never advertises build N with the new hash. If the edit
+            # fails after the upload, the old text stays and its hash no longer matches, so the app shows a mismatch
+            # instead of a wrong "verified" build; the next run repairs it.
             gh release upload app-main Player.ipa --clobber
+            gh release edit app-main --title "$title" --notes "$notes"
             echo "move_tag=true" >> "$GITHUB_OUTPUT"
           else
             gh release create app-main Player.ipa --target "$GITHUB_SHA" --title "$title" --notes "$notes" --latest=false

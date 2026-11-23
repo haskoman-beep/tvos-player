@@ -164,15 +164,21 @@ public enum AddonAccess {
 
 extension StoredProfiles {
     /// Task 1.4: the same structure without `apiKeys`, `syncTokens` and the access part of addon addresses. Empty maps
-    /// stay in the file, so build 249 reads it as before.
+    /// stay in the file, so build 249 reads it as before. Final review: two configurations of one addon end on the same
+    /// address (= `InstalledAddon.id`), only the first stays; an address without a readable host (`""`) is dropped.
     public func withoutSecrets() -> StoredProfiles {
         var s = self
         for i in s.profiles.indices {
             s.profiles[i].apiKeys = [:]
             s.profiles[i].syncTokens = [:]
-            for j in s.profiles[i].addons.indices {
-                s.profiles[i].addons[j].manifestURL = AddonAccess.publicManifestURL(s.profiles[i].addons[j].manifestURL)
+            var seen = Set<String>()
+            var kept: [InstalledAddon] = []
+            for var a in s.profiles[i].addons {
+                a.manifestURL = AddonAccess.publicManifestURL(a.manifestURL)
+                guard !a.manifestURL.isEmpty, seen.insert(a.manifestURL).inserted else { continue }
+                kept.append(a)
             }
+            s.profiles[i].addons = kept
         }
         return s
     }

@@ -303,14 +303,18 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// „Erneut versuchen“.
-    func retryProfileLoad() {
+    /// „Erneut versuchen“. Final review: false when the profiles are still unreadable (the recovery view says so).
+    @discardableResult
+    func retryProfileLoad() -> Bool {
         let l = store.loadResult()
         switch l {
         case .loaded(let s, _), .fresh(let s):
             adoptProfileLoad(l)
             profilesReplaced(s)
-        case .unreadable: adoptProfileLoad(l)
+            return true
+        case .unreadable:
+            adoptProfileLoad(l)
+            return false
         }
     }
 
@@ -680,15 +684,17 @@ final class AppModel: ObservableObject {
     }
 
     /// Task 1.4: opens a sealed backup with the code typed on the TV; nil (and a message) for a wrong code.
-    func openSealedBackup(_ file: Data, code: String) -> Data? {
-        do { return try BackupCrypto(cipher: CryptoKitBackupCipher()).open(file, code: code) } catch {
+    /// Final review: on failure `data` is nil and `problem` the German reason; the phone card shows it and stays open.
+    func openSealedBackup(_ file: Data, code: String) -> (data: Data?, problem: String?) {
+        do { return (try BackupCrypto(cipher: CryptoKitBackupCipher()).open(file, code: code), nil) } catch {
+            let problem: String
             switch error as? BackupCryptoError {
-            case .some(.invalidCode): lastError = "Sicherung nicht geöffnet: Der Code hat 12 Zeichen in drei Vierergruppen, zum Beispiel K7QM-2XPA-9DRT."
-            case .some(.unsupportedVersion(_)): lastError = "Sicherung nicht geöffnet: Sie stammt aus einer neueren Version der App."
-            case .some(.unsupportedCode(_)): lastError = "Sicherung nicht geöffnet: Diese Datei nutzt ein Code-Verfahren, das diese Version nicht liest. Bitte eine neue Sicherung anlegen."
-            default: lastError = "Sicherung nicht geöffnet: Code falsch oder Datei beschädigt."
+            case .some(.invalidCode): problem = "Sicherung nicht geöffnet: Der Code hat 12 Zeichen in drei Vierergruppen, zum Beispiel K7QM-2XPA-9DRT."
+            case .some(.unsupportedVersion(_)): problem = "Sicherung nicht geöffnet: Sie stammt aus einer neueren Version der App."
+            case .some(.unsupportedCode(_)): problem = "Sicherung nicht geöffnet: Diese Datei nutzt ein Code-Verfahren, das diese Version nicht liest. Bitte eine neue Sicherung anlegen."
+            default: problem = "Sicherung nicht geöffnet: Code falsch oder Datei beschädigt. Code prüfen und erneut „Erlauben“."
             }
-            return nil
+            return (nil, problem)
         }
     }
 
@@ -731,7 +737,9 @@ final class AppModel: ObservableObject {
                 guard !BackupCrypto.isSealed(d) else { lastError = "Verschlüsselte Sicherung: bitte den Code am Fernseher eingeben."; continue }
                 do {
                     let before = stored.profiles.map(\.id)
-                    let imported = try store.importData(d)
+                    let (imported, report) = try store.importDataReporting(d)
+                    // Final review: like the load line, paths only (a backup from a newer build).
+                    if !report.isEmpty { RemoteLog.info("speicher", "Import · ignoriert: \(report.ignored.joined(separator: ", "))") }
                     stored = imported; save(); clearCatalogCache()
                     removeCatalogFiles(profiles: before + stored.profiles.map(\.id))
                     progress = loadProgress(profile.id)

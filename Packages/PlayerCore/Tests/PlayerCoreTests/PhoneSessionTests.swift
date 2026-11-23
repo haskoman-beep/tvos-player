@@ -365,3 +365,69 @@ private func req(_ s: String) -> HTTPRequest {
     guard case .complete(let r) = HTTPRequest.parse(Data(s.utf8)) else { fatalError("parse") }
     return r
 }
+
+// MARK: Final review of build 1
+
+@Test func sealedRestoreRequestLastsFiveMinutesOthersOne() throws {
+    let sealed = try crypto.seal(Data("{}".utf8), code: "ABCD-EFGH-JKMN")
+    #expect(PhoneConfirmGate.lifetime(for: [.importBackup(sealed)]) == 5 * 60)
+    #expect(PhoneConfirmGate.lifetime(for: [.addAddon("https://addon.example/manifest.json")]) == 60)
+    var g = PhoneConfirmGate()
+    _ = g.offer([.importBackup(sealed)], now: t0)
+    #expect(g.current(now: t0 + 299)?.needsCode == true)
+    #expect(g.current(now: t0 + 299)?.lapseText.contains("fünf Minuten") == true)
+    #expect(g.current(now: t0 + 300) == nil)
+    _ = g.offer([.addAddon("https://addon.example/manifest.json")], now: t0 + 400)
+    #expect(g.current(now: t0 + 459)?.lapseText.contains("einer Minute") == true)
+    #expect(g.current(now: t0 + 460) == nil)
+}
+
+@Test func wrongBackupCodeKeepsTheRequestOpen() throws {
+    let sealed = try crypto.seal(Data("{}".utf8), code: "ABCD-EFGH-JKMN")
+    let addon = PhoneCommand.addAddon("https://addon.example/manifest.json")
+    var g = PhoneConfirmGate()
+    _ = g.offer([.importBackup(sealed), addon], now: t0)
+    #expect(g.answer(allow: true, now: t0 + 10) { _ in nil } == .codeRejected)
+    #expect(g.current(now: t0 + 11) != nil)   // a typo does not end the request
+    let plain = Data("{\"x\":1}".utf8)
+    #expect(g.answer(allow: true, now: t0 + 20) { d in d == sealed ? plain : nil } == .allowed([.importBackup(plain), addon]))
+    #expect(g.current(now: t0 + 21) == nil)
+    _ = g.offer([.importBackup(sealed)], now: t0 + 30)
+    #expect(g.answer(allow: false, now: t0 + 31) { _ in Issue.record("not opened on decline"); return nil } == .declined)
+    #expect(g.current(now: t0 + 32) == nil)
+    _ = g.offer([addon], now: t0 + 40)
+    #expect(g.answer(allow: true, now: t0 + 41) { _ in nil } == .allowed([addon]))   // nothing sealed: no code needed
+    _ = g.offer([.importBackup(sealed)], now: t0 + 50)
+    #expect(g.answer(allow: true, now: t0 + 50 + 300) { _ in plain } == .lapsed)
+}
+
+@Test func plainExportDropsDuplicateAndUnreadableAddons() throws {
+    let data = try fixture("build249-profiles.json")
+    var s = try ProfileStore.decode(data)
+    let m = s.profiles[0].addons[0].manifest
+    s.profiles[0].addons = [
+        InstalledAddon(manifestURL: "https://addon4.example/providers=yts|debrid=FAKE-KEY-0013/manifest.json", manifest: m),
+        InstalledAddon(manifestURL: "keine adresse", manifest: m),
+        InstalledAddon(manifestURL: "https://addon4.example/providers=eztv|debrid=FAKE-KEY-0014/manifest.json", manifest: m),
+        InstalledAddon(manifestURL: "https://addon5.example/manifest.json", manifest: m),
+    ]
+    let out = s.withoutSecrets()
+    #expect(out.profiles[0].addons.map(\.manifestURL) == ["https://addon4.example/manifest.json", "https://addon5.example/manifest.json"])
+    let store = ProfileStore(directory: tempDir())
+    let file = try store.exportData(s, includeSecrets: false)
+    #expect(try store.importData(file).profiles[0].addons.count == 2)
+    guard case .needsConfirmation(let summary) = PhoneCommand.importBackup(file).sensitivity else { Issue.record("confirmation"); return }
+    #expect(summary.contains("Addons mit Zugangsdaten"))
+    guard case .needsConfirmation(let full) = PhoneCommand.importBackup(try store.exportData(s, includeSecrets: true)).sensitivity else { return }
+    #expect(!full.contains("Addons mit Zugangsdaten"))
+    s.profiles = s.profiles.map { var p = $0; p.addons = []; return p }
+    guard case .needsConfirmation(let none) = PhoneCommand.importBackup(try store.exportData(s, includeSecrets: false)).sensitivity else { return }
+    #expect(!none.contains("Addons mit Zugangsdaten"))
+}
+
+@Test func importOfNewerBuildFileReportsIgnoredValues() throws {
+    let json = #"{"schemaVersion":1,"profiles":[{"id":"00000000-0000-4000-8000-000000000001","name":"A","appearance":{"accent":"turquoise"}}]}"#
+    let (s, report) = try ProfileStore(directory: tempDir()).importDataReporting(Data(json.utf8))
+    #expect(s.profiles.count == 1 && !report.isEmpty)
+    #expect(report.ignored.allSatisfy { !$0.contains("turquoise") })   // paths only, no values
+}

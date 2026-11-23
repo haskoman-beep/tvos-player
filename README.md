@@ -91,7 +91,9 @@ shows the latest lines. Sending the log to a computer on the local network is **
 3. On the TV, open Settings › System › „Fern-Log“ (remote log), turn on „Ereignis-Log senden“ (send event log) and
    choose the receiver by name.
 
-The app sends only to the chosen receiver, and every request is signed with the secret. Measuring points appear as
+The app sends only to the chosen receiver, and every request is signed with the secret. The secret is stored with
+the profile, so after „Neu anfangen“ (start fresh) or restoring a plain export (without keys) it must be entered again.
+Measuring points appear as
 `metric: <name> <ms>`, followed by details such as `· reihen 6`: `start.usable`, `start.profiles`,
 `start.catalog`, `detail.badges`, `streams.firstRow`, `streams.order`, `player.loadBegins`, `player.firstFrame`,
 `player.audioReload` and `sync.merged`. Keys, tokens and addresses are redacted before a line is stored or sent.

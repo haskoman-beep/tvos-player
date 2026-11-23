@@ -154,8 +154,12 @@ extension PhoneCommand {
             }
             let names = s.profiles.prefix(3).map(\.name).joined(separator: ", ") + (s.profiles.count > 3 ? ", …" : "")
             let noSecrets = s.profiles.allSatisfy { $0.apiKeys.isEmpty && $0.syncTokens.isEmpty }
+            // Final review: a plain export also drops the access part of addon addresses (`withoutSecrets`); the file
+            // cannot tell which addons had one, so the hint comes whenever such a file holds addons.
+            let hasAddons = s.profiles.contains { !$0.addons.isEmpty }
             return .needsConfirmation(summary: "Sicherung wiederherstellen – ersetzt alle Profile durch \(s.profiles.count) Profil(e): \(names)."
-                + (noSecrets ? " Sie enthält keine Schlüssel und Anmeldungen." : ""))
+                + (noSecrets ? " Sie enthält keine Schlüssel und Anmeldungen." : "")
+                + (noSecrets && hasAddons ? " Addons mit Zugangsdaten danach neu eintragen." : ""))
         case .exportSecrets:
             return .needsConfirmation(summary: "Sicherung mit allen Schlüsseln und Anmeldungen verschlüsselt an das Handy geben. Den Code zeigt danach nur der Fernseher.")
         case .importNuvioURL, .importNuvioJSON, .addTMDBLink, .importFusionURL, .moveRow, .removeRow, .deleteRow, .restoreRow, .addRow,
@@ -181,6 +185,11 @@ public struct PhoneConfirmation: Equatable, Sendable {
     public let summary: [String]
     public let expires: Date
     public var needsCode: Bool { commands.contains(where: \.needsBackupCode) }
+
+    /// Line on the TV card: when the request lapses (`PhoneConfirmGate.lifetime(for:)`).
+    public var lapseText: String {
+        needsCode ? "Ohne Antwort verfällt die Anfrage nach fünf Minuten." : "Ohne Antwort verfällt die Anfrage nach einer Minute."
+    }
 }
 
 extension PhoneConfirmation {
@@ -209,10 +218,27 @@ extension PhoneConfirmation {
     public func logLine(_ outcome: Outcome) -> String { "Bestätigung \(logKind) \(outcome.rawValue)" }
 }
 
-/// Only one open request at a time; it lapses after 60 s without an answer.
+/// Only one open request at a time; it lapses after 60 s without an answer, a request with a sealed backup (12-character
+/// code to type with the remote) after 5 minutes.
 public struct PhoneConfirmGate: Sendable {
     public static let lifetime: TimeInterval = 60
+    public static let codeLifetime: TimeInterval = 5 * 60
     private var pending: PhoneConfirmation?
+
+    public static func lifetime(for commands: [PhoneCommand]) -> TimeInterval {
+        commands.contains(where: \.needsBackupCode) ? codeLifetime : lifetime
+    }
+
+    /// Result of „Erlauben“ / „Ablehnen“ (`answer`).
+    public enum Answer: Equatable, Sendable {
+        /// Run these; a sealed backup is already replaced by its opened content.
+        case allowed([PhoneCommand])
+        case declined
+        /// Nothing open (any more).
+        case lapsed
+        /// „Erlauben“, but a sealed backup did not open with the typed code: the request stays open for another try.
+        case codeRejected
+    }
 
     public init() {}
 
@@ -224,7 +250,7 @@ public struct PhoneConfirmGate: Sendable {
         }
         guard !sensitive.isEmpty else { return (plain, []) }
         if current(now: now) != nil { return (plain, sensitive) }
-        pending = PhoneConfirmation(commands: sensitive, summary: summary, expires: now.addingTimeInterval(Self.lifetime))
+        pending = PhoneConfirmation(commands: sensitive, summary: summary, expires: now.addingTimeInterval(Self.lifetime(for: sensitive)))
         return (plain, [])
     }
 
@@ -238,5 +264,21 @@ public struct PhoneConfirmGate: Sendable {
         guard let p = current(now: now) else { return [] }
         pending = nil
         return allow ? p.commands : []
+    }
+
+    /// Final review: the answer on the card. `open` opens a sealed backup with the typed code (nil: wrong code or
+    /// unreadable file); the request ends only when every sealed backup opened, on „Ablehnen“ or on expiry.
+    public mutating func answer(allow: Bool, now: Date, open: (Data) -> Data?) -> Answer {
+        guard let p = current(now: now) else { return allow ? .lapsed : .declined }
+        guard allow else { pending = nil; return .declined }
+        var run: [PhoneCommand] = []
+        for c in p.commands {
+            if case .importBackup(let d) = c, c.needsBackupCode {
+                guard let plain = open(d) else { return .codeRejected }
+                run.append(.importBackup(plain))
+            } else { run.append(c) }
+        }
+        pending = nil
+        return .allowed(run)
     }
 }

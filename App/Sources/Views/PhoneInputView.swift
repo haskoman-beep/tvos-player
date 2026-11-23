@@ -15,6 +15,8 @@ final class PhoneServer: ObservableObject {
     @Published var shownAddress: String?
     @Published var failure: String?
     @Published private(set) var confirmation: PhoneConfirmation?
+    /// Final review: why the typed code did not open the sealed backup; the request stays open for another try.
+    @Published private(set) var codeProblem: String?
     /// Code of the last sealed backup; only on this screen, never sent and never stored.
     @Published private(set) var exportCode: String?
     @Published private(set) var connected = false
@@ -45,6 +47,7 @@ final class PhoneServer: ObservableObject {
             }
             l.start(queue: .main)
             listener = l
+            failure = nil   // final review: an old error (e.g. before a trip to the background) goes with a new start
             newSession()
             ticker = Task { @MainActor [weak self] in
                 while !Task.isCancelled {
@@ -66,7 +69,7 @@ final class PhoneServer: ObservableObject {
         for c in connections.values { c.cancel() }
         connections = [:]
         _ = gate.resolve(allow: false, now: Date())
-        confirmation = nil
+        confirmation = nil; codeProblem = nil
         sealedFile = nil; sealedUntil = nil; sealedDelivered = false; sealedOutcome = nil
         if closing { exportCode = nil }
         address = nil; shownAddress = nil; connected = false
@@ -93,7 +96,7 @@ final class PhoneServer: ObservableObject {
         }
         syncConnected()
         if let c = confirmation, gate.current(now: now) == nil {
-            confirmation = nil
+            confirmation = nil; codeProblem = nil
             if c.commands.contains(.exportSecrets) { sealedOutcome = .lapsed }
             RemoteLog.info("handy", c.logLine(.lapsed))
         }
@@ -106,18 +109,35 @@ final class PhoneServer: ObservableObject {
         if connected { RemoteLog.info("handy", "Sitzung gebunden") }   // Task 1.8: QR address used by the first phone
     }
 
-    /// „Erlauben“ / „Ablehnen“ on the card. `code` is the code typed for a sealed backup.
+    /// „Erlauben“ / „Ablehnen“ on the card. `code` is the code typed for a sealed backup. Final review: a code that does
+    /// not open the backup keeps the request open (`PhoneConfirmGate.answer`) and shows the reason on the card.
     func answer(allow: Bool, code: String) {
         let now = Date()
         let wantedExport = confirmation?.commands.contains(.exportSecrets) ?? false
         let open = confirmation
-        let cmds = gate.resolve(allow: allow, now: now)
-        confirmation = nil
-        // Task 1.8: allowed too late counts as lapsed (nothing runs).
-        if let open { RemoteLog.info("handy", open.logLine(!allow ? .declined : cmds.isEmpty ? .lapsed : .allowed)) }
-        if wantedExport && !allow { sealedOutcome = .declined }
+        var problem: String?
+        let result = gate.answer(allow: allow, now: now) { file in
+            guard let model = self.model else { return nil }
+            let opened = model.openSealedBackup(file, code: code)
+            problem = opened.problem
+            return opened.data
+        }
+        let cmds: [PhoneCommand]
+        let outcome: PhoneConfirmation.Outcome
+        switch result {
+        case .codeRejected:
+            codeProblem = problem ?? "Sicherung nicht geöffnet: Code falsch oder Datei beschädigt."
+            RemoteLog.info("handy", "Bestätigung \(open?.logKind ?? "Import") Code abgewiesen")
+            return
+        case .allowed(let c): cmds = c; outcome = .allowed
+        case .declined: cmds = []; outcome = .declined
+        case .lapsed: cmds = []; outcome = .lapsed   // Task 1.8: allowed too late counts as lapsed (nothing runs).
+        }
+        confirmation = nil; codeProblem = nil
+        if let open { RemoteLog.info("handy", open.logLine(outcome)) }
+        if wantedExport && outcome == .declined { sealedOutcome = .declined }
         guard let model else { return }
-        if allow && cmds.isEmpty {
+        if outcome == .lapsed {
             if wantedExport { sealedOutcome = .lapsed }
             model.lastError = "Die Anfrage ist abgelaufen. Bitte am Handy erneut senden."; return
         }
@@ -129,10 +149,8 @@ final class PhoneServer: ObservableObject {
                     sealedFile = s.file; sealedUntil = now.addingTimeInterval(Self.sealedLifetime); sealedDelivered = false
                     exportCode = s.code
                 } else { sealedOutcome = .failed }
-            case .importBackup(let d) where c.needsBackupCode:
-                if let plain = model.openSealedBackup(d, code: code) { run.append(.importBackup(plain)) }
             default:
-                run.append(c)
+                run.append(c)   // a sealed backup arrives here already opened
             }
         }
         if !run.isEmpty { Task { await model.apply(run) } }
@@ -219,7 +237,7 @@ final class PhoneServer: ObservableObject {
         guard !rest.isEmpty else { return }
         let (plain, refused) = gate.offer(rest, now: now)
         if let open = gate.current(now: now), open != confirmation {
-            confirmation = open
+            confirmation = open; codeProblem = nil
             // A new sealed export starts from scratch: no old file, no old result.
             if open.commands.contains(.exportSecrets) {
                 sealedFile = nil; sealedUntil = nil; sealedDelivered = false; sealedOutcome = nil
@@ -312,9 +330,10 @@ struct PhoneInputView: View {
             .disabled(server.confirmation != nil)
             // Task 1.4: the confirmation card lies over the QR code; focus starts on „Ablehnen“.
             if let c = server.confirmation {
-                PhoneConfirmationCard(confirmation: c, code: $backupCode) { allow in
+                PhoneConfirmationCard(confirmation: c, code: $backupCode, problem: server.codeProblem) { allow in
                     server.answer(allow: allow, code: backupCode)
-                    backupCode = ""
+                    // A rejected code stays in the field, so a typo can be fixed.
+                    if server.confirmation == nil { backupCode = "" }
                 }
             }
         }
@@ -329,17 +348,19 @@ struct PhoneInputView: View {
             default: break
             }
         }
-        .onChange(of: server.confirmation == nil) { _, closed in if closed { doneFocused = true } }
+        .onChange(of: server.confirmation == nil) { _, closed in if closed { backupCode = ""; doneFocused = true } }
     }
 
 }
 
 /// Task 1.4: „Erlauben“ / „Ablehnen“ for a request from the phone. Same layout as `SettingsConfirmationView`;
-/// the cautious answer comes first and gets the focus, Menu answers „Ablehnen“. The request lapses after 60 s
-/// (`PhoneConfirmGate`), then the card disappears.
+/// the cautious answer comes first and gets the focus, Menu answers „Ablehnen“. The request lapses after 60 s, with a
+/// sealed backup after 5 minutes (`PhoneConfirmGate.lifetime(for:)`), then the card disappears. `problem`: the typed
+/// code did not open the backup; the card stays for another try.
 private struct PhoneConfirmationCard: View {
     let confirmation: PhoneConfirmation
     @Binding var code: String
+    let problem: String?
     let answer: (Bool) -> Void
 
     private enum Choice: Hashable { case deny, code, allow }
@@ -356,7 +377,7 @@ private struct PhoneConfirmationCard: View {
                     Text(line).textRole(.rowDetail)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Text("Ohne Antwort verfällt die Anfrage nach einer Minute.").textRole(.rowDetail)
+                Text(confirmation.lapseText).textRole(.rowDetail)
                 VStack(spacing: Theme.Space.s) {
                     Button { answer(false) } label: {
                         SettingsRowLabel(symbol: "xmark", tint: Theme.CategoryTint.system.color, title: "Ablehnen",
@@ -369,6 +390,10 @@ private struct PhoneConfirmationCard: View {
                             .textInputAutocapitalization(.characters)
                             .autocorrectionDisabled()
                             .focused($focus, equals: .code)
+                        if let problem {
+                            Text(problem).textRole(.rowDetail).foregroundStyle(.red)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     Button { answer(true) } label: {
                         SettingsRowLabel(symbol: "checkmark", tint: Theme.Tone.ok.color, title: "Erlauben",

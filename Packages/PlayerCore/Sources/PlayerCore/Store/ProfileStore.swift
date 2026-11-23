@@ -160,6 +160,10 @@ public final class ProfileStore: @unchecked Sendable {
     }
 
     public func importData(_ data: Data) throws -> StoredProfiles { try Self.decode(data) }
+    /// Final review: the import with its report (values a newer build wrote that this one ignores), for the log line.
+    public func importDataReporting(_ data: Data) throws -> (profiles: StoredProfiles, report: DecodeReport) {
+        try Self.decodeReporting(data)
+    }
 
     static func decode(_ data: Data) throws -> StoredProfiles { try decodeReporting(data).profiles }
 

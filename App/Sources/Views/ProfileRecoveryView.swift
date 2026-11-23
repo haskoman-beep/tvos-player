@@ -9,6 +9,8 @@ struct ProfileRecoveryView: View {
     let candidates: [RecoveryCandidate]
     @State private var selected: String?
     @State private var confirmFresh = false
+    /// Final review: feedback when „Erneut versuchen“ finds the same unreadable state.
+    @State private var retryNote: String?
     @FocusState private var focus: Field?
 
     enum Field: Hashable { case retry, candidate(String), load, fresh }
@@ -43,7 +45,12 @@ struct ProfileRecoveryView: View {
                 }
             }
             HStack(spacing: Theme.Space.xl) {
-                Button("Erneut versuchen") { model.retryProfileLoad() }
+                Button("Erneut versuchen") {
+                    retryNote = nil
+                    if !model.retryProfileLoad() {
+                        retryNote = "Weiterhin nicht lesbar (Stand \(Date().formatted(date: .omitted, time: .standard)))."
+                    }
+                }
                     .focused($focus, equals: .retry)
                 Button("Diese Fassung laden") { if let s = selected { model.restoreProfiles(s) } }
                     .disabled(selected == nil)
@@ -51,6 +58,7 @@ struct ProfileRecoveryView: View {
                 Button("Neu anfangen", role: .destructive) { confirmFresh = true }
                     .focused($focus, equals: .fresh)
             }
+            if let retryNote { Text(retryNote).textRole(.rowDetail) }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, Theme.Space.edge)
