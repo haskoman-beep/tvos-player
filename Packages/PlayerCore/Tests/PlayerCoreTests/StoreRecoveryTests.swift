@@ -40,11 +40,11 @@ private func candidates(_ l: ProfileLoad) -> [RecoveryCandidate] {
     guard case .unreadable(let reason, let c) = store.loadResult() else { Issue.record("expected .unreadable"); return }
     #expect(!reason.isEmpty)
     #expect(c.isEmpty)
-    // The unreadable file stays as it is; only the .bak copy (and its date) is new.
+    // The unreadable file stays as it is; only the copy in its own slot (and its date) is new.
     #expect(try Data(contentsOf: store.fileURL) == Data("kaputt{".utf8))
-    #expect(try Data(contentsOf: store.backupURL) == Data("kaputt{".utf8))
+    #expect(try Data(contentsOf: store.unreadableURL) == Data("kaputt{".utf8))
     let names = try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted()
-    #expect(names == ["profiles.json", "profiles.json.bak", "profiles.json.dates"])
+    #expect(names == ["profiles.json", "profiles.json.dates", "profiles.json.unreadable.bak"])
 }
 
 @Test func truncatedJsonListsGenerationsAsCandidates() throws {
@@ -69,7 +69,7 @@ private func candidates(_ l: ProfileLoad) -> [RecoveryCandidate] {
     #expect(s.profiles[0].name == "Alt")
     guard case .loaded(let again, _) = store.loadResult() else { Issue.record("expected .loaded"); return }
     #expect(again.profiles[0].name == "Alt")
-    #expect(try Data(contentsOf: store.backupURL) == Data("{\"schemaVersion\":1,\"prof".utf8))   // the broken state is kept
+    #expect(try Data(contentsOf: store.unreadableURL) == Data("{\"schemaVersion\":1,\"prof".utf8))   // the broken state is kept
 }
 
 @Test func restoreFromBak() throws {
@@ -79,10 +79,10 @@ private func candidates(_ l: ProfileLoad) -> [RecoveryCandidate] {
     try Data("kaputt{".utf8).write(to: store.fileURL)
     let c = candidates(store.loadResult())
     #expect(c.map(\.id) == ["profiles.json.bak#0"])
-    #expect(try Data(contentsOf: store.backupURL) != Data("kaputt{".utf8))   // a readable .bak is not overwritten
     let s = try store.restore("profiles.json.bak#0")
     #expect(s.profiles[0].name == "Gerettet")
-    #expect(try Data(contentsOf: store.backupURL) == Data("kaputt{".utf8))   // swapped: the broken state is now the .bak
+    #expect(try Data(contentsOf: store.unreadableURL) == Data("kaputt{".utf8))   // the broken state is kept
+    #expect(try ProfileStore.decode(Data(contentsOf: store.backupURL)).profiles[0].name == "Gerettet")   // .bak stays
     guard case .loaded(let again, _) = store.loadResult() else { Issue.record("expected .loaded"); return }
     #expect(again.profiles[0].name == "Gerettet")
 }
@@ -120,17 +120,45 @@ private func candidates(_ l: ProfileLoad) -> [RecoveryCandidate] {
 
 // MARK: Extra rules
 
-@Test func noRotationWhileBakIsNewerThanGeneration1() throws {
+@Test func unreadableSetAsideFreezesGenerationsForSevenDays() throws {
     let store = ProfileStore(directory: tempDir())
     func gen(_ n: Int) -> String? { store.storage.read("profiles.json.\(n)").flatMap { try? ProfileStore.decode($0) }?.profiles[0].name }
+    let day: TimeInterval = 24 * 3600
     try store.save(named("A"), now: t0)
     try store.save(named("B"), now: t0.addingTimeInterval(1))            // .1 = A
     try Data("kaputt{".utf8).write(to: store.fileURL)
-    _ = store.loadResult()                                               // .bak is set aside now (newer than .1)
+    _ = store.loadResult(now: t0.addingTimeInterval(100))                // set aside now (newer than .1)
+    _ = try store.startFresh(now: t0.addingTimeInterval(100))
+    try store.save(named("X"), now: t0.addingTimeInterval(6 * day))
+    #expect(gen(1) == "A" && gen(2) == nil)                              // day 6: frozen, the good generation stays
+    try store.save(named("Y"), now: t0.addingTimeInterval(8 * day))
+    #expect(gen(1) == "X" && gen(2) == "A")                              // day 8: rotates again
+    #expect(try Data(contentsOf: store.unreadableURL) == Data("kaputt{".utf8))
+}
+
+@Test func clockGoingBackIsNotDue() throws {
+    let store = ProfileStore(directory: tempDir())
+    func gen(_ n: Int) -> String? { store.storage.read("profiles.json.\(n)").flatMap { try? ProfileStore.decode($0) }?.profiles[0].name }
+    try store.save(named("A"), now: t0)
+    try store.save(named("B"), now: t0.addingTimeInterval(1000))         // .1 = A at t0+1000
+    try store.save(named("C"), now: t0)                                  // clock went back: no rotation
+    #expect(gen(1) == "A" && gen(2) == nil)
+}
+
+@Test func reportBakSurvivesLaterUnreadableSetAsideAndStartFresh() throws {
+    let json = """
+    {"schemaVersion":1,"profiles":[{"id":"00000000-0000-4000-8000-000000000051","name":"Original",
+     "appearance":{"accent":"turquoise"}}]}
+    """
+    let store = ProfileStore(directory: tempDir())
+    try Data(json.utf8).write(to: store.fileURL)
+    guard case .loaded = store.loadResult() else { Issue.record("expected .loaded"); return }
+    try Data("kaputt{".utf8).write(to: store.fileURL)
+    let c = candidates(store.loadResult())
+    #expect(c.map(\.id) == ["profiles.json.bak#0"])
     _ = try store.startFresh()
-    try store.save(named("Neu"), now: Date().addingTimeInterval(3600))
-    #expect(gen(1) == "A")                                               // the good generation was not pushed out
-    #expect(try Data(contentsOf: store.backupURL) == Data("kaputt{".utf8))
+    #expect(try Data(contentsOf: store.backupURL) == Data(json.utf8))
+    #expect(try Data(contentsOf: store.unreadableURL) == Data("kaputt{".utf8))
 }
 
 @Test func savingUnreadableStateNeverRotatesBrokenData() throws {
@@ -139,7 +167,7 @@ private func candidates(_ l: ProfileLoad) -> [RecoveryCandidate] {
     _ = store.loadResult()
     _ = try store.startFresh()
     #expect(store.storage.read("profiles.json.1") == nil)
-    #expect(try Data(contentsOf: store.backupURL) == Data("kaputt{".utf8))
+    #expect(try Data(contentsOf: store.unreadableURL) == Data("kaputt{".utf8))
 }
 
 @Test func missingMainWithGenerationsIsNotFresh() throws {

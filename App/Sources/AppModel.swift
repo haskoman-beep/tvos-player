@@ -24,6 +24,9 @@ final class AppModel: ObservableObject {
     let progressStore: ProgressStore
     /// Fortschritt des aktiven Profils.
     @Published private(set) var progress = ProgressBook()
+    /// Task 1.3 (S-11): the progress file was unreadable (kept as .bak). The sync pull then merges in memory only;
+    /// the book is saved again with the next real progress (play, tile action, chosen source).
+    private var progressSaveHeld = false
     /// Wave W-a: PlayerCore reports skipped catalog items, addon notices and error subtitles through `log`.
     let addons = AddonClient(log: { cat, msg in Task { @MainActor in RemoteLog.info(cat, msg) } })
     /// Katalog-Cache: 24 h frisch, danach alter Stand sichtbar + Erneuerung im Hintergrund (AppModel+CatalogCache).
@@ -83,6 +86,7 @@ final class AppModel: ObservableObject {
     // MARK: Fortschritt
 
     func recordProgress(_ r: PlayRequest, position: Double, duration: Double) {
+        progressSaveHeld = false
         progress.record(id: r.id, item: r.item, season: r.season, episode: r.episode, position: position, duration: duration)
         if progress.isWatched(r.id), let n = r.nextRequest, let s = n.season, let e = n.episode {
             progress.recordNextUp(id: n.id, item: n.item, season: s, episode: e)
@@ -94,12 +98,14 @@ final class AppModel: ObservableObject {
     /// Wave L: local change from a tile action (AppModel+SyncQueue), saved at once.
     func editProgress(_ change: (inout ProgressBook) -> Void) {
         change(&progress)
+        progressSaveHeld = false
         do { try progressStore.save(progress, profile: profile.id) } catch { lastError = "Fortschritt nicht gespeichert: \(error)" }
     }
 
     /// Gewählte Quelle merken, damit Weiterschauen sie direkt startet.
     func rememberSource(_ r: PlayRequest, stream: StreamItem, addon: String) {
         progress.rememberSource(stream, addon: addon, for: r.id)
+        progressSaveHeld = false
         do { try progressStore.save(progress, profile: profile.id) } catch { lastError = "Quelle nicht gespeichert: \(error)" }
     }
 
@@ -201,7 +207,8 @@ final class AppModel: ObservableObject {
             let remote = s == "trakt" ? try await trakt?.playback(token: t) : try await simkl?.playback(token: t)
             progress.merge(remote: applySyncQueue(remote ?? []))
             RemoteLog.info("sync", "\(s): \(remote?.count ?? 0) angefangene Titel geholt")
-            try progressStore.save(progress, profile: profile.id)
+            if progressSaveHeld { RemoteLog.info("speicher", "Fortschritt nach Abgleich nicht gespeichert: Datei war unlesbar, wartet auf nächsten Fortschritt") }
+            else { try progressStore.save(progress, profile: profile.id) }
         } catch { lastError = "\(s == "trakt" ? "Trakt" : "Simkl") nicht erreichbar: \(error)" }
     }
 
@@ -262,7 +269,9 @@ final class AppModel: ObservableObject {
     /// Progress of a profile; an unreadable file is kept as `.bak` by ProgressStore and the book starts empty
     /// (saved only with the next progress).
     func loadProgress(_ id: UUID) -> ProgressBook {
+        progressSaveHeld = false
         if let b = progressStore.load(profile: id) { return b }
+        progressSaveHeld = true
         RemoteLog.error("speicher", "Fortschritt unlesbar, als .bak beiseitegelegt · leeres Buch bis zum nächsten Fortschritt")
         return ProgressBook()
     }
@@ -309,7 +318,7 @@ final class AppModel: ObservableObject {
         do {
             let s = try store.startFresh()
             storeState = .ready
-            RemoteLog.info("speicher", "Profile neu angefangen · unlesbarer Stand bleibt als .bak")
+            RemoteLog.info("speicher", "Profile neu angefangen · unlesbarer Stand bleibt als profiles.json.unreadable.bak")
             profilesReplaced(s)
         } catch { lastError = "Neu anfangen fehlgeschlagen: \(error)" }
     }
@@ -670,7 +679,7 @@ final class AppModel: ObservableObject {
                 do {
                     let before = stored.profiles.map(\.id)
                     let imported = try store.importData(d)
-                    // Task 1.3: a deliberate import also ends the unreadable state (that state is kept as .bak first).
+                    // Task 1.3: a deliberate import also ends the unreadable state (that state is kept in profiles.json.unreadable.bak first).
                     if storeState != .ready { try store.keepUnreadableAside(); storeState = .ready }
                     stored = imported; save(); clearCatalogCache()
                     removeCatalogFiles(profiles: before + stored.profiles.map(\.id))

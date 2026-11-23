@@ -27,7 +27,7 @@ func tempDir() -> URL {
     try Data("kaputt{".utf8).write(to: store.fileURL)
     let s = store.load().profiles
     #expect(s.profiles.count == 1)
-    #expect(try String(contentsOf: store.backupURL, encoding: .utf8) == "kaputt{")
+    #expect(try String(contentsOf: store.unreadableURL, encoding: .utf8) == "kaputt{")   // Task 1.3: own slot
 }
 
 @Test func newerSchemaIsNotOverwritten() throws {
@@ -35,7 +35,8 @@ func tempDir() -> URL {
     var s = StoredProfiles.makeDefault(); s.schemaVersion = 99
     try store.exportData(s).write(to: store.fileURL)
     _ = store.load()
-    #expect(FileManager.default.fileExists(atPath: store.backupURL.path))
+    #expect(FileManager.default.fileExists(atPath: store.unreadableURL.path))   // Task 1.3: own slot
+    #expect(try store.exportData(s) == Data(contentsOf: store.fileURL))       // and profiles.json is untouched
 }
 
 @Test func exportImportRoundTrip() throws {

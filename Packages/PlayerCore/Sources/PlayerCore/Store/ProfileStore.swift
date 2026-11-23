@@ -57,27 +57,34 @@ public struct RecoveryCandidate: Sendable, Identifiable, Hashable {
 /// Alle Profile in einer JSON-Datei, atomar geschrieben.
 ///
 /// Task 1.3: loading never leads to overwriting.
-/// - An unreadable `profiles.json` stays untouched; a copy goes to `profiles.json.bak` (a readable `.bak` is not
-///   replaced), and `loadResult()` returns `.unreadable` with the readable older versions as candidates.
-/// - Read with a non-empty `DecodeReport`: the original bytes go to `.bak` too (unless the `.bak` holds an unreadable
-///   state, or already covers every ignored path).
+/// - An unreadable `profiles.json` stays untouched; a copy goes to its own slot `profiles.json.unreadable.bak`
+///   (file only), and `loadResult()` returns `.unreadable` with the readable older versions as candidates.
+/// - `profiles.json.bak` holds only readable originals: read with a non-empty `DecodeReport`, the original bytes go
+///   there (unless that `.bak` holds an unreadable legacy state, or already covers every ignored path).
 /// - `save` first moves the last good version to `profiles.json.1` and `.1` to `.2`, at most once per
-///   `rotationInterval`, and not while a `.bak` set aside from an unreadable state is newer than `.1`.
-/// - The dates of `.1`, `.2` and `.bak` lie in `profiles.json.dates` (UserDefaults entries have no date).
+///   `rotationInterval`. While an unreadable state set aside is newer than `.1` and younger than `freezeInterval`,
+///   the generations are frozen (no rotation), so a good generation is not pushed out right after the failure.
+/// - The dates of `.1`, `.2`, `.bak` and the unreadable slot lie in `profiles.json.dates` (UserDefaults entries
+///   have no date).
 public final class ProfileStore: @unchecked Sendable {
     public let storage: BlobStorage
     static let name = "profiles.json"
     static let generation1 = name + ".1"
     static let generation2 = name + ".2"
     static let backupName = name + ".bak"
+    /// Fix round 1: own slot for unreadable states; ends in `.bak`, so TieredBlobStorage keeps it file only.
+    static let unreadableName = name + ".unreadable.bak"
     static let datesName = name + ".dates"
     /// Task 1.3: at most one rotation of the generations in this time.
     public static let rotationInterval: TimeInterval = 10 * 60
+    /// Fix round 1: an unreadable set-aside freezes the generations at most this long.
+    public static let freezeInterval: TimeInterval = 7 * 24 * 3600
 
     public init(storage: BlobStorage) { self.storage = storage }
     /// Nur für Datei-Ablage (Tests).
     var fileURL: URL { (storage as! FileBlobStorage).url(Self.name) }
     var backupURL: URL { (storage as! FileBlobStorage).url(Self.backupName) }
+    var unreadableURL: URL { (storage as! FileBlobStorage).url(Self.unreadableName) }
     public convenience init(directory: URL) { self.init(storage: FileBlobStorage(directory: directory)) }
 
     /// Task 1.2 interface, kept for callers that only want profiles: an unreadable state gives the default profile
@@ -107,7 +114,7 @@ public final class ProfileStore: @unchecked Sendable {
     }
 
     /// Loads a candidate from `loadResult()` into `profiles.json` (without rotating). An unreadable state there is
-    /// kept as `.bak` first; if that fails, nothing is changed and the error is thrown.
+    /// kept in `profiles.json.unreadable.bak` first; if that fails, nothing is changed and the error is thrown.
     public func restore(_ id: String, now: Date = Date()) throws -> StoredProfiles {
         guard let hash = id.lastIndex(of: "#"), let index = Int(id[id.index(after: hash)...]) else { throw StoreError.candidateMissing }
         let list = copies(String(id[..<hash]))
@@ -117,7 +124,8 @@ public final class ProfileStore: @unchecked Sendable {
         return s
     }
 
-    /// Deliberately starts again with the default profile (without rotating); the unreadable state stays as `.bak`.
+    /// Deliberately starts again with the default profile (without rotating); the unreadable state stays in
+    /// `profiles.json.unreadable.bak`.
     public func startFresh(now: Date = Date()) throws -> StoredProfiles {
         try keepUnreadableAside(now: now)
         let s = StoredProfiles.makeDefault()
@@ -126,11 +134,11 @@ public final class ProfileStore: @unchecked Sendable {
     }
 
     /// Before `profiles.json` is replaced on purpose (restore, start again, import): an unreadable state there goes to
-    /// `.bak` (replacing whatever is there). Throws if it cannot be written.
+    /// `profiles.json.unreadable.bak` (`.bak` with readable originals stays). Throws if it cannot be written.
     public func keepUnreadableAside(now: Date = Date()) throws {
-        guard let cur = storage.read(Self.name), !Self.isReadable(cur), storage.read(Self.backupName) != cur else { return }
-        try storage.write(Self.backupName, cur)
-        var d = dates(); d["bak"] = now; d["bakUnreadable"] = now; writeDates(d)
+        guard let cur = storage.read(Self.name), !Self.isReadable(cur), storage.read(Self.unreadableName) != cur else { return }
+        try storage.write(Self.unreadableName, cur)
+        var d = dates(); d["unreadable"] = now; writeDates(d)
     }
 
     public func save(_ s: StoredProfiles, now: Date = Date()) throws {
@@ -171,15 +179,16 @@ public final class ProfileStore: @unchecked Sendable {
 
     /// Last good version → `.1`, `.1` → `.2`. Skipped when the stored version is not readable or equals the new one
     /// (compared decoded: dictionary order makes the bytes of equal values differ),
-    /// within `rotationInterval` after the last rotation, and while an unreadable `.bak` is newer than `.1`.
+    /// within `rotationInterval` after the last rotation or when the clock went back before it, and while an
+    /// unreadable set-aside is newer than `.1` and younger than `freezeInterval`.
     /// Failures here never block the save itself.
     func rotateIfDue(replacing new: StoredProfiles, now: Date) {
         guard let cur = storage.read(Self.name) else { return }
         var d = dates()
         let old1 = storage.read(Self.generation1)
         if old1 != nil, let d1 = d["1"] {
-            if now >= d1, now.timeIntervalSince(d1) < Self.rotationInterval { return }
-            if let b = d["bakUnreadable"], b > d1 { return }
+            if now.timeIntervalSince(d1) < Self.rotationInterval { return }   // also when the clock went back
+            if let u = d["unreadable"], u > d1, now.timeIntervalSince(u) < Self.freezeInterval { return }
         }
         // Decoded only when a rotation is due (at most once per interval).
         guard let old = try? Self.decode(cur), old != new else { return }
@@ -190,12 +199,12 @@ public final class ProfileStore: @unchecked Sendable {
         writeDates(d)
     }
 
-    /// Unreadable state → `.bak`, unless the `.bak` already is this state or holds a readable version (that one is
-    /// a recovery candidate; `profiles.json` itself stays untouched anyway).
+    /// Unreadable state → `profiles.json.unreadable.bak` (`profiles.json` itself stays untouched anyway). The date
+    /// stays when the slot already holds this state (a second failed start does not extend the freeze).
     func setAsideUnreadable(_ data: Data, now: Date) {
-        if let b = storage.read(Self.backupName), b == data || Self.isReadable(b) { return }
-        guard (try? storage.write(Self.backupName, data)) != nil else { return }
-        var d = dates(); d["bak"] = now; d["bakUnreadable"] = now; writeDates(d)
+        if storage.read(Self.unreadableName) == data { return }
+        guard (try? storage.write(Self.unreadableName, data)) != nil else { return }
+        var d = dates(); d["unreadable"] = now; writeDates(d)
     }
 
     /// Read with ignored values → original bytes to `.bak`, so the next save cannot destroy the only copy. Not over
@@ -208,15 +217,17 @@ public final class ProfileStore: @unchecked Sendable {
             if Set(report.ignored).isSubset(of: Set(old.ignored)) { return }
         }
         guard (try? storage.write(Self.backupName, data)) != nil else { return }
-        var d = dates(); d["bak"] = now; d["bakUnreadable"] = nil; writeDates(d)
+        var d = dates(); d["bak"] = now; writeDates(d)
     }
 
-    /// Readable older versions: `.1`, `.2`, `.bak`, then other copies of `profiles.json` (e.g. an older file).
+    /// Readable older versions: `.1`, `.2`, `.bak`, the unreadable slot (only if this build can read it after all),
+    /// then other copies of `profiles.json` (e.g. an older file).
     func candidates() -> [RecoveryCandidate] {
         let d = dates()
         let sources: [(name: String, label: String, date: Date?)] = [
             (Self.generation1, "Letzte Fassung", d["1"]), (Self.generation2, "Vorletzte Fassung", d["2"]),
-            (Self.backupName, "Beiseitegelegte Fassung", d["bak"]), (Self.name, "Dateikopie", nil),
+            (Self.backupName, "Beiseitegelegte Fassung", d["bak"]),
+            (Self.unreadableName, "Beiseitegelegter Stand", d["unreadable"]), (Self.name, "Dateikopie", nil),
         ]
         var seen: Set<Data> = []
         var out: [RecoveryCandidate] = []
