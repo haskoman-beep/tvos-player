@@ -101,6 +101,8 @@ public struct TraktClient: Sendable {
         case 429: return .slowDown
         case 404, 409, 410: return .expired
         case 418: return .denied
+        // Server trouble or a timeout is no answer: keep waiting, only the code expiring ends the login.
+        case 408, 500...599: return .pending
         default: return .failed(s)
         }
     }

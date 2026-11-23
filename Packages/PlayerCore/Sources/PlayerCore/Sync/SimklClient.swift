@@ -36,7 +36,11 @@ public struct SimklClient: Sendable {
 
     public func poll(_ code: DeviceCode) async throws -> DevicePoll {
         let (s, d) = try await http.send(request("GET", "/oauth/pin/\(code.userCode)"))
-        guard s == 200 else { return s == 404 ? .expired : .failed(s) }
+        guard s == 200 else {
+            if s == 404 { return .expired }
+            // Server trouble or a timeout: keep waiting, only the code expiring ends the login.
+            return s == 408 || (500...599).contains(s) ? .pending : .failed(s)
+        }
         let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] ?? [:]
         if let t = o["access_token"] as? String { return .success(SyncToken(accessToken: t)) }
         return .pending

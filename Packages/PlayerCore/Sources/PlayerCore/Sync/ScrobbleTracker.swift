@@ -6,16 +6,23 @@ public struct ScrobbleEvent<Item> {
     public var item: Item
     /// 0…1
     public var fraction: Double
+
+    /// A `stop` from 80 % on: the services count the title as watched, so the app marks it watched locally too.
+    public var watched: Bool { action == .stop && fraction >= ScrobbleTracker<Item>.watchedThreshold }
 }
 
 extension ScrobbleEvent: Sendable where Item: Sendable {}
 
 /// Scrobble-Regeln für eine laufende Wiedergabe (eine Sitzung zur Zeit):
 /// - `start` nur unter 80 % (sonst entstünde beim Weiterschauen von fast Gesehenem ein doppelter Verlaufseintrag).
-/// - `pause` nur, wenn gerade eine Sitzung läuft; der nächste Fortschritt schickt wieder `start`.
+/// - `pause` nur, wenn gerade eine Sitzung läuft; erst ein Fortschritt über die Pausenstelle hinaus schickt wieder
+///   `start` (Speichern während der Pause startet nichts).
+/// - Je Sitzung und Titel genau ein `stop`.
 /// - `stop` beim Verlassen/Titelwechsel, wenn eine Sitzung läuft oder ab 80 %; ab `finishedAt` genau einmal.
 public struct ScrobbleTracker<Item> {
     public static var startLimit: Double { 0.8 }
+    /// Same threshold as the services: a stop from here on is a history entry.
+    public static var watchedThreshold: Double { 0.8 }
 
     struct Session {
         var item: Item
@@ -23,6 +30,8 @@ public struct ScrobbleTracker<Item> {
         var fraction: Double
         var active: Bool
         var completed: Bool
+        /// Fraction at which playback was paused; nil = not paused.
+        var pausedAt: Double? = nil
     }
 
     private(set) var session: Session?
@@ -42,7 +51,10 @@ public struct ScrobbleTracker<Item> {
             if fraction >= finishedAt {
                 out.append(ScrobbleEvent(action: .stop, item: item, fraction: fraction))
                 s.active = false; s.completed = true
+            } else if let p = s.pausedAt, fraction <= p {
+                // Still paused (a save while paused): no start.
             } else if !s.active && fraction < Self.startLimit {
+                s.pausedAt = nil
                 out.append(ScrobbleEvent(action: .start, item: item, fraction: fraction))
                 s.active = true
             }
@@ -54,6 +66,7 @@ public struct ScrobbleTracker<Item> {
     public mutating func pause(id: String) -> [ScrobbleEvent<Item>] {
         guard var s = session, s.id == id, s.active, !s.completed else { return [] }
         s.active = false
+        s.pausedAt = s.fraction
         session = s
         return [ScrobbleEvent(action: .pause, item: s.item, fraction: s.fraction)]
     }

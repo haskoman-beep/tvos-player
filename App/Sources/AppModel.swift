@@ -231,6 +231,8 @@ final class AppModel: ObservableObject {
         let events = events.filter { $0.item.item.id.hasPrefix("tt") }
         let services = Self.syncServices.filter(isConnected)
         guard !events.isEmpty, !services.isEmpty else { return }
+        // Build 2 (2.5): a stop from 80 % on counts as watched at the services, so locally too.
+        for e in events where e.watched { editProgress { $0.markFinished(id: e.item.id) } }
         let previous = scrobbleChain
         scrobbleChain = Task {
             await previous?.value
@@ -241,7 +243,14 @@ final class AppModel: ObservableObject {
                     do {
                         if s == "trakt" { try await trakt?.scrobble(e.action, imdb: imdb, season: r.season, episode: r.episode, percent: pct, token: t) }
                         else { try await simkl?.scrobble(e.action, imdb: imdb, season: r.season, episode: r.episode, percent: pct, token: t) }
-                    } catch { RemoteLog.error("sync", "\(s) \(e.action.rawValue): \(error)") }
+                    } catch {
+                        RemoteLog.error("sync", "\(s) \(e.action.rawValue): \(error)")
+                        // Build 2 (2.5): a lost watched stop goes to the queue and is sent later as a history entry.
+                        if e.watched {
+                            let id = [imdb, r.season.map(String.init), r.episode.map(String.init)].compactMap { $0 }.joined(separator: ":")
+                            queueScrobbleStop(id: id, progress: e.fraction, service: s)
+                        }
+                    }
                 }
             }
         }
