@@ -16,6 +16,10 @@ actor ImagePipeline {
     static let urlMemoryPlayback = 4 << 20
 
     private let session: URLSession
+    private let http: LimitedHTTPClient
+    /// Task 2.3: 20 MiB like `HTTPLimits.image`; 15 s without data as before (Wave F-k R1).
+    static let limits = HTTPLimits(requestTimeout: 15, resourceTimeout: HTTPLimits.image.resourceTimeout,
+                                   maxBytes: HTTPLimits.image.maxBytes)
     private let urlCache: URLCache
     /// NSCache ist threadsicher: `cachedImage` liest ohne Umweg über den Actor (Bild ohne Überblendung zeigen).
     nonisolated(unsafe) private let memory = NSCache<NSString, UIImage>()
@@ -54,6 +58,8 @@ actor ImagePipeline {
         // download that keeps receiving is not cut. The tile then tries its next picture (TilePosterImage).
         cfg.timeoutIntervalForRequest = 15
         session = URLSession(configuration: cfg)
+        // Task 2.3: downloads go through the HTTPClient (size limit 20 MiB, total time limit) on this cached session.
+        http = LimitedHTTPClient(transport: URLSessionByteTransport(session: session))
         urlCache = cache
         memory.totalCostLimit = ImageCacheBudget.maximum
         memory.delegate = tracker
@@ -213,7 +219,7 @@ actor ImagePipeline {
         defer { if animInFlight[key]?.id == loadID { animInFlight[key] = nil } }
         let data: Data
         do {
-            let (d, resp) = try await session.data(from: url)
+            let (d, resp) = try await load(url)
             guard (resp as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true else {
                 failed[key] = Date(); return nil
             }
@@ -279,11 +285,18 @@ actor ImagePipeline {
         for u in urls { Task { _ = await image(u, target: target) } }
     }
 
+    /// Task 2.3: one picture download with the image limits; the session's cache rule stays in charge.
+    private func load(_ url: URL) async throws -> (Data, URLResponse) {
+        let r = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad)
+        let (d, resp) = try await http.data(r, limits: Self.limits, fresh: false)
+        return (d, resp)
+    }
+
     /// Größenvariante zuerst, bei Fehlschlag die Original-Adresse.
     private func fetch(_ url: URL, target: ImageTarget, blur: Int) async -> UIImage? {
         let candidates = ImageURLVariant.candidates(for: url.absoluteString, neededWidth: target.neededSourceWidth).compactMap(URL.init(string:))
         for (i, u) in candidates.enumerated() {
-            guard let (data, resp) = try? await session.data(from: u),
+            guard let (data, resp) = try? await load(u),
                   (resp as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true else {
                 if i + 1 < candidates.count { noteVariantMiss(u) }
                 continue
