@@ -105,3 +105,8 @@ longer opens.
 - 23 Nov: fast scrolling on the home screen shows many grey placeholders that turn into posters late. Build 1 does not
   touch image loading (`ImagePipeline`, `RemoteImage` unchanged), so this is not a regression. Open item for a later
   build: measure with the metrics from 1.8 and compare with 250 before changing anything.
+- 23 Nov: on the home screen, a focused landscape or collection tile covered its neighbours (lift ×1.15 grows a 528 pt
+  tile by 40 pt per side, the gap was 24). Pre-existing, not from Build 1. Fixed: the gap is now the lift growth plus
+  8 pt (`FocusHeadroom.tileSpacing`), at least the old value; hero rows unchanged.
+  - [ ] Check: collection row (Netflix/Prime/Disney+) and a poster row, focus moves left/right, no overlap, rows do
+        not jump.

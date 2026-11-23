@@ -133,6 +133,11 @@ enum Theme {
         static let listFade: CGFloat = 24
         /// Wave F-k: vertical padding of a `.card` tile row (lift + shadow, PlayerCore `FocusHeadroom`), at least
         /// `minimum` (rows with enough room keep it).
+        /// Gap between tiles of one row so a lifted card never covers its neighbour (8 pt clearance, at least `minimum`).
+        static func tileSpacing(width: CGFloat, minimum: CGFloat) -> CGFloat {
+            FocusHeadroom.tileSpacing(width: width, scale: cardLiftScale, clearance: 8, minimum: minimum)
+        }
+
         static func cardRowPadding(height: CGFloat, minimum: CGFloat) -> CGFloat {
             FocusHeadroom.rowPadding(height: height, scale: cardLiftScale, shadow: cardLiftShadow, minimum: minimum)
         }

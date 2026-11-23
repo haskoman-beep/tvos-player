@@ -355,8 +355,12 @@ struct Strip<C: View>: View {
         // reads or compares, so a focus move never triggers it. Unlike `ScrollViewProxy` it acts on this horizontal
         // scroll view alone (no vertical jump of the page) and honours the leading content margin (edge 80).
         // Without the anchor the focus engine would not follow the card's growth (up to 640·s wide) to the right.
+        // The lifted card (×1.15) must not cover its neighbour; landscape and collection tiles were too tight (23.11.).
+        // Hero rows keep their spacing (one wide card per screen).
+        let gap = kind == .hero ? Theme.Space.m * s
+            : Theme.Focus.tileSpacing(width: PosterSize.tileSize(kind, scale: s).width, minimum: Theme.Space.m * s)
         ScrollView(.horizontal, showsIndicators: false) {
-            LazyHStack(spacing: Theme.Space.m * s) { content }
+            LazyHStack(spacing: gap) { content }
                 .scrollTargetLayout()
                 .padding(.vertical, pad)
         }

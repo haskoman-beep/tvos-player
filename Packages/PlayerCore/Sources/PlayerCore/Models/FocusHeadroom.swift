@@ -19,6 +19,12 @@ public enum FocusHeadroom {
         max(minimum, perSide(height: height, scale: scale, shadow: shadow))
     }
 
+    /// Gap between tiles in one row: the focused tile grows sideways by half its extra width and must not cover its
+    /// neighbour, so the gap is that growth plus `clearance`, but at least `minimum` (rows that had room stay as they are).
+    public static func tileSpacing(width: CGFloat, scale: CGFloat, clearance: CGFloat, minimum: CGFloat) -> CGFloat {
+        max(minimum, perSide(height: width, scale: scale, shadow: clearance))
+    }
+
     /// Band above a clipping list edge (home list under the hero info): the headroom of the tallest tile plus the
     /// soft fade above it, so the lifted card stays fully opaque and only the band's top edge fades.
     public static func edgeBand(height: CGFloat, scale: CGFloat, shadow: CGFloat, fade: CGFloat) -> CGFloat {

@@ -57,6 +57,15 @@ private let shadow: CGFloat = 12
     #expect(FocusHeadroom.tallest([.hero, .poster], cardScale: 0.85) == 620)
 }
 
+@Test func focusHeadroomTileSpacingKeepsLiftedTileOffItsNeighbour() {
+    // Landscape at "Groß" (440 × 1.2 = 528): grows 39.6 per side at 1.15 → 40 + 8 clearance.
+    #expect(FocusHeadroom.tileSpacing(width: 528, scale: 1.15, clearance: 8, minimum: 24) == 48)
+    // Poster at "Groß" (288): 21.6 + 8 → 30, more than the old 24.
+    #expect(FocusHeadroom.tileSpacing(width: 288, scale: 1.15, clearance: 8, minimum: 24) == 30)
+    // Small tile: the old spacing stays.
+    #expect(FocusHeadroom.tileSpacing(width: 100, scale: 1.15, clearance: 8, minimum: 20) == 20)
+}
+
 @Test func focusHeadroomEdgeBandAddsFadeAboveLift() {
     // Hero home: band above the list = lift room (opaque) + fade 24.
     #expect(FocusHeadroom.edgeBand(height: 360, scale: lift, shadow: shadow, fade: 24) == 63)
