@@ -100,6 +100,7 @@ longer opens.
 
 - 23 Nov: in „Reihe hinzufügen“ the left list scrolled over the page title. Pre-existing since the F-0 design wave (also in
   249/250). Fixed in 5b8710b: both `CategoryList` columns clip top and bottom, the sides stay open for the focus zoom.
+  Second step: the entry list inside the right column also clips under the group title (seen 23 Nov after 5b8710b).
   - [ ] Check: „Reihe hinzufügen“ and the settings pages, scroll to the bottom, nothing covers the title; the focused
         row still zooms without being cut at the sides or at the first/last row.
 - 23 Nov: fast scrolling on the home screen shows many grey placeholders that turn into posters late. Build 1 does not

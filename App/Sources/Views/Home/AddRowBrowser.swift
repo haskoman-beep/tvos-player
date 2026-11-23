@@ -134,6 +134,8 @@ struct AddRowBrowser: View {
                 .padding(.vertical, Theme.Space.s)
             }
             .scrollClipDisabled()
+            // Entries scroll under the group title, never over it; the sides stay open for the focus zoom.
+            .mask { Rectangle().padding(.horizontal, -Theme.Space.xl) }
         }
         .defaultFocus($entryFocus, g.firstAvailable?.id)
     }
