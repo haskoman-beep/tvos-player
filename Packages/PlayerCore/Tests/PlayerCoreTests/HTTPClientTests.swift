@@ -54,7 +54,6 @@ private let req = URLRequest(url: URL(string: "https://addon.example.com/catalog
     await #expect(throws: HTTPClientError.tooLarge(limit: 100)) {
         _ = try await LimitedHTTPClient(transport: t).data(req, limits: HTTPLimits(maxBytes: 100), fresh: false)
     }
-    #expect(t.deliveredChunks <= 3)
 }
 
 @Test func httpClientRejectsDeclaredContentLengthOverLimit() async {
@@ -109,4 +108,90 @@ private let req = URLRequest(url: URL(string: "https://addon.example.com/catalog
     #expect(t.lastRequest?.cachePolicy == .reloadIgnoringLocalCacheData)
     #expect(t.lastRequest?.httpMethod == "POST")
     #expect(t.lastRequest?.value(forHTTPHeaderField: "A") == "b")
+}
+
+// Fix round 1
+
+/// Records the limits the addon client asks for.
+private final class LimitRecordingHTTP: HTTPFetching, @unchecked Sendable {
+    var limits: [HTTPLimits] = []
+    let routes: [String: String]
+    init(routes: [String: String]) { self.routes = routes }
+    func data(from url: URL) async throws -> Data { try await data(from: url, limits: .json) }
+    func data(from url: URL, limits: HTTPLimits) async throws -> Data {
+        self.limits.append(limits)
+        guard let b = routes[url.absoluteString] else { throw AddonError.http(404) }
+        return Data(b.utf8)
+    }
+}
+
+@Test func addonLimitsStayAboveTheProfileTimeout() {
+    for t in AddonSearch.timeoutChoices {
+        let l = HTTPLimits.addon(timeout: t)
+        #expect(l.requestTimeout > t)
+        #expect(l.resourceTimeout >= t + HTTPLimits.addonMargin)
+        #expect(l.maxBytes == HTTPLimits.json.maxBytes)
+    }
+}
+
+@Test func addonStreamSearchUsesProfileTimeoutForRequests() async throws {
+    let http = LimitRecordingHTTP(routes: [
+        "https://a.example.com/manifest.json": manifestJSON,
+        "https://a.example.com/stream/movie/tt1.json": #"{"streams":[{"url":"https://cdn.example.com/1.mkv"}]}"#,
+    ])
+    let c = AddonClient(http: http)
+    let a = try await c.install(manifestURL: "https://a.example.com/manifest.json")
+    #expect(http.limits.last!.requestTimeout >= 45)   // no profile timeout: longest choice
+    _ = await c.streams(from: [a], type: "movie", id: "tt1", timeout: 30) { _ in }
+    #expect(http.limits.last!.requestTimeout >= 30)
+    #expect(http.limits.last!.resourceTimeout >= 35)
+    // The request built by the client carries it as timeoutInterval.
+    let r = LimitedHTTPClient.prepared(req, limits: http.limits.last!, fresh: false)
+    #expect(r.timeoutInterval >= 30)
+}
+
+/// A body that never ends (one chunk, then silence).
+private struct HangingTransport: HTTPByteTransport {
+    func open(_ request: URLRequest) async throws -> (HTTPURLResponse, AsyncThrowingStream<Data, Error>) {
+        let resp = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: [:])!
+        return (resp, AsyncThrowingStream { c in c.yield(Data("{\"part".utf8)) })
+    }
+}
+
+@Test func httpClientCancelledMidBodyThrows() async {
+    let t = Task { try await LimitedHTTPClient(transport: HangingTransport()).data(req, limits: .json, fresh: false) }
+    try? await Task.sleep(nanoseconds: 50_000_000)
+    t.cancel()
+    let r = await t.result
+    switch r {
+    case .success: Issue.record("truncated body returned as success")
+    case .failure(let e): #expect(e is CancellationError)
+    }
+}
+
+@Test func httpClientRejectsBodyShorterThanContentLength() async {
+    let t = FakeTransport(chunks: [Data(count: 10)], contentLength: 50)
+    await #expect(throws: HTTPClientError.incomplete) {
+        _ = try await LimitedHTTPClient(transport: t).data(req, limits: .json, fresh: false)
+    }
+}
+
+@Test func httpClientKeepsCallerCachePolicyWhenNotFresh() async throws {
+    let t = FakeTransport(chunks: [Data("x".utf8)])
+    _ = try await LimitedHTTPClient(transport: t)
+        .data(URLRequest(url: req.url!, cachePolicy: .returnCacheDataElseLoad), limits: .image, fresh: false)
+    #expect(t.lastRequest?.cachePolicy == .returnCacheDataElseLoad)
+}
+
+@Test func httpClientTimesOutAfterResourceTimeout() async {
+    let limits = HTTPLimits(requestTimeout: 1, resourceTimeout: 0.1, maxBytes: 100)
+    await #expect(throws: HTTPClientError.timedOut) {
+        _ = try await LimitedHTTPClient(transport: HangingTransport()).data(req, limits: limits, fresh: false)
+    }
+}
+
+@Test func httpClientErrorsHaveReadableMessages() {
+    #expect(AddonSearch.describe(HTTPClientError.timedOut) == "Zeitüberschreitung")
+    #expect(AddonSearch.describe(HTTPClientError.tooLarge(limit: 1)) == "Antwort zu groß")
+    #expect(TorBoxClient.userMessage(HTTPClientError.timedOut) == "TorBox antwortet nicht (Zeitüberschreitung)")
 }

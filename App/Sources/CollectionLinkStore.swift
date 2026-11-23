@@ -69,6 +69,7 @@ final class CollectionLinkStore: ObservableObject {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.urlCache = nil
         cfg.timeoutIntervalForRequest = 10
+        // Task 2.3 exception (direct URLSession, not via HTTPClient in Build 2): own ephemeral session with range reads and sound probing; migrate later.
         return URLSession(configuration: cfg)
     }()
 
@@ -199,6 +200,7 @@ final class CollectionLinkStore: ObservableObject {
         cfg.urlCache = nil
         cfg.timeoutIntervalForRequest = CollectionLinkStore.linkTimeout
         cfg.timeoutIntervalForResource = CollectionLinkStore.linkTimeout
+        // Task 2.3 exception (direct URLSession, not via HTTPClient in Build 2): link checks read only a few bytes via Range; migrate later.
         return URLSession(configuration: cfg)
     }()
 

@@ -294,6 +294,7 @@ actor ImagePipeline {
 
     /// Größenvariante zuerst, bei Fehlschlag die Original-Adresse.
     private func fetch(_ url: URL, target: ImageTarget, blur: Int) async -> UIImage? {
+        noteTargetPolicy(url)
         let candidates = ImageURLVariant.candidates(for: url.absoluteString, neededWidth: target.neededSourceWidth).compactMap(URL.init(string:))
         for (i, u) in candidates.enumerated() {
             guard let (data, resp) = try? await load(u),
@@ -311,6 +312,17 @@ actor ImagePipeline {
 
     /// Fehlende Größenvarianten melden (höchstens 5 Zeilen je Start), damit falsche Stufen auffallen.
     private var variantMisses = 0
+    /// Task 2.3, shadow build: pictures the TargetPolicy would refuse (non-http, private targets; the origin addon
+    /// is unknown here, so LAN addons count too). Only counted and logged (first 5 per start), never blocked.
+    private var targetRefusals = 0
+    private func noteTargetPolicy(_ u: URL) {
+        guard !TargetPolicy.allows(u, origin: nil) else { return }
+        targetRefusals += 1
+        guard targetRefusals <= 5 else { return }
+        let line = "Zielprüfung würde Bild ablehnen (Schattenbetrieb, \(u.scheme ?? "?"), Nr. \(targetRefusals))"
+        Task { @MainActor in RemoteLog.info("bilder", line) }
+    }
+
     private func noteVariantMiss(_ u: URL) {
         variantMisses += 1
         guard variantMisses <= 5 else { return }

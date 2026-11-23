@@ -16,6 +16,15 @@ public struct HTTPLimits: Sendable, Equatable {
     public static let json = HTTPLimits(maxBytes: 8 * 1024 * 1024)
     public static let image = HTTPLimits(maxBytes: 20 * 1024 * 1024)
     public static let subtitle = HTTPLimits(maxBytes: 5 * 1024 * 1024)
+
+    /// Fix round 1: addon calls (streams, catalogs, meta) wait as long as the profile's addon timeout allows.
+    /// Aggregator addons often send nothing until the whole answer is ready, so both limits sit above `timeout`
+    /// (the caller's own deadline, e.g. `AddonSearch.withDeadline`, ends the wait first).
+    public static let addonMargin: TimeInterval = 5
+    public static func addon(timeout: TimeInterval) -> HTTPLimits {
+        let t = max(timeout, HTTPLimits.json.requestTimeout)
+        return HTTPLimits(requestTimeout: t + addonMargin, resourceTimeout: t + 2 * addonMargin, maxBytes: json.maxBytes)
+    }
 }
 
 public enum HTTPClientError: Error, Equatable {
@@ -23,6 +32,8 @@ public enum HTTPClientError: Error, Equatable {
     case tooLarge(limit: Int)
     /// `resourceTimeout` passed before the body was complete.
     case timedOut
+    /// The body ended before the declared Content-Length (connection lost).
+    case incomplete
 }
 
 /// Task 2.3: the one way to fetch data. Callers check the status code themselves.
@@ -67,6 +78,15 @@ public struct LimitedHTTPClient: HTTPClient {
         }
     }
 
+    /// Fewer bytes than the declared length (only checkable without Content-Encoding: compressed lengths differ).
+    static func isIncomplete(_ received: Int, _ resp: HTTPURLResponse) -> Bool {
+        let declared = resp.expectedContentLength
+        guard declared >= 0 else { return false }
+        let enc = (resp.value(forHTTPHeaderField: "Content-Encoding") ?? "identity").lowercased()
+        guard enc.isEmpty || enc == "identity" else { return false }
+        return Int64(received) < declared
+    }
+
     static func read(_ r: URLRequest, transport: HTTPByteTransport, maxBytes: Int) async throws -> (Data, HTTPURLResponse) {
         let (resp, stream) = try await transport.open(r)
         if resp.expectedContentLength > Int64(maxBytes) { throw HTTPClientError.tooLarge(limit: maxBytes) }
@@ -76,6 +96,9 @@ public struct LimitedHTTPClient: HTTPClient {
             out.append(chunk)
             try Task.checkCancellation()
         }
+        // Fix round 1: a cancelled caller ends the stream without an error; never return that partial body.
+        try Task.checkCancellation()
+        if isIncomplete(out.count, resp) { throw HTTPClientError.incomplete }
         return (out, resp)
     }
 }
@@ -87,7 +110,8 @@ public struct URLSessionByteTransport: HTTPByteTransport {
 
     public static let shared: URLSessionByteTransport = {
         let cfg = URLSessionConfiguration.default
-        cfg.timeoutIntervalForRequest = 10
+        // Fix round 1: high so each request's own timeoutInterval (from its HTTPLimits) governs.
+        cfg.timeoutIntervalForRequest = 60
         // Outer bound only; the per-request resourceTimeout is enforced by LimitedHTTPClient.
         cfg.timeoutIntervalForResource = 60
         return URLSessionByteTransport(session: URLSession(configuration: cfg))
@@ -113,9 +137,9 @@ public struct URLSessionByteTransport: HTTPByteTransport {
                     var answered = false
                     do {
                         let (bytes, resp) = try await session.bytes(for: request)
-                        guard let http = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+                        guard let httpResp = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }
                         answered = true
-                        rc.resume(returning: http)
+                        rc.resume(returning: httpResp)
                         var buf = Data(); buf.reserveCapacity(size)
                         for try await b in bytes {
                             buf.append(b)
@@ -159,6 +183,9 @@ public struct HTTPClientFetcher: HTTPFetching {
         self.client = client; self.limits = limits
     }
     public func data(from url: URL) async throws -> Data {
+        try await data(from: url, limits: limits)
+    }
+    public func data(from url: URL, limits: HTTPLimits) async throws -> Data {
         let (d, resp) = try await client.data(URLRequest(url: url), limits: limits, fresh: false)
         if !(200..<300).contains(resp.statusCode) { throw AddonError.http(resp.statusCode) }
         return d

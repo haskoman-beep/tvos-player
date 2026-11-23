@@ -6,6 +6,12 @@ import FoundationNetworking
 /// Abstraktion über HTTP, damit Tests ohne Netz laufen.
 public protocol HTTPFetching: Sendable {
     func data(from url: URL) async throws -> Data
+    /// Fix round 1: with explicit limits (addon timeout); fetchers without limits ignore them.
+    func data(from url: URL, limits: HTTPLimits) async throws -> Data
+}
+
+public extension HTTPFetching {
+    func data(from url: URL, limits: HTTPLimits) async throws -> Data { try await data(from: url) }
 }
 
 /// Task 2.3: kept for existing callers; goes through the shared `HTTPClient` with JSON limits.
@@ -13,6 +19,9 @@ public struct URLSessionFetcher: HTTPFetching {
     public init() {}
     public func data(from url: URL) async throws -> Data {
         try await HTTPClientFetcher().data(from: url)
+    }
+    public func data(from url: URL, limits: HTTPLimits) async throws -> Data {
+        try await HTTPClientFetcher().data(from: url, limits: limits)
     }
 }
 
@@ -41,6 +50,10 @@ public struct AddonClient: Sendable {
     let http: HTTPFetching
     /// Wave W-a: log line (category, text) for things the caller should see, e.g. skipped catalog items.
     let log: @Sendable (_ category: String, _ message: String) -> Void
+    /// Fix round 1: the profile's addon timeout; network limits of addon calls are derived from it. Default = the
+    /// longest choice, so calls without a profile timeout are never cut before the caller's own deadline.
+    public var addonTimeout: Double = AddonSearch.timeoutChoices.max() ?? 45
+    var addonLimits: HTTPLimits { .addon(timeout: addonTimeout) }
 
     public init(http: HTTPFetching = URLSessionFetcher(),
                 log: @escaping @Sendable (_ category: String, _ message: String) -> Void = { _, _ in }) {
@@ -102,13 +115,13 @@ public struct AddonClient: Sendable {
         guard let parsed = Self.parseManifest(manifestURL) else { throw AddonError.invalidManifestURL(manifestURL) }
         let manifest = parsed.base + "/manifest.json" + (parsed.query.map { "?" + $0 } ?? "")
         guard let url = URL(string: manifest) else { throw AddonError.invalidManifestURL(manifestURL) }
-        let m = try JSONDecoder().decode(AddonManifest.self, from: try await http.data(from: url))
+        let m = try JSONDecoder().decode(AddonManifest.self, from: try await http.data(from: url, limits: addonLimits))
         return InstalledAddon(manifestURL: manifest, manifest: m)
     }
 
     public func streams(_ addon: InstalledAddon, type: String, id: String) async throws -> [StreamItem] {
         let url = try resourceURL(addon, "stream", type: type, id: id)
-        let r = try JSONDecoder().decode(StreamsResponse.self, from: try await http.data(from: url))
+        let r = try JSONDecoder().decode(StreamsResponse.self, from: try await http.data(from: url, limits: addonLimits))
         if r.skipped > 0 { log("streams", "\(addon.manifest.name) \(type)/\(id): \(AddonNotices.skippedText(r.skipped))") }
         if r.streams.count > AddonListCaps.streams {
             log("streams", "\(addon.manifest.name) \(type)/\(id): \(r.streams.count) Streams, gekappt auf \(AddonListCaps.streams)")
@@ -131,7 +144,7 @@ public struct AddonClient: Sendable {
     public func catalogPage(_ addon: InstalledAddon, type: String, id: String,
                             extra: [String: String] = [:]) async throws -> AddonCatalogPage {
         let url = try resourceURL(addon, "catalog", type: type, id: id, extra: extra)
-        let r = try JSONDecoder().decode(MetasResponse.self, from: try await http.data(from: url))
+        let r = try JSONDecoder().decode(MetasResponse.self, from: try await http.data(from: url, limits: addonLimits))
         if r.metas.count > AddonListCaps.catalog {
             log("katalog", "\(addon.manifest.name) \(type)/\(id): \(r.metas.count) Einträge, gekappt auf \(AddonListCaps.catalog)")
         }
@@ -144,7 +157,7 @@ public struct AddonClient: Sendable {
     /// `AddonNoticeError` (logged).
     public func meta(_ addon: InstalledAddon, type: String, id: String) async throws -> MetaDetail {
         let url = try resourceURL(addon, "meta", type: type, id: id)
-        var m = try JSONDecoder().decode(MetaResponse.self, from: try await http.data(from: url)).meta
+        var m = try JSONDecoder().decode(MetaResponse.self, from: try await http.data(from: url, limits: addonLimits)).meta
         if AddonNotices.isErrorItem(id: m.id) {
             let text = AddonNotices.text(name: m.name, description: m.description, id: m.id)
             log("meta", "\(addon.manifest.name) \(type)/\(id): Fehlereintrag statt Metadaten: \(text)")

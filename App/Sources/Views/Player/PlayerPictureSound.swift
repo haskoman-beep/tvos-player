@@ -227,6 +227,7 @@ enum AddonSubtitleFiles {
     nonisolated static func download(_ r: URLRequest) async throws -> Data {
         try await withThrowingTaskGroup(of: Data?.self) { group in
             group.addTask {
+                // Task 2.3 exception (direct URLSession, not via HTTPClient in Build 2): subtitle download already has own byte cap (maxBytes) and deadline; migrate later.
                 let (stream, resp) = try await URLSession.shared.bytes(for: r)
                 defer { stream.task.cancel() }   // auch bei falschem Status oder zu großer Längenangabe nicht weiterladen
                 let code = (resp as? HTTPURLResponse)?.statusCode ?? -1

@@ -199,6 +199,7 @@ final class AppUpdater: ObservableObject {
     private nonisolated static func probe(_ base: URL) async -> String? {
         var r = URLRequest(url: base.appendingPathComponent("api/version"), timeoutInterval: 4)
         r.cachePolicy = .reloadIgnoringLocalCacheData
+        // Task 2.3 exception (direct URLSession, not via HTTPClient in Build 2): update check against a fixed address, small answer; migrate later.
         guard let res = try? await URLSession.shared.data(for: r) else { return nil }
         guard (res.1 as? HTTPURLResponse)?.statusCode == 200 else { return nil }
         return try? Atvloadly.parseVersion(res.0)

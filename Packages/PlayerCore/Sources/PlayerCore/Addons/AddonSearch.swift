@@ -114,6 +114,13 @@ public enum AddonSearch {
             case .invalidManifestURL: return "Adresse ungültig"
             }
         }
+        if let e = error as? HTTPClientError {
+            switch e {
+            case .timedOut: return "Zeitüberschreitung"
+            case .tooLarge: return "Antwort zu groß"
+            case .incomplete: return "Verbindung abgerissen"
+            }
+        }
         if error is DecodingError { return "Antwort unlesbar" }
         if error is CancellationError { return "abgebrochen" }
         let ns = error as NSError
@@ -161,11 +168,12 @@ extension AddonClient {
         var progress = AddonSearchProgress(addons: wanted)
         await onUpdate(progress)
         let limit = AddonSearch.clamp(timeout)
+        let client: AddonClient = { var c = self; c.addonTimeout = limit; return c }()
         await withTaskGroup(of: (Int, InstalledAddon, AddonSearch.Outcome, Int).self) { group in
             for w in wanted {
                 group.addTask {
                     let t0 = Date()
-                    let r = await AddonSearch.withDeadline(limit) { try await self.streams(w.addon, type: type, id: id) }
+                    let r = await AddonSearch.withDeadline(limit) { try await client.streams(w.addon, type: type, id: id) }
                     let ms = Int(Date().timeIntervalSince(t0) * 1000)
                     switch r {
                     case .some(.success(let s)): return (w.index, w.addon, .streams(s), ms)

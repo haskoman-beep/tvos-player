@@ -58,6 +58,7 @@ enum VideoHash {
         for (k, v) in headers { r.setValue(v, forHTTPHeaderField: k) }
         r.setValue("bytes=\(from)-\(to)", forHTTPHeaderField: "Range")
         r.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        // Task 2.3 exception (direct URLSession, not via HTTPClient in Build 2): two 64 KiB Range reads with own timeout and byte cap (VideoHash); migrate later.
         guard let res = try? await URLSession.shared.bytes(for: r) else { return nil }
         let (bytes, resp) = res
         defer { bytes.task.cancel() }   // Server ohne Range-Unterstützung: nie die ganze Datei laden
