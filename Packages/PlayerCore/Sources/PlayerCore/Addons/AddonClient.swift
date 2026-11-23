@@ -8,14 +8,11 @@ public protocol HTTPFetching: Sendable {
     func data(from url: URL) async throws -> Data
 }
 
+/// Task 2.3: kept for existing callers; goes through the shared `HTTPClient` with JSON limits.
 public struct URLSessionFetcher: HTTPFetching {
     public init() {}
     public func data(from url: URL) async throws -> Data {
-        let (data, resp) = try await URLSession.shared.data(from: url)
-        if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            throw AddonError.http(http.statusCode)
-        }
-        return data
+        try await HTTPClientFetcher().data(from: url)
     }
 }
 
@@ -113,7 +110,10 @@ public struct AddonClient: Sendable {
         let url = try resourceURL(addon, "stream", type: type, id: id)
         let r = try JSONDecoder().decode(StreamsResponse.self, from: try await http.data(from: url))
         if r.skipped > 0 { log("streams", "\(addon.manifest.name) \(type)/\(id): \(AddonNotices.skippedText(r.skipped))") }
-        return r.streams
+        if r.streams.count > AddonListCaps.streams {
+            log("streams", "\(addon.manifest.name) \(type)/\(id): \(r.streams.count) Streams, gekappt auf \(AddonListCaps.streams)")
+        }
+        return AddonListCaps.cap(r.streams, AddonListCaps.streams)
     }
 
     public func catalog(_ addon: InstalledAddon, type: String, id: String, extra: [String: String] = [:]) async throws -> [MetaPreview] {
@@ -125,7 +125,10 @@ public struct AddonClient: Sendable {
                             extra: [String: String] = [:]) async throws -> AddonCatalogPage {
         let url = try resourceURL(addon, "catalog", type: type, id: id, extra: extra)
         let r = try JSONDecoder().decode(MetasResponse.self, from: try await http.data(from: url))
-        let page = AddonCatalogPage(decoded: r.metas, skipped: r.skipped, catalogType: type)
+        if r.metas.count > AddonListCaps.catalog {
+            log("katalog", "\(addon.manifest.name) \(type)/\(id): \(r.metas.count) Einträge, gekappt auf \(AddonListCaps.catalog)")
+        }
+        let page = AddonCatalogPage(decoded: AddonListCaps.cap(r.metas, AddonListCaps.catalog), skipped: r.skipped, catalogType: type)
         if let note = page.logNote { log("katalog", "\(addon.manifest.name) \(type)/\(id): \(note)") }
         return page
     }
