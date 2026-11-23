@@ -15,6 +15,7 @@ private let show = MetaPreview(id: "tt9", type: "series", name: "Die Serie", pos
     #expect(b.isWatched("tt1"))
     b.record(id: "tt1", item: movie, position: 15, duration: 6000, now: t0.addingTimeInterval(60))
     #expect(b.isWatched("tt1"))
+    #expect(b.entries["tt1"]?.updated == t0)
     #expect(b.history().map(\.id) == ["tt1"])
     #expect(b.continueWatching().isEmpty)
 }
@@ -58,12 +59,12 @@ private let show = MetaPreview(id: "tt9", type: "series", name: "Die Serie", pos
     #expect(b.entries["tt9:1:3"]?.nextUp == nil)
 }
 
-@Test func recordKeepsRemoteFractionTitleAndArtwork() {
+@Test func recordKeepsRemoteFractionTitleAndArtwork() throws {
     var b = ProgressBook()
     b.entries["tt1"] = WatchProgress(id: "tt1", item: movie, position: 0, duration: 0, updated: t0, remoteFraction: 0.4)
     let bare = MetaPreview(id: "tt1", type: "movie", name: "")
     b.record(WatchProgress(id: "tt1", item: bare, position: 10, duration: 6000), now: t0.addingTimeInterval(5))
-    let e = try! #require(b.entries["tt1"])
+    let e = try #require(b.entries["tt1"])
     #expect(e.remoteFraction == 0.4)
     #expect(e.item == movie)
     #expect(e.position == 10 && e.duration == 6000 && e.updated == t0.addingTimeInterval(5))
@@ -76,24 +77,49 @@ private let show = MetaPreview(id: "tt9", type: "series", name: "Die Serie", pos
     #expect(b.entries["tt1"]?.remoteFraction == 0.5)
 }
 
-@Test func remoteMergeKeepsLocalArtwork() {
+@Test func remoteMergeKeepsLocalArtwork() throws {
     var b = ProgressBook()
     b.record(id: "tt1", item: movie, position: 2400, duration: 6000, now: t0)
     let remoteItem = MetaPreview(id: "tt1", type: "movie", name: "", poster: nil)
     b.merge(remote: [RemoteProgress(id: "tt1", item: remoteItem, fraction: 0.5, updated: t0.addingTimeInterval(1))])
-    let e = try! #require(b.entries["tt1"])
+    let e = try #require(b.entries["tt1"])
     #expect(e.position == 3000 && e.updated == t0.addingTimeInterval(1))
     #expect(e.item == movie)
 }
 
-@Test func remoteMergeKeepsLocalTitleButFillsMissingArtwork() {
+@Test func remoteMergeKeepsLocalTitleButFillsMissingArtwork() throws {
     var b = ProgressBook()
     let local = MetaPreview(id: "tt1", type: "movie", name: "Der Film")
     b.record(id: "tt1", item: local, position: 600, duration: 6000, now: t0)
     let remoteItem = MetaPreview(id: "tt1", type: "movie", name: "The Movie", poster: "remote-poster")
     b.merge(remote: [RemoteProgress(id: "tt1", item: remoteItem, fraction: 0.2, updated: t0.addingTimeInterval(1))])
-    let e = try! #require(b.entries["tt1"])
+    let e = try #require(b.entries["tt1"])
     #expect(e.item.name == "Der Film")
     #expect(e.item.poster == "remote-poster")
     #expect(e.position == 1200)
+}
+
+@Test func syncedBackShortReopenOfWatchedFilmKeepsCheckmark() {
+    var b = ProgressBook()
+    b.record(id: "tt1", item: movie, position: 6000, duration: 6000, now: t0)
+    b.record(id: "tt1", item: movie, position: 15, duration: 6000, now: t0.addingTimeInterval(60))
+    // The service echoes the 15 s session (0.25 %) with a newer timestamp.
+    b.merge(remote: [RemoteProgress(id: "tt1", item: movie, fraction: 0.0025, updated: t0.addingTimeInterval(70))])
+    #expect(b.isWatched("tt1"))
+    #expect(b.history().map(\.id) == ["tt1"])
+    // A real rewatch from another device (40 %) still reopens it.
+    b.merge(remote: [RemoteProgress(id: "tt1", item: movie, fraction: 0.4, updated: t0.addingTimeInterval(80))])
+    #expect(!b.isWatched("tt1"))
+    #expect(b.resumePosition(for: "tt1") == 2400)
+}
+
+@Test func syncedBackNextEpisodeLeftAt40sStaysInContinueWatching() {
+    var b = ProgressBook()
+    b.record(id: "tt9:1:2", item: show, season: 1, episode: 2, position: 2400, duration: 2400, now: t0)
+    b.recordNextUp(id: "tt9:1:3", item: show, season: 1, episode: 3, now: t0.addingTimeInterval(1))
+    b.record(id: "tt9:1:3", item: show, season: 1, episode: 3, position: 40, duration: 2400, now: t0.addingTimeInterval(50))
+    b.merge(remote: [RemoteProgress(id: "tt9:1:3", item: show, season: 1, episode: 3, fraction: 40.0 / 2400,
+                                    updated: t0.addingTimeInterval(60))])
+    #expect(b.entries["tt9:1:3"]?.nextUp == true)
+    #expect(b.continueWatching().map(\.id) == ["tt9:1:3"])
 }

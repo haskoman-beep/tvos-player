@@ -157,14 +157,22 @@ public struct ProgressBook: Codable, Sendable, Equatable {
             if let l = entries[r.id], l.updated >= r.updated { continue }
             // Wave L: an episode paused before the series was marked as watched stays out.
             if r.id != r.item.id, let m = entries[r.item.id], m.season == nil, m.finished, m.updated >= r.updated { continue }
-            clearSeriesMarker(itemID: r.item.id, episodeID: r.id, updated: r.updated)
             let dur = entries[r.id]?.duration ?? 0
+            let done = r.fraction >= Self.finishedAt
+            // Task 2.1 fix round 1 (W-B-1 via sync): the same rules as `record`. A short remote session
+            // (the service echoes our own scrobble) neither reopens a watched entry nor drops the next-episode hint.
+            let seconds: Double? = dur > 0 ? r.fraction * dur : nil
+            if let l = entries[r.id], l.finished, !done,
+               !(r.fraction > Self.unfinishFraction && (seconds ?? .infinity) > Self.markerSeconds) { continue }
+            let keepNextUp = !done && entries[r.id]?.nextUp == true && (seconds ?? 0) <= Self.markerSeconds
+            clearSeriesMarker(itemID: r.item.id, episodeID: r.id, updated: r.updated)
             // Task 2.1 (S-13): take position and time from the service, keep the local title and artwork;
             // the service only fills what is missing locally.
             let item = entries[r.id].map { Self.filled($0.item, from: r.item) } ?? r.item
             entries[r.id] = WatchProgress(id: r.id, item: item, season: r.season, episode: r.episode,
                                           position: dur > 0 ? r.fraction * dur : 0, duration: dur, updated: r.updated,
-                                          finished: r.fraction >= Self.finishedAt, remoteFraction: dur > 0 ? nil : r.fraction)
+                                          finished: done, nextUp: keepNextUp ? true : nil,
+                                          remoteFraction: dur > 0 ? nil : r.fraction)
         }
     }
 }
