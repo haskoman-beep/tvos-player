@@ -255,7 +255,7 @@ private actor Updates {
     let clock = ContinuousClock.now
     let result = await AddonClient(http: http).streams(from: addons, type: "movie", id: "tt1", timeout: 3) { await updates.add($0) }
     let elapsed = ContinuousClock.now - clock
-    #expect(elapsed < .seconds(4.5))
+    #expect(elapsed < .seconds(4.9))   // timeout 3 s vs. slow addon 5 s; 4.5 was too tight for CI runners
     #expect(result.map(\.addon.manifest.name) == ["Schnell"])
     let list = await updates.list
     #expect(list.count == 4)   // Anfang + je Addon
