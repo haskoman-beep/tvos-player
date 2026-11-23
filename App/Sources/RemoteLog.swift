@@ -2,6 +2,7 @@ import Foundation
 import Network
 import os
 import PlayerCore
+import UIKit
 
 /// Ereignis-Log: os_log, Verlauf auf dem Gerät (`LogRing`, Caches/log-ring.json, alle 30 s) und – nur wenn
 /// eingeschaltet – Sendung an den am Fernseher gewählten Log-Empfänger im Heimnetz (Bonjour `_playerlog._tcp`).
@@ -35,6 +36,12 @@ final class RemoteLog {
         Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in Task { @MainActor in RemoteLog.shared.flush() } }
         Timer.scheduledTimer(withTimeInterval: LogRing.saveInterval, repeats: true) { _ in
             Task { @MainActor in RemoteLog.shared.saveRing() }
+        }
+        // Also on the way into the background (same observer pattern as FocusVideoPlayer): tvOS may end a suspended
+        // app without notice, the last up to 30 s of lines would be lost otherwise.
+        _ = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil,
+                                                   queue: .main) { _ in
+            Task { @MainActor in RemoteLog.shared.saveRing(now: true) }
         }
     }
 
@@ -135,9 +142,11 @@ final class RemoteLog {
 
     // MARK: Verlauf auf dem Gerät
 
-    private func saveRing() {
+    /// `now`: write at once on the calling thread (going into the background), otherwise off the main thread.
+    private func saveRing(now: Bool = false) {
         guard ringDirty, let url = ringURL, let data = try? JSONEncoder().encode(ring) else { return }
         ringDirty = false
+        if now { try? data.write(to: url, options: .atomic); return }
         Task.detached(priority: .utility) { try? data.write(to: url, options: .atomic) }
     }
 

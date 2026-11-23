@@ -293,6 +293,10 @@ import Testing
     #expect(LogRedact.text("open https://u:a/b@c@host.example/x/c.mp4?k=1 jetzt") == "open https://host.example/…/c.mp4 jetzt")
     // "@" only behind "?" is no credential: the host stays.
     #expect(LogRedact.url("https://h.example/x/c.mkv?mail=a@b.example") == "https://h.example/…/c.mkv")
+    // "@" inside the path is no credential: the host stays (review of task 1.5).
+    #expect(LogRedact.url("https://h.example/a@KEYKEY/file.mkv") == "https://h.example/…/file.mkv")
+    #expect(LogRedact.text("x https://h.example:8443/a@KEYKEY/file.mkv y") == "x https://h.example:8443/…/file.mkv y")
+    #expect(!LogRedact.url("https://h.example/a@KEYKEY/file.mkv").lowercased().contains("keykey"))
     // "?" and "#" inside the password still work (credentials before the first "/").
     #expect(LogRedact.url("https://user:p?a#ss@Host.example/a/b.mkv?x=1") == "https://host.example/…/b.mkv")
 }

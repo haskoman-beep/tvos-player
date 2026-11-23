@@ -55,8 +55,9 @@ def make_handler(secret, log_dir):
             body = self.rfile.read(n)
             if len(body) != n:
                 return self.reply(400)
-            want = hmac.new(key, body, hashlib.sha256).hexdigest()
-            got = (self.headers.get(SIG_HEADER) or "").strip().lower()
+            want = hmac.new(key, body, hashlib.sha256).hexdigest().encode("ascii")
+            # Header values arrive as latin-1 text; compare bytes, compare_digest refuses non-ASCII str (TypeError).
+            got = (self.headers.get(SIG_HEADER) or "").strip().lower().encode("latin-1", "replace")
             if not hmac.compare_digest(want, got):
                 return self.reply(401)
             try:

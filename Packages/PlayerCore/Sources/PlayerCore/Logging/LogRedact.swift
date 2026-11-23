@@ -78,11 +78,18 @@ public enum LogRedact {
     /// Teil nach `schema://` (bzw. eine Adresse ohne Schema): Host + gekürzter Pfad.
     private static func redactAfterScheme(_ rest: Substring) -> String {
         // Zugangsdaten (user:pass@) zuerst abtrennen, erst dann Query/Fragment. Das Passwort darf „?“/„#“ enthalten
-        // (letztes „@“ vor dem ersten „/“) oder „/“ (Task 1.5: letztes „@“ vor dem ersten „?“/„#“); das spätere zählt.
+        // (letztes „@“ vor dem ersten „/“) oder „/“ (Task 1.5: letztes „@“ vor dem ersten „?“/„#“). Ein „@“ hinter dem
+        // ersten „/“ zählt nur, wenn der Teil davor wie `user:pass` aussieht (Doppelpunkt, danach keine reine
+        // Portnummer) – sonst liegt es im Pfad (`h.example/a@KEY/x.mkv`) und der Host bleibt `h.example`.
         let firstSlash = rest.firstIndex(of: "/") ?? rest.endIndex
         let firstQuery = rest.firstIndex(where: { $0 == "?" || $0 == "#" }) ?? rest.endIndex
         let atBeforeSlash = rest[..<firstSlash].lastIndex(of: "@")
-        let atBeforeQuery = rest[..<firstQuery].lastIndex(of: "@")
+        let beforeSlash = rest[..<firstSlash]
+        let userinfoShaped = beforeSlash.firstIndex(of: ":").map { colon in
+            let after = beforeSlash[beforeSlash.index(after: colon)...]
+            return after.isEmpty || !after.allSatisfy(\.isNumber)
+        } ?? false
+        let atBeforeQuery = userinfoShaped ? rest[..<firstQuery].lastIndex(of: "@") : nil
         let lastAt = [atBeforeSlash, atBeforeQuery].compactMap { $0 }.max()
         let hostStart = lastAt.map { rest.index(after: $0) } ?? rest.startIndex
         let afterUser = rest[hostStart...]
