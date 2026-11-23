@@ -71,7 +71,7 @@ public struct TMDBClient: Sendable {
         }
         let obj = try JSONSerialization.jsonObject(with: try await http.data(from: u)) as? [String: Any]
         let arr = obj?[key] as? [[String: Any]] ?? []
-        let total = (obj?["total_pages"] as? Int) ?? (obj?["total_pages"] as? Double).map { Int($0) }
+        let total = (obj?["total_pages"] as? Int) ?? (obj?["total_pages"] as? Double).flatMap(SafeNumber.int)
         return (arr.compactMap { Self.preview($0, defaultType: t) }, total)
     }
 

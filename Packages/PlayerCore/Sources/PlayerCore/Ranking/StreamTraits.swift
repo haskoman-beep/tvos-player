@@ -144,7 +144,8 @@ public struct StreamTraits: Equatable, Sendable {
               let nr = Range(m.range(at: 1), in: up), let ur = Range(m.range(at: 2), in: up),
               let n = Double(up[nr].replacingOccurrences(of: ",", with: ".")) else { return nil }
         let mult: Double = switch up[ur] { case "TB": 1e12; case "GB": 1e9; default: 1e6 }
-        return Int64(n * mult)
+        // Fremdtext: eine lange Ziffernfolge ergäbe außerhalb von Int64 einen Laufzeitfehler (A-A-3) → nil.
+        return SafeNumber.int64(n * mult)
     }
 }
 

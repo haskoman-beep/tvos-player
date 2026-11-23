@@ -46,7 +46,10 @@ public struct IntroDBClient: Sendable {
         return c?.url
     }
 
-    /// Bereiche aus der Antwort (ungültige/fehlende Marken fallen weg).
+    /// Späteste angenommene Endmarke (ein Tag); größere Werte sind keine echten Marken (SEC-10).
+    static let maxEndSeconds: Double = 86_400
+
+    /// Bereiche aus der Antwort (ungültige/fehlende Marken fallen weg, ebenso Marken nach `maxEndSeconds`).
     public static func parse(_ data: Data) -> [SkipSegment] {
         guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return [] }
         let map: [(String, SkipSegment.Kind)] = [("intro", .intro), ("recap", .recap), ("outro", .credits),
@@ -56,7 +59,8 @@ public struct IntroDBClient: Sendable {
             guard let m = obj[key] as? [String: Any] else { continue }
             let start = seconds(m["start_sec"]) ?? seconds(m["start_ms"]).map { $0 / 1000 }
             let end = seconds(m["end_sec"]) ?? seconds(m["end_ms"]).map { $0 / 1000 }
-            guard let start, let end, start >= 0, end - start >= 1, end - start <= 1200 else { continue }
+            guard let start, let end, start >= 0, end - start >= 1, end - start <= 1200,
+                  end <= maxEndSeconds else { continue }
             out.append(SkipSegment(kind: kind, start: start, end: end, source: .introDB))
         }
         return out.sorted { $0.start < $1.start }
@@ -84,6 +88,11 @@ public struct IntroDBClient: Sendable {
             total = total * 60 + d
         }
         return total
+    }
+
+    /// Ganze Sekunden für die Logzeile; „?“ statt Laufzeitfehler, falls je ein Wert außerhalb von `Int` ankommt.
+    static func logSeconds(_ d: Double) -> String {
+        SafeNumber.int(d).map(String.init) ?? "?"
     }
 
     /// Bereiche für Film/Folge; leer bei Fehler, Zeitüberschreitung oder ohne Treffer.
@@ -114,7 +123,7 @@ public struct IntroDBClient: Sendable {
         case .data(let data):
             guard (try? JSONSerialization.jsonObject(with: data)) is [String: Any] else { log("keine verwertbare Antwort"); return nil }
             let list = Self.parse(data)
-            log(list.isEmpty ? "keine Marken" : list.map { "\($0.kind.rawValue) \(Int($0.start))–\(Int($0.end))s" }.joined(separator: ", "))
+            log(list.isEmpty ? "keine Marken" : list.map { "\($0.kind.rawValue) \(Self.logSeconds($0.start))–\(Self.logSeconds($0.end))s" }.joined(separator: ", "))
             return list
         }
     }

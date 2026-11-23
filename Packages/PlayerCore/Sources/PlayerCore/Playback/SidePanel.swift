@@ -226,7 +226,7 @@ public enum SideChapters {
     }
 
     public static func timeLabel(_ s: Double) -> String {
-        let t = Int(max(0, s))
+        let t = SafeNumber.int(max(0, s)) ?? 0   // Kapitelzeit aus der Datei: unendlich/riesig → 0 statt Laufzeitfehler
         return t >= 3600 ? String(format: "%d:%02d:%02d", t / 3600, t / 60 % 60, t % 60) : String(format: "%d:%02d", t / 60, t % 60)
     }
 }
