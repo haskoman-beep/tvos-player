@@ -19,7 +19,12 @@ public protocol KeyValueBlobs: Sendable {
 ///   sie passen immer, solange sie darunter bleiben – Caches darf tvOS leeren, Profile dürfen nie nur dort liegen.
 /// - Wave S round 3: the device settings (`device-settings.json`, under 1 KB) get the same treatment with a reserve
 ///   of `deviceLimit`, outside the shared budget of the other blocks.
-/// - Andere Blöcke nur bis `smallLimit` je Block und zusammen höchstens `budget - profileLimit`.
+/// - Task 1.3: the last two good profile versions (`profiles.json.1`, `.2`) and their dates (`profiles.json.dates`)
+///   live under their own keys `profilegen.*` (no `blob.` prefix: `migrate()` and the budget of the other blocks
+///   never see them) INSIDE the profile reserve: main block + generations ≤ `profileLimit`, generations together
+///   ≤ `generationsLimit`. Priority: main block, then `.1`, then `.2`, then the dates; what does not fit lies only in
+///   the files (same file rules as every block).
+/// - Andere Blöcke nur bis `smallLimit` je Block und zusammen höchstens `budget - profileLimit - deviceLimit`.
 /// - Nach dem Schreiben in UserDefaults wird gegengelesen; weicht der Wert ab, wird der Eintrag gelöscht.
 /// - Lesen: Defaults-Eintrag zuerst (jeder Schreibvorgang hält ihn aktuell oder löscht ihn), sonst die jüngste Datei.
 public struct TieredBlobStorage: BlobStorage {
@@ -37,8 +42,18 @@ public struct TieredBlobStorage: BlobStorage {
     public static let profileLimit = 512 * 1024
     /// Summe aller Blöcke in UserDefaults – unter der ~1-MB-Grenze von tvOS.
     public static let budget = 640 * 1024
-    /// Was alle anderen Blöcke zusammen belegen dürfen.
-    public static var othersBudget: Int { budget - profileLimit }
+    /// Was alle anderen Blöcke zusammen belegen dürfen. Task 1.3: minus the device reserve, so that all reserves
+    /// together stay within `budget` (before: 512 + 8 + 128 KB = 648 KB in the worst case).
+    public static var othersBudget: Int { budget - profileLimit - deviceLimit }
+    /// Task 1.3: the profile generations and their dates, each under its own UserDefaults key (no `blob.` prefix).
+    public static let generationKeys: [String: String] = [
+        profileName + ".1": "profilegen.1", profileName + ".2": "profilegen.2", profileName + ".dates": "profilegen.dates",
+    ]
+    /// Priority inside the profile reserve (first = keeps its place).
+    static let profileFamily = [profileName, profileName + ".1", profileName + ".2", profileName + ".dates"]
+    /// Task 1.3: what the generations (with their dates) may take of the profile reserve together.
+    public static let generationsLimit = 192 * 1024
+    public static func isGeneration(_ name: String) -> Bool { generationKeys[name] != nil }
     /// Blobs with this name prefix are kept as files only, whatever their size (import data that may be large and
     /// that the app can rebuild or do without). They never count against the UserDefaults budget.
     public static let fileOnlyPrefix = "import-"
@@ -67,33 +82,39 @@ public struct TieredBlobStorage: BlobStorage {
     public static func limit(_ name: String) -> Int {
         if name.hasSuffix(".bak") || name.hasPrefix(fileOnlyPrefix) { return 0 }
         if name == profileName { return profileLimit }
+        if isGeneration(name) { return generationsLimit }
         if name == deviceName { return deviceLimit }
         return smallLimit
     }
 
     func key(_ name: String) -> String { Self.prefix + name }
+    /// Key in UserDefaults: own key for the generations, `blob.<name>` for everything else.
+    func storeKey(_ name: String) -> String { Self.generationKeys[name] ?? key(name) }
 
     public func read(_ name: String) -> Data? {
-        if let z = defaults.data(forKey: key(name)), let d = decompress(z) { return d }
+        if let z = defaults.data(forKey: storeKey(name)), let d = decompress(z) { return d }
         return newestFile(name)
     }
 
     public func write(_ name: String, _ data: Data) throws {
         let fileOK = writeFile(name, data)
         let z = compress(data)
+        let k = storeKey(name)
+        let family = Self.profileFamily.contains(name)
+        defer { if family { trimProfileFamily() } }
         if let z, fitsDefaults(name, bytes: z.count) {
-            defaults.set(z, forKey: key(name))
-            if defaults.data(forKey: key(name)) == z { return }
-            defaults.remove(forKey: key(name))   // Schreiben nicht angekommen: nur Datei gilt
+            defaults.set(z, forKey: k)
+            if defaults.data(forKey: k) == z { return }
+            defaults.remove(forKey: k)   // Schreiben nicht angekommen: nur Datei gilt
         } else {
-            defaults.remove(forKey: key(name))
+            defaults.remove(forKey: k)
         }
         if name == Self.profileName { onProfilesFileOnly?(z?.count ?? data.count) }
         guard fileOK else { throw StorageFull(bytes: data.count) }
     }
 
     public func remove(_ name: String) {
-        defaults.remove(forKey: key(name))
+        defaults.remove(forKey: storeKey(name))
         for dir in directories { dir.remove(name) }
     }
 
@@ -110,7 +131,7 @@ public struct TieredBlobStorage: BlobStorage {
         var best: (data: Data, date: Date)?
         for dir in directories {
             guard let d = dir.read(name) else { continue }
-            let date = (try? FileManager.default.attributesOfItem(atPath: dir.url(name).path)[.modificationDate] as? Date) ?? .distantPast
+            let date = dir.modificationDate(name) ?? .distantPast
             if best == nil || date > best!.date { best = (d, date) }
         }
         return best?.data
@@ -118,11 +139,42 @@ public struct TieredBlobStorage: BlobStorage {
 
     func fitsDefaults(_ name: String, bytes: Int) -> Bool {
         guard bytes <= Self.limit(name) else { return false }
+        if Self.isGeneration(name) { return generationFits(name, bytes: bytes) }
         if Self.isReserved(name) { return true }   // eigener Vorbehalt
         let others = defaults.keys(withPrefix: Self.prefix)
             .filter { $0 != key(name) && !Self.isReserved(String($0.dropFirst(Self.prefix.count))) }
             .reduce(0) { $0 + (defaults.data(forKey: $1)?.count ?? 0) }
         return others + bytes <= Self.othersBudget
+    }
+
+    /// Task 1.3: a generation fits when the blocks before it in `profileFamily` leave room for it (the ones after it
+    /// give way in `trimProfileFamily`).
+    func generationFits(_ name: String, bytes: Int) -> Bool {
+        var all = 0, gens = 0
+        for n in Self.profileFamily {
+            if n == name { break }
+            let s = defaults.data(forKey: storeKey(n))?.count ?? 0
+            all += s
+            if n != Self.profileName { gens += s }
+        }
+        return all + bytes <= Self.profileLimit && gens + bytes <= Self.generationsLimit
+    }
+
+    /// Task 1.3: after every write of the main block or a generation, generations that no longer fit next to the
+    /// blocks before them leave UserDefaults (`.2` before `.1`). They stay readable from the files; if no file has
+    /// them yet, one is written first.
+    func trimProfileFamily() {
+        var all = 0, gens = 0
+        for n in Self.profileFamily {
+            let k = storeKey(n)
+            guard let z = defaults.data(forKey: k) else { continue }
+            if n == Self.profileName { all += z.count; continue }
+            if all + z.count <= Self.profileLimit, gens + z.count <= Self.generationsLimit {
+                all += z.count; gens += z.count; continue
+            }
+            if let d = decompress(z), !directories.contains(where: { $0.read(n) == d }) { writeFile(n, d) }
+            defaults.remove(forKey: k)
+        }
     }
 
     /// Bytes aller Blöcke in UserDefaults, je Name.
@@ -207,5 +259,22 @@ public extension BlobStorage {
             if (try? write(b.name, b.data)) == nil || read(b.name) != b.data { failed.append(b.name) }
         }
         return failed
+    }
+}
+
+/// Task 1.3: every copy of a blob (UserDefaults entry first, then each folder) for the recovery list.
+extension TieredBlobStorage: BlobCopies {
+    public func copies(_ name: String) -> [BlobCopy] {
+        var out: [BlobCopy] = []
+        if let z = defaults.data(forKey: storeKey(name)), let d = decompress(z) {
+            out.append(BlobCopy(source: "UserDefaults", data: d, modified: nil))
+        }
+        for dir in directories {
+            guard let d = dir.read(name) else { continue }
+            // App folders are ".../Application Support/Player" and ".../Caches/Player": name the parent.
+            let folder = dir.directory.lastPathComponent == "Player" ? dir.directory.deletingLastPathComponent() : dir.directory
+            out.append(BlobCopy(source: folder.lastPathComponent, data: d, modified: dir.modificationDate(name)))
+        }
+        return out
     }
 }

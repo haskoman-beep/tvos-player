@@ -5,7 +5,7 @@ import PlayerCore
 /// große nur als Datei (Regeln in `TieredBlobStorage`). tvOS bricht die App ab, wenn die UserDefaults-Domäne
 /// ~1 MB übersteigt. Dateien: Application Support, falls dort wirklich schreibbar (tvOS verweigert es oft
 /// mit Code 513), und immer Caches/Player als zweite Kopie (darf das System bei Platzmangel leeren).
-struct DefaultsStorage: BlobStorage {
+struct DefaultsStorage: BlobStorage, BlobCopies {
     let tiered: TieredBlobStorage
 
     /// Baut die Ablage, verschiebt einmalig zu große Alt-Einträge und loggt die Defaults-Größe.
@@ -37,6 +37,8 @@ struct DefaultsStorage: BlobStorage {
     func read(_ name: String) -> Data? { tiered.read(name) }
     func write(_ name: String, _ data: Data) throws { try tiered.write(name, data) }
     func remove(_ name: String) { tiered.remove(name) }
+    /// Task 1.3: every copy (UserDefaults, Application Support, Caches) for the profile recovery list.
+    func copies(_ name: String) -> [BlobCopy] { tiered.copies(name) }
 
     /// Gesamtgröße der App-Domäne in UserDefaults (binäre Plist wie bei cfprefsd) plus die Blöcke einzeln.
     static func summary(tiered: TieredBlobStorage, filesIn: String) -> String {

@@ -11,6 +11,13 @@ final class AppModel: ObservableObject {
     @Published var lastError: String? { didSet { if let e = lastError { RemoteLog.error("fehler", e) } } }
     @Published var notice: String?
     let store: ProfileStore
+    /// Task 1.3: `.unreadable` while the stored profiles cannot be read; RootView then shows ProfileRecoveryView and
+    /// `save()` writes nothing until the user restores a version or starts again.
+    @Published private(set) var storeState: StoreState = .ready
+    enum StoreState: Equatable {
+        case ready
+        case unreadable(reason: String, candidates: [RecoveryCandidate])
+    }
     /// Wave S round 2: „Bild & Ton“ per device (TV, HDMI, sound system); profile export and sync leave it out.
     @Published private(set) var device: DeviceSettings
     let deviceStore: DeviceSettingsStore
@@ -55,9 +62,14 @@ final class AppModel: ObservableObject {
         }
         if let e = dev.writeError { RemoteLog.error("speicher", "Bild & Ton: Gerätewerte nicht gespeichert: \(e)") }
         store = ProfileStore(storage: storage)
-        stored = store.load().profiles
+        let loaded = store.loadResult()
+        switch loaded {
+        case .loaded(let s, _), .fresh(let s): stored = s
+        case .unreadable: stored = .makeDefault()   // only shown behind ProfileRecoveryView, never saved
+        }
         progressStore = ProgressStore(storage: storage)
-        progress = progressStore.load(profile: profile.id)
+        adoptProfileLoad(loaded)
+        progress = loadProgress(profile.id)
         CollectionLinkStore.shared.attach(storage)   // wave F-o round 4: import blobs in the size-bounded storage
         FusionKitStore.shared.attach(self, storage: storage)   // Welle A e: Kit-Reihen der Startseite (AppModel+FusionKit)
         PlaybackStability.shared.attach(storage)   // Welle C-a: Netz, Ton-Route, fehlgeschlagene Quellen
@@ -238,7 +250,77 @@ final class AppModel: ObservableObject {
     }
 
     func save() {
+        guard storeState == .ready else {
+            RemoteLog.info("speicher", "Speichern übersprungen: Profile nicht lesbar, Auswahl offen")
+            return
+        }
         do { try store.save(stored) } catch { lastError = "Speichern fehlgeschlagen: \(error)" }
+    }
+
+    // MARK: Task 1.3: unreadable profiles
+
+    /// Progress of a profile; an unreadable file is kept as `.bak` by ProgressStore and the book starts empty
+    /// (saved only with the next progress).
+    func loadProgress(_ id: UUID) -> ProgressBook {
+        if let b = progressStore.load(profile: id) { return b }
+        RemoteLog.error("speicher", "Fortschritt unlesbar, als .bak beiseitegelegt · leeres Buch bis zum nächsten Fortschritt")
+        return ProgressBook()
+    }
+
+    /// Applies a load result to `storeState` and logs it.
+    private func adoptProfileLoad(_ l: ProfileLoad) {
+        switch l {
+        case .loaded(_, let report):
+            storeState = .ready
+            RemoteLog.info("speicher", report.isEmpty ? "Profile geladen · Bericht leer"
+                                                      : "Profile geladen · ignoriert: \(report.ignored.joined(separator: ", "))")
+        case .fresh:
+            storeState = .ready
+            RemoteLog.info("speicher", "Profile neu angelegt")
+        case .unreadable(let reason, let candidates):
+            storeState = .unreadable(reason: reason, candidates: candidates)
+            RemoteLog.error("speicher", "Profile nicht lesbar: \(reason) · \(candidates.count) ältere Fassung(en) · Speichern gesperrt")
+        }
+    }
+
+    /// „Erneut versuchen“.
+    func retryProfileLoad() {
+        let l = store.loadResult()
+        switch l {
+        case .loaded(let s, _), .fresh(let s):
+            adoptProfileLoad(l)
+            profilesReplaced(s)
+        case .unreadable: adoptProfileLoad(l)
+        }
+    }
+
+    /// „Diese Fassung laden“.
+    func restoreProfiles(_ id: String) {
+        do {
+            let s = try store.restore(id)
+            storeState = .ready
+            RemoteLog.info("speicher", "Profile wiederhergestellt aus \(id) · \(s.profiles.count) Profil(e)")
+            profilesReplaced(s)
+        } catch { lastError = "Fassung nicht geladen: \(error)" }
+    }
+
+    /// „Neu anfangen“ (after the confirmation).
+    func startFreshProfiles() {
+        do {
+            let s = try store.startFresh()
+            storeState = .ready
+            RemoteLog.info("speicher", "Profile neu angefangen · unlesbarer Stand bleibt als .bak")
+            profilesReplaced(s)
+        } catch { lastError = "Neu anfangen fehlgeschlagen: \(error)" }
+    }
+
+    /// After the profiles were replaced while the app runs: state of the old (default) profile goes.
+    private func profilesReplaced(_ s: StoredProfiles) {
+        clearCatalogCache()   // memory cache and snapshot of the stand-in default profile
+        stored = s
+        progress = loadProgress(profile.id)
+        restoreCatalogSnapshot()
+        Task { await syncRemoteProgress() }
     }
 
     /// Wave S round 2: changes a device setting (Bild & Ton) and stores it at once.
@@ -263,7 +345,7 @@ final class AppModel: ObservableObject {
         // Welle E-a (I3): Addon-Bilder/-Bewertungen des alten Profils nicht weiter zeigen.
         HeroDetailsCache.all.removeAll(); AddonMetaCache.reset()
         restoreCatalogSnapshot()
-        progress = progressStore.load(profile: id)
+        progress = loadProgress(id)
         Task { await syncRemoteProgress() }
     }
 
@@ -587,9 +669,12 @@ final class AppModel: ObservableObject {
             case .importBackup(let d):
                 do {
                     let before = stored.profiles.map(\.id)
-                    stored = try store.importData(d); save(); clearCatalogCache()
+                    let imported = try store.importData(d)
+                    // Task 1.3: a deliberate import also ends the unreadable state (that state is kept as .bak first).
+                    if storeState != .ready { try store.keepUnreadableAside(); storeState = .ready }
+                    stored = imported; save(); clearCatalogCache()
                     removeCatalogFiles(profiles: before + stored.profiles.map(\.id))
-                    progress = progressStore.load(profile: profile.id)
+                    progress = loadProgress(profile.id)
                 } catch { lastError = "Sicherung ungültig: \(error)" }
             case .importFusionURL(let u): await importFusionKit(from: u)
             case .moveRow, .removeRow, .deleteRow, .restoreRow, .addRow: applyHome([c])   // Welle F-e; PhoneServer übernimmt sie sonst schon vorab

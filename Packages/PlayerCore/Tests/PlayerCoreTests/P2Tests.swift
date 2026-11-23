@@ -69,7 +69,7 @@ private let serie = MetaPreview(id: "tt9", type: "series", name: "Serie")
     b.record(id: "tt1", item: film, position: 1200, duration: 6000, now: Date(timeIntervalSince1970: 5000))
     try s.save(b, profile: p)
     #expect(s.load(profile: p) == b)
-    #expect(s.load(profile: UUID()).entries.isEmpty)
+    #expect(s.load(profile: UUID())?.entries.isEmpty == true)
 }
 
 @Test func episodeOrderAndNext() {

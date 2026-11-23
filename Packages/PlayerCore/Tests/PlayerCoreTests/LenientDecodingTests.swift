@@ -92,7 +92,8 @@ private let knownRow = """
     #expect(s.profiles.map(\.name) == ["Eins", "Drei"])
     #expect(s.active?.name == "Eins")
     #expect(report.ignored == ["profiles[1]"])
-    #expect(!FileManager.default.fileExists(atPath: store.backupURL.path))
+    // Task 1.3 (review of 1.2): something was ignored, so the original bytes are kept as .bak.
+    #expect(try Data(contentsOf: store.backupURL) == Data(json.utf8))
 }
 
 @Test func ratingSourcesWrongTypeFallsBack() throws {

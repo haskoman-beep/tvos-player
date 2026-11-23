@@ -132,10 +132,14 @@ public struct ProgressStore: Sendable {
     public init(directory: URL) { self.init(storage: FileBlobStorage(directory: directory)) }
     func name(_ profile: UUID) -> String { "progress-\(profile.uuidString).json" }
 
-    public func load(profile: UUID) -> ProgressBook {
+    /// Missing file: empty book. Task 1.3 (S-11): an unreadable file gives nil and is kept as
+    /// `progress-<Profil>.json.bak`; the caller starts with an empty book and saves only after the next progress.
+    public func load(profile: UUID) -> ProgressBook? {
         guard let d = storage.read(name(profile)) else { return ProgressBook() }
         let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
-        return (try? dec.decode(ProgressBook.self, from: d)) ?? ProgressBook()
+        if let b = try? dec.decode(ProgressBook.self, from: d) { return b }
+        try? storage.write(name(profile) + ".bak", d)
+        return nil
     }
 
     public func save(_ book: ProgressBook, profile: UUID) throws {

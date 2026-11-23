@@ -202,7 +202,7 @@ private func blockedDir() -> FileBlobStorage {
     var book = ProgressBook()
     book.record(id: "tt1", item: MetaPreview(id: "tt1", type: "movie", name: "A"), season: nil, episode: nil, position: 10, duration: 100)
     try prog.save(book, profile: id)
-    #expect(prog.load(profile: id).entries.count == 1)
+    #expect(prog.load(profile: id)?.entries.count == 1)
 }
 
 @Test func readsFromReadOnlyDirButWritesOnlyToWritable() throws {

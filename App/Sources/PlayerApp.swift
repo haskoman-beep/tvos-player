@@ -74,7 +74,10 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            if model.hasMultipleProfiles && !pickedProfile {
+            if case .unreadable(let reason, let candidates) = model.storeState {
+                // Task 1.3: nothing is saved until the user picks a way out here.
+                ProfileRecoveryView(reason: reason, candidates: candidates)
+            } else if model.hasMultipleProfiles && !pickedProfile {
                 ProfilePickerView { pickedProfile = true }
             } else {
                 styled(tabs)
