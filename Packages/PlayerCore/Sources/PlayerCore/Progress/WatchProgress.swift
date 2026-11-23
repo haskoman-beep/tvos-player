@@ -52,21 +52,30 @@ public struct ProgressBook: Codable, Sendable, Equatable {
     /// Task 2.6 (S-10): entries younger than this many months are never pruned.
     public static let pruneMonths = 18
 
-    /// Task 2.6 (S-10): keeps the book small. Of the finished entries the newest `keepFinished` stay, of the open
-    /// ones the newest `keepOpen`; an entry beyond its quota is dropped only when it is older than `pruneMonths`.
-    /// Everything else (sources, schema) is kept as it is. The stored format does not change.
-    public func pruned(now: Date = Date(), keepFinished: Int = 1500, keepOpen: Int = 500) -> ProgressBook {
-        guard entries.count > min(keepFinished, keepOpen) else { return self }
+    /// Fixed UTC calendar for the cutoff (built once, not on every save).
+    static let pruneCalendar: Calendar = {
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = TimeZone(identifier: "UTC") ?? cal.timeZone
-        let cutoff = cal.date(byAdding: .month, value: -Self.pruneMonths, to: now) ?? now
-        func drops(_ list: [WatchProgress], keep: Int) -> [String] {
-            guard list.count > keep else { return [] }
-            return list.sorted { $0.updated != $1.updated ? $0.updated > $1.updated : $0.id < $1.id }
-                .dropFirst(max(0, keep)).filter { $0.updated < cutoff }.map(\.id)
-        }
-        let all = Array(entries.values)
-        let gone = drops(all.filter(\.finished), keep: keepFinished) + drops(all.filter { !$0.finished }, keep: keepOpen)
+        return cal
+    }()
+
+    /// Series marker ("whole series watched"): `id == item.id`, no season, not a film. Never pruned, because
+    /// `merge(remote:)` relies on it to keep old paused episodes out of Weiterschauen.
+    static func isSeriesMarker(_ e: WatchProgress) -> Bool {
+        e.season == nil && e.id == e.item.id && e.item.type != "movie"
+    }
+
+    /// Task 2.6 (S-10): keeps the book small. Only finished entries are pruned (plan: "nur fertige, älter als
+    /// 18 Monate"): of them the newest `keepFinished` stay, and one beyond that quota is dropped only when it is
+    /// older than `pruneMonths`. Open entries and series markers are never pruned; sources and schema stay.
+    /// The stored format does not change.
+    public func pruned(now: Date = Date(), keepFinished: Int = 1500) -> ProgressBook {
+        guard entries.count > keepFinished else { return self }
+        let finished = entries.values.filter { $0.finished && !Self.isSeriesMarker($0) }
+        guard finished.count > keepFinished else { return self }
+        let cutoff = Self.pruneCalendar.date(byAdding: .month, value: -Self.pruneMonths, to: now) ?? now
+        let gone = finished.sorted { $0.updated != $1.updated ? $0.updated > $1.updated : $0.id < $1.id }
+            .dropFirst(max(0, keepFinished)).filter { $0.updated < cutoff }.map(\.id)
         guard !gone.isEmpty else { return self }
         var out = self
         for id in gone { out.entries[id] = nil }
@@ -170,13 +179,22 @@ public struct ProgressStore: Sendable {
         return nil
     }
 
-    /// Task 2.6: prunes the book before every save (`ProgressBook.pruned`).
-    public func save(_ book: ProgressBook, profile: UUID, now: Date = Date()) throws {
+    /// Task 2.6: the one pruning step (`ProgressBook.pruned`); reports the number dropped through `onPruned`.
+    /// Callers keep the result as their book, so the same entries are never pruned or reported twice.
+    public func prune(_ book: ProgressBook, now: Date = Date()) -> ProgressBook {
         let small = book.pruned(now: now)
         let dropped = book.entries.count - small.entries.count
         if dropped > 0 { onPruned?(dropped) }
+        return small
+    }
+
+    /// Task 2.6: prunes the book before every save and returns what was written.
+    @discardableResult
+    public func save(_ book: ProgressBook, profile: UUID, now: Date = Date()) throws -> ProgressBook {
+        let small = prune(book, now: now)
         let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
         try storage.write(name(profile), try enc.encode(small))
+        return small
     }
 }
 

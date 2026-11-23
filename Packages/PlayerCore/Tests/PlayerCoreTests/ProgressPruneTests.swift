@@ -47,14 +47,17 @@ private func book(finished: Int, open: Int = 0, offset: Double = 0) -> ProgressB
     #expect(small.pruned(now: now) == small)
 }
 
-@Test func prunedKeepsNewestOpenEntriesAndSources() {
-    // 700 started films, all older than 18 months: the newest 500 stay; finished ones are counted separately.
-    var b = book(finished: 5, open: 700, offset: 600)
+@Test func prunedNeverDropsOpenEntriesOrSeriesMarkers() {
+    // 700 started films and 1600 watched episodes, all older than 18 months: only finished episodes are pruned.
+    var b = book(finished: 1600, open: 700, offset: 600)
+    // Series marker ("whole series watched"), the oldest finished entry of all.
+    b.entries["tt900"] = WatchProgress(id: "tt900", item: show, position: 0, duration: 0,
+                                       updated: now.addingTimeInterval(-5000 * day), finished: true)
     b.rememberSource(StreamItem(name: "Q", title: "datei.mkv"), addon: "A", for: "tt5000", now: now)
     let p = b.pruned(now: now)
-    #expect(p.entries.values.filter { !$0.finished }.count == 500)
-    #expect(p.entries.values.filter(\.finished).count == 5)
-    #expect(p.entries["tt5000"] != nil && p.entries["tt5499"] != nil && p.entries["tt5500"] == nil)
+    #expect(p.entries.values.filter { !$0.finished }.count == 700)
+    #expect(p.entries.values.filter { $0.finished && $0.season != nil }.count == 1500)
+    #expect(p.entries["tt900"]?.finished == true)
     #expect(p.sources == b.sources)
     #expect(p.schemaVersion == b.schemaVersion)
 }
@@ -71,6 +74,11 @@ private func book(finished: Int, open: Int = 0, offset: Double = 0) -> ProgressB
     // Nothing to prune: no report.
     try store.save(loaded, profile: profile, now: now)
     #expect(counts.all == [100])
+    // Contract for the app: prune once (also at load), keep the result, later saves report nothing again.
+    let kept = store.prune(book(finished: 1550, offset: 600), now: now)
+    #expect(kept.entries.count == 1500 && counts.all == [100, 50])
+    let written = try store.save(kept, profile: profile, now: now)
+    #expect(written == kept && counts.all == [100, 50])
 }
 
 @Test func progressFallingOutOfDefaultsIsReported() throws {
@@ -86,6 +94,36 @@ private func book(finished: Int, open: Int = 0, offset: Double = 0) -> ProgressB
     #expect(names.all == ["progress-a.json"])
     try s.write("progress-a.json.bak", Data(repeating: 4, count: 10))
     #expect(names.all == ["progress-a.json"])
+    // No folder writable: nothing was saved, so no "only as a file" report (StorageFull is thrown instead).
+    let blockedFile = tempDir().appendingPathComponent("datei")
+    try Data("x".utf8).write(to: blockedFile)
+    let none = TieredBlobStorage(defaults: MemoryKeyValueBlobs(),
+                                 directories: [FileBlobStorage(directory: blockedFile.appendingPathComponent("unter"))],
+                                 onProgressFileOnly: { names.add($0) })
+    #expect(throws: TieredBlobStorage.StorageFull.self) {
+        try none.write("progress-b.json", Data(repeating: 5, count: TieredBlobStorage.smallLimit + 1))
+    }
+    #expect(names.all == ["progress-a.json"])
+}
+
+@Test func pruneCutoffIsExactly18Months() {
+    // 1500 young entries plus two old ones (over quota by two): one just inside 18 months stays, one just
+    // outside goes.
+    var b = ProgressBook()
+    for i in 0..<1500 {
+        let id = "tt900:3:\(i)"
+        b.entries[id] = WatchProgress(id: id, item: show, season: 3, episode: i, position: 0, duration: 2400,
+                                      updated: now.addingTimeInterval(-Double(i) * 0.25 * day), finished: true)
+    }
+    let cutoff = ProgressBook.pruneCalendar.date(byAdding: .month, value: -18, to: now)!
+    b.entries["tt900:9:1"] = WatchProgress(id: "tt900:9:1", item: show, season: 9, episode: 1, position: 0,
+                                           duration: 2400, updated: cutoff.addingTimeInterval(1), finished: true)
+    b.entries["tt900:9:2"] = WatchProgress(id: "tt900:9:2", item: show, season: 9, episode: 2, position: 0,
+                                           duration: 2400, updated: cutoff.addingTimeInterval(-1), finished: true)
+    let p = b.pruned(now: now)
+    #expect(p.entries["tt900:9:1"] != nil)
+    #expect(p.entries["tt900:9:2"] == nil)
+    #expect(p.entries.count == 1501)
 }
 
 private final class MemoryBlobStorageForPrune: BlobStorage, @unchecked Sendable {

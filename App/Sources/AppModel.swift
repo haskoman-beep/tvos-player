@@ -100,7 +100,7 @@ final class AppModel: ObservableObject {
         if progress.isWatched(r.id), let n = r.nextRequest, let s = n.season, let e = n.episode {
             progress.recordNextUp(id: n.id, item: n.item, season: s, episode: e)
         }
-        do { try progressStore.save(progress, profile: profile.id) } catch { lastError = "Fortschritt nicht gespeichert: \(error)" }
+        do { try saveProgressBook() } catch { lastError = "Fortschritt nicht gespeichert: \(error)" }
         scrobbleProgress(r, fraction: duration > 0 ? position / duration : 0)
     }
 
@@ -108,14 +108,14 @@ final class AppModel: ObservableObject {
     func editProgress(_ change: (inout ProgressBook) -> Void) {
         change(&progress)
         progressSaveHeld = false
-        do { try progressStore.save(progress, profile: profile.id) } catch { lastError = "Fortschritt nicht gespeichert: \(error)" }
+        do { try saveProgressBook() } catch { lastError = "Fortschritt nicht gespeichert: \(error)" }
     }
 
     /// Gewählte Quelle merken, damit Weiterschauen sie direkt startet.
     func rememberSource(_ r: PlayRequest, stream: StreamItem, addon: String) {
         progress.rememberSource(stream, addon: addon, for: r.id)
         progressSaveHeld = false
-        do { try progressStore.save(progress, profile: profile.id) } catch { lastError = "Quelle nicht gespeichert: \(error)" }
+        do { try saveProgressBook() } catch { lastError = "Quelle nicht gespeichert: \(error)" }
     }
 
     /// Player wird verlassen: Trakt/Simkl bekommen den letzten Stand.
@@ -221,7 +221,7 @@ final class AppModel: ObservableObject {
                              fields: ["eintraege": "\(remote?.count ?? 0)", "geaendert": progress == before ? "nein" : "ja"])
             RemoteLog.info("sync", "\(s): \(remote?.count ?? 0) angefangene Titel geholt")
             if progressSaveHeld { RemoteLog.info("speicher", "Fortschritt nach Abgleich nicht gespeichert: Datei war unlesbar, wartet auf nächsten Fortschritt") }
-            else { try progressStore.save(progress, profile: profile.id) }
+            else { try saveProgressBook() }
         } catch { lastError = "\(s == "trakt" ? "Trakt" : "Simkl") nicht erreichbar: \(error)" }
     }
 
@@ -279,12 +279,20 @@ final class AppModel: ObservableObject {
 
     // MARK: Task 1.3: unreadable profiles
 
+    /// Task 2.6: the only place the app saves progress. Prunes first and keeps the pruned book in memory, so the
+    /// same entries are never pruned or logged again on the next save.
+    func saveProgressBook() throws {
+        let small = progressStore.prune(progress)
+        if small.entries.count != progress.entries.count { progress = small }
+        try progressStore.save(progress, profile: profile.id)
+    }
+
     /// Progress of a profile; an unreadable file is kept as `.bak` by ProgressStore and the book starts empty
     /// (saved only with the next progress).
     func loadProgress(_ id: UUID) -> ProgressBook {
         progressSaveHeld = false
-        // Task 2.6: prune in memory too, so later saves do not report the same entries again.
-        if let b = progressStore.load(profile: id) { return b.pruned() }
+        // Task 2.6: pruned (and logged) by the same step as every save, so the in-memory book matches the file.
+        if let b = progressStore.load(profile: id) { return progressStore.prune(b) }
         progressSaveHeld = true
         RemoteLog.error("speicher", "Fortschritt unlesbar, als .bak beiseitegelegt · leeres Buch bis zum nächsten Fortschritt")
         return ProgressBook()

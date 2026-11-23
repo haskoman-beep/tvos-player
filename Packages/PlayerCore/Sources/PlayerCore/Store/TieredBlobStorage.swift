@@ -117,7 +117,8 @@ public struct TieredBlobStorage: BlobStorage {
             defaults.remove(forKey: k)
         }
         if name == Self.profileName { onProfilesFileOnly?(z?.count ?? data.count) }
-        if Self.isProgress(name) { onProgressFileOnly?(name) }
+        // Only when a file really holds it (otherwise nothing was saved and StorageFull follows).
+        if fileOK, Self.isProgress(name) { onProgressFileOnly?(name) }
         guard fileOK else { throw StorageFull(bytes: data.count) }
     }
 
