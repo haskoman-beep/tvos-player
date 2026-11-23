@@ -12,7 +12,7 @@ final class AppModel: ObservableObject {
     @Published var notice: String?
     let store: ProfileStore
     /// Task 2.2 (SEC-14): keys and sync logins also in the Keychain (stage 1: profiles keep them, format unchanged).
-    /// Read rule: Keychain, else profile (applied to `stored` on load); write rule: both (`save()`).
+    /// Write rule: both (`save()`). At a normal start the profile wins; the Keychain fills gaps only on recovery.
     let secrets: SecretStore = KeychainSecretStore()
     /// What the Keychain holds per profile after the last save; `save()` writes only the differences.
     private var secretSnapshot: SecretSnapshot = [:]
@@ -79,7 +79,7 @@ final class AppModel: ObservableObject {
         }
         progressStore = ProgressStore(storage: storage)
         adoptProfileLoad(loaded)
-        adoptSecrets()
+        if case .fresh = loaded { adoptSecrets(recovery: true) } else { adoptSecrets(recovery: false) }   // fresh: file lost
         let progressStart = ContinuousClock.now
         progress = loadProgress(profile.id)
         RemoteLog.metric(.startProfiles, ms: Metric.ms(profilesStart.duration(to: progressStart)),
@@ -278,23 +278,29 @@ final class AppModel: ObservableObject {
             RemoteLog.info("speicher", "Speichern übersprungen: Profile nicht lesbar, Auswahl offen")
             return
         }
-        do { try store.save(stored) } catch { lastError = "Speichern fehlgeschlagen: \(error)" }
-        mirrorSecrets()
+        do { try store.save(stored) } catch { lastError = "Speichern fehlgeschlagen: \(error)"; return }
+        mirrorSecrets()   // only after the file was written, so the Keychain never holds what the profile lacks
     }
 
     // MARK: Task 2.2: Keychain
 
-    /// After a load or a replacement of the profiles: takes newer values from the Keychain into the profiles (read rule)
-    /// and copies the rest into the Keychain (repeatable, runs at every start). Nothing while the profiles are unreadable.
-    private func adoptSecrets() {
+    /// After a load or a replacement of the profiles. Fix round 1: normally the loaded profile is authoritative (it
+    /// may hold values changed under Build 1): its secrets go into the Keychain, nothing goes back into profiles.json.
+    /// `recovery` (older version restored, profile file lost or reset): first fill the secrets the profiles lack from
+    /// the Keychain. Nothing while the profiles are unreadable.
+    private func adoptSecrets(recovery: Bool) {
         guard storeState == .ready else { return }
-        var list = stored.profiles
-        let taken = SecretMigration.overlay(&list, store: secrets)
-        if taken > 0 { stored.profiles = list }
+        var filled = 0
+        if recovery {
+            var list = stored.profiles
+            filled = SecretMigration.fillMissing(&list, store: secrets)
+            if filled > 0 { stored.profiles = list }
+        }
         let copied = SecretMigration.copyIntoStore(profiles: stored.profiles, store: secrets)
+        // A failed single write is retried at the next start (copyIntoStore compares with the Keychain itself).
         secretSnapshot = SecretMigration.snapshot(stored.profiles)
-        RemoteLog.info("speicher", "Schlüsselbund: \(copied) Eintrag/Einträge kopiert, \(taken) Wert(e) aus dem Schlüsselbund übernommen")
-        if taken > 0 { save() }   // the profile gets the Keychain value too (both places agree again)
+        RemoteLog.info("speicher", "Schlüsselbund: \(copied) Eintrag/Einträge abgeglichen" + (recovery ? ", \(filled) fehlende Wert(e) ergänzt" : ""))
+        if filled > 0 { save() }
     }
 
     /// Write rule: changed secrets of every profile into the Keychain, removed ones and deleted profiles out.
@@ -338,7 +344,7 @@ final class AppModel: ObservableObject {
         switch l {
         case .loaded(let s, _), .fresh(let s):
             adoptProfileLoad(l)
-            profilesReplaced(s)
+            if case .fresh = l { profilesReplaced(s, recovery: true) } else { profilesReplaced(s, recovery: false) }
             return true
         case .unreadable:
             adoptProfileLoad(l)
@@ -352,7 +358,7 @@ final class AppModel: ObservableObject {
             let s = try store.restore(id)
             storeState = .ready
             RemoteLog.info("speicher", "Profile wiederhergestellt aus \(id) · \(s.profiles.count) Profil(e)")
-            profilesReplaced(s)
+            profilesReplaced(s, recovery: true)
         } catch { lastError = "Fassung nicht geladen: \(error)" }
     }
 
@@ -362,15 +368,15 @@ final class AppModel: ObservableObject {
             let s = try store.startFresh()
             storeState = .ready
             RemoteLog.info("speicher", "Profile neu angefangen · unlesbarer Stand bleibt als profiles.json.unreadable.bak")
-            profilesReplaced(s)
+            profilesReplaced(s, recovery: true)
         } catch { lastError = "Neu anfangen fehlgeschlagen: \(error)" }
     }
 
     /// After the profiles were replaced while the app runs: state of the old (default) profile goes.
-    private func profilesReplaced(_ s: StoredProfiles) {
+    private func profilesReplaced(_ s: StoredProfiles, recovery: Bool) {
         clearCatalogCache()   // memory cache and snapshot of the stand-in default profile
         stored = s
-        adoptSecrets()   // Task 2.2: a restored older version gets the newer keys and logins back from the Keychain
+        adoptSecrets(recovery: recovery)   // Task 2.2: a restored version gets missing keys and logins from the Keychain
         progress = loadProgress(profile.id)
         restoreCatalogSnapshot()
         Task { await syncRemoteProgress() }

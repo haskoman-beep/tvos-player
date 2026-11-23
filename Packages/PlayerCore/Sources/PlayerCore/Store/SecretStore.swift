@@ -47,7 +47,7 @@ public enum SecretNames {
 public typealias SecretSnapshot = [UUID: [String: String]]
 
 /// Task 2.2, stage 1 (double bookkeeping): profiles keep their secrets (format unchanged, Build 1 reads them);
-/// the store gets a copy. Read rule: store, else profile. Write rule: both.
+/// the store gets a copy. Write rule: both. At a normal start the profile wins; the store fills gaps only on recovery.
 public enum SecretMigration {
     private static let encoder: JSONEncoder = { let e = JSONEncoder(); e.outputFormatting = .sortedKeys; return e }()
 
@@ -66,59 +66,53 @@ public enum SecretMigration {
         Dictionary(profiles.map { ($0.id, entries(of: $0)) }, uniquingKeysWith: { a, _ in a })
     }
 
-    /// Read rule for a key: store, else profile.
-    public static func apiKey(_ k: String, profile p: Profile, store: SecretStore) -> String? {
-        store.get(SecretNames.apiKey(k), profile: p.id) ?? p.apiKeys[k]
+    /// Key names checked in the store even when the profile lacks them (removal at start, fill on recovery).
+    public static let knownKeys = ["tmdb", "mdblist", "trakt_id", "trakt_secret", "simkl_id", "torbox",
+                                   LogSignature.secretKey, AtvloadlyAddress.key]
+    public static let knownTokens = ["trakt", "simkl"]
+
+    /// All entry names worth checking for a profile: its own plus the known ones.
+    static func names(of p: Profile) -> Set<String> {
+        Set(Set(p.apiKeys.keys).union(knownKeys).map(SecretNames.apiKey))
+            .union(Set(p.syncTokens.keys).union(knownTokens).map(SecretNames.token))
     }
 
-    /// Read rule for a login: store, else profile. When both hold one, the one that expires later wins (a rollback
-    /// to Build 1 rotates the Trakt token in the profile only; the store would hold a used refresh token then).
-    public static func token(_ s: String, profile p: Profile, store: SecretStore) -> SyncToken? {
-        let kept = store.get(SecretNames.token(s), profile: p.id).flatMap(decode)
-        guard let kept else { return p.syncTokens[s] }
-        guard let own = p.syncTokens[s] else { return kept }
-        let a = kept.expiresAt ?? .distantPast, b = own.expiresAt ?? .distantPast
-        return b > a ? own : kept
+    /// The login kept in the store (nil without one).
+    public static func token(_ s: String, profile id: UUID, store: SecretStore) -> SyncToken? {
+        store.get(SecretNames.token(s), profile: id).flatMap(decode)
     }
 
-    /// Runs at every start: copies every profile secret the store lacks or holds older (tokens). Repeatable; returns the
-    /// number of entries written. Errors of single entries are skipped (the profile still holds the value).
+    /// Runs at every normal start and on retry. Fix round 1 (ruling): the loaded profile is authoritative, because
+    /// Build 2 writes both places, so a difference can only come from Build 1 after a rollback (or a crash between
+    /// the two writes). Adds and replaces entries, removes entries the profile no longer has. Never touches the
+    /// profiles. Repeatable; returns the number of entries changed. Errors of single entries are skipped (the
+    /// profile still holds the value; the next start tries again).
     @discardableResult
     public static func copyIntoStore(profiles: [Profile], store: SecretStore) -> Int {
         var n = 0
         for p in profiles {
-            for (name, value) in entries(of: p) {
-                let cur = store.get(name, profile: p.id)
-                if cur == value { continue }
-                if cur != nil {
-                    // Store wins for keys; for a token only when it does not expire earlier than the profile's.
-                    guard name.hasPrefix("token.") else { continue }
-                    let s = String(name.dropFirst("token.".count))
-                    if token(s, profile: p, store: store) != p.syncTokens[s] { continue }
-                }
+            let want = entries(of: p)
+            for name in names(of: p) {
+                let value = want[name]
+                if store.get(name, profile: p.id) == value { continue }
                 if (try? store.set(value, name: name, profile: p.id)) != nil { n += 1 }
             }
         }
         return n
     }
 
-    /// Key names looked up in the store even when the profile lacks them (a restored older profile version).
-    public static let knownKeys = ["tmdb", "mdblist", "trakt_id", "trakt_secret", "simkl_id", "torbox",
-                                   LogSignature.secretKey, AtvloadlyAddress.key]
-    public static let knownTokens = ["trakt", "simkl"]
-
-    /// Applies the read rule to the loaded profiles so all readers of `apiKeys` / `syncTokens` see it; returns the
-    /// number of values taken from the store.
+    /// Recovery only (an older version restored, the profile file lost or reset): fills secrets the profiles lack
+    /// from the store. Never replaces a value the profile has. Returns the number of values filled.
     @discardableResult
-    public static func overlay(_ profiles: inout [Profile], store: SecretStore) -> Int {
+    public static func fillMissing(_ profiles: inout [Profile], store: SecretStore) -> Int {
         var n = 0
         for i in profiles.indices {
             let p = profiles[i]
-            for k in Set(p.apiKeys.keys).union(knownKeys) {
-                if let v = store.get(SecretNames.apiKey(k), profile: p.id), v != p.apiKeys[k] { profiles[i].apiKeys[k] = v; n += 1 }
+            for k in Set(p.apiKeys.keys).union(knownKeys) where (p.apiKeys[k] ?? "").isEmpty {
+                if let v = store.get(SecretNames.apiKey(k), profile: p.id) { profiles[i].apiKeys[k] = v; n += 1 }
             }
-            for s in Set(p.syncTokens.keys).union(knownTokens) {
-                if let t = token(s, profile: p, store: store), t != p.syncTokens[s] { profiles[i].syncTokens[s] = t; n += 1 }
+            for s in knownTokens where p.syncTokens[s] == nil {
+                if let t = token(s, profile: p.id, store: store) { profiles[i].syncTokens[s] = t; n += 1 }
             }
         }
         return n

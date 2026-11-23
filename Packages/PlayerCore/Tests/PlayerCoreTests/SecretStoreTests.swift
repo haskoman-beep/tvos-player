@@ -18,36 +18,47 @@ private func secretProfile() -> Profile {
     #expect(store.get(SecretNames.apiKey("tmdb"), profile: p.id) == "k-tmdb")
     #expect(store.get(SecretNames.apiKey(LogSignature.secretKey), profile: p.id) == "log-secret")
     #expect(store.get(SecretNames.apiKey("leer"), profile: p.id) == nil)
-    #expect(SecretMigration.token("trakt", profile: p, store: store) == p.syncTokens["trakt"])
+    #expect(SecretMigration.token("trakt", profile: p.id, store: store) == p.syncTokens["trakt"])
 }
 
-@Test func secretReadFallsBackToProfile() throws {
+/// Fix round 1: rollback to Build 1 (edits land in the profile only) and forward again: the profile wins at start.
+@Test func secretRollbackAndForwardKeepsProfileValues() {
     let store = MemorySecretStore()
     var p = secretProfile()
-    #expect(SecretMigration.apiKey("tmdb", profile: p, store: store) == "k-tmdb")
-    #expect(SecretMigration.token("trakt", profile: p, store: store)?.accessToken == "a1")
-    // Keychain wins for keys: a restored older profile gets the newer key back.
-    try store.set("k-neu", name: SecretNames.apiKey("tmdb"), profile: p.id)
-    #expect(SecretMigration.apiKey("tmdb", profile: p, store: store) == "k-neu")
-    var list = [p]
-    #expect(SecretMigration.overlay(&list, store: store) == 1)
-    #expect(list[0].apiKeys["tmdb"] == "k-neu")
+    p.apiKeys["torbox"] = "tb-alt"
+    p.syncTokens["simkl"] = SyncToken(accessToken: "simkl-alt")
+    SecretMigration.copyIntoStore(profiles: [p], store: store)
+    // Under "Build 1": key changed, Simkl re-login (no expiry), Trakt disconnected, TorBox key deleted.
+    var b1 = p
+    b1.apiKeys[LogSignature.secretKey] = "log-neu"
+    b1.syncTokens["simkl"] = SyncToken(accessToken: "simkl-neu")
+    b1.syncTokens["trakt"] = nil
+    b1.apiKeys["torbox"] = nil
+    let loaded = b1
+    #expect(SecretMigration.copyIntoStore(profiles: [loaded], store: store) == 4)
+    #expect(loaded == b1)   // the profile is never rewritten at start
+    #expect(store.get(SecretNames.apiKey(LogSignature.secretKey), profile: p.id) == "log-neu")
+    #expect(SecretMigration.token("simkl", profile: p.id, store: store)?.accessToken == "simkl-neu")
+    #expect(SecretMigration.token("trakt", profile: p.id, store: store) == nil)
+    #expect(store.get(SecretNames.apiKey("torbox"), profile: p.id) == nil)
+    #expect(SecretMigration.copyIntoStore(profiles: [loaded], store: store) == 0)
+}
+
+/// Fix round 1: recovery (older version restored) fills what the profile lacks, never replaces what it has.
+@Test func secretRecoveryFillsMissingFromStore() throws {
+    let store = MemorySecretStore()
+    let p = secretProfile()
+    SecretMigration.copyIntoStore(profiles: [p], store: store)
+    try store.set("k-kc", name: SecretNames.apiKey("tmdb"), profile: p.id)
+    var older = p
+    older.apiKeys[LogSignature.secretKey] = nil
+    older.syncTokens = [:]
+    var list = [older]
+    #expect(SecretMigration.fillMissing(&list, store: store) == 2)
     #expect(list[0].apiKeys[LogSignature.secretKey] == "log-secret")
-    // Profile recovery: an older profile version without the remote-log secret gets it back from the store.
-    try store.set("log-kc", name: SecretNames.apiKey(LogSignature.secretKey), profile: p.id)
-    var older = p; older.apiKeys[LogSignature.secretKey] = nil
-    var restored = [older]
-    SecretMigration.overlay(&restored, store: store)
-    #expect(restored[0].apiKeys[LogSignature.secretKey] == "log-kc")
-    try store.set(nil, name: SecretNames.apiKey(LogSignature.secretKey), profile: p.id)
-    // Tokens: the one that expires later wins (a rollback build may have rotated it in the profile only).
-    let newer = SyncToken(accessToken: "a2", refreshToken: "r2", expiresAt: Date(timeIntervalSince1970: 2_000))
-    p.syncTokens["trakt"] = newer
-    #expect(SecretMigration.token("trakt", profile: p, store: store) == newer)
-    #expect(SecretMigration.copyIntoStore(profiles: [p], store: store) == 2)   // playerlog + the newer token; tmdb stays "k-neu"
-    #expect(store.get(SecretNames.apiKey("tmdb"), profile: p.id) == "k-neu")
-    #expect(SecretMigration.copyIntoStore(profiles: [p], store: store) == 0)
-    #expect(SecretMigration.token("trakt", profile: Profile.makeDefault(name: "x"), store: store) == nil)
+    #expect(list[0].syncTokens["trakt"] == p.syncTokens["trakt"])
+    #expect(list[0].apiKeys["tmdb"] == "k-tmdb")   // the profile's own value stays
+    #expect(SecretMigration.fillMissing(&list, store: store) == 0)
 }
 
 @Test func deletingProfileRemovesItsSecrets() throws {
@@ -71,7 +82,7 @@ private func secretProfile() -> Profile {
     p.syncTokens["trakt"] = rotated   // the profile side (AppModel.update)
     let snap2 = try SecretMigration.mirror(from: snap, to: [p], store: store)
     #expect(p.syncTokens["trakt"] == rotated)
-    #expect(SecretMigration.token("trakt", profile: Profile.makeDefault(name: "y").with(id: p.id), store: store) == rotated)
+    #expect(SecretMigration.token("trakt", profile: p.id, store: store) == rotated)
     #expect(snap2 != snap)
     // Profile format unchanged: the token stays in the profile JSON.
     let json = String(decoding: try JSONEncoder().encode(p), as: UTF8.self)
@@ -93,8 +104,4 @@ private func secretProfile() -> Profile {
     try store.set("v", name: "n", profile: p.id)
     try store.set(nil, name: "n", profile: p.id)
     #expect(store.get("n", profile: p.id) == nil)
-}
-
-private extension Profile {
-    func with(id: UUID) -> Profile { var p = self; p.id = id; return p }
 }
