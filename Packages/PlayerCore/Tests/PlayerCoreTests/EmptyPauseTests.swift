@@ -91,3 +91,51 @@ private let t0 = Date(timeIntervalSince1970: 1_000_000)
     #expect(QualityBadges.detailRow(none.adding(final), settings: s).map(\.text)
         == QualityBadges.detailRow(final, settings: s).map(\.text))
 }
+
+// Task 3.7 (A-A-17): the YouTube fallback has one overall deadline across visitor token and clients.
+
+private final class SlowPoster: HTTPPosting, @unchecked Sendable {
+    private let lock = NSLock()
+    private var n = 0
+    var calls: Int { lock.lock(); defer { lock.unlock() }; return n }
+    func post(_ url: URL, headers: [String: String], body: Data) async throws -> Data {
+        lock.withLock { n += 1 }
+        try await Task.sleep(nanoseconds: 5_000_000_000)   // a hanging YouTube (cancellable)
+        return Data()
+    }
+}
+
+private final class LogLines: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lines: [String] = []
+    func add(_ s: String) { lock.lock(); lines.append(s); lock.unlock() }
+    var all: [String] { lock.lock(); defer { lock.unlock() }; return lines }
+}
+
+@Test func youtubeResolveGivesUpAtOverallDeadline() async {
+    #expect(YouTubeResolver.overallDeadline == 8)
+    let poster = SlowPoster(), log = LogLines()
+    let start = ContinuousClock.now
+    let s = await YouTubeResolver(poster: poster).resolve(videoID: "aqz-KE-bpKQ", deadline: 0.3) { log.add($0) }
+    let waited = ContinuousClock.now - start
+    #expect(s == nil)
+    // Before: visitor token plus three clients one after another (here 4 × 5 s).
+    #expect(waited < .seconds(3))
+    #expect(log.all.contains { $0.contains("Gesamtfrist") })
+}
+
+@Test func youtubeResolveStopsAfterSecondClientWithMP4() async throws {
+    let poster = ScriptedPoster([
+        #"{"responseContext":{"visitorData":"V"}}"#,
+        #"{"playabilityStatus":{"status":"OK"},"streamingData":{"formats":[{"mimeType":"video/mp4","height":720,"url":"https://media.example/v22"}]}}"#,
+        #"{"playabilityStatus":{"status":"LOGIN_REQUIRED"}}"#,
+        #"{"playabilityStatus":{"status":"OK"},"streamingData":{"formats":[{"mimeType":"video/mp4","height":360,"url":"https://media.example/v18"}]}}"#,
+    ])
+    let log = LogLines()
+    let s = try #require(await YouTubeResolver(poster: poster).resolve(videoID: "aqz-KE-bpKQ") { log.add($0) })
+    #expect(s.client == "visionos" && s.height == 720)
+    #expect(poster.calls.count == 3)   // visitor token, visionOS, iOS – no third client
+    // Every step names its duration.
+    #expect(log.all.contains { $0.hasPrefix("Besucher-Token") && $0.contains(" ms") })
+    #expect(log.all.contains { $0.hasPrefix("visionos:") && $0.contains(" ms") })
+}
