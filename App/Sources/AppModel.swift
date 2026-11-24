@@ -368,7 +368,7 @@ final class AppModel: ObservableObject {
         streamCache.removeAll(); streamAddonFetchedAt.removeAll()
         // Welle D-b (M1): laufende Suchen des alten Profils vergessen (sie legen nichts mehr ab, niemand wartet neu
         // auf sie), Leer-Pausen und Lückenmerker gelten nur für das Profil, in dem sie entstanden.
-        streamTasks.reset(); streamEmptyUntil.removeAll(); streamsAllEmptyAt = nil; streamPartial.removeAll()
+        streamTasks.reset(); streamEmptyUntil.removeAll(); emptyPause = EmptyPause(); streamPartial.removeAll()
         streamTiers.removeAll()   // Wave F-k R2
         StreamSearchStatus.shared.reset(); StreamPrefetcher.shared.reset()
     }
@@ -758,7 +758,7 @@ final class AppModel: ObservableObject {
         // Detailseite holt vorab (für die Technik-Plaketten), die Quellenliste nutzt das Ergebnis.
         // Welle C-b: frisch → direkt; veraltet → sofort zeigen + im Hintergrund erneuern; abgelaufen → neu laden.
         if !revalidate, let c = streamCache[id], case let list = usableStreams(id: id, c), !list.isEmpty,
-           let fresh = streamCacheHit(type: type, id: id, at: c.at) {
+           let fresh = streamCacheHit(type: type, id: id, at: c.at, caller: caller) {
             RemoteLog.info("streams", "\(id): Cache-Treffer\(fresh ? "" : " (veraltet, Erneuerung läuft)")\(StreamPrefetcher.shared.wasPrefetched(id) ? " (vorgeladen)" : "") · \(list.count) Quellen")
             if caller != .visiblePrefetch { streamTiers.keep(id) }
             return list
@@ -787,9 +787,10 @@ final class AppModel: ObservableObject {
                 RemoteLog.info("streams", "\(id): Profil gewechselt, Ergebnis der alten Suche verworfen")
                 return []
             }
-            // Rohergebnis aller Addons leer (fehlgeschlagene fehlen in `all`, zählen also als leer): vermutlich
-            // Ratenbegrenzung → Vorladen pausiert. Bewusst vor dem Filtern auf abspielbare Quellen.
-            if !profile.addons.isEmpty, all.allSatisfy({ $0.streams.isEmpty }) { streamsAllEmptyAt = Date() }
+            // Rohergebnis aller Addons leer (fehlgeschlagene fehlen in `all`, zählen also als leer). Bewusst vor dem
+            // Filtern auf abspielbare Quellen. Task 3.7 (A-A-4): one title without sources is normal; only several
+            // different titles in a row pause the prefetch (`EmptyPause`). No addon asked: does not count.
+            noteSearchOutcome(id: id, raw: all, failed: search.failed)
             // Task 3.6 (A-A-9): entries, answered and failed carry the unique label per installation (`AddonIdentity`).
             let labels = AddonIdentity.labels(profile.addons)
             let label = { (a: InstalledAddon) in labels[a.instanceID] ?? a.manifest.name }
@@ -829,8 +830,26 @@ final class AppModel: ObservableObject {
     private(set) var streamTiers = StreamCacheTierMarks()
     /// Leeres/fehlgeschlagenes Ergebnis: bis dahin kein Vorladen dieser ID (die Detailseite fragt trotzdem).
     private(set) var streamEmptyUntil: [String: Date] = [:]
-    /// Letztes Ergebnis, bei dem alle Addons leer blieben (vermutlich Ratenbegrenzung): Vorladen pausiert.
-    private(set) var streamsAllEmptyAt: Date?
+    /// Task 3.7 (A-A-4): empty searches of different titles in a row; from 3 in 60 s the prefetch pauses.
+    private(set) var emptyPause = EmptyPause()
+    /// Start of the prefetch pause after „alle Addons leer“ (vermutlich Ratenbegrenzung), nil = none. Only the
+    /// prefetch consults it (`StreamPrefetcher.allowed`, renewals started by it), never the search of an open page.
+    var streamsAllEmptyAt: Date? { emptyPause.pausedAt }
+
+    /// Task 3.7 (A-A-4): count the raw result of a finished search (before the filter on playable sources).
+    /// Hits end the streak and a running pause; every asked addon empty or failed counts as one empty title;
+    /// no addon asked (none serves type/ID) counts as nothing.
+    func noteSearchOutcome(id: String, raw: [(addon: InstalledAddon, streams: [StreamItem])], failed: Set<String>) {
+        let now = Date()
+        if raw.contains(where: { !$0.streams.isEmpty }) {
+            if emptyPause.recordHit(now: now) { RemoteLog.info("prefetch", "Pause aufgehoben: \(id) hat Quellen") }
+            return
+        }
+        guard !raw.isEmpty || !failed.isEmpty else { return }
+        if emptyPause.recordEmpty(id: id, now: now) {
+            RemoteLog.info("prefetch", "Vorladen pausiert \(Int(StreamPrefetcher.allEmptyPause)) s: \(EmptyPause.titles) Titel ohne Quellen in \(Int(EmptyPause.window)) s (zuletzt \(id))")
+        }
+    }
 
     /// MDBList-Bewertungen (nil ohne Key oder ohne Treffer).
     func ratings(imdb: String, series: Bool) async -> ExternalRatings? {
@@ -1047,7 +1066,8 @@ extension AppModel {
     /// Ergebnis ablegen (`StreamCacheUpdate`): Treffer in den Cache (`RevalidationPolicy.streams`; abgelaufene raus,
     /// höchstens 40: Einträge sichtbarer Kacheln zuerst raus, dann die ältesten), Addons mit Fehler/Zeitüberschreitung
     /// behalten ihre alten Einträge, ein lückenhaftes Ergebnis ist nur kurz frisch. Leer (auch nach dem Behalten):
-    /// 120 s als „leer“ merken, ein vorhandener Stand bleibt unverändert. Ein Treffer hebt die Pause nach „alle Addons leer“ auf.
+    /// 120 s als „leer“ merken, ein vorhandener Stand bleibt unverändert. Die Pause nach „alle Addons leer“ hebt schon das
+    /// Rohergebnis mit Treffern auf (Task 3.7, `noteSearchOutcome`).
     /// Rückgabe: der abgelegte Stand (leer bei leerem Ergebnis).
     fileprivate func storeStreams(id: String, fresh: [(addon: String, stream: StreamItem)],
                                   answered: Set<String>, failed: Set<String>) -> [(addon: String, stream: StreamItem)] {
@@ -1067,7 +1087,6 @@ extension AppModel {
                 RemoteLog.info("streams", "\(id): Ergebnis lückenhaft → nur \(Int(AddonSearch.partialCacheSeconds)) s frisch")
             }
             streamEmptyUntil[id] = nil
-            streamsAllEmptyAt = nil
             streamCache = streamCache.filter { RevalidationPolicy.streams.isUsable(storedAt: $0.value.at, now: now) }
             streamCache[id] = (at, list)
             // Wave F-k R2: visible-tile results are the weak tier and go first; focus/page entries are never pushed
