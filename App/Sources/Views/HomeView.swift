@@ -19,6 +19,8 @@ struct HomeView: View {
     @State private var rowFocus = HomeRowFocusMemory()
     /// Wave F-j: top edge of the page, tab bar request and focus log.
     @State private var topWatch = HomeTopEdgeWatch()
+    /// Build 3 device test: row whose heading is being snapped to the list's top edge (focus inside it).
+    @State private var headingRow: UUID?
 
     var body: some View {
         let layout = model.profile.home
@@ -174,10 +176,31 @@ struct HomeView: View {
     private func showHeading(of row: HomeRow) {
         guard let scroll = topWatch.scrollToRow else { return }
         let id = row.id
+        headingRow = id
         DispatchQueue.main.async {
             withAnimation(.easeOut(duration: 0.25)) { scroll(id) }
         }
         RemoteLog.info("nav", "Reihe fokussiert, Überschrift nach oben: \(model.homeRowTitle(row.content))")
+        // Build 3 device test: the row stopped too low (heading visible, posters cut at the bottom); the system's
+        // focus scroll finished after ours. Once that animation is over, snap again while focus is still in the row.
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(Self.headingResnapMs))
+            guard headingRow == id else { return }
+            let before = Self.listScrollState()
+            withAnimation(.easeOut(duration: 0.2)) { scroll(id) }
+            try? await Task.sleep(for: .milliseconds(250))
+            RemoteLog.info("nav", "Überschrift nachgerastet: vorher \(before), nachher \(Self.listScrollState())")
+        }
+    }
+
+    /// Time until the system's focus scroll has settled (its animation runs about 0.3 s).
+    private static let headingResnapMs = 400
+
+    /// Log text of the home list's scroll view: offset, the largest offset (content end) and the visible height.
+    private static func listScrollState() -> String {
+        guard let sv = TabBarGuard.shared.knownScrollView else { return "keine Liste" }
+        let maxY = sv.contentSize.height + sv.adjustedContentInset.bottom - sv.bounds.height
+        return "y \(Int(sv.contentOffset.y))/max \(Int(maxY)), Höhe \(Int(sv.bounds.height))"
     }
 
     @ViewBuilder private func rowList(_ rows: [HomeRow], hero: Bool) -> some View {
@@ -194,6 +217,7 @@ struct HomeView: View {
                     if row.id == firstRow { topWatch.report(.firstRow, inside) }
                     // Without a hero the first row is the top edge: `TopEdgeScroll` snaps the page to the very top.
                     if inside, hero || row.id != firstRow { showHeading(of: row) }
+                    if !inside, headingRow == row.id { headingRow = nil }
                 })
         }
         if layout.rows.isEmpty {

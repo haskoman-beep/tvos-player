@@ -84,8 +84,9 @@ struct RootView: View {
             } else {
                 styled(tabs)
                     .overlay(alignment: .topTrailing) {
-                        ClockView().padding(.top, 40).padding(.trailing, 80)
-                            .opacity(model.profile.appearance.navigation == .top ? 1 : 0)
+                        let top = model.profile.appearance.navigation == .top
+                        ClockView(followsTabBar: top).padding(.top, 40).padding(.trailing, 80)
+                            .opacity(top ? 1 : 0)
                     }
                     .tint(model.profile.appearance.accent.color)
             }
