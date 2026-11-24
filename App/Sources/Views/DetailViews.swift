@@ -704,7 +704,8 @@ struct StreamListView: View {
     /// Quellen, die in dieser Liste schon versagt haben, und Zahl der automatischen Wechsel.
     @State private var failed: Set<String> = []
     /// Welle G-a R1 (I1): Autostart (Weiterschauen bzw. Beste Wahl) nur einmal je Liste; `.task` läuft nach dem
-    /// Vollbild-Player erneut, danach entscheidet allein die Rückfallleiter bzw. die Auswahl.
+    /// Vollbild-Player erneut, danach entscheidet allein die Rückfallleiter bzw. die Auswahl. Task 3.4 (F-B-5): the
+    /// used autostart is also kept in `StreamListAutostarts` (survives a rebuild of the TabView).
     @State private var autostartDone = false
     @State private var fallbacks = 0
     /// „Noch da?“-Zähler, Addon je Quelle, offene Abfrage (StillWatchingPrompt.swift).
@@ -848,13 +849,36 @@ struct StreamListView: View {
             RemoteLog.metric(.streamsFirstRow, ms: Metric.ms(listOpened.duration(to: ContinuousClock.now)),
                              fields: ["quellen": "\(streams.count)", "teilstand": loading ? "ja" : "nein"])
         }
-        .task {
+        // Task 3.4 (F-B-1): the load task follows the episode that runs now. After "next episode automatically" it
+        // loads that episode's sources (also when it runs again after the player closed), never the route's.
+        .task(id: (current ?? request).id) {
             // Start of the push transition (the list appears as the push begins); see `autostartAfterPush`.
             let appeared = ProcessInfo.processInfo.systemUptime
-            let autostart = (request.resumeLastSource || request.bestChoice != nil) && playing == nil && !autostartDone
-            streams = model.orderedStreams(autostart
-                ? await model.streamsForAutoplay(type: request.type, id: request.id)
-                : await model.streams(type: request.type, id: request.id))
+            let r = current ?? request
+            let followsOtherEpisode = r.id != request.id
+            let wantsAutostart = (request.resumeLastSource || request.bestChoice != nil) && playing == nil
+            let autostart = wantsAutostart && AutostartGate.shouldStart(
+                requestID: request.id, alreadyStarted: StreamListAutostarts.shared.started,
+                isRebuild: autostartDone || followsOtherEpisode)
+            if wantsAutostart, !autostart, !autostartDone, !followsOtherEpisode {
+                RemoteLog.info("nav", "Autostart schon verbraucht (Liste neu aufgebaut): \(request.id)")
+            }
+            let loaded = model.orderedStreams(autostart
+                ? await model.streamsForAutoplay(type: r.type, id: r.id)
+                : await model.streams(type: r.type, id: r.id))
+            // A newer run (other episode) or a closed list takes over: nothing stale lands in the list.
+            guard !Task.isCancelled, (current ?? request).id == r.id else { return }
+            if followsOtherEpisode {
+                // `startNext` already put this episode's rows in; while a source plays they stay (fallback and
+                // the side panel look up the running source in them).
+                if playing == nil || streams.isEmpty {
+                    streams = loaded
+                    RemoteLog.info("streams", "Quellenliste zeigt die laufende Folge: \(r.id) · \(loaded.count) Quellen")
+                }
+                loading = false
+                return
+            }
+            streams = loaded
             loading = false
             if request.type == "series", request.episodes.isEmpty, let base = request.id.split(separator: ":").first {
                 // Aus Weiterschauen: Folgenliste nachladen, damit die nächste Folge automatisch kommt.
@@ -864,7 +888,7 @@ struct StreamListView: View {
             // Welle G-a R1: in dieser Liste schon gescheiterte Quellen nie automatisch (die Rückfallleiter entscheidet).
             let untried = streams.filter { !failed.contains($0.stream.id) }
             let autostartNow = autostart && !Task.isCancelled
-            if autostartNow { autostartDone = true }
+            if autostartNow { autostartDone = true; StreamListAutostarts.shared.started.insert(request.id) }
             if autostartNow, request.resumeLastSource, playing == nil, let last = model.progress.lastSource(for: request.id) {
                 // nie eine zuletzt fehlgeschlagene; Welle E-b: Wahl immer in kluger Ordnung, egal wie die Liste sortiert ist
                 let pick = Self.resumeCandidate(last, in: model.autoOrderedStreams(untried), title: request.id)
@@ -941,6 +965,19 @@ struct StreamListView: View {
                                                                              startOverride: sideStart?.id == s.id ? sideStart?.at : nil).environmentObject(model) }   // Wave P-b
         }
         .modifier(StillWatchingAlert(state: $autoNext, note: $nextNote) { startNext($0.next, after: $0.stream, auto: false) })
+    }
+}
+
+/// Task 3.4 (F-B-5): route IDs of source lists whose autostart already ran. The routes stay in the tab paths when
+/// the TabView is rebuilt (navigation style), the lists' own state does not. A new push of a list clears its ID
+/// (`RootView.stack`), so opening the same title again starts again.
+@MainActor
+final class StreamListAutostarts {
+    static let shared = StreamListAutostarts()
+    var started: Set<String> = []
+
+    func pushed(_ route: Route) {
+        if case .streams(let r) = route { started.remove(r.id) }
     }
 }
 

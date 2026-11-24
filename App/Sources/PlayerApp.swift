@@ -189,6 +189,7 @@ struct RootView: View {
         let r = root()
         let push: (Route) -> Void = { route in
             RemoteLog.info("nav", "→ \(route.logName)")
+            StreamListAutostarts.shared.pushed(route)   // Task 3.4: a new list may autostart again
             p.wrappedValue.append(route)
         }
         let exit: (() -> Void)? = rootHandlesMenu && MenuChain.target(.tabRoot, tab: t) == .startTab
