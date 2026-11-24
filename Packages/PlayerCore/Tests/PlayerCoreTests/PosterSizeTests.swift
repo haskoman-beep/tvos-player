@@ -69,3 +69,14 @@ import Testing
     #expect(HomeRowPreload.sources(rows).map(\.id) == [a.id, CatalogSource.upcoming.id])
     #expect(HomeRowPreload.limit == 4)
 }
+
+// Task 4.1a (F-A-2): collection rows use the same phases, so a focused placeholder hands over when tiles arrive.
+@Test func collectionRowPhaseMapsToHomeRowPhaseWithHandover() {
+    #expect(HomeRowPhase(collection: .loading, count: 0) == .loading)
+    #expect(HomeRowPhase(collection: .tiles, count: 4) == .items(4))
+    #expect(HomeRowPhase(collection: .tiles, count: 0) == .empty)
+    #expect(HomeRowPhase(collection: .empty, count: 0) == .empty)
+    #expect(HomeRowPhase(collection: .failed(sourceKey: "k"), count: 0) == .failed)
+    #expect(HomeRowPhase(collection: .tiles, count: 4).focusAfterLoad(placeholder: 6) == 3)
+    #expect(HomeRowPhase(collection: .failed(sourceKey: "k"), count: 0).focusAfterLoad(placeholder: 2) == 0)
+}

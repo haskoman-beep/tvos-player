@@ -82,6 +82,16 @@ public enum HomeRowPhase: Equatable, Sendable {
     /// Laden fehlgeschlagen: eine Kachel „Laden fehlgeschlagen – erneut versuchen“.
     case failed
 
+    /// Task 4.1a (F-A-2): a collection row uses the same phases (tiles = items); its placeholder hands over too.
+    public init(collection p: CollectionRowPhase, count: Int) {
+        switch p {
+        case .loading: self = .loading
+        case .failed: self = .failed
+        case .empty: self = .empty
+        case .tiles: self = count > 0 ? .items(count) : .empty
+        }
+    }
+
     public init(loaded: Bool, failed: Bool, count: Int) {
         if !loaded { self = .loading }
         else if count > 0 { self = .items(count) }

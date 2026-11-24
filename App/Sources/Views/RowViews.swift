@@ -64,6 +64,20 @@ struct HomeRowView: View {
         }
         .onChange(of: focusedRoute != nil || focusedPlaceholder != nil) { _, f in onFocusInside?(f) }
         .onAppear { if focusedRoute != nil || focusedPlaceholder != nil { onFocusInside?(true) } }
+        // Task 4.1a (F-A-2): collection rows hand over like list rows: a focused placeholder (or status tile) goes to
+        // the tile at the same place when the kit file arrives, else to the status tile.
+        .onChange(of: collectionLoadPhase) { _, p in
+            guard let p, let placeholder = focusedPlaceholder, case .collection(let id) = row.content else { return }
+            let slot = p.focusAfterLoad(placeholder: placeholder)
+            var target: Route?
+            if case .items = p, let folders = model.collection(id)?.folders, folders.indices.contains(slot) {
+                target = .folder(folders[slot])
+            }
+            RemoteLog.info("fokus", "Collection \(title): Platzhalter \(placeholder) → \(target != nil ? "Kachel \(slot)" : "Statuskachel")")
+            DispatchQueue.main.async {
+                if let target { focusedRoute = target } else { focusedPlaceholder = slot }
+            }
+        }
         // Task 4.1a (F-A-3): `initial` also claims a target when the lazy list builds this row after the scroll.
         .onChange(of: focusTarget?.serial, initial: true) { _, _ in claimFocusTarget() }
         .onDisappear {
@@ -104,6 +118,14 @@ struct HomeRowView: View {
     /// Welle F-g: Phase der Collection-Reihe (Kit-Datei lädt, schlug fehl, leer, Kacheln).
     private func collectionPhase(_ id: String, _ c: MediaCollection?) -> CollectionRowPhase {
         CollectionRowPhase.of(collectionID: id, folders: c?.folders, kitErrors: kit.errors, kitLoading: kit.loading)
+    }
+
+
+    /// Task 4.1a (F-A-2): phase of a collection row as `HomeRowPhase` (nil for list rows).
+    private var collectionLoadPhase: HomeRowPhase? {
+        guard case .collection(let id) = row.content else { return nil }
+        let c = model.collection(id)
+        return HomeRowPhase(collection: collectionPhase(id, c), count: c?.folders.count ?? 0)
     }
 
     /// Welle F-f: Phase der Listen-Reihe (jede Phase hat ein Fokusziel, PlayerCore `HomeRowPhase`).
