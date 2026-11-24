@@ -30,7 +30,9 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     /// Anmeldungen bei "trakt" / "simkl".
     public var syncTokens: [String: SyncToken]
     /// Aussehen (Navigation, Akzent, Kachelgröße, Hero).
-    public var appearance: Appearance
+    public var appearance: Appearance {
+        didSet { followOldFields(oldAppearance: oldValue, oldPlayer: player) }
+    }
     /// Plattencache für den laufenden Film (Standard aus).
     public var diskCache: DiskCacheSettings
     /// Welle C-a: Zeitgrenze je Addon bei der Quellensuche in Sekunden (Standard `AddonSearch.defaultTimeout`).
@@ -40,7 +42,9 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     /// Quellen-Sortierung und Extras (Welle C-d).
     public var sources: SourceSettings = SourceSettings()
     /// Welle D-a: Spur-Wahl je Serie merken, Bildschirmschoner in der Pause.
-    public var player: PlayerComfortSettings = PlayerComfortSettings()
+    public var player: PlayerComfortSettings = PlayerComfortSettings() {
+        didSet { followOldFields(oldAppearance: appearance, oldPlayer: oldValue) }
+    }
     /// Welle F-e: am Handy ausgeblendete Reihen, vollständig (Stil, ID für den Hero-Bezug), neueste zuletzt,
     /// höchstens `HomeLayout.hiddenLimit`. „Wieder einblenden“ hängt sie unverändert unten an.
     public var hiddenRows: [HomeRow] = []
@@ -50,6 +54,10 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     public var subtitleStyle: SubtitleStyle = SubtitleStyle()
     /// Wave P-a: skip action per segment type and the card after a movie.
     public var skip: SkipSettings = SkipSettings()
+    /// Task 4.2: the look (preset "Mein Look" plus overrides). Missing in older profiles: built once from
+    /// `appearance`, `player` and `sources` (`Look.migrated`). The old fields keep being written so going back to the
+    /// previous build loses nothing.
+    public var look: Look = Look()
 
     public init(id: UUID = UUID(), name: String, language: AppLanguage = .de, audioPriority: [String] = ["de", "en", "orig"],
                 subtitleMode: SubtitleMode = .forcedOnly, subtitleLanguage: String = "de", progressSource: ProgressSource = .local,
@@ -63,6 +71,7 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         self.stillWatchingAfter = stillWatchingAfter
         self.syncTokens = syncTokens; self.appearance = appearance
         self.diskCache = diskCache
+        self.look = Look.migrated(from: appearance, player: player, sources: sources)
     }
 
     enum CodingKeys: String, CodingKey {
@@ -75,6 +84,7 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         case hiddenRows
         case subtitleStyle
         case skip
+        case look
     }
     /// Nur zum Lesen alter Profile.
     private enum LegacyKeys: String, CodingKey { case subtitlesEnabled }
@@ -117,6 +127,8 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         (hiddenRows, unknownHiddenRows) = c.decodeSalvagedList(HomeRow.self, forKey: .hiddenRows, report: r)
         subtitleStyle = c.decodeLenient(SubtitleStyle.self, forKey: .subtitleStyle, default: d.subtitleStyle, report: r)
         skip = c.decodeLenient(SkipSettings.self, forKey: .skip, default: d.skip, report: r)
+        let migratedLook = Look.migrated(from: appearance, player: player, sources: sources)
+        look = c.decodeLenient(Look.self, forKey: .look, default: migratedLook, report: r)
     }
 
     /// Same keys, order and format as the former synthesized encoding; only `hiddenRows` gets the raw leftovers
@@ -147,6 +159,19 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         for raw in unknownHiddenRows { try hidden.encode(raw) }
         try c.encode(subtitleStyle, forKey: .subtitleStyle)
         try c.encode(skip, forKey: .skip)
+        // Task 4.2: a look that only mirrors the old fields is not written; reading rebuilds the same one. So a
+        // profile nobody restyled keeps its exact Build 3 bytes (export and round-trip tests compare them).
+        if !look.sameStyle(as: Look.migrated(from: appearance, player: player, sources: sources)) {
+            try c.encode(look, forKey: .look)
+        }
+    }
+
+    /// Task 4.2 fix round 1: while `look` only mirrors the old fields (the app still edits `appearance`/`player`),
+    /// it follows them; once restyled it stays as set. `sources` is not part of the migration, so it needs no observer.
+    private mutating func followOldFields(oldAppearance: Appearance, oldPlayer: PlayerComfortSettings) {
+        if look.sameStyle(as: Look.migrated(from: oldAppearance, player: oldPlayer, sources: sources)) {
+            look = Look.migrated(from: appearance, player: player, sources: sources)
+        }
     }
 
     public static func makeDefault(name: String = "Ich") -> Profile {
