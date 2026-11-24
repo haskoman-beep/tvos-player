@@ -114,7 +114,7 @@ final class QualityBadgeCache {
     /// list right away, the badge stays).
     func streamsStored(id: String, list: [(addon: String, stream: StreamItem)], at: Date) {
         cache[id] = nil
-        if let b = BestQuality.from(list.map(\.stream)) { remember(id, b, at: at) } else { remembered[id] = nil }
+        if let b = BestQuality.from(RankedStream.rank(list)) { remember(id, b, at: at) } else { remembered[id] = nil }
         stored.send(id)
     }
 
@@ -134,7 +134,7 @@ final class QualityBadgeCache {
             return r.best
         }
         if let b = cache[id] { return b }
-        guard let b = BestQuality.from(list.map(\.stream)) else { return nil }
+        guard let b = BestQuality.from(RankedStream.rank(list)) else { return nil }
         if cache.count >= 2 * StreamPrefetcher.cacheLimit {
             cache = cache.filter { model.cachedStreams(id: $0.key) != nil }
         }

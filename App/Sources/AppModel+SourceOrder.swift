@@ -44,10 +44,15 @@ extension AppModel {
     /// Welle G-a: „Sofort abspielen / Beste Wahl“ (Regeln in PlayerCore `BestChoice`): letzte Quelle, sonst die beste
     /// der klugen Ordnung, nie eine im 8-h-Gedächtnis.
     func bestChoice(_ list: [(addon: String, stream: StreamItem)], title: String) -> BestChoice.Pick? {
+        bestChoice(ranked: RankedStream.rank(list), title: title)
+    }
+
+    /// Task 3.8: with a list ranked once (the detail page shares it with its badges); traits pass through
+    /// ordering, last source and tier choice without a second parse.
+    func bestChoice(ranked: [RankedStream], title: String) -> BestChoice.Pick? {
         let stability = PlaybackStability.shared
         let last = progress.lastSource(for: title).flatMap { $0.contentID == title ? $0 : nil }
-        // Task 3.8: traits parsed once and passed through ordering, last source and tier choice.
-        return BestChoice.pick(ranked: RankedStream.rank(list), context: sourceRankContext, last: last,
+        return BestChoice.pick(ranked: ranked, context: sourceRankContext, last: last,
                                isFailed: { stability.isRecentlyFailed($0, title: title) })
     }
 

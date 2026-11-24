@@ -190,11 +190,12 @@ struct DetailView: View {
             if loaded, let id = imdb { updateChoice(id) }
             // Quellen schon im Cache (z. B. zweiter Besuch): Technik-Plaketten im ersten Bild, nicht erst nach dem Laden.
             let id = imdb ?? (item.id.hasPrefix("tt") ? item.id : nil)
-            if best == nil, !isSeries, let id, let b = detailQuality(id) {
+            // Task 3.8: one ranked list for the badges and the pick.
+            if best == nil, !isSeries, let id, let ranked = rankedCache(id), let b = DetailQuality.from(ranked) {
                 best = b
                 logFirstBadges("Technik aus Cache")
                 markLoad(.tech, source: cacheSource(id))
-                updateChoice(id)
+                updateChoice(id, ranked: ranked)
             }
         }
         .task {
@@ -203,11 +204,11 @@ struct DetailView: View {
             imdb = await model.imdbID(for: item)
             if let imdb {
                 markLoad(.id)
-                if !isSeries, best == nil, let b = detailQuality(imdb) {
+                if !isSeries, best == nil, let ranked = rankedCache(imdb), let b = DetailQuality.from(ranked) {
                     best = b
                     logFirstBadges("Technik aus Cache")
                     markLoad(.tech, source: cacheSource(imdb))
-                    updateChoice(imdb)
+                    updateChoice(imdb, ranked: ranked)
                 } else if !isSeries, best != nil {
                     markLoad(.tech, source: cacheSource(imdb))
                 } else if !isSeries, best == nil {
@@ -462,13 +463,16 @@ struct DetailView: View {
     /// Task 3.7 (A-A-6): first intermediate result of this page's search: badges right away; the pick of
     /// „Sofort abspielen“ too, if there is one (no „Keine Quelle gefunden“ before the search is through).
     private func applyPartialStreams(_ list: [(addon: String, stream: StreamItem)]) {
-        guard !isSeries, best == nil, let id = imdb, let q = DetailQuality.from(list.map(\.stream)) else { return }
+        guard !isSeries, best == nil, let id = imdb else { return }
+        // Task 3.8: parsed once for the badges and the pick.
+        let ranked = RankedStream.rank(list)
+        guard let q = DetailQuality.from(ranked) else { return }
         best = q
         let ms = appeared.map { Int(Date().timeIntervalSince($0) * 1000) } ?? -1
         RemoteLog.info("detail", "Plaketten aus Zwischenstand nach \(ms) ms (\(list.count) Quellen)")
         logFirstBadges("Technik, Zwischenstand")
         markLoad(.tech, source: "Zwischenstand, \(list.count) Quellen")
-        if instantPlayOn, choice == nil, let pick = model.bestChoice(list, title: id) {
+        if instantPlayOn, choice == nil, let pick = model.bestChoice(ranked: ranked, title: id) {
             RemoteLog.info("play", "Beste Wahl aus Zwischenstand: \(pick.reason.rawValue) · \(pick.addon)")
             choice = pick
         }
@@ -476,20 +480,26 @@ struct DetailView: View {
 
     /// Technik-Werte aus dem Quellen-Cache (keine Abfrage); nil ohne gecachte Quellen.
     private func detailQuality(_ id: String) -> DetailQuality? {
-        model.cachedStreams(id: id).flatMap { DetailQuality.from($0.map(\.stream)) }
+        rankedCache(id).flatMap { DetailQuality.from($0) }
+    }
+
+    /// Task 3.8: the cached sources with their traits parsed once (badges and pick share it); nil without cache.
+    private func rankedCache(_ id: String) -> [RankedStream]? {
+        model.cachedStreams(id: id).map { RankedStream.rank($0) }
     }
 
     /// Welle G-a: Beste Wahl neu bilden (Film). `list` = eben geholte Quellen; sonst aus dem Quellen-Cache
     /// (ohne Cache bleibt der Stand, bis die Quellen da sind).
     /// Wave F-n: only with the setting „Sofort abspielen anzeigen“ (default off); off drops any earlier pick.
-    private func updateChoice(_ id: String, list: [(addon: String, stream: StreamItem)]? = nil) {
+    /// Task 3.8: `ranked` = a list already ranked for the badges (no second parse).
+    private func updateChoice(_ id: String, list: [(addon: String, stream: StreamItem)]? = nil, ranked: [RankedStream]? = nil) {
         guard instantPlayOn else {
             choice = nil
             choiceChecked = false
             return
         }
-        guard let all = list ?? model.cachedStreams(id: id) else { return }
-        let pick = model.bestChoice(all, title: id)
+        guard let all = ranked ?? (list ?? model.cachedStreams(id: id)).map({ RankedStream.rank($0) }) else { return }
+        let pick = model.bestChoice(ranked: all, title: id)
         if pick?.stream.id != choice?.stream.id || !choiceChecked {
             RemoteLog.info("play", pick.map { "Beste Wahl bereit: \($0.reason.rawValue) · \(BestChoice.detail($0.stream, primaryLanguage: model.sourceRankContext.primaryLanguage)) · \($0.addon)" }
                 ?? "Beste Wahl: keine abspielbare Quelle (\(all.count) Quellen)")
