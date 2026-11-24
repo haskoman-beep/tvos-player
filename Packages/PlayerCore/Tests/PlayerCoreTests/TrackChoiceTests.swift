@@ -166,9 +166,18 @@ private func sp(_ id: Int, _ lang: String?, ch: Int, codec: String, commentary: 
     let t2 = [sp(0, "eng", ch: 1, codec: "flac"), sp(1, "eng", ch: 6, codec: "eac3", commentary: true),
               sp(2, "ger", ch: 6, codec: "eac3")]
     #expect(preferredAudioTrack(t2, priority: ["en", "de"])?.id == 0)
-    // Gibt es in der Sprache nur den Kommentar, gilt er (statt die Sprache zu überspringen).
-    #expect(preferredAudioTrack([sp(0, "jpn", ch: 2, codec: "aac"), sp(1, "ger", ch: 2, codec: "ac3", commentary: true)],
-                                priority: ["de"])?.id == 1)
+    // Nur Kommentar in der Sprache: nie automatisch, die nächste Sprache bzw. der Rückfall gilt.
+    let onlyCommentary = [sp(0, "ger", ch: 2, codec: "ac3", commentary: true), sp(1, "jpn", ch: 2, codec: "aac"),
+                          sp(2, "eng", ch: 6, codec: "eac3")]
+    #expect(preferredAudioTrack(onlyCommentary, priority: ["de"])?.id == 1)
+    #expect(preferredAudioTrack(onlyCommentary, priority: ["de", "en"])?.id == 2)
+    // "orig" und der letzte Rückfall nehmen die erste Spur, die kein Kommentar ist.
+    #expect(preferredAudioTrack(onlyCommentary, priority: ["orig"])?.id == 1)
+    #expect(preferredAudioTrack(onlyCommentary, priority: ["fr"])?.id == 1)
+    // Nur Kommentarspuren in der ganzen Datei: die erste Spur als letzter Ausweg.
+    let all = [sp(0, "ger", ch: 2, codec: "ac3", commentary: true), sp(1, "eng", ch: 2, codec: "ac3", commentary: true)]
+    #expect(preferredAudioTrack(all, priority: ["en"])?.id == 0)
+    #expect(preferredAudioTrack(all, priority: ["orig"])?.id == 0)
 }
 
 @Test func hoerfilmOnlyWhenNoOtherTrackOfLanguage() {
