@@ -23,14 +23,18 @@ public enum AddonSearchState: Equatable, Sendable {
 /// Ein Addon in der laufenden Suche (Reihenfolge = Reihenfolge der installierten Addons).
 public struct AddonSearchStatus: Equatable, Sendable, Identifiable {
     public var index: Int
+    /// Task 3.6: the unique label (`AddonIdentity.labels`), so two installations with one name stay apart.
     public var name: String
     public var state: AddonSearchState
     /// Antwortzeit in Millisekunden (nil = läuft noch).
     public var milliseconds: Int?
+    /// Task 3.6 (A-A-16): entries of the answer that cannot be played (e.g. only `infoHash`); not in `.ok(count:)`.
+    public var unplayable: Int
     public var id: Int { index }
 
-    public init(index: Int, name: String, state: AddonSearchState = .loading, milliseconds: Int? = nil) {
+    public init(index: Int, name: String, state: AddonSearchState = .loading, milliseconds: Int? = nil, unplayable: Int = 0) {
         self.index = index; self.name = name; self.state = state; self.milliseconds = milliseconds
+        self.unplayable = unplayable
     }
 }
 
@@ -38,10 +42,18 @@ public struct AddonSearchStatus: Equatable, Sendable, Identifiable {
 public struct AddonSearchProgress: Sendable {
     public private(set) var statuses: [AddonSearchStatus]
     private var found: [Int: (addon: InstalledAddon, streams: [StreamItem])] = [:]
+    /// Label per `instanceID` (Task 3.6), from all installed addons.
+    private let labels: [String: String]
 
-    public init(addons: [(index: Int, addon: InstalledAddon)]) {
-        statuses = addons.map { AddonSearchStatus(index: $0.index, name: $0.addon.manifest.name) }
+    /// `installed`: all installed addons, for labels that do not depend on which addons a title asks (nil = `addons`).
+    public init(addons: [(index: Int, addon: InstalledAddon)], installed: [InstalledAddon]? = nil) {
+        let l = AddonIdentity.labels(installed ?? addons.map(\.addon))
+        labels = l
+        statuses = addons.map { AddonSearchStatus(index: $0.index, name: l[$0.addon.instanceID] ?? $0.addon.manifest.name) }
     }
+
+    /// Entry label of an addon in this search (unique per installation).
+    public func label(of addon: InstalledAddon) -> String { labels[addon.instanceID] ?? addon.manifest.name }
 
     /// Ein Addon ist fertig (Treffer, Fehler oder Zeitüberschreitung).
     public mutating func finish(index: Int, addon: InstalledAddon, outcome: AddonSearch.Outcome, milliseconds: Int) {
@@ -49,7 +61,12 @@ public struct AddonSearchProgress: Sendable {
         statuses[i].milliseconds = milliseconds
         switch outcome {
         // Wave W-a: addon notices (error/statistics/action entries) are not sources and do not count.
-        case .streams(let s): statuses[i].state = .ok(count: s.filter { !$0.addonKind.isNotice }.count); found[index] = (addon, s)
+        // Task 3.6 (A-A-16): only playable entries count; the others are named apart (log).
+        case .streams(let s):
+            let playable = s.filter(\.isPlayableVideo).count
+            statuses[i].state = .ok(count: playable)
+            statuses[i].unplayable = s.filter { !$0.addonKind.isNotice }.count - playable
+            found[index] = (addon, s)
         case .failed(let r): statuses[i].state = .failed(reason: r)
         case .timedOut: statuses[i].state = .timedOut
         }
@@ -77,7 +94,7 @@ public struct AddonSearchProgress: Sendable {
         statuses.map { s in
             let ms = s.milliseconds.map { " (\($0) ms)" } ?? ""
             switch s.state {
-            case .ok(let n): return "\(s.name)=\(n)\(ms)"
+            case .ok(let n): return "\(s.name)=\(n)\(s.unplayable > 0 ? " (+\(s.unplayable) nicht abspielbar)" : "")\(ms)"
             default: return "\(s.name)=\(s.state.label)\(ms)"
             }
         }.joined(separator: ", ")
@@ -165,7 +182,7 @@ extension AddonClient {
         -> [(addon: InstalledAddon, streams: [StreamItem])] {
         let wanted = addons.enumerated().filter { $0.element.manifest.supports("stream", type: type, id: id) }
             .map { (index: $0.offset, addon: $0.element) }
-        var progress = AddonSearchProgress(addons: wanted)
+        var progress = AddonSearchProgress(addons: wanted, installed: addons)
         await onUpdate(progress)
         let limit = AddonSearch.clamp(timeout)
         let client: AddonClient = { var c = self; c.addonTimeout = limit; return c }()

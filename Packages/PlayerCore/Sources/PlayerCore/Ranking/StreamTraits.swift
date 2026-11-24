@@ -33,7 +33,9 @@ public struct StreamTraits: Equatable, Sendable {
         let up = text.uppercased()
         var t = StreamTraits()
 
-        for (key, label) in [("2160P", "2160p"), ("4K", "2160p"), ("UHD", "2160p"), ("1440P", "1440p"), ("1080P", "1080p"), ("720P", "720p"), ("480P", "480p")]
+        // Task 3.6 (A-A-1): an explicit line count wins over „4K“/„UHD“ (a 1080p encode of a UHD disc stays 1080p).
+        for (key, label) in [("2160P", "2160p"), ("1440P", "1440p"), ("1080P", "1080p"), ("720P", "720p"), ("480P", "480p"),
+                             ("4K", "2160p"), ("UHD", "2160p")]
         where t.resolution == nil && containsToken(up, key) { t.resolution = label }
 
         if containsToken(up, "DV") || up.contains("DOLBY VISION") || up.contains("DOVI") { t.hdr.append("DV") }
@@ -50,7 +52,7 @@ public struct StreamTraits: Equatable, Sendable {
         if up.contains("DDP") || up.contains("DD+") || up.contains("EAC3") || up.contains("E-AC-3") { t.audio.append("DD+") }
         else if containsToken(up, "DD") || up.contains("DD5") || up.contains("AC3") { t.audio.append("DD") }
         if containsToken(up, "AAC") { t.audio.append("AAC") }
-        for ch in ["7.1", "5.1", "2.0"] where t.channels == nil && (containsToken(up, ch) || up.contains("DDP\(ch)") || up.contains("DD\(ch)")) { t.channels = ch }
+        for ch in ["7.1", "5.1", "2.0"] where t.channels == nil && containsChannels(up, ch) { t.channels = ch }
         for (keys, label) in [(["REMUX"], "REMUX"), (["BLURAY", "BLU-RAY", "BDRIP", "BRRIP"], "BluRay"), (["WEB-DL", "WEBDL"], "WEB-DL"),
                               (["WEBRIP", "WEB-RIP"], "WEBRip"), (["HDTV"], "HDTV")]
         where t.source == nil && keys.contains(where: { containsToken(up, $0) }) { t.source = label }
@@ -136,6 +138,34 @@ public struct StreamTraits: Equatable, Sendable {
         }
         return false
     }
+
+    /// Task 3.6 (A-A-2): „5.1“/„7.1“/„2.0“ as a channel layout: free-standing or right after an audio codec
+    /// („DDP5.1“, „AAC2.0“, „TrueHD7.1“), but never when a size unit follows („💾 5.1 GB“, „7.1 GiB“, „5.1 Mbps“).
+    static func containsChannels(_ up: String, _ ch: String) -> Bool {
+        var search = up[...]
+        while let r = search.range(of: ch) {
+            search = up[r.upperBound...]
+            if r.upperBound < up.endIndex, up[r.upperBound].isLetter || up[r.upperBound].isNumber { continue }
+            if r.lowerBound > up.startIndex {
+                let before = up[up.index(before: r.lowerBound)]
+                if before.isNumber { continue }
+                if before.isLetter {
+                    var start = r.lowerBound
+                    while start > up.startIndex, up[up.index(before: start)].isLetter { start = up.index(before: start) }
+                    guard channelCodecs.contains(String(up[start..<r.lowerBound])) else { continue }
+                }
+            }
+            let rest = up[r.upperBound...].drop { $0.isWhitespace }
+            if sizeUnits.contains(where: { rest.hasPrefix($0) }) { continue }
+            return true
+        }
+        return false
+    }
+
+    /// Codec names written directly before the layout („DDP5.1“, „AAC2.0“).
+    private static let channelCodecs: Set<String> = ["DD", "DDP", "AAC", "TRUEHD", "FLAC", "OPUS", "DTS", "MA", "PCM", "LPCM", "ATMOS"]
+    /// Units that make a number a size or rate („MB“ also covers „Mbps“), not a channel layout.
+    private static let sizeUnits = ["GB", "MB", "TB", "KB", "GIB", "MIB", "TIB", "KIB"]
 
     static func parseSize(_ up: String) -> Int64? {
         let pattern = #"(\d+(?:[.,]\d+)?)\s*(TB|GB|MB)"#

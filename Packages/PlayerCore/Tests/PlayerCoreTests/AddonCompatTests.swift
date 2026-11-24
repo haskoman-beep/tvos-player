@@ -175,7 +175,8 @@ private let noticeStreams = """
     let a = try installed("https://aio.example/u", #"{"id":"com.aio","name":"AIOStreams","version":"1","resources":["stream"],"types":["movie"],"idPrefixes":["tt"]}"#)
     let c = client(["https://aio.example/u/stream/movie/tt1.json": noticeStreams], box)
     let r = await c.streams(from: [a], type: "movie", id: "tt1", timeout: 5) { p in
-        if p.isComplete { #expect(p.statuses.first?.state == .ok(count: 3)) }
+        // Task 3.6 (A-A-16): the `infoHash`-only „P2P“ entry cannot be played and is counted apart.
+        if p.isComplete { #expect(p.statuses.first?.state == .ok(count: 2) && p.statuses.first?.unplayable == 1) }
     }
     #expect(r.first?.streams.count == 9)
     let lines = box.lines.filter { $0.category == "streams" }
