@@ -160,6 +160,16 @@ public enum SkipPolicy {
         return min(s.end, scene)
     }
 
+    /// Task 3.5 (W-B-12): where a skip lands from `position`. Never before the position (a skip never jumps
+    /// backwards) and, with a known duration, never later than 1 s before the file end:
+    /// `max(position, min(target, duration − 1))`.
+    public static func skipTarget(for s: SkipSegment, in segments: [SkipSegment], position: Double,
+                                  duration: Double) -> Double {
+        var t = target(for: s, in: segments, duration: duration)
+        if duration > 0 { t = min(t, duration - 1) }
+        return max(max(0, position), t)
+    }
+
     /// Action for a segment under the given settings. The end credits get no button or countdown while a card
     /// covers them: the card after a movie, or the next-episode card (unless a scene follows; then that card waits
     /// for the scene and the button leads to the scene).

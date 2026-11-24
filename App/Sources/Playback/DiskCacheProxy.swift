@@ -538,9 +538,17 @@ actor DiskCacheProxy {
             sessionPort = port
             return (proxyURL(s, port: port), token)
         } catch {
-            failedOrigins.insert(url)
+            // Task 3.5 (W-A-7): the player closed during the probe (task cancelled, URL error −999). That says
+            // nothing about the source: no entry in `failedOrigins`, the next start tries the cache again.
+            let cancelled = Task.isCancelled || error is CancellationError
+                || ((error as NSError).domain == NSURLErrorDomain && (error as NSError).code == NSURLErrorCancelled)
+            if !cancelled { failedOrigins.insert(url) }
             try? FileManager.default.removeItem(at: Self.root.appendingPathComponent(token, isDirectory: true))
-            cacheLog("Plattencache nicht möglich (\(short(error))) → direkte Adresse")
+            if cancelled {
+                cacheLog("Plattencache-Probe abgebrochen (\(short(error))) → direkte Adresse, Quelle nicht gesperrt")
+            } else {
+                cacheLog("Plattencache nicht möglich (\(short(error))) → direkte Adresse")
+            }
             return (url, nil)
         }
     }

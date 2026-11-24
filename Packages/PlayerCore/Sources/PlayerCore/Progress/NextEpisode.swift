@@ -27,8 +27,12 @@ public struct EpisodeRef: Codable, Sendable, Hashable {
     }
 
     /// Folge nach (season, episode); nil = Serie zu Ende.
+    /// Task 3.5 (W-B-10): after a special (season 0) only the next special counts, never S1E1; none = nil.
     public static func next(after season: Int, _ episode: Int, in list: [EpisodeRef]) -> EpisodeRef? {
-        list.first { ($0.season, $0.episode) > (season, episode) }
+        if season <= 0 {
+            return list.filter { $0.season == season && $0.episode > episode }.min { $0.episode < $1.episode }
+        }
+        return list.first { ($0.season, $0.episode) > (season, episode) }
     }
 }
 

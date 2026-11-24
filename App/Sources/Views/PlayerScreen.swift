@@ -40,6 +40,14 @@ struct PlayerScreen: View {
     @State private var prefetchToken = UUID()
     /// Spur-Panel (fullScreenCover) offen: ein onDisappear dabei ist kein Verlassen des Players.
     @State private var tracksOpen = false
+    /// Task 3.5 (W-B-2): the controls are leaving (Menü, Hintergrund, Ende, Rückfall). From now on every
+    /// onDisappear is a real exit, even with the panel still open.
+    @State private var leavingPlayer = false
+    /// Task 3.5 (W-B-2): onDisappear came while the panel was open (the cover hid the player). A later exit then
+    /// releases at once, because SwiftUI may not call onDisappear a second time when the player closes.
+    @State private var hiddenByPanel = false
+    /// Task 3.5 (W-B-2): scrobble, prefetch lock and extras already released for this appearance (no double stop).
+    @State private var released = false
     /// Task 3.1 (Build 2 carry-over): profile scope of this playback session. The track memory is read and written
     /// for this profile by ID, so a profile switch during playback never lands a choice in the new profile.
     @State private var session: ProfileScope?
@@ -75,6 +83,11 @@ struct PlayerScreen: View {
                                                        },
                                                        addonSubtitles: { await model.addonSubtitles(for: request, media: url, headers: headers, enabled: !isTrailer) },
                                                        onTracksShown: { tracksOpen = $0 },
+                                                       // Task 3.5 (W-B-2): leaving always releases, panel open or not.
+                                                       onLeaving: {
+                                                           leavingPlayer = true; tracksOpen = false
+                                                           if hiddenByPanel { releasePlayback() }
+                                                       },
                                                        reresolve: { isTrailer ? nil : await model.freshStream(for: request) },
                                                        skipLookup: { isTrailer ? nil : await model.introDBQuery(for: request) },
                                                        postPlayItem: isTrailer || ownProgress != nil || request.type != "movie" ? nil : request.item,   // wave P-a
@@ -97,14 +110,12 @@ struct PlayerScreen: View {
         .onDisappear {
             PostPlayRoute.flushLater()   // wave P-a: fallback; the stream list runs the route in playerDismissed
             // Öffnet das Spur-Panel (fullScreenCover) und löst onDisappear aus: Vorlader bleibt gesperrt,
-            // kein Wiedergabe-Ende melden.
-            guard !tracksOpen else { return }
-            StreamPrefetcher.shared.playerDisappeared(prefetchToken)
-            extras.cancel()   // Wave P-b
-            // Wave P-b: a source switch pauses the scrobble (the new player continues it), it never stops it.
-            if !isTrailer { if sideExit?.stopsScrobble == false { model.scrobblePause(request) } else { model.endPlayback(request) } }
+            // kein Wiedergabe-Ende melden. Task 3.5 (W-B-2): after `onLeaving` it is always a real exit.
+            guard !tracksOpen || leavingPlayer else { hiddenByPanel = true; return }
+            releasePlayback()
         }
         .onAppear {
+            hiddenByPanel = false; released = false
             // Beim Vorlader immer anmelden (onDisappear meldet ab), das Backend aber nur einmal anlegen.
             StreamPrefetcher.shared.playerAppeared(prefetchToken)
             if !isTrailer { extras.attach(model: model, request: request, links: sideLinks?.closing { tracksOpen = false; sideExit = $0 }) }   // Wave P-b
@@ -112,6 +123,16 @@ struct PlayerScreen: View {
             session = model.scopes.current   // Task 3.1: before the backend, so the controls see it from the start
             do { let b = try AetherBackend(); NowPlayingBridge.stage(b, request: request, skipSeconds: model.profile.player.remoteSkipSeconds); backend = b } catch { initError = "Player-Start fehlgeschlagen: \(error)"; RemoteLog.error("player", initError ?? "") }
         }
+    }
+
+    /// Task 3.5 (W-B-2): end of this player for the prefetcher, the side extras and the scrobble (once per appearance).
+    private func releasePlayback() {
+        guard !released else { return }
+        released = true
+        StreamPrefetcher.shared.playerDisappeared(prefetchToken)
+        extras.cancel()   // Wave P-b
+        // Wave P-b: a source switch pauses the scrobble (the new player continues it), it never stops it.
+        if !isTrailer { if sideExit?.stopsScrobble == false { model.scrobblePause(request) } else { model.endPlayback(request) } }
     }
 
     /// Task 3.1: the profile this playback started in (the active one until `onAppear` ran).
@@ -151,6 +172,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
     var addonSubtitles: (@MainActor () async -> [AddonSubtitle]?)? = nil
     /// Spur-Panel auf/zu (für PlayerScreen: onDisappear bei offenem Panel ist kein Verlassen).
     var onTracksShown: (Bool) -> Void = { _ in }
+    /// Task 3.5 (W-B-2): the player is leaving (called once from `leave`, after the exit step started).
+    var onLeaving: () -> Void = {}
     /// Abgelaufenen Link derselben Quelle neu auflösen (nil = geht nicht, z. B. Trailer).
     var reresolve: (@MainActor () async -> (url: URL, headers: [String: String])?)? = nil
     /// Fehlerleiter, TV-aus-Verhalten, Fehlermeldung, neu aufgelöster Link (Logik in PlayerCore, PlayerLifecycle.swift).
@@ -592,6 +615,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
         releaseIdleTimer()   // Bildschirmschoner wieder frei (Welle D-a)
         NowPlayingBridge.detach(engine)   // Now Playing: Befehle sperren, Karte leeren (Welle G-b)
         exit()
+        // Task 3.5 (W-B-2): after `exit` (progress already saved), so PlayerScreen releases even with the panel open.
+        onLeaving()
     }
 
     /// Up-next: Karte mit 10-s-Countdown ab Abspannbeginn (`skip.upNextAt`, Welle B-b), sonst 20 s vor Ende;
@@ -789,6 +814,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
             guard !Task.isCancelled else { return }
             RemoteLog.info("player", "Sprung \(Int(engine.currentTime)) → \(Int(target))s")
             await engine.seek(target)
+            // Task 3.5 (W-B-5): replaced by a newer press meanwhile: that task owns `pendingSeek` now.
+            guard !Task.isCancelled else { return }
             pendingSeek = nil
         }
     }
@@ -827,7 +854,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
         if startAborted { loadTask?.cancel(); stabilityLoadEnded() }
         switch step {
         case .nextSource:
-            onSourceVerdict(SourceVerdict.forNextSource(cls, failureKind: failure.kind, reachedFirstFrame: stab.firstFrameSeen))
+            // Task 3.5 (W-A-5): an unclassified transport error is not held against the source (nil = no verdict).
+            if let v = SourceVerdict.forNextSource(cls, failure: failure, reachedFirstFrame: stab.firstFrameSeen) { onSourceVerdict(v) }
             saveProgress(); engine.stop(); leave { onFallback("\(cls.label): \(reason)") }; return
         case .giveUp(let message):
             if startAborted { stab.startPending = true }   // „Erneut versuchen“ wiederholt dann den ganzen Start

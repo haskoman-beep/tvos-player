@@ -82,6 +82,20 @@ private let serie = MetaPreview(id: "tt9", type: "series", name: "Serie")
     #expect(EpisodeRef.next(after: 2, 1, in: l) == nil)
 }
 
+// Task 3.5 (W-B-10): after a special the next episode is the next special, never S1E1.
+@Test func nextAfterSpecialWithoutSpecialsInListIsNone() {
+    let l = [EpisodeRef(season: 1, episode: 1), EpisodeRef(season: 1, episode: 2)]
+    #expect(EpisodeRef.next(after: 0, 3, in: l) == nil)
+}
+
+@Test func nextAfterSpecialStaysInSeasonZero() {
+    let l = [EpisodeRef(season: 0, episode: 2), EpisodeRef(season: 0, episode: 5), EpisodeRef(season: 1, episode: 1)]
+    #expect(EpisodeRef.next(after: 0, 3, in: l) == EpisodeRef(season: 0, episode: 5))
+    #expect(EpisodeRef.next(after: 0, 5, in: l) == nil)
+    // Regular episodes are unchanged.
+    #expect(EpisodeRef.next(after: 1, 1, in: l + [EpisodeRef(season: 1, episode: 2)]) == EpisodeRef(season: 1, episode: 2))
+}
+
 @Test func nextStreamPrefersBingeGroup() {
     func s(_ u: String, _ g: String?) -> StreamItem { StreamItem(name: u, url: u, behaviorHints: g.map { StreamBehaviorHints(bingeGroup: $0) }) }
     let list = [StreamItem(name: "t", infoHash: "x"), s("https://a", "g1"), s("https://b", "g2")]

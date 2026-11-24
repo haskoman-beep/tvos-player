@@ -231,12 +231,11 @@ public struct SkipPlanner: Sendable {
         return true
     }
 
-    /// Sprung beginnen; liefert das Ziel (Bereichsende, vor dem Dateiende gehalten).
-    public mutating func beginSkip(_ s: SkipSegment, duration: Double, now: Double) -> Double {
+    /// Sprung beginnen; liefert das Ziel (Bereichsende, vor dem Dateiende gehalten, nie vor `position`).
+    public mutating func beginSkip(_ s: SkipSegment, position: Double, duration: Double, now: Double) -> Double {
         // Wave P-a: credits followed by a scene end at that scene, never at the file end.
-        var target = SkipPolicy.target(for: s, in: segments, duration: duration)
-        if duration > 10 { target = min(target, duration - 5) }
-        target = max(0, target)
+        // Task 3.5 (W-B-12): never backwards, at most 1 s before the file end (`SkipPolicy.skipTarget`).
+        let target = SkipPolicy.skipTarget(for: s, in: segments, position: position, duration: duration)
         seeking = (target, now)
         // Ankunft zählt ab Ziel − 2 s, der Knopf stünde bis Ende − 1 s: ohne das flackerte er nach dem Sprung kurz auf.
         // Wird aufgehoben, sobald die Position den Bereich verlassen hat (observe).

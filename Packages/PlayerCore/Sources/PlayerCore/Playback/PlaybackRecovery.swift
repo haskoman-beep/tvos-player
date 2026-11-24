@@ -156,6 +156,18 @@ public enum PlaybackErrorClassifier {
         }
     }
 
+    /// Task 3.5 (W-A-5): error domains of the network transport (URL loading, sockets, CFNetwork).
+    static let transportDomains: Set<String> = ["NSURLErrorDomain", "NSPOSIXErrorDomain", "kCFErrorDomainCFNetwork"]
+
+    /// Task 3.5 (W-A-5): a transport error (network stack, not the file or the service) whose code the classifier
+    /// does not know, so it landed in `.unknown`. Such a failure says nothing about the source and is not remembered.
+    /// AVFoundation −11800 counts only when a URL error below is known.
+    public static func isUnclassifiedTransport(_ f: PlaybackFailure, as cls: PlaybackErrorClass) -> Bool {
+        guard cls == .unknown else { return false }
+        if let d = f.domain, transportDomains.contains(d) { return true }
+        return f.domain == "AVFoundationErrorDomain" && f.code == -11800 && f.underlyingURLCode != nil
+    }
+
     /// NSURLError-Codes (Foundation).
     static func urlClass(_ code: Int) -> PlaybackErrorClass? {
         switch code {
@@ -285,5 +297,16 @@ extension LastSource {
 
     public func exactURL(in streams: [StreamItem]) -> URL? {
         exactStream(in: streams)?.url.flatMap(URL.init(string:))
+    }
+}
+
+extension SourceVerdict {
+    /// Task 3.5 (W-A-5): verdict when the ladder switches to the next source, from the whole failure.
+    /// nil = nothing to report: an unclassified transport error is not held against the source for 8 h; only
+    /// classified failures go to `FailedLinkBook` (which then decides by class, `FailedLinkBook.remembers`).
+    public static func forNextSource(_ cls: PlaybackErrorClass, failure: PlaybackFailure,
+                                     reachedFirstFrame: Bool) -> SourceVerdict? {
+        if PlaybackErrorClassifier.isUnclassifiedTransport(failure, as: cls) { return nil }
+        return forNextSource(cls, failureKind: failure.kind, reachedFirstFrame: reachedFirstFrame)
     }
 }
