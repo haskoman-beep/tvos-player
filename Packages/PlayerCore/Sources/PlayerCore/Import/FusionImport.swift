@@ -135,8 +135,8 @@ public enum FusionImport {
     /// - Parameters:
     ///   - sourceKey: Schlüssel der Kit-Datei (Teil aller IDs, damit zwei Dateien sich nicht in die Quere kommen).
     ///   - title: Reihentitel für die flache Collection-Liste (die hat keinen eigenen).
-    ///   - now: für „schon erschienen“ (TMDB-Datumsfilter); beim Laden eingesetzt. A-B-10: beim Abruf ersetzt
-    ///     `requestFilters` das Datum durch den aktuellen Tag; das gespeicherte bleibt für ältere Builds stehen.
+    ///   - now: day for "released" (TMDB date filter), stored at parse. A-B-10: `requestFilters` replaces it with
+    ///     the current day at request time; the stored value stays for older builds.
     public static func parse(_ data: Data, sourceKey: String, title: String = "Kit", now: Date = Date()) throws -> FusionKitContent {
         let any = try JSONSerialization.jsonObject(with: data)
         var warnings: [String: Int] = [:]
