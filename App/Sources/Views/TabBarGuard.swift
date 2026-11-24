@@ -38,10 +38,22 @@ import PlayerCore
 
     func configure(navigation: NavigationStyle) { self.navigation = navigation }
 
-    /// The visible page changed (`popped`: back to `page` by a pop).
-    func visit(_ page: String, popped: Bool) {
+    /// The visible page changed (`popped`: back to `page` by a pop). Task 4.1a (F-A-8): a tab change starts a new
+    /// visit too (`NavigationGuard.startsVisit`), so the repair steps may run again on the other tab's page.
+    func visit(_ page: String, popped: Bool, startsVisit: Bool = false) {
         self.page = page
-        if popped { check(.popped) }
+        if popped {
+            check(.popped)
+        } else if startsVisit {
+            newVisit()
+        }
+    }
+
+    /// Task 4.1a (F-A-8): a new visit without a check of its own (tab change): the steps are allowed again.
+    func newVisit() {
+        guard task == nil else { return }   // a running check finishes; its own visit stays
+        lastRepair = nil
+        loggedExhausted = false
     }
 
     /// Checks the bar after the trigger's delay and repairs it while it is stuck. A new visit (pop, player closed)
@@ -220,9 +232,36 @@ struct TabBarGuardHook: ViewModifier {
             .onAppear { TabBarGuard.shared.install(navigation: navigation) }
             .onChange(of: navigation) { _, n in TabBarGuard.shared.configure(navigation: n) }
             .onChange(of: Visible(tab: tab, depth: depth), initial: true) { old, new in
+                VisiblePage.moved(tab: new.tab, depth: new.depth)
                 TabBarGuard.shared.visit("\(new.tab.logName), Tiefe \(new.depth)",
-                                         popped: old.tab == new.tab && new.depth < old.depth)
+                                         popped: old.tab == new.tab && new.depth < old.depth,
+                                         startsVisit: NavigationGuard.startsVisit(
+                                             old: NavigationStamp(tab: old.tab, depth: old.depth),
+                                             new: NavigationStamp(tab: new.tab, depth: new.depth)))
             }
+    }
+}
+
+/// Task 4.1a (F-A-1): the visible page as a `NavigationStamp`, kept by `TabBarGuardHook`. Actions that navigate
+/// after an `await` take a stamp before and push only while `NavigationGuard.mayPush` holds.
+@MainActor enum VisiblePage {
+    private(set) static var stamp = NavigationStamp(tab: .home, depth: 0)
+
+    static func moved(tab: AppTab, depth: Int) {
+        guard tab != stamp.tab || depth != stamp.depth else { return }
+        stamp = NavigationStamp(tab: tab, depth: depth, visit: stamp.visit + 1)
+    }
+
+    /// A page outside the path (manager, browser, settings link) covers the current one: a new visit.
+    static func covered() {
+        stamp = NavigationStamp(tab: stamp.tab, depth: stamp.depth, visit: stamp.visit + 1)
+    }
+
+    /// True while the visible page is the one of `start`; otherwise logs the dropped jump.
+    static func mayNavigate(from start: NavigationStamp, _ what: String) -> Bool {
+        if NavigationGuard.mayPush(startedAt: start, now: stamp) { return true }
+        RemoteLog.info("nav", "navigation: später Sprung verworfen (\(what))")
+        return false
     }
 }
 

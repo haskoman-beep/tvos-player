@@ -14,6 +14,9 @@ final class HomeFocus {
     /// Fokus liegt in den Reihen (nicht auf den Hero-Knöpfen).
     private(set) var inRows = false
     @ObservationIgnored private var pending: Task<Void, Never>?
+    /// Task 4.1a (F-A-12): rows that hold the focus, and the rest check after the last one lost it.
+    @ObservationIgnored private var focusedRows: Set<UUID> = []
+    @ObservationIgnored private var outside: Task<Void, Never>?
 
     /// Kachel hat den Fokus: Diashow sofort anhalten, Hintergrund erst nach 350 ms Ruhe wechseln.
     /// Ein neuer Fokus bricht die Wartezeit ab; pro Ruhepause höchstens eine Log-Zeile.
@@ -33,6 +36,27 @@ final class HomeFocus {
         }
     }
 
+    /// Task 4.1a (F-A-12): a row gained or lost the focus. When no row holds it for 300 ms (sidebar, top bar, the
+    /// button below the rows), the show runs again and the backdrop goes back to the slide.
+    func row(_ id: UUID, focused: Bool) {
+        if focused {
+            focusedRows.insert(id)
+            outside?.cancel()
+            outside = nil
+            return
+        }
+        focusedRows.remove(id)
+        guard focusedRows.isEmpty, inRows, outside == nil else { return }
+        outside = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled, let self else { return }
+            self.outside = nil
+            guard self.focusedRows.isEmpty, self.inRows else { return }
+            RemoteLog.info("hero", "Fokus außerhalb der Reihen: Diashow läuft weiter")
+            self.leaveRows()
+        }
+    }
+
     /// Fokus ist auf den Hero-Knöpfen: Diashow läuft wieder.
     func leaveRows() {
         pending?.cancel()
@@ -46,15 +70,28 @@ final class HomeFocus {
 final class HeroSlides {
     private(set) var items: [MetaPreview] = []
     private(set) var index = 0
-    /// Erste Ladung abgeschlossen (leer = kein Hero).
+    /// Erste Ladung abgeschlossen.
     private(set) var loaded = false
+    /// Task 4.1a (F-A-4): last load failed and there is nothing to show (status tile instead of slides).
+    private(set) var failed = false
+    /// Raised by the status tile: loads the hero source again.
+    var retry = 0
 
     var current: MetaPreview? { items.isEmpty ? nil : items[min(index, items.count - 1)] }
 
-    func set(_ new: [MetaPreview]) {
-        if new.map(\.id) != items.map(\.id) { items = new; index = 0 }
+    /// Phase of the hero frame: slides, still loading, failed or empty (status tile; the layout stays).
+    var phase: HomeRowPhase { HomeRowPhase(loaded: loaded, failed: failed, count: items.count) }
+
+    /// New slides; same IDs keep the show where it is (A-B-6: a background refresh does not restart it). A failed
+    /// load keeps slides already shown.
+    func set(_ new: [MetaPreview], failed loadFailed: Bool = false) {
+        if loadFailed, new.isEmpty, !items.isEmpty { loaded = true; return }
+        if new.map(\.rowKey) != items.map(\.rowKey) { items = new; index = 0 }
+        failed = loadFailed && new.isEmpty
         loaded = true
     }
+
+    static let emptyText = "Die Hero-Quelle hat gerade keine Einträge."
 
     func advance() {
         guard items.count > 1 else { return }
@@ -100,6 +137,11 @@ struct HeroLayer: View {
             if let shown {
                 HeroInfo(item: shown)
                     .padding(.leading, Theme.Space.edge).padding(.top, Theme.Space.s)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else if let text = slides.phase.statusText(empty: HeroSlides.emptyText) {
+                // Task 4.1a (F-A-4): the hero frame stays; the reason stands where the info would be.
+                Text(text).textRole(.rowDetail)
+                    .padding(.leading, Theme.Space.edge).padding(.top, Theme.Space.xl)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -276,8 +318,13 @@ struct HeroButtons: View {
 
     var body: some View {
         HStack(spacing: Theme.Space.l) {
-            Button { play() } label: {
-                Label(starting ? "Wird geladen …" : "Abspielen", systemImage: "play.fill")
+            Button { slides.phase == .failed ? retryHero() : play() } label: {
+                // Task 4.1a (F-A-4): failed hero source → the play button is the status tile "erneut laden".
+                if slides.phase == .failed {
+                    Label("Erneut laden", systemImage: "arrow.clockwise")
+                } else {
+                    Label(starting ? "Wird geladen …" : "Abspielen", systemImage: "play.fill")
+                }
             }
             .focused($field, equals: .play)
             .buttonStyle(ThemeActionButtonStyle())
@@ -350,12 +397,20 @@ struct HeroButtons: View {
         }
     }
 
+    private func retryHero() {
+        RemoteLog.info("hero", "Hero-Quelle erneut laden")
+        slides.retry += 1
+    }
+
     private func play() {
         guard !starting, let m = slides.current else { return }
         starting = true
+        let start = VisiblePage.stamp
         Task {
             let r = await model.quickPlayRequest(for: m)
             starting = false
+            // F-A-1: the user opened another page or tab while waiting → no late jump into the source list.
+            guard VisiblePage.mayNavigate(from: start, "hero Abspielen \(m.name)") else { return }
             guard let r else {
                 model.lastError = "Abspielen nicht möglich: keine IMDb-ID für \(m.name)."
                 return

@@ -82,6 +82,16 @@ public enum HomeRowPhase: Equatable, Sendable {
     /// Laden fehlgeschlagen: eine Kachel „Laden fehlgeschlagen – erneut versuchen“.
     case failed
 
+    /// Task 4.1a (F-A-2): a collection row uses the same phases (tiles = items); its placeholder hands over too.
+    public init(collection p: CollectionRowPhase, count: Int) {
+        switch p {
+        case .loading: self = .loading
+        case .failed: self = .failed
+        case .empty: self = .empty
+        case .tiles: self = count > 0 ? .items(count) : .empty
+        }
+    }
+
     public init(loaded: Bool, failed: Bool, count: Int) {
         if !loaded { self = .loading }
         else if count > 0 { self = .items(count) }
@@ -119,4 +129,18 @@ public enum HomeRowPreload {
 
     /// Gleichzeitige Ladungen beim Vorladen (die gerade sichtbaren Reihen laden zusätzlich sofort selbst).
     public static let limit = 4
+}
+
+/// Task 4.1a (F-A-5, A-B-8): row entries are told apart by type and id (TMDB film and series share numbers).
+extension MetaPreview {
+    /// Identity of a card in a row (`ForEach` id).
+    public var rowKey: String { type + "|" + id }
+}
+
+public enum RowItems {
+    /// One entry per (type, id), the first occurrence wins; order stays.
+    public static func deduped(_ items: [MetaPreview]) -> [MetaPreview] {
+        var seen = Set<String>()
+        return items.filter { seen.insert($0.rowKey).inserted }
+    }
 }

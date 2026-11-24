@@ -8,6 +8,8 @@ struct HomeRowView: View {
     @EnvironmentObject var model: AppModel
     let row: HomeRow
     let onActivate: (Route) -> Route?
+    /// Task 4.1a (F-A-3): home page focus target after a context-menu action (nil elsewhere).
+    var focusTarget: HomeFocusTarget? = nil
     /// Welle F-b2: Kontextmenü der Startseite (langer Druck auf eine Kachel), nil = keins.
     var menu: HomeRowMenu? = nil
     /// Wave F-j: focus enters (true) or leaves (false) this row (home page: top edge watch, heading scroll).
@@ -47,7 +49,8 @@ struct HomeRowView: View {
             let r = await model.homeRowItems(s)
             guard !Task.isCancelled else { return }   // abgebrochen (neue Ladung folgt): kein „Keine Einträge“-Flackern
             let placeholder = focusedPlaceholder
-            items = r.items; failed = r.failed; loaded = true
+            // Task 4.1a (F-A-5): a catalog may list a title twice; one card per (type, id), the first wins.
+            items = RowItems.deduped(r.items); failed = r.failed; loaded = true
             // Fokus lag auf einem Platzhalter: an dieselbe Stelle der fertigen Reihe (bzw. auf die Statuskachel).
             // Erst im nächsten Durchlauf: dann gibt es die Karten schon.
             if let placeholder {
@@ -62,6 +65,24 @@ struct HomeRowView: View {
         }
         .onChange(of: focusedRoute != nil || focusedPlaceholder != nil) { _, f in onFocusInside?(f) }
         .onAppear { if focusedRoute != nil || focusedPlaceholder != nil { onFocusInside?(true) } }
+        // Task 4.1a (F-A-2): collection rows hand over like list rows: a focused placeholder (or status tile) goes to
+        // the tile at the same place when the kit file arrives, else to the status tile.
+        .onChange(of: collectionLoadPhase) { _, p in
+            // Review minor 1: the change into `.loading` (OK on the status tile) is no hand-over.
+            guard let p, p != .loading, let placeholder = focusedPlaceholder, case .collection(let id) = row.content
+            else { return }
+            let slot = p.focusAfterLoad(placeholder: placeholder)
+            var target: Route?
+            if case .items = p, let folders = model.collection(id)?.folders, folders.indices.contains(slot) {
+                target = .folder(folders[slot])
+            }
+            RemoteLog.info("fokus", "Collection \(title): Platzhalter \(placeholder) → \(target != nil ? "Kachel \(slot)" : "Statuskachel")")
+            DispatchQueue.main.async {
+                if let target { focusedRoute = target } else { focusedPlaceholder = slot }
+            }
+        }
+        // Task 4.1a (F-A-3): `initial` also claims a target when the lazy list builds this row after the scroll.
+        .onChange(of: focusTarget?.serial, initial: true) { _, _ in claimFocusTarget() }
         .onDisappear {
             onFocusInside?(false)
             // Wave F-p R1: page left with focus in this row within the 350 ms rest: no stale request.
@@ -100,6 +121,14 @@ struct HomeRowView: View {
     /// Welle F-g: Phase der Collection-Reihe (Kit-Datei lädt, schlug fehl, leer, Kacheln).
     private func collectionPhase(_ id: String, _ c: MediaCollection?) -> CollectionRowPhase {
         CollectionRowPhase.of(collectionID: id, folders: c?.folders, kitErrors: kit.errors, kitLoading: kit.loading)
+    }
+
+
+    /// Task 4.1a (F-A-2): phase of a collection row as `HomeRowPhase` (nil for list rows).
+    private var collectionLoadPhase: HomeRowPhase? {
+        guard case .collection(let id) = row.content else { return nil }
+        let c = model.collection(id)
+        return HomeRowPhase(collection: collectionPhase(id, c), count: c?.folders.count ?? 0)
     }
 
     /// Welle F-f: Phase der Listen-Reihe (jede Phase hat ein Fokusziel, PlayerCore `HomeRowPhase`).
@@ -153,7 +182,7 @@ struct HomeRowView: View {
             case .items:
                 let routes = routeTable   // Task 3.8: once per row pass, not once per card
                 Strip(expands: row.style == .poster, kind: tileKind) {
-                    ForEach(Array(displayed.enumerated()), id: \.element.id) { i, m in
+                    ForEach(Array(displayed.enumerated()), id: \.element.rowKey) { i, m in
                         card(routes[m.id] ?? .detail(m)) {
                             if row.content == .list(.upcoming) {
                                 UpcomingTodayCard(item: m, landscape: row.style == .landscape || row.style == .hero)
@@ -229,6 +258,28 @@ struct HomeRowView: View {
         .buttonStyle(.card)
         .focused($focusedPlaceholder, equals: 0)
         .homeRowMenu(menu)
+    }
+
+    /// Task 4.1a (F-A-3): this row is the home page's focus target: remembered tile, else the first tile, else
+    /// placeholder/status tile 0. Next run loop, after the layout change built the row.
+    private func claimFocusTarget() {
+        guard let focusTarget, focusTarget.claim(.row(row.id)) else { return }
+        let target = rememberedRoute ?? firstRoute
+        DispatchQueue.main.async {
+            if let target { focusedRoute = target } else { focusedPlaceholder = 0 }
+        }
+    }
+
+    /// First tile of the row, if tiles are shown.
+    private var firstRoute: Route? {
+        switch row.content {
+        case .collection(let id):
+            guard case .tiles = collectionPhase(id, model.collection(id)) else { return nil }
+            return model.collection(id)?.folders.first.map { Route.folder($0) }
+        case .list:
+            guard case .items = phase, let m = displayed.first else { return nil }
+            return routeTable[m.id] ?? .detail(m)
+        }
     }
 
     /// Zuletzt fokussierte Kachel dieser Reihe, sofern noch vorhanden (sonst entscheidet die Fokus-Engine).
@@ -429,7 +480,8 @@ struct PosterCard: View {
             try? await Task.sleep(for: .milliseconds(350))
             guard !Task.isCancelled else { return }
             // Verankern nur zusammen mit dem Aufklappen: schnelles Durchscrollen löst kein Programm-Scrollen aus.
-            withAnimation(.easeInOut(duration: 0.25)) { expanded = true; anchor(item.id) }
+            // Task 4.1a (C1): the anchor id must equal the row's `ForEach` id (`rowKey`, type|id since F-A-5).
+            withAnimation(.easeInOut(duration: 0.25)) { expanded = true; anchor(item.rowKey) }
         }
     }
 }
@@ -686,6 +738,7 @@ extension EnvironmentValues {
         set { self[ExpandPostersKey.self] = newValue }
     }
     /// Fokussierte, aufklappbare Karte meldet ihre ID; die Reihe verankert die Scrollposition daran.
+    /// The id is the `ForEach` id of the strip: `MetaPreview.rowKey` (Task 4.1a, C1).
     var anchorFocusedCard: (String) -> Void {
         get { self[AnchorFocusedCardKey.self] }
         set { self[AnchorFocusedCardKey.self] = newValue }

@@ -6,6 +6,14 @@ import PlayerCore
 /// nochmal OK nimmt eine eben hinzugefügte zurück; schon vorher vorhandene Reihen nimmt OK erst nach Rückfrage weg.
 /// Kopf: „Suchen“ öffnet eine eigene Suchseite (Rückfallweg §6.4 statt `.searchable` in der Spalte).
 /// Menu links schließt; der Verwalter fokussiert dann die oberste neue Reihe.
+/// Task 4.1a (F-A-6): a browser section with a stable key (title, numbered when it repeats; untitled: "-").
+struct KeyedRowSection {
+    let key: String
+    let section: RowCatalogSection
+    var title: String? { section.title }
+    var entries: [RowCatalogEntry] { section.entries }
+}
+
 struct AddRowBrowser: View {
     let session: HomeRowsSession
     @EnvironmentObject var model: AppModel
@@ -123,7 +131,9 @@ struct AddRowBrowser: View {
                     if g.entries.isEmpty {
                         Text(emptyText(g)).textRole(.rowDetail).multilineTextAlignment(.leading)
                     }
-                    ForEach(Array(g.sections.enumerated()), id: \.offset) { _, section in
+                    // Task 4.1a (F-A-6): sections keyed by title, not position; a kit file arriving later inserts
+                    // sections before the focused one without changing that one's identity.
+                    ForEach(Self.keyed(g.sections), id: \.key) { section in
                         if let t = section.title { SettingsSectionLabel(title: t) }
                         ForEach(section.entries) { e in
                             CatalogEntryRow(entry: e, isNew: isNew(e)) { toggle(e) }
@@ -189,6 +199,17 @@ struct AddRowBrowser: View {
         case .done: break
         case .confirmHide(let row): hideCandidate = row
         case .unavailable(let why): model.notice = why
+        }
+    }
+
+    /// Task 4.1a (F-A-6): stable section keys; a repeated title gets its occurrence number.
+    static func keyed(_ sections: [RowCatalogSection]) -> [KeyedRowSection] {
+        var seen: [String: Int] = [:]
+        return sections.map { sec in
+            let base = sec.title ?? "-"
+            let n = seen[base, default: 0]
+            seen[base] = n + 1
+            return KeyedRowSection(key: n == 0 ? base : "\(base)#\(n)", section: sec)
         }
     }
 }
