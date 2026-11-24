@@ -159,3 +159,46 @@ private let seasonTwo = #"{"episodes":[{"season_number":2,"episode_number":4,"na
     #expect(Upcoming.dayOffset("2026-11-22", today: saturday, calendar: berlin) == 1)
     #expect(Upcoming.dayOffset("2026-11-22", today: saturday, calendar: buddhist) != 1)
 }
+
+/// A-B-11: the last aired episode lies in the window although the next one is announced later.
+@Test func nextEpisodesFetchesLastSeasonWhenNextIsOutsideWindow() async throws {
+    let show = #"""
+    {"id":42,"name":"Die Serie",
+     "last_episode_to_air":{"season_number":1,"episode_number":9,"name":"Neun","air_date":"2026-11-23"},
+     "next_episode_to_air":{"season_number":1,"episode_number":10,"name":"Zehn","air_date":"2026-12-24"}}
+    """#
+    let seasonOne = #"{"episodes":[{"season_number":1,"episode_number":8,"name":"Acht","air_date":"2026-11-23"},{"season_number":1,"episode_number":9,"name":"Neun","air_date":"2026-11-23"}]}"#
+    let http = PathHTTP(["/3/tv/42": show, "/3/tv/42/season/1": seasonOne])
+    let eps = try await TMDBClient(apiKey: "K", http: http).nextEpisodes(tmdbID: 42, from: "2026-11-23", through: "2026-12-08")
+    #expect(http.urls.map(\.path) == ["/3/tv/42", "/3/tv/42/season/1"])
+    #expect(Set(eps.filter { $0.airDate == "2026-11-23" }.map(\.episode)) == [8, 9])
+}
+
+/// A-B-11: next episode in the window belongs to another season than yesterday's double episode → both seasons.
+@Test func nextEpisodesFetchesBothSeasonsWhenLastAndNextDiffer() async throws {
+    let show = #"""
+    {"id":42,"name":"Die Serie",
+     "last_episode_to_air":{"season_number":1,"episode_number":9,"name":"Neun","air_date":"2026-11-23"},
+     "next_episode_to_air":{"season_number":2,"episode_number":5,"name":"Fünf","air_date":"2026-11-27"}}
+    """#
+    let seasonOne = #"{"episodes":[{"season_number":1,"episode_number":8,"name":"Acht","air_date":"2026-11-23"},{"season_number":1,"episode_number":9,"name":"Neun","air_date":"2026-11-23"}]}"#
+    let http = PathHTTP(["/3/tv/42": show, "/3/tv/42/season/1": seasonOne, "/3/tv/42/season/2": seasonTwo])
+    let eps = try await TMDBClient(apiKey: "K", http: http).nextEpisodes(tmdbID: 42, from: "2026-11-23", through: "2026-12-08")
+    #expect(http.urls.count == 3)
+    #expect(Set(http.urls.map(\.path)) == ["/3/tv/42", "/3/tv/42/season/1", "/3/tv/42/season/2"])
+    #expect(Set(eps.map { "\($0.season)x\($0.episode)" }).isSuperset(of: ["1x8", "1x9", "2x5", "2x6"]))
+}
+
+/// A-B-5: day key for "recompute on day change" (local calendar day, not 24 h).
+@Test func upcomingDayChangeWakesRows() {
+    let cal = berlin
+    let evening = cal.date(from: DateComponents(year: 2026, month: 11, day: 24, hour: 23, minute: 50))!
+    let later = cal.date(from: DateComponents(year: 2026, month: 11, day: 24, hour: 23, minute: 59))!
+    let morning = cal.date(from: DateComponents(year: 2026, month: 11, day: 25, hour: 0, minute: 10))!
+    #expect(Upcoming.dayKey(evening, calendar: cal) == "2026-11-24")
+    #expect(Upcoming.dayKey(morning, calendar: cal) == "2026-11-25")
+    let day = Upcoming.dayKey(evening, calendar: cal)
+    #expect(!Upcoming.wakeNeeded(lastDay: day, now: later, calendar: cal, cacheDue: false))
+    #expect(Upcoming.wakeNeeded(lastDay: day, now: later, calendar: cal, cacheDue: true))
+    #expect(Upcoming.wakeNeeded(lastDay: day, now: morning, calendar: cal, cacheDue: false))
+}

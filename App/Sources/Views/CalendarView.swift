@@ -68,7 +68,8 @@ struct CalendarView: View {
                 RemoteLog.info("kalender", "Fokus von der Kopfzeile auf die erste Kachel")
             }
         }
-        .task(id: "\(model.profile.id)|\(revision.value)") {
+        // A-B-5: `catalogWake` also rises when a new local day began, so the window (yesterday … +14) moves along.
+        .task(id: "\(model.profile.id)|\(revision.value)|\(model.catalogWake)") {
             episodes = await model.upcoming()
             loaded = true
         }

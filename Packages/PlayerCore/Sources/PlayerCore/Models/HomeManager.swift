@@ -178,6 +178,20 @@ public struct HomeManager: Sendable {
         }
     }
 
+    /// Task 4.1a (F-A-3): focus target on the home page for an action's `Outcome.focus`. `rows` is the layout order,
+    /// `shown` the rows drawn as rows (without a hero-style hero source). A row that is not shown hands over to the
+    /// next shown row after it, else the nearest before it; without rows (or for `.hidden`) the action button (`.add`).
+    public static func homeTarget(_ focus: Focus, rows: [UUID], shown: [UUID]) -> Focus {
+        guard case .row(let id) = focus else { return .add }
+        if shown.contains(id) { return focus }
+        let set = Set(shown)
+        if let at = rows.firstIndex(of: id) {
+            if let next = rows[(at + 1)...].first(where: set.contains) { return .row(next) }
+            if let before = rows[..<at].last(where: set.contains) { return .row(before) }
+        }
+        return shown.first.map { .row($0) } ?? .add
+    }
+
     private func focusNear(_ index: Int) -> Focus {
         guard !rows.isEmpty else { return .add }
         return .row(rows[min(index, rows.count - 1)].id)

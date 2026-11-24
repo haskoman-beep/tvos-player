@@ -30,7 +30,8 @@ struct GenrePageView: View {
     @FocusState private var focusedFilter: GenreFilter?
     /// Review I-2: the footer retry button keeps the focus while its block loads (spinner inside).
     @FocusState private var retryFocused: Bool
-    @State private var retrying = false
+    /// F-B-8: retry marker per filter, so a block of the other filter neither keeps nor clears it.
+    @State private var retrying: Set<GenreFilter> = []
     /// Review M-1: page on screen; a block that lands after leaving it does not chain the next one.
     @State private var onScreen = false
 
@@ -157,7 +158,7 @@ struct GenrePageView: View {
         // Review I-2: after "Erneut versuchen" the button stays (spinner inside, one branch = same view identity, so
         // it keeps the focus also when the block fails again) and the focus does not fall back to the top of the page;
         // when the block lands the focus moves to its first new title.
-        if state.footer == .retry || (state.footer == .loading && retrying) {
+        if state.footer == .retry || (state.footer == .loading && retrying.contains(filter)) {
             retryButton(text: "Erneut versuchen", loading: state.footer == .loading)
         } else if state.footer == .loading {
             ProgressView().frame(maxWidth: .infinity, alignment: .leading)
@@ -211,7 +212,7 @@ struct GenrePageView: View {
 
     private func retry(_ f: GenreFilter) {
         guard var p = paging[f], let r = p.retry() else { return }
-        retrying = !p.items.isEmpty
+        if p.items.isEmpty { retrying.remove(f) } else { retrying.insert(f) }
         paging[f] = p
         load(f, r)
     }
@@ -227,8 +228,7 @@ struct GenrePageView: View {
                 let added = p.receive(r, items: items, totalPages: total)
                 paging[f] = p
                 RemoteLog.info("genre", p.logLine(genre: name, filter: f, added: added))
-                if retrying, f == filter {
-                    retrying = false
+                if retrying.remove(f) != nil, f == filter {
                     // Review I-2: the retry button goes away; its focus moves to the first new (else the last) title.
                     if retryFocused, let target = (p.items.count > before ? p.items[before] : p.items.last)?.id { focusedID = target }
                 }
@@ -239,7 +239,7 @@ struct GenrePageView: View {
                 let line = p.failLine(genre: name, filter: f, request: r, error: "\(error)")
                 p.fail(r)
                 paging[f] = p
-                if f == filter { retrying = false }
+                retrying.remove(f)
                 RemoteLog.error("genre", line)
             }
         }

@@ -36,10 +36,14 @@ struct ProfileSettings: View {
                     newName = ""
                     naming = true
                 }
-                if model.hasMultipleProfiles {
-                    SettingsRow(symbol: "trash", tint: Theme.Tone.error.color, title: "Profil „\(p.name)“ löschen …",
-                                reserveDetailSpace: false) { confirmDelete = true }
+                // F-B-9: the row stays after deleting down to one profile (focus keeps its view); then only dimmed.
+                SettingsRow(symbol: "trash", tint: Theme.Tone.error.color, title: "Profil „\(p.name)“ löschen …",
+                            detail: model.hasMultipleProfiles ? nil : "Das einzige Profil lässt sich nicht löschen.",
+                            reserveDetailSpace: false) {
+                    guard model.hasMultipleProfiles else { return }
+                    confirmDelete = true
                 }
+                .settingsUnavailable(!model.hasMultipleProfiles)
             }
             // Review S M3: the page label says "this profile", the profile list itself is device-wide.
             SettingsFootnote("Die Profilliste gilt für das ganze Gerät.")

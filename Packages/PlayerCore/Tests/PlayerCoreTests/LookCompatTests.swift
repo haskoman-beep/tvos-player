@@ -4,7 +4,8 @@ import Testing
 
 // Task 4.2: going back from Build 4 to Build 3 must keep everything. `Fixtures/build4-profiles-look.json` is
 // `build249-profiles.json` (same keys as Build 3) plus a `look` per profile, one of them from a future build.
-// This test was run green on the Build 3 code before `look` existed: the Build 3 model ignores the key.
+// The same test body was run green once on the Build 3 code (commit 8159e35, before `look` existed): the Build 3
+// model ignores the key. Here it runs against the current model and checks the other fields stay untouched.
 
 private func compatFixture(_ name: String) throws -> Data {
     let url = try #require(Bundle.module.url(forResource: name, withExtension: nil, subdirectory: "Fixtures"))
@@ -22,7 +23,7 @@ private func withoutLook(_ stored: StoredProfiles) throws -> [Data] {
     }
 }
 
-@Test func profileWithLookDecodesInBuild3Model() throws {
+@Test func lookKeyDoesNotDisturbOtherProfileFields() throws {
     let (withLook, report) = try ProfileStore.decodeReporting(try compatFixture("build4-profiles-look.json"))
     let plain = try ProfileStore.decode(try compatFixture("build249-profiles.json"))
     #expect(withLook.profiles.count == 2)

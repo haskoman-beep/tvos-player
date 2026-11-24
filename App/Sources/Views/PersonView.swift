@@ -50,8 +50,15 @@ struct PersonView: View {
             do {
                 let p = try await tmdb.personCredits(id: personID)
                 person = p
+                // F-B-7: reset only on success, so the focused "Zurück" anchor of a real failure stays until content is there.
+                failed = false
                 RemoteLog.info("person", "\(personID) \(p.name): \(p.credits.count) Titel, Bio \(p.biography == nil ? "fehlt" : "da")")
             } catch {
+                // A cancelled task (tab switch) is no failure; the next appearance loads again.
+                if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled {
+                    RemoteLog.info("person", "\(personID) laden abgebrochen")
+                    return
+                }
                 failed = true
                 RemoteLog.error("person", "\(personID) laden fehlgeschlagen: \(error)")
             }

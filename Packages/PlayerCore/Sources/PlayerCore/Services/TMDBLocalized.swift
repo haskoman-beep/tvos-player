@@ -182,21 +182,34 @@ extension MetaDetail {
 
 extension TMDBClient {
     /// Kommende Folgen einer Serie: letzte und nächste Folge aus `/tv/{id}`, dazu die Folgen der laufenden Staffel.
-    /// Die Staffel wird nur abgerufen, wenn die nächste Folge bis `through` erscheint – oder, ohne nächste Folge,
-    /// wenn die letzte ab `from` lief (Daten YYYY-MM-DD).
+    /// Die Staffel der nächsten Folge wird abgerufen, wenn sie bis `through` erscheint, die Staffel der letzten
+    /// Folge, wenn sie ab `from` lief – unabhängig voneinander, höchstens zwei Abrufe (Daten YYYY-MM-DD).
     /// `seriesID` ist "tmdb:{id}"; die App ersetzt sie durch die ID aus Weiterschauen/Merkliste.
     public func nextEpisodes(tmdbID: Int, from: String? = nil, through: String? = nil) async throws -> [UpcomingEpisode] {
         let base = Self.parseNextEpisodes(try await http.data(from: url("/tv/\(tmdbID)")))
         let episodes = base.map(\.episode)
-        let anchor: UpcomingEpisode?
-        if let next = base.first(where: { $0.isNext })?.episode {
-            anchor = next.airDate <= (through ?? next.airDate) ? next : nil
-        } else if let last = base.first(where: { !$0.isNext })?.episode {
-            anchor = from.map { last.airDate >= $0 } == true ? last : nil
-        } else { anchor = nil }
-        guard let anchor else { return episodes }
-        let data = try await http.data(from: url("/tv/\(tmdbID)/season/\(anchor.season)"))
-        let season = Self.parseSeasonEpisodes(data, like: anchor)
+        // Check both anchors independently (A-B-11): a double episode yesterday must show up even when the next
+        // episode is announced outside the window or belongs to another season.
+        var anchors: [UpcomingEpisode] = []
+        if let next = base.first(where: { $0.isNext })?.episode, next.airDate <= (through ?? next.airDate) {
+            anchors.append(next)
+        }
+        if let last = base.first(where: { !$0.isNext })?.episode, from.map({ last.airDate >= $0 }) == true,
+           !anchors.contains(where: { $0.season == last.season }) {
+            anchors.append(last)
+        }
+        guard !anchors.isEmpty else { return episodes }
+        var season: [UpcomingEpisode] = []
+        for (i, anchor) in anchors.enumerated() {
+            let path = try url("/tv/\(tmdbID)/season/\(anchor.season)")
+            // The first fetch behaves as before (throws); the extra one never costs the result of the first.
+            let data: Data
+            if i == 0 { data = try await http.data(from: path) } else {
+                guard let d = try? await http.data(from: path) else { continue }
+                data = d
+            }
+            season += Self.parseSeasonEpisodes(data, like: anchor)
+        }
         var seen = Set<String>(), out: [UpcomingEpisode] = []
         for e in episodes + season where seen.insert(e.id).inserted { out.append(e) }
         return out

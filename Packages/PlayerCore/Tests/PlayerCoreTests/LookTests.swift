@@ -177,6 +177,34 @@ private func leafCount(_ v: JSONValue) -> Int {
     #expect(report.isEmpty)
     #expect(LookMigration.upgrade(look, from: 7) == look)
     #expect(LookMigration.upgrade(look, from: 1) == look)
+    // Written back in this build's own shape: unknown keys are gone, so the version is the writer's, not 7.
+    let written = String(decoding: try JSONEncoder().encode(look), as: UTF8.self)
+    #expect(written.contains(#""version":\#(LookSchema.current)"#))
+    #expect(!written.contains(#""version":7"#))
+}
+
+@Test func derivedLookFollowsOldFieldsUntilRestyled() throws {
+    // Profile 0 of build249: orange, hero off, topBar; its look is only derived from these fields.
+    var p = try ProfileStore.decode(try lookFixture("build249-profiles.json")).profiles[0]
+    p.appearance.accent = .blue
+    p.player.trackPanelStyle = .bottomBar
+    #expect(p.look.overrides.global.accent == .blau)
+    #expect(p.look.overrides.player.trackPanel == nil)          // unten is the preset value
+    #expect(p.look == Look.migrated(from: p.appearance, player: p.player, sources: p.sources))
+    let data = try JSONEncoder().encode(p)
+    #expect(!String(decoding: data, as: UTF8.self).contains(#""look""#))
+    #expect(try JSONDecoder().decode(Profile.self, from: data).look.overrides.global.accent == .blau)
+
+    // Once restyled, the look stays as set when an old field changes.
+    var q = try ProfileStore.decode(try lookFixture("build249-profiles.json")).profiles[0]
+    q.look.overrides.global.accent = .rot
+    q.appearance.accent = .green
+    q.appearance.heroEnabled = true
+    #expect(q.look.overrides.global.accent == .rot)
+    #expect(q.look.overrides.home.heroStyle == .aus)
+    let back = try JSONDecoder().decode(Profile.self, from: try JSONEncoder().encode(q))
+    #expect(back.look.overrides.global.accent == .rot)
+    #expect(back.appearance.accent == .green)
 }
 
 @Test func profileWithFutureLookStillLoads() throws {

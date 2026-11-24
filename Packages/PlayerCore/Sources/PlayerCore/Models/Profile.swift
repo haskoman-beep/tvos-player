@@ -30,7 +30,9 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     /// Anmeldungen bei "trakt" / "simkl".
     public var syncTokens: [String: SyncToken]
     /// Aussehen (Navigation, Akzent, Kachelgröße, Hero).
-    public var appearance: Appearance
+    public var appearance: Appearance {
+        didSet { followOldFields(oldAppearance: oldValue, oldPlayer: player) }
+    }
     /// Plattencache für den laufenden Film (Standard aus).
     public var diskCache: DiskCacheSettings
     /// Welle C-a: Zeitgrenze je Addon bei der Quellensuche in Sekunden (Standard `AddonSearch.defaultTimeout`).
@@ -40,7 +42,9 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     /// Quellen-Sortierung und Extras (Welle C-d).
     public var sources: SourceSettings = SourceSettings()
     /// Welle D-a: Spur-Wahl je Serie merken, Bildschirmschoner in der Pause.
-    public var player: PlayerComfortSettings = PlayerComfortSettings()
+    public var player: PlayerComfortSettings = PlayerComfortSettings() {
+        didSet { followOldFields(oldAppearance: appearance, oldPlayer: oldValue) }
+    }
     /// Welle F-e: am Handy ausgeblendete Reihen, vollständig (Stil, ID für den Hero-Bezug), neueste zuletzt,
     /// höchstens `HomeLayout.hiddenLimit`. „Wieder einblenden“ hängt sie unverändert unten an.
     public var hiddenRows: [HomeRow] = []
@@ -157,8 +161,16 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         try c.encode(skip, forKey: .skip)
         // Task 4.2: a look that only mirrors the old fields is not written; reading rebuilds the same one. So a
         // profile nobody restyled keeps its exact Build 3 bytes (export and round-trip tests compare them).
-        if look != Look.migrated(from: appearance, player: player, sources: sources) {
+        if !look.sameStyle(as: Look.migrated(from: appearance, player: player, sources: sources)) {
             try c.encode(look, forKey: .look)
+        }
+    }
+
+    /// Task 4.2 fix round 1: while `look` only mirrors the old fields (the app still edits `appearance`/`player`),
+    /// it follows them; once restyled it stays as set. `sources` is not part of the migration, so it needs no observer.
+    private mutating func followOldFields(oldAppearance: Appearance, oldPlayer: PlayerComfortSettings) {
+        if look.sameStyle(as: Look.migrated(from: oldAppearance, player: oldPlayer, sources: sources)) {
+            look = Look.migrated(from: appearance, player: player, sources: sources)
         }
     }
 
