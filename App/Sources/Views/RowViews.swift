@@ -151,9 +151,10 @@ struct HomeRowView: View {
             case .empty, .failed:
                 Strip(kind: tileKind) { statusTile(phase.statusText(empty: emptyText) ?? emptyText, retry: phase == .failed) }
             case .items:
+                let routes = routeTable   // Task 3.8: once per row pass, not once per card
                 Strip(expands: row.style == .poster, kind: tileKind) {
                     ForEach(Array(displayed.enumerated()), id: \.element.id) { i, m in
-                        card(route(for: m)) {
+                        card(routes[m.id] ?? .detail(m)) {
                             if row.content == .list(.upcoming) {
                                 UpcomingTodayCard(item: m, landscape: row.style == .landscape || row.style == .hero)
                             } else {
@@ -243,9 +244,22 @@ struct HomeRowView: View {
 
     /// Weiterschauen mit gemerkter Quelle → direkt abspielen, sonst Detailseite.
     private func route(for m: MetaPreview) -> Route {
-        guard row.content == .list(.continueWatching),
-              let e = model.progress.continueWatching().first(where: { $0.item.id == m.id }),
-              model.progress.lastSource(for: e.id) != nil else { return .detail(m) }
+        guard row.content == .list(.continueWatching), let e = model.progress.resumeTargets()[m.id] else { return .detail(m) }
+        return Self.resumeRoute(m, e)
+    }
+
+    /// Task 3.8 ([04 §6.5]): play targets of the shown cards (item id → route), built once per row pass from one
+    /// `resumeTargets()` call. Before, every card sorted the whole progress book on every focus step.
+    /// Cards missing here open the detail page. Empty outside the continue row.
+    private var routeTable: [String: Route] {
+        guard row.content == .list(.continueWatching) else { return [:] }
+        let targets = model.progress.resumeTargets()
+        var out: [String: Route] = [:]
+        for m in displayed { if let e = targets[m.id] { out[m.id] = Self.resumeRoute(m, e) } }
+        return out
+    }
+
+    private static func resumeRoute(_ m: MetaPreview, _ e: WatchProgress) -> Route {
         let title = e.season.map { "\(m.name) S\($0)E\(e.episode ?? 0)" } ?? m.name
         return .streams(PlayRequest(type: e.season == nil ? "movie" : "series", id: e.id, title: title, item: m,
                                     season: e.season, episode: e.episode, resumeLastSource: true))
@@ -260,7 +274,8 @@ struct HomeRowView: View {
 
     /// Wave L: the card leaves the row through its long-press menu: focus moves to the right neighbour, else the left.
     private func focusNeighbour(of r: Route) {
-        let routes = displayed.map { route(for: $0) }
+        let table = routeTable
+        let routes = displayed.map { table[$0.id] ?? .detail($0) }
         guard let i = routes.firstIndex(of: r), let n = TileMenuAction.neighbour(removing: i, count: routes.count) else { return }
         let target = routes[n]
         // Closing the menu hands focus back to the card: retry up to 3 times, 100 ms apart, until it lands.
