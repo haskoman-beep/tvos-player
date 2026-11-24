@@ -96,3 +96,51 @@ private func lookValueKeys() throws -> [String: Set<String>] {
     #expect(SettingsSummary.lookValue(Look(overrides: o)) == "angepasst · 3")
 }
 
+// Fix round 1 (I2): writes go through the profile so the theme shows them; summary and rows read `themeLook`.
+
+@Test func setLookShowsInThemeAndOldFields() {
+    var p = Profile(name: "T")
+    p.resetLook() // a new profile's old fields differ from Apple TV in several keys; start from Apple TV
+    p.setLook("accent", to: "rot")
+    #expect(p.themeLook.global.accent == .rot)
+    #expect(p.appearance.accent == .pink)
+    p.setLook("cardSize", to: "klein")
+    #expect(p.themeLook.home.cardSize == .klein)
+    #expect(p.appearance.cardSize == .small)
+    p.setLook("corners", to: "eckig")
+    #expect(p.themeLook.home.corners == .eckig)
+    #expect(SettingsSummary.lookValue(p) == "angepasst · 3")
+    #expect(p.lookRawValue("accent") == "rot")
+    #expect(p.isLookOverridden("accent"))
+    // Back to the preset value: no deviation left for that key.
+    p.setLook("accent", to: "weiss")
+    #expect(p.themeLook.global.accent == .weiss)
+    #expect(!p.isLookOverridden("accent"))
+    p.setLook("corners", to: nil)
+    #expect(SettingsSummary.lookValue(p) == "angepasst · 1")
+}
+
+@Test func summaryCountsOldFieldChanges() {
+    var p = Profile(name: "T")
+    p.resetLook()
+    #expect(SettingsSummary.lookValue(p) == "Apple TV")
+    p.appearance.accent = .green
+    #expect(p.themeLook.global.accent == .salbei)
+    #expect(SettingsSummary.lookValue(p) == "angepasst · 1")
+    #expect(SettingsSummary.look(p) == "Mein Look · angepasst · 1")
+    #expect(p.lookRawValue("accent") == "salbei")
+}
+
+@Test func resetLookReturnsToAppleTV() {
+    var p = Profile(name: "T")
+    p.appearance.accent = .green
+    p.appearance.heroEnabled = false
+    p.player.trackPanelStyle = .menu
+    p.setLook("background", to: "tinte")
+    p.resetLook()
+    #expect(p.themeLook == LookPreset.values(.appleTV))
+    #expect(SettingsSummary.lookValue(p) == "Apple TV")
+    #expect(SettingsSummary.look(p) == "Mein Look · Apple TV")
+    #expect(p.appearance.accent == .white)
+    #expect(p.appearance.heroEnabled)
+}

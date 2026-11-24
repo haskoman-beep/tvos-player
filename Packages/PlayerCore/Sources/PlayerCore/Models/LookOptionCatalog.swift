@@ -281,4 +281,40 @@ extension SettingsSummary {
     public static func look(_ look: Look) -> String {
         DesignText.metaLine([look.preset.title, lookValue(look)])
     }
+    /// Fix round 1 (I2): the row value from what the theme shows (`themeLook`), so a change in the old settings
+    /// counts too.
+    public static func lookValue(_ p: Profile) -> String { lookValue(p.shownLook) }
+
+    public static func look(_ p: Profile) -> String { look(p.shownLook) }
+}
+
+extension Profile {
+    /// Fix round 1 (I2): the look the theme shows, as preset plus deviations (for the count and the row dots).
+    public var shownLook: Look {
+        Look(preset: look.preset, overrides: LookOverrides.difference(themeLook, from: LookPreset.values(look.preset)))
+    }
+
+    /// The value a row shows (raw configurator value of `themeLook`).
+    public func lookRawValue(_ key: String) -> String? { LookOptionCatalog.rawValue(key, in: themeLook) }
+
+    /// Whether the row differs from the preset (accent dot, "Auf Apple TV zurücksetzen").
+    public func isLookOverridden(_ key: String) -> Bool {
+        LookOptionCatalog.rawValue(key, in: themeLook)
+            != LookOptionCatalog.rawValue(key, in: LookPreset.values(look.preset))
+    }
+
+    /// Sets one option (`nil` = back to the preset) starting from what the theme shows, and writes the old fields
+    /// it maps to through `applyImportedLook` (old fields first, look last), so `themeLook` shows the new value.
+    /// Unknown key or value: nothing changes.
+    public mutating func setLook(_ key: String, to raw: String?) {
+        let shown = shownLook
+        guard let o = LookOptionCatalog.overrides(shown.overrides, setting: key, to: raw, preset: look.preset)
+        else { return }
+        applyImportedLook(Look(preset: look.preset, overrides: o))
+    }
+
+    /// "Alles auf Apple TV zurücksetzen": no overrides, old fields mapped to the preset.
+    public mutating func resetLook() {
+        applyImportedLook(Look(preset: look.preset))
+    }
 }
