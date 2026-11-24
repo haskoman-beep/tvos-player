@@ -77,8 +77,11 @@ extension HomeLayout {
     /// sonst erste Liste außer Weiterschauen und „Heute neu“; nil, wenn der Hero aus ist.
     public func heroSource(_ a: Appearance) -> HomeRow? {
         guard a.heroEnabled else { return nil }
-        if let id = a.heroRowID, let r = rows.first(where: { $0.id == id }) { return r }
-        if let r = rows.first(where: { $0.style == .hero }) { return r }
+        // Task 4.1a round 2 (M2): only list rows can feed the hero (a collection holds folders, nothing to play);
+        // a stored choice or hero style on a collection falls through to the next rule.
+        func isList(_ r: HomeRow) -> Bool { if case .list = r.content { true } else { false } }
+        if let id = a.heroRowID, let r = rows.first(where: { $0.id == id }), isList(r) { return r }
+        if let r = rows.first(where: { $0.style == .hero && isList($0) }) { return r }
         return rows.first { row in
             if case .list(let s) = row.content, s.kind != .continueWatching, s.kind != .upcoming { return true }
             return false

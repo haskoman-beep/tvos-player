@@ -57,6 +57,19 @@ import Testing
     #expect(HomeLayout().heroSource(Appearance()) == nil)
 }
 
+// Task 4.1a round 2 (integration review M2): a collection row (folders, no titles to play) is never the hero
+// source, neither chosen by id nor by hero style; the next rule applies and the row stays below the hero.
+@Test func heroSourceSkipsCollectionRows() {
+    let collHero = HomeRow(content: .collection(id: "c1"), style: .hero)
+    let wl = HomeRow(content: .list(.watchlist), style: .poster)
+    let l = HomeLayout(rows: [collHero, wl])
+    #expect(l.heroSource(Appearance(heroRowID: collHero.id))?.id == wl.id)
+    #expect(l.heroSource(Appearance())?.id == wl.id)
+    #expect(l.rowsBelowHero(Appearance()).map(\.id) == [collHero.id, wl.id])
+    // Only collections: no hero, the page uses the layout without hero.
+    #expect(HomeLayout(rows: [collHero]).heroSource(Appearance(heroRowID: collHero.id)) == nil)
+}
+
 @Test func rowsBelowHeroHidesHeroStyleRow() {
     let cw = HomeRow(content: .list(.continueWatching), style: .landscape)
     let wl = HomeRow(content: .list(.watchlist), style: .poster)
