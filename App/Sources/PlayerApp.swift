@@ -65,6 +65,8 @@ struct RootView: View {
     @State private var libraryPath = NavigationPath()
     @State private var calendarPath = NavigationPath()
     @State private var settingsPath = NavigationPath()
+    /// Profile picker only at launch (F-B-2): once the tabs are on screen this is true, so a second profile created
+    /// in the settings (or a backup with several profiles from the phone page) does not swap the TabView out.
     @State private var pickedProfile = false
     /// Gewählte Einstellungs-Kategorie; liegt hier, damit sie den Neuaufbau beim Wechsel der Navigationsart übersteht.
     @State private var settingsCategory: SettingsCategory = .profile
@@ -89,6 +91,7 @@ struct RootView: View {
                             .opacity(top ? 1 : 0)
                     }
                     .tint(model.profile.appearance.accent.color)
+                    .onAppear { pickedProfile = true }   // F-B-2: the picker decision is made once
             }
         }
         .alert("Fehler", isPresented: Binding(get: { model.lastError != nil }, set: { if !$0 { model.lastError = nil } })) {
