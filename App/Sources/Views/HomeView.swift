@@ -39,7 +39,7 @@ struct HomeView: View {
                     let room = listBottomRoom(rows)
                     let bottom = max(room, Self.bottomSafeArea)
                     ScrollView(.vertical) {
-                        LazyVStack(alignment: .leading, spacing: Theme.Space.xl) { rowList(rows) }
+                        LazyVStack(alignment: .leading, spacing: Theme.Space.xl) { rowList(rows, hero: false) }
                             .padding(.top, max(0, 40 - room))
                             .padding(.bottom, 40)
                             .id(HomeTopEdgeWatch.topID)
@@ -114,7 +114,7 @@ struct HomeView: View {
                 ScrollView(.vertical) {
                     LazyVStack(alignment: .leading, spacing: Theme.Space.xl) {
                         HeroButtons(slides: slides, onFocusChange: { topWatch.report(.heroButtons, $0) })
-                        rowList(rows)
+                        rowList(rows, hero: true)
                     }
                     .padding(.top, 24)
                     .padding(.bottom, 60)
@@ -167,7 +167,20 @@ struct HomeView: View {
         return Theme.Focus.listBottomRoom(height: FocusHeadroom.tallest(kinds, cardScale: a.cardSize.scale, posterExtra: strip))
     }
 
-    @ViewBuilder private func rowList(_ rows: [HomeRow]) -> some View {
+    /// Build 2 device test: focus scrolling only keeps the focused card's frame inside the list, so a row entered
+    /// from above (hero buttons, tab bar) ended with its heading above the list's top edge, in the faded band.
+    /// When focus enters a row, the row (heading included) scrolls to the list's top edge like in the Apple TV app.
+    /// Queued after the focus update so this scroll replaces the system's focus scroll instead of racing it.
+    private func showHeading(of row: HomeRow) {
+        guard let scroll = topWatch.scrollToRow else { return }
+        let id = row.id
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.25)) { scroll(id) }
+        }
+        RemoteLog.info("nav", "Reihe fokussiert, Überschrift nach oben: \(model.homeRowTitle(row.content))")
+    }
+
+    @ViewBuilder private func rowList(_ rows: [HomeRow], hero: Bool) -> some View {
         let layout = model.profile.home
         let firstRow = rows.first?.id
         ForEach(rows) { row in
@@ -177,7 +190,11 @@ struct HomeView: View {
                 moveToTop: { quick { $0.moveToTop(row.id) } },
                 hide: { hideCandidate = row },
                 delete: { deleteCandidate = row }),
-                onFocusInside: row.id == firstRow ? { topWatch.report(.firstRow, $0) } : nil)
+                onFocusInside: { inside in
+                    if row.id == firstRow { topWatch.report(.firstRow, inside) }
+                    // Without a hero the first row is the top edge: `TopEdgeScroll` snaps the page to the very top.
+                    if inside, hero || row.id != firstRow { showHeading(of: row) }
+                })
         }
         if layout.rows.isEmpty {
             VStack(alignment: .leading, spacing: Theme.Space.m) {
@@ -217,7 +234,10 @@ private struct TopEdgeScroll: ViewModifier {
             .onScrollGeometryChange(for: Double.self, of: { Double($0.contentOffset.y + $0.contentInsets.top) }) { _, v in
                 watch.setOffset(v)
             }
-            .onAppear { watch.scrollToTop = { proxy.scrollTo(HomeTopEdgeWatch.topID, anchor: .top) } }
+            .onAppear {
+                watch.scrollToTop = { proxy.scrollTo(HomeTopEdgeWatch.topID, anchor: .top) }
+                watch.scrollToRow = { proxy.scrollTo($0, anchor: .top) }
+            }
     }
 }
 

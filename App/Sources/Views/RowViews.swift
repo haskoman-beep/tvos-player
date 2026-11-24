@@ -10,7 +10,7 @@ struct HomeRowView: View {
     let onActivate: (Route) -> Route?
     /// Welle F-b2: Kontextmenü der Startseite (langer Druck auf eine Kachel), nil = keins.
     var menu: HomeRowMenu? = nil
-    /// Wave F-j: focus enters (true) or leaves (false) this row; set only for the first row of the home page.
+    /// Wave F-j: focus enters (true) or leaves (false) this row (home page: top edge watch, heading scroll).
     var onFocusInside: ((Bool) -> Void)? = nil
     @State private var items: [MetaPreview] = []
     @State private var loaded = false

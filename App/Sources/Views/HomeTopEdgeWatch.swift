@@ -28,6 +28,8 @@ import PlayerCore
     @ObservationIgnored private var loggedArrival = false
     /// Set by the scroll view (ScrollViewReader): scrolls to `topID`.
     @ObservationIgnored var scrollToTop: (() -> Void)?
+    /// Set by the scroll view (ScrollViewReader): scrolls a home row (heading included) to the list's top edge.
+    @ObservationIgnored var scrollToRow: ((UUID) -> Void)?
 
     private static var now: Double { ProcessInfo.processInfo.systemUptime }
 
