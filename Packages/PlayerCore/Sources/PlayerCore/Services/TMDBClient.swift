@@ -26,9 +26,12 @@ public struct TMDBClient: Sendable {
         return u
     }
 
-    public func items(for source: CatalogSource, page: Int = 1) async throws -> [MetaPreview] {
+    /// - Parameters: now, calendar: A-B-10, day for the "released" cut-off of kit rows (see `FusionImport.requestFilters`).
+    public func items(for source: CatalogSource, page: Int = 1, now: Date = Date(),
+                      calendar: Calendar = Upcoming.localCalendar) async throws -> [MetaPreview] {
         switch source.kind {
-        case .tmdbDiscover(let filters):
+        case .tmdbDiscover(let stored):
+            let filters = FusionImport.requestFilters(stored, sourceID: source.id, now: now, calendar: calendar)
             let types: [MediaType] = source.mediaType == .both ? [.movie, .series] : [source.mediaType]
             var out: [MetaPreview] = []
             for t in types {
@@ -53,12 +56,13 @@ public struct TMDBClient: Sendable {
 
     /// Wave G2: one page of a single-type TMDB list (discover, list, company) plus `total_pages` (nil if missing),
     /// for the endless genre grid.
-    public func page(for source: CatalogSource, page: Int) async throws -> (items: [MetaPreview], totalPages: Int?) {
+    public func page(for source: CatalogSource, page: Int, now: Date = Date(),
+                     calendar: Calendar = Upcoming.localCalendar) async throws -> (items: [MetaPreview], totalPages: Int?) {
         let t: MediaType = source.mediaType == .series ? .series : .movie
         let u: URL, key: String
         switch source.kind {
-        case .tmdbDiscover(let filters):
-            var q = filters; q["page"] = String(page)
+        case .tmdbDiscover(let stored):
+            var q = FusionImport.requestFilters(stored, sourceID: source.id, now: now, calendar: calendar); q["page"] = String(page)
             u = try url("/discover/\(t == .movie ? "movie" : "tv")", q); key = "results"
         case .tmdbList(let id):
             u = try url("/list/\(id)", ["page": String(page)]); key = "items"

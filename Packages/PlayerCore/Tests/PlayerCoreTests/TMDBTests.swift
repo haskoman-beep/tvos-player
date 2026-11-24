@@ -43,3 +43,79 @@ final class RecordingHTTP: HTTPFetching, @unchecked Sendable {
         try await TMDBClient(apiKey: "", http: RecordingHTTP("{}")).items(for: .init(id: "x", title: "x", kind: .tmdbList(id: "1"), mediaType: .movie))
     }
 }
+
+// A-B-10: a kit row with releaseStatus "released" is parsed on day 1; fetching on day 2 must use day 2, not the
+// date baked in at parse time. The stored filter keeps the literal date (Build 3 reads it unchanged).
+private let abDay1 = Date(timeIntervalSince1970: 1_795_262_400)   // 2026-11-21 12:00 UTC
+private let abDay2 = abDay1.addingTimeInterval(86_400)            // 2026-11-22 12:00 UTC
+private func utcCalendar() -> Calendar { var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "UTC")!; return c }
+
+private func releasedKitSource(type: String = "movie") throws -> CatalogSource {
+    let json = #"{"exportType":"fusionWidgets","widgets":[{"id":"w","title":"Neu","type":"row.classic","dataSource":{"kind":"tmdbDiscover","payload":{"type":"\#(type)","includeGenres":[28],"releaseStatus":"released"}}}]}"#
+    let c = try FusionImport.parse(Data(json.utf8), sourceKey: "s", now: abDay1)
+    guard case .list(let s) = try #require(c.rows.first).body else { throw TMDBError.unsupported }
+    return s
+}
+
+@Test func kitReleasedFetchOnDay2UsesDay2() async throws {
+    let src = try releasedKitSource()
+    guard case .tmdbDiscover(let f) = src.kind else { Issue.record("kein Discover"); return }
+    #expect(f["primary_release_date.lte"] == "2026-11-21")   // stored format unchanged
+    let http = RecordingHTTP(#"{"results":[]}"#)
+    let c = TMDBClient(apiKey: "K", http: http)
+    _ = try await c.items(for: src, now: abDay2, calendar: utcCalendar())
+    _ = try await c.page(for: src, page: 2, now: abDay2, calendar: utcCalendar())
+    let tv = try releasedKitSource(type: "tv")
+    _ = try await c.items(for: tv, now: abDay2, calendar: utcCalendar())
+    let u = http.urls.map(\.absoluteString)
+    #expect(u.count == 3)
+    #expect(u[0].contains("primary_release_date.lte=2026-11-22") && !u[0].contains("2026-11-21"))
+    #expect(u[1].contains("primary_release_date.lte=2026-11-22") && u[1].contains("page=2"))
+    #expect(u[2].contains("first_air_date.lte=2026-11-22"))
+}
+
+@Test func ownDiscoverRowKeepsLiteralDate() async throws {
+    let http = RecordingHTTP(#"{"results":[]}"#)
+    let src = CatalogSource(id: "own", title: "x", kind: .tmdbDiscover(filters: ["primary_release_date.lte": "1999-12-31"]), mediaType: .movie)
+    _ = try await TMDBClient(apiKey: "K", http: http).items(for: src, now: abDay2, calendar: utcCalendar())
+    #expect(http.urls[0].absoluteString.contains("primary_release_date.lte=1999-12-31"))
+}
+
+// A-B-10 review M2: a movie with a release channel uses `release_date.lte`; it gets the request day too.
+@Test func kitReleasedWithChannelUsesReleaseDateKey() async throws {
+    let json = #"{"exportType":"fusionWidgets","widgets":[{"id":"w","title":"Neu","type":"row.classic","dataSource":{"kind":"tmdbDiscover","payload":{"type":"movie","releaseChannel":"digital","releaseStatus":"released"}}}]}"#
+    let c = try FusionImport.parse(Data(json.utf8), sourceKey: "s", now: abDay1)
+    guard case .list(let src) = try #require(c.rows.first).body else { Issue.record("keine Liste"); return }
+    let http = RecordingHTTP(#"{"results":[]}"#)
+    _ = try await TMDBClient(apiKey: "K", http: http).items(for: src, now: abDay2, calendar: utcCalendar())
+    let u = try #require(http.urls.first?.absoluteString)
+    #expect(u.contains("release_date.lte=2026-11-22") && !u.contains("primary_release_date"))
+}
+
+// A-B-10 review M2: the cut-off is the day in the given (local) calendar, not the UTC day.
+@Test func kitReleasedUsesLocalDayNotUTC() {
+    var kiritimati = Calendar(identifier: .gregorian)
+    kiritimati.timeZone = TimeZone(identifier: "Pacific/Kiritimati")!   // UTC+14: 2026-11-21 12:00 UTC is 22 Nov there
+    let f = FusionImport.requestFilters(["primary_release_date.lte": "2026-11-21"], sourceID: "fusion.s.w", now: abDay1,
+                                        calendar: kiritimati)
+    #expect(f["primary_release_date.lte"] == "2026-11-22")
+}
+
+// A-B-10 review M1: only kit discover sources with a released cut-off expire on a new day.
+@Test func dayBoundSourcesAreKitReleasedOnly() throws {
+    let kit = try releasedKitSource()
+    let kitPlain = CatalogSource(id: "fusion.s.x", title: "x", kind: .tmdbDiscover(filters: ["with_genres": "28"]), mediaType: .movie)
+    let own = CatalogSource(id: "own", title: "x", kind: .tmdbDiscover(filters: ["primary_release_date.lte": "1999-12-31"]), mediaType: .movie)
+    let kitList = CatalogSource(id: "fusion.s.y", title: "x", kind: .tmdbList(id: "1"), mediaType: .movie)
+    #expect(FusionImport.dayBoundSourceIDs([kit, kitPlain, own, kitList, kit]) == [kit.id])
+}
+
+@Test func timedCacheExpireMakesEntryDue() {
+    var c = TimedCache<[Int]>()
+    let t = Date(timeIntervalSince1970: 1_000_000)
+    c.store([1], for: "a", now: t)
+    c.markFailed("a", now: t)
+    #expect(!c.needsRefresh("a", now: t))
+    c.expire("a"); c.expire("missing")
+    #expect(c.needsRefresh("a", now: t) && c["a"] == [1] && c["missing"] == nil)
+}

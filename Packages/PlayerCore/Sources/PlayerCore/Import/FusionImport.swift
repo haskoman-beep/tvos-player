@@ -135,7 +135,8 @@ public enum FusionImport {
     /// - Parameters:
     ///   - sourceKey: Schlüssel der Kit-Datei (Teil aller IDs, damit zwei Dateien sich nicht in die Quere kommen).
     ///   - title: Reihentitel für die flache Collection-Liste (die hat keinen eigenen).
-    ///   - now: für „schon erschienen“ (TMDB-Datumsfilter); beim Laden eingesetzt.
+    ///   - now: day for "released" (TMDB date filter), stored at parse. A-B-10: `requestFilters` replaces it with
+    ///     the current day at request time; the stored value stays for older builds.
     public static func parse(_ data: Data, sourceKey: String, title: String = "Kit", now: Date = Date()) throws -> FusionKitContent {
         let any = try JSONSerialization.jsonObject(with: data)
         var warnings: [String: Int] = [:]
@@ -307,6 +308,32 @@ public enum FusionImport {
                    "Streaming Services": "Streaming-Dienste", "Movie Genres": "Film-Genres", "Movie Collections": "Filmreihen",
                    "Popular Genres": "Beliebte Genres", "Popular Decades": "Beliebte Jahrzehnte", "Discover": "Entdecken"]
         return map[base] ?? t
+    }
+
+    /// A-B-10: date keys that `releaseStatus: "released"` sets (the only way a kit discover filter gets them).
+    static let releasedDateKeys = ["primary_release_date.lte", "release_date.lte", "first_air_date.lte"]
+
+    /// A-B-10: filters as sent to TMDB. For a kit source (`fusion.` ID) the "released" cut-off is the current
+    /// local day at request time, not the day of the last parse. The stored filter keeps its literal date, so the
+    /// layout format is unchanged and older builds still send a valid (if stale) date; own rows stay untouched.
+    public static func requestFilters(_ filters: [String: String], sourceID: String, now: Date,
+                                      calendar: Calendar = Upcoming.localCalendar) -> [String: String] {
+        guard isKitID(sourceID) else { return filters }
+        var f = filters
+        let today = Upcoming.dayKey(now, calendar: calendar)
+        for k in releasedDateKeys where f[k] != nil { f[k] = today }
+        return f
+    }
+
+    /// A-B-10 review M1: IDs of the sources whose result depends on the day (kit discover rows with a "released"
+    /// cut-off). Their catalog cache entries expire on a new local day, so the rows refetch with today's date.
+    public static func dayBoundSourceIDs(_ sources: [CatalogSource]) -> [String] {
+        var seen = Set<String>()
+        return sources.compactMap { s in
+            guard isKitID(s.id), case .tmdbDiscover(let f) = s.kind,
+                  releasedDateKeys.contains(where: { f[$0] != nil }), seen.insert(s.id).inserted else { return nil }
+            return s.id
+        }
     }
 
     /// `yyyy-MM-dd` (UTC) für TMDB-Datumsfilter.
