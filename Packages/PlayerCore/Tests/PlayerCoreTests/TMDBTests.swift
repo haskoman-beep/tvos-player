@@ -80,3 +80,23 @@ private func releasedKitSource(type: String = "movie") throws -> CatalogSource {
     _ = try await TMDBClient(apiKey: "K", http: http).items(for: src, now: abDay2, calendar: utcCalendar())
     #expect(http.urls[0].absoluteString.contains("primary_release_date.lte=1999-12-31"))
 }
+
+// A-B-10 review M2: a movie with a release channel uses `release_date.lte`; it gets the request day too.
+@Test func kitReleasedWithChannelUsesReleaseDateKey() async throws {
+    let json = #"{"exportType":"fusionWidgets","widgets":[{"id":"w","title":"Neu","type":"row.classic","dataSource":{"kind":"tmdbDiscover","payload":{"type":"movie","releaseChannel":"digital","releaseStatus":"released"}}}]}"#
+    let c = try FusionImport.parse(Data(json.utf8), sourceKey: "s", now: abDay1)
+    guard case .list(let src) = try #require(c.rows.first).body else { Issue.record("keine Liste"); return }
+    let http = RecordingHTTP(#"{"results":[]}"#)
+    _ = try await TMDBClient(apiKey: "K", http: http).items(for: src, now: abDay2, calendar: utcCalendar())
+    let u = try #require(http.urls.first?.absoluteString)
+    #expect(u.contains("release_date.lte=2026-11-22") && !u.contains("primary_release_date"))
+}
+
+// A-B-10 review M2: the cut-off is the day in the given (local) calendar, not the UTC day.
+@Test func kitReleasedUsesLocalDayNotUTC() {
+    var kiritimati = Calendar(identifier: .gregorian)
+    kiritimati.timeZone = TimeZone(identifier: "Pacific/Kiritimati")!   // UTC+14: 2026-11-21 12:00 UTC is 22 Nov there
+    let f = FusionImport.requestFilters(["primary_release_date.lte": "2026-11-21"], sourceID: "fusion.s.w", now: abDay1,
+                                        calendar: kiritimati)
+    #expect(f["primary_release_date.lte"] == "2026-11-22")
+}
