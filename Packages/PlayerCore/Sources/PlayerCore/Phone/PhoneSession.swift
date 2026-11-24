@@ -163,7 +163,7 @@ extension PhoneCommand {
         case .exportSecrets:
             return .needsConfirmation(summary: "Sicherung mit allen Schlüsseln und Anmeldungen verschlüsselt an das Handy geben. Den Code zeigt danach nur der Fernseher.")
         case .importNuvioURL, .importNuvioJSON, .addTMDBLink, .importFusionURL, .moveRow, .removeRow, .deleteRow, .restoreRow, .addRow,
-             .setRatingIconSet, .importCollectionLink, .importCollectionCode:
+             .setRatingIconSet, .importCollectionLink, .importCollectionCode, .look:
             return .plain
         }
     }

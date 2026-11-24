@@ -7,6 +7,8 @@ public enum PhoneSection: String, CaseIterable, Sendable {
     case addon
     case keys
     case home
+    /// Task 4.3: look from the configurator.
+    case look = "aussehen"
     case system
 
     public var title: String {
@@ -15,6 +17,7 @@ public enum PhoneSection: String, CaseIterable, Sendable {
         case .addon: "Addons"
         case .keys: "Konten & Schlüssel"
         case .home: "Startseite"
+        case .look: "Aussehen"
         case .system: "System"
         }
     }

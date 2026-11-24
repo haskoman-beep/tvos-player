@@ -174,6 +174,17 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         }
     }
 
+    /// Task 4.3 fix round 1: takes a look imported from the configurator. The old fields it maps to are written
+    /// first (each assigned once, so the observers run on whole values), the look last, so `followOldFields` can
+    /// never replace it.
+    public mutating func applyImportedLook(_ l: Look) {
+        var a = appearance, pl = player
+        l.writeOldFields(appearance: &a, player: &pl)
+        appearance = a
+        player = pl
+        look = l
+    }
+
     public static func makeDefault(name: String = "Ich") -> Profile {
         Profile(name: name, home: HomeLayout(rows: [HomeRow(content: .list(.continueWatching), style: .landscape)]))
     }

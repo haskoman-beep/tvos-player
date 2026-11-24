@@ -13,8 +13,11 @@ public enum PhoneImportDetect {
     /// Grund der Ablehnung; `rawValue` geht als Kennung in die Rückmeldung der Seite.
     public enum Refusal: String, Equatable, Sendable {
         case backup, kitText
+        /// Task 4.3: a configurator export (`schema` matches) that `LookImport` cannot read.
+        case lookInvalid
         public var text: String {
             switch self {
+            case .lookInvalid: "Aussehen nicht übernommen: keine lesbare Aussehen-Datei aus dem Konfigurator."
             case .backup: "Sicherung erkannt: bitte das Feld „Sicherung wiederherstellen“ nutzen."
             case .kitText: "Fusion-Kit als Text: bitte die „Copy JSON URL“ einfügen."
             }
@@ -50,6 +53,11 @@ public enum PhoneImportDetect {
 
     static func detectJSON(_ s: String) -> Result {
         let data = Data(s.utf8)
+        // Task 4.3: `"schema":"player.appearance.preset"` is a look from the configurator.
+        if LookImport.claims(data) {
+            guard let look = try? LookImport.parse(data).look else { return .refused(.lookInvalid) }
+            return .command(.look(look))
+        }
         switch CollectionImportFormat.detect(data) {
         case .widgets, .collectionList, .previewPack, .collections: return .command(.importCollectionCode(data))
         case .backup: return .refused(.backup)

@@ -34,8 +34,8 @@ private func state() -> PhoneHomeState {
 }
 
 @Test func phoneSectionsInTargetOrderWithAnchors() {
-    #expect(PhoneSection.allCases.map(\.title) == ["Schnell-Import", "Addons", "Konten & Schlüssel", "Startseite", "System"])
-    #expect(PhoneSection.allCases.map(\.rawValue) == ["import", "addon", "keys", "home", "system"])
+    #expect(PhoneSection.allCases.map(\.title) == ["Schnell-Import", "Addons", "Konten & Schlüssel", "Startseite", "Aussehen", "System"])
+    #expect(PhoneSection.allCases.map(\.rawValue) == ["import", "addon", "keys", "home", "aussehen", "system"])
     #expect(PhoneSection.url("http://h/?t=x", section: .home) == "http://h/?t=x#home")
     #expect(PhoneSection.url("http://h/?t=x", section: nil) == "http://h/?t=x")
     let page = PhoneInputPage()
