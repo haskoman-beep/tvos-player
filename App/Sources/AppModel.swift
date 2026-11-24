@@ -1003,11 +1003,8 @@ final class AppModel: ObservableObject {
             case .exportSecrets: break   // PhoneServer.answer seals the file after „Erlauben“
             case .look(let l):
                 // Task 4.3 (controller ruling): the look goes onto the active profile, and the old fields it maps to
-                // are written too, so the views that still read `appearance`/`player` show it today.
-                update { p in
-                    p.look = l
-                    l.writeOldFields(appearance: &p.appearance, player: &p.player)
-                }
+                // are written too, so the views that still read `appearance`/`player` show it today (PlayerCore).
+                update { $0.applyImportedLook(l) }
                 notice = "Aussehen übernommen · \(l.overrides.count) " + (l.overrides.count == 1 ? "Abweichung" : "Abweichungen")
             }
         }
