@@ -70,6 +70,7 @@ struct HomeView: View {
             topWatch.start()
         }
         .onDisappear {
+            VisiblePage.covered()   // F-A-1: the manager is outside the path; a late hero jump is dropped too
             rowFocus.state.covered = true
             topWatch.stop()
         }

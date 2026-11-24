@@ -353,9 +353,12 @@ struct HeroButtons: View {
     private func play() {
         guard !starting, let m = slides.current else { return }
         starting = true
+        let start = VisiblePage.stamp
         Task {
             let r = await model.quickPlayRequest(for: m)
             starting = false
+            // F-A-1: the user opened another page or tab while waiting → no late jump into the source list.
+            guard VisiblePage.mayNavigate(from: start, "hero Abspielen \(m.name)") else { return }
             guard let r else {
                 model.lastError = "Abspielen nicht möglich: keine IMDb-ID für \(m.name)."
                 return

@@ -220,9 +220,36 @@ struct TabBarGuardHook: ViewModifier {
             .onAppear { TabBarGuard.shared.install(navigation: navigation) }
             .onChange(of: navigation) { _, n in TabBarGuard.shared.configure(navigation: n) }
             .onChange(of: Visible(tab: tab, depth: depth), initial: true) { old, new in
+                VisiblePage.moved(tab: new.tab, depth: new.depth)
                 TabBarGuard.shared.visit("\(new.tab.logName), Tiefe \(new.depth)",
-                                         popped: old.tab == new.tab && new.depth < old.depth)
+                                         popped: old.tab == new.tab && new.depth < old.depth,
+                                         startsVisit: NavigationGuard.startsVisit(
+                                             old: NavigationStamp(tab: old.tab, depth: old.depth),
+                                             new: NavigationStamp(tab: new.tab, depth: new.depth)))
             }
+    }
+}
+
+/// Task 4.1a (F-A-1): the visible page as a `NavigationStamp`, kept by `TabBarGuardHook`. Actions that navigate
+/// after an `await` take a stamp before and push only while `NavigationGuard.mayPush` holds.
+@MainActor enum VisiblePage {
+    private(set) static var stamp = NavigationStamp(tab: .home, depth: 0)
+
+    static func moved(tab: AppTab, depth: Int) {
+        guard tab != stamp.tab || depth != stamp.depth else { return }
+        stamp = NavigationStamp(tab: tab, depth: depth, visit: stamp.visit + 1)
+    }
+
+    /// A page outside the path (manager, browser, settings link) covers the current one: a new visit.
+    static func covered() {
+        stamp = NavigationStamp(tab: stamp.tab, depth: stamp.depth, visit: stamp.visit + 1)
+    }
+
+    /// True while the visible page is the one of `start`; otherwise logs the dropped jump.
+    static func mayNavigate(from start: NavigationStamp, _ what: String) -> Bool {
+        if NavigationGuard.mayPush(startedAt: start, now: stamp) { return true }
+        RemoteLog.info("nav", "navigation: später Sprung verworfen (\(what))")
+        return false
     }
 }
 

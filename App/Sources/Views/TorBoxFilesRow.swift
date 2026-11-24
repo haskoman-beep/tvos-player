@@ -122,8 +122,11 @@ struct TorBoxFilesRow: View {
         guard resolving == nil else { return }
         resolving = f.id
         defer { resolving = nil }
+        let startedAt = VisiblePage.stamp
         do {
             let url = try await TorBoxClient(apiKey: key).link(for: f)
+            // F-A-1: Menu to the Start tab (or another page) while waiting → do not open the player there.
+            guard VisiblePage.mayNavigate(from: startedAt, "torbox Datei") else { return }
             let start = fromStart ? nil : PlayerMemory.shared.fileResume(profile: model.profile.id, key: Self.progressKey(f))
             RemoteLog.info("torbox", "Start \(start.map { "ab \(Int($0)) s" } ?? "von vorn")")
             playing = TorBoxPlay(file: f, url: url, start: start)
