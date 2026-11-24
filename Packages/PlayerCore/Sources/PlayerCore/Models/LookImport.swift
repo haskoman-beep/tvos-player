@@ -59,40 +59,18 @@ public enum LookImport {
 }
 
 extension Look {
-    /// Task 4.3 (controller ruling): an imported look also writes the old fields it maps to (reverse of
-    /// `Look.migrated`), so the views that still read `appearance` and `player` show the effect. A value without an
-    /// old counterpart (accent champagner/eisblau/rot, badgeStyle umriss/gefuellt) leaves the old field as it is;
-    /// koralle keeps pink if set, else becomes orange. Fields the look does not cover stay untouched.
+    /// Task 4.3 (controller ruling): an imported look also writes the old fields it maps to
+    /// (`LookMigration.oldValues`), so the views that still read `appearance` and `player` show the effect. An old
+    /// accent that already stands for the look's accent is kept (koralle keeps pink). Fields the look does not cover
+    /// stay untouched.
     public func writeOldFields(appearance: inout Appearance, player: inout PlayerComfortSettings) {
-        let v = resolved()
-        appearance.navigation = switch v.global.navigation {
-        case .seitenleiste: .sidebar
-        case .oben: .top
-        }
-        switch v.global.accent {
-        case .blau: appearance.accent = .blue
-        case .violett: appearance.accent = .purple
-        case .koralle: if appearance.accent != .pink { appearance.accent = .orange }
-        case .salbei: appearance.accent = .green
-        case .weiss: appearance.accent = .white
-        case .champagner, .eisblau, .rot: break
-        }
-        appearance.cardSize = switch v.home.cardSize {
-        case .klein: .small
-        case .mittel: .medium
-        case .gross: .large
-        }
-        appearance.heroEnabled = v.home.heroStyle != .aus
-        appearance.expandPosters = v.home.expandPosters
-        switch v.detail.badgeStyle {
-        case .text: appearance.badges.style = .text
-        case .logos: appearance.badges.style = .logo
-        case .umriss, .gefuellt: break
-        }
-        player.trackPanelStyle = switch v.player.trackPanel {
-        case .seite: .topBar
-        case .unten: .bottomBar
-        case .mitte: .menu
-        }
+        let old = LookMigration.oldValues(for: resolved())
+        appearance.navigation = old.navigation
+        if !old.accents.contains(appearance.accent), let first = old.accents.first { appearance.accent = first }
+        appearance.cardSize = old.cardSize
+        appearance.heroEnabled = old.heroEnabled
+        appearance.expandPosters = old.expandPosters
+        appearance.badges.style = old.badgeStyle
+        player.trackPanelStyle = old.trackPanelStyle
     }
 }

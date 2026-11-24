@@ -6,6 +6,49 @@ public enum LookMigration {
     /// version is read like a known one (unknown fields were already ignored while decoding), so this is the
     /// identity. A future rename adds one step here, with a test.
     public static func upgrade(_ look: Look, from version: Int) -> Look { look }
+
+    /// Task 4.3 fix round 1 (controller ruling): the old fields a look maps back to, the reverse of
+    /// `Look.migrated`. A value without an exact old counterpart gets the nearest one: accent champagner → white,
+    /// eisblau → blue, rot → pink; badgeStyle umriss/gefuellt → text. `accents` lists every old accent that stands
+    /// for the value, the preferred one first (koralle: orange, pink), so a writer can keep a matching old value.
+    public static func oldValues(for v: LookValues) -> OldLookFields {
+        let accents: [AccentChoice] = switch v.global.accent {
+        case .blau: [.blue]
+        case .violett: [.purple]
+        case .koralle: [.orange, .pink]
+        case .salbei: [.green]
+        case .weiss: [.white]
+        case .champagner: [.white]
+        case .eisblau: [.blue]
+        case .rot: [.pink]
+        }
+        let cardSize: CardSize = switch v.home.cardSize {
+        case .klein: .small
+        case .mittel: .medium
+        case .gross: .large
+        }
+        let track: TrackPanelStyle = switch v.player.trackPanel {
+        case .seite: .topBar
+        case .unten: .bottomBar
+        case .mitte: .menu
+        }
+        return OldLookFields(navigation: v.global.navigation == .seitenleiste ? .sidebar : .top, accents: accents,
+                             cardSize: cardSize, heroEnabled: v.home.heroStyle != .aus,
+                             expandPosters: v.home.expandPosters,
+                             badgeStyle: v.detail.badgeStyle == .logos ? .logo : .text, trackPanelStyle: track)
+    }
+}
+
+/// Task 4.3 fix round 1: the values of the old fields (`Appearance`, `PlayerComfortSettings`) that a look maps to.
+public struct OldLookFields: Sendable, Hashable {
+    public var navigation: NavigationStyle
+    /// Old accents standing for the look's accent, preferred first (never empty).
+    public var accents: [AccentChoice]
+    public var cardSize: CardSize
+    public var heroEnabled: Bool
+    public var expandPosters: Bool
+    public var badgeStyle: BadgeStyle
+    public var trackPanelStyle: TrackPanelStyle
 }
 
 extension Look {

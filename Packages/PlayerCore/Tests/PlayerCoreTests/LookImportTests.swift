@@ -134,8 +134,8 @@ private let edelExport = """
     #expect(player.trackPanelStyle == .menu)
     // Mapped back, the old fields migrate to the same look.
     #expect(Look.migrated(from: appearance, player: player, sources: SourceSettings()) == look)
-    // Values without an old counterpart leave the old field as it was; koralle keeps pink.
-    var a2 = Appearance(); a2.accent = .pink; a2.badges.style = .text
+    // Values without an old counterpart get the nearest old value; koralle keeps pink.
+    var a2 = Appearance(); a2.accent = .pink; a2.badges.style = .logo
     var p2 = PlayerComfortSettings()
     var o2 = LookOverrides(); o2.global.accent = .koralle; o2.detail.badgeStyle = .umriss
     Look(overrides: o2).writeOldFields(appearance: &a2, player: &p2)
@@ -143,9 +143,40 @@ private let edelExport = """
     var a3 = Appearance(); a3.accent = .blue
     var o3 = LookOverrides(); o3.global.accent = .champagner
     Look(overrides: o3).writeOldFields(appearance: &a3, player: &p2)
-    #expect(a3.accent == .blue)
+    #expect(a3.accent == .white)
     var a4 = Appearance(); a4.accent = .blue
     var o4 = LookOverrides(); o4.global.accent = .koralle
     Look(overrides: o4).writeOldFields(appearance: &a4, player: &p2)
     #expect(a4.accent == .orange)
+}
+
+@Test func reverseTableGivesNearestOldValue() {
+    let base = LookPreset.values(.appleTV)
+    let accents: [LookAccent: [AccentChoice]] = [.blau: [.blue], .violett: [.purple], .koralle: [.orange, .pink],
+                                                 .salbei: [.green], .weiss: [.white], .champagner: [.white],
+                                                 .eisblau: [.blue], .rot: [.pink]]
+    #expect(Set(accents.keys) == Set(LookAccent.allCases))
+    for (look, old) in accents {
+        var v = base; v.global.accent = look
+        #expect(LookMigration.oldValues(for: v).accents == old, "\(look)")
+    }
+    let badges: [LookBadgeStyle: BadgeStyle] = [.text: .text, .logos: .logo, .umriss: .text, .gefuellt: .text]
+    #expect(Set(badges.keys) == Set(LookBadgeStyle.allCases))
+    for (look, old) in badges {
+        var v = base; v.detail.badgeStyle = look
+        #expect(LookMigration.oldValues(for: v).badgeStyle == old, "\(look)")
+    }
+    var v = base
+    v.global.navigation = .seitenleiste; v.home.cardSize = .klein; v.home.heroStyle = .aus; v.player.trackPanel = .seite
+    let old = LookMigration.oldValues(for: v)
+    #expect(old.navigation == .sidebar && old.cardSize == .small && !old.heroEnabled && old.trackPanelStyle == .topBar)
+    let b = LookMigration.oldValues(for: base)
+    #expect(b.navigation == .top && b.cardSize == .large && b.heroEnabled && !b.expandPosters)
+    #expect(b.badgeStyle == .text && b.trackPanelStyle == .bottomBar && b.accents == [.white])
+    // Every exact counterpart migrates back to the same value.
+    for nav in LookNavigation.allCases {
+        var w = base; w.global.navigation = nav
+        var a = Appearance(); a.navigation = LookMigration.oldValues(for: w).navigation
+        #expect(Look.migrated(from: a, player: PlayerComfortSettings(), sources: SourceSettings()).resolved().global.navigation == nav)
+    }
 }
