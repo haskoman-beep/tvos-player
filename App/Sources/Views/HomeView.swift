@@ -227,6 +227,8 @@ struct HomeView: View {
                 delete: { deleteCandidate = row }),
                 onFocusInside: { inside in
                     if row.id == firstRow { topWatch.report(.firstRow, inside) }
+                    if hero { focus.row(row.id, focused: inside) }   // F-A-12
+                    if inside { focusedRows.insert(row.id) } else { focusedRows.remove(row.id) }
                     // Without a hero the first row is the top edge: `TopEdgeScroll` snaps the page to the very top.
                     if inside, hero || row.id != firstRow { showHeading(of: row) }
                     if !inside, headingRow == row.id { headingRow = nil }

@@ -14,6 +14,9 @@ final class HomeFocus {
     /// Fokus liegt in den Reihen (nicht auf den Hero-Knöpfen).
     private(set) var inRows = false
     @ObservationIgnored private var pending: Task<Void, Never>?
+    /// Task 4.1a (F-A-12): rows that hold the focus, and the rest check after the last one lost it.
+    @ObservationIgnored private var focusedRows: Set<UUID> = []
+    @ObservationIgnored private var outside: Task<Void, Never>?
 
     /// Kachel hat den Fokus: Diashow sofort anhalten, Hintergrund erst nach 350 ms Ruhe wechseln.
     /// Ein neuer Fokus bricht die Wartezeit ab; pro Ruhepause höchstens eine Log-Zeile.
@@ -30,6 +33,27 @@ final class HomeFocus {
             self.pending = nil
             RemoteLog.info("hero", "Fokus-Hintergrund \(m.id)")
             onRest?()
+        }
+    }
+
+    /// Task 4.1a (F-A-12): a row gained or lost the focus. When no row holds it for 300 ms (sidebar, top bar, the
+    /// button below the rows), the show runs again and the backdrop goes back to the slide.
+    func row(_ id: UUID, focused: Bool) {
+        if focused {
+            focusedRows.insert(id)
+            outside?.cancel()
+            outside = nil
+            return
+        }
+        focusedRows.remove(id)
+        guard focusedRows.isEmpty, inRows, outside == nil else { return }
+        outside = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled, let self else { return }
+            self.outside = nil
+            guard self.focusedRows.isEmpty, self.inRows else { return }
+            RemoteLog.info("hero", "Fokus außerhalb der Reihen: Diashow läuft weiter")
+            self.leaveRows()
         }
     }
 
