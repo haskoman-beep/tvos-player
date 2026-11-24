@@ -73,15 +73,27 @@ private func kitRow(_ id: String) -> HomeRow { HomeRow(content: .collection(id: 
     #expect(FusionKitSync.apply(settings: FusionKitSettings(enabled: false, selected: ["fusion.a.b"]), layout: layout).rows == [own])
 }
 
+/// Final review I2 (ruling): only an expired login without a refresh token is dropped.
 @Test func expiredTokensAreDropped() {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
     var s = StoredProfiles.makeDefault()
-    s.profiles[0].syncTokens = ["trakt": SyncToken(accessToken: "a", refreshToken: "r", expiresAt: now.addingTimeInterval(-1)),
+    s.profiles[0].syncTokens = ["trakt": SyncToken(accessToken: "a", expiresAt: now.addingTimeInterval(-1)),
                                 "simkl": SyncToken(accessToken: "b"),
                                 "other": SyncToken(accessToken: "c", expiresAt: now.addingTimeInterval(3600))]
     let (out, dropped) = s.droppingExpiredTokens(now: now)
     #expect(dropped == 1)
     #expect(Set(out.profiles[0].syncTokens.keys) == ["simkl", "other"])
+}
+
+/// Final review I2: an expired login with a refresh token stays; `AppModel.token(_:)` renews it on first use.
+@Test func expiredRefreshableTokenIsKept() {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    var s = StoredProfiles.makeDefault()
+    let t = SyncToken(accessToken: "a", refreshToken: "r", expiresAt: now.addingTimeInterval(-86_400 * 120))
+    s.profiles[0].syncTokens = ["trakt": t]
+    let (out, dropped) = s.droppingExpiredTokens(now: now)
+    #expect(dropped == 0)
+    #expect(out.profiles[0].syncTokens["trakt"] == t)
 }
 
 @Test func deletingProfileRemovesAllItsBlocks() throws {

@@ -107,13 +107,14 @@ private struct EntryKey: CodingKey {
 
 extension StoredProfiles {
     /// Task 2.4 (S-9): sync logins whose `expiresAt` lies in the past are removed (after restoring an old backup).
-    /// Tokens without an expiry date stay.
+    /// Tokens without an expiry date stay. Final review I2 (ruling, deviates from the plan text): an expired login
+    /// with a refresh token stays too, because `AppModel.token(_:)` renews it on first use.
     public func droppingExpiredTokens(now: Date = Date()) -> (profiles: StoredProfiles, dropped: Int) {
         var s = self
         var dropped = 0
         for i in s.profiles.indices {
             for (k, t) in s.profiles[i].syncTokens {
-                if let e = t.expiresAt, e <= now { s.profiles[i].syncTokens[k] = nil; dropped += 1 }
+                if t.refreshToken == nil, let e = t.expiresAt, e <= now { s.profiles[i].syncTokens[k] = nil; dropped += 1 }
             }
         }
         return (s, dropped)
