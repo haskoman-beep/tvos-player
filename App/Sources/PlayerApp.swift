@@ -119,6 +119,9 @@ struct RootView: View {
             }
         }
         .onChange(of: tab) { old, new in RemoteLog.info("nav", "Tab \(old.logName) → \(new.logName)") }
+        // Task 3.1 (F-B-10): pages of the other tabs hold the old profile's state (texts, sources, badges) in @State;
+        // a new profile scope closes them. The visible tab stays as it is (focus keeps its view).
+        .onChange(of: model.scopes.current) { _, _ in closeOtherTabs() }
         // Menu in der Tab-/Seitenleiste eines anderen Tabs als Start: erst zum Start-Tab (N2). Auf Start und mit
         // gepushten Seiten `nil`: dann gilt das System (Stack poppen bzw. App verlassen). Einstellungen: nur bei
         // sichtbarer Wurzel (Unterseiten sind NavigationLinks außerhalb des Pfads); die Kategorienspalte hat als
@@ -147,6 +150,17 @@ struct RootView: View {
                 tab = new
             }
         })
+    }
+
+    /// Task 3.1: closes the pushed pages of every tab but the visible one.
+    private func closeOtherTabs() {
+        var closed: [String] = []
+        if tab != .home, !path.isEmpty { path = NavigationPath(); closed.append(AppTab.home.logName) }
+        if tab != .search, !searchPath.isEmpty { searchPath = NavigationPath(); closed.append(AppTab.search.logName) }
+        if tab != .library, !libraryPath.isEmpty { libraryPath = NavigationPath(); closed.append(AppTab.library.logName) }
+        if tab != .calendar, !calendarPath.isEmpty { calendarPath = NavigationPath(); closed.append(AppTab.calendar.logName) }
+        if tab != .settings, !settingsPath.isEmpty { settingsPath = NavigationPath(); closed.append(AppTab.settings.logName) }
+        if !closed.isEmpty { RemoteLog.info("nav", "Profil-Epoche neu: Seiten geschlossen in \(closed.joined(separator: ", "))") }
     }
 
     /// Gepushte Seiten im Pfad eines Tabs (ohne NavigationLink-/navigationDestination(item:)-Seiten).

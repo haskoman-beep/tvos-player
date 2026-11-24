@@ -226,6 +226,7 @@ final class CollectionLinkStore: ObservableObject {
     /// Link from the TV field or the phone page: fetch, detect, import, keep the link.
     func importLink(_ raw: String, model: AppModel) async {
         ensure(model)
+        let scope = model.scopes.current   // Task 3.1: the import belongs to this profile and epoch
         let u = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: u), url.scheme == "https" || url.scheme == "http", url.host != nil else {
             model.lastError = "Import: Link ungültig (\(u))."
@@ -239,15 +240,16 @@ final class CollectionLinkStore: ObservableObject {
             model.lastError = "Import: Link nicht geladen (\(Self.describe(error)))."
             return
         }
-        await importData(data, link: u, model: model)
+        await importData(data, link: u, model: model, scope: scope)
     }
 
     /// Pasted code from the phone page.
     func importCode(_ data: Data, model: AppModel) async {
         ensure(model)
+        let scope = model.scopes.current   // Task 3.1
         busy = true
         defer { busy = false }
-        await importData(data, link: nil, model: model)
+        await importData(data, link: nil, model: model, scope: scope)
     }
 
     /// "Aktualisieren": fetch one stored link again.
@@ -320,8 +322,14 @@ final class CollectionLinkStore: ObservableObject {
         return (format, r)
     }
 
-    private func importData(_ data: Data, link: String?, model: AppModel) async {
+    /// Task 3.1: `scope` was taken before the first await. Links, kit content and collections belong to the active
+    /// profile's stores, so a result of an older scope is dropped (not rewritten by ID).
+    private func importData(_ data: Data, link: String?, model: AppModel, scope: ProfileScope) async {
         let (format, result) = await Task.detached(priority: .userInitiated) { Self.parse(data, link: link) }.value
+        guard model.scopeStillCurrent(scope, "Collection-Import") else {
+            model.notice = "Import verworfen: Profil oder Einstellungen wurden währenddessen geändert. Bitte erneut importieren."
+            return
+        }
         if let problem = format.problem {
             model.lastError = "Import: \(problem)"
             RemoteLog.info("import", "Collection-Import abgelehnt: \(format.name)")
@@ -353,7 +361,7 @@ final class CollectionLinkStore: ObservableObject {
             line = { n in var s = base; s.rows = c.rows.count; s.sound = n; return s.line }
         case .collections(let r):
             // A refresh of a stored link takes the fresh media addresses (I4); a first import only fills gaps.
-            model.importNuvio(result: r, refresh: previous.map { snapshot($0.id) ?? [:] })
+            model.importNuvio(result: r, refresh: previous.map { snapshot($0.id) ?? [:] }, profile: scope.profile)
             // Only a link can be refreshed, so only a link keeps a snapshot (pasted code needs none).
             if link != nil { media = NuvioImport.media(of: r.collections) }
             let collections = r.collections.map { PreviewPack.apply(packIndex, to: $0) }
@@ -391,7 +399,7 @@ final class CollectionLinkStore: ObservableObject {
         model.notice = entry.summary + dropped
         RemoteLog.info("import", "\(format.name)\(link == nil ? " (Code)" : ""): \(entry.summary)")
         // The sound count follows (range requests can take a while; the rows are already there).
-        guard let sound = await soundCount(probe) else { return }
+        guard let sound = await soundCount(probe), model.scopeStillCurrent(scope, "Collection-Import Ton") else { return }
         let first = entry.summary + dropped
         entry.summary = line(sound)
         if links.contains(where: { $0.id == id }) { store(entry) }

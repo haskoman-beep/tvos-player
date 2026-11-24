@@ -186,8 +186,10 @@ struct HeroDetails {
 }
 
 /// Je Titel einmal laden (die Quellen sind ohnehin gecacht, das spart die Wege dorthin).
+/// Task 3.1: bound to the profile scope (profile, language, addon set) and bounded; a late load of an older scope
+/// is not stored.
 @MainActor enum HeroDetailsCache {
-    static var all: [String: HeroDetails] = [:]
+    static var all = ScopedCache<String, HeroDetails>(limit: 200)
 }
 
 /// Logo (sonst Name), Metazeile Jahr · Laufzeit · FSK, Bewertungen, Beschreibung in 2 Zeilen.
@@ -223,15 +225,16 @@ struct HeroInfo: View {
         .shadow(color: .black.opacity(0.6), radius: 8)
         .animation(.easeInOut(duration: 0.3), value: item.id)
         .animation(.easeInOut(duration: 0.3), value: detailsID)
-        .task(id: item.id) { await load() }
+        // Task 3.1: a new profile scope (language, addon set) loads the details again.
+        .task(id: "\(item.id)|\(model.scopes.current.epoch)") { await load() }
     }
 
     private func load() async {
-        let id = item.id
-        if let c = HeroDetailsCache.all[id] { details = c; detailsID = id; return }
+        let id = item.id, scope = model.scopes.current
+        if let c = HeroDetailsCache.all.value(for: id, in: scope) { details = c; detailsID = id; return }
         guard let imdb = await model.imdbID(for: item) else {
-            guard !Task.isCancelled else { return }
-            HeroDetailsCache.all[id] = HeroDetails()
+            guard !Task.isCancelled, model.scopeStillCurrent(scope, "Hero \(id)") else { return }
+            HeroDetailsCache.all.store(HeroDetails(), for: id, from: scope, current: model.scopes.current)
             details = HeroDetails(); detailsID = id
             return
         }
@@ -242,9 +245,11 @@ struct HeroInfo: View {
         let d = HeroDetails(logo: meta?.logo ?? loc?.logo, runtime: Self.runtimeText(meta?.runtime),
                             certification: loc?.certification, overview: meta?.description ?? loc?.overview,
                             ratings: await r, imdbRating: meta?.imdbRating)
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, model.scopeStillCurrent(scope, "Hero \(id)") else { return }
         // Welle E-a Runde 2: Addon-Antwort noch offen (3-s-Grenze) → nicht merken, nächster Besuch holt sie aus dem Cache.
-        if !model.addonMetaPending(type: series ? "series" : "movie", imdb: imdb) { HeroDetailsCache.all[id] = d }
+        if !model.addonMetaPending(type: series ? "series" : "movie", imdb: imdb) {
+            HeroDetailsCache.all.store(d, for: id, from: scope, current: model.scopes.current)
+        }
         details = d; detailsID = id
     }
 
