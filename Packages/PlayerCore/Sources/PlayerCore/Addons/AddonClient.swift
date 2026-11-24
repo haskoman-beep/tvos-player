@@ -31,19 +31,110 @@ public enum AddonError: Error, Equatable {
 }
 
 /// Ein installiertes Addon: Basis-URL (ohne `/manifest.json`) plus geladenes Manifest.
+/// Task 3.6 (A-A-9): `instanceID` tells two installations apart (also two with the same `manifest.name`),
+/// `manifestID` names the addon kind. Both default to values derived from the stored data (address, manifest) and
+/// are written to the profile only when they were set to something else, so builds 249/250, Build 1 and Build 2
+/// read (and ignore) them and an unchanged profile is written back byte for byte.
 public struct InstalledAddon: Codable, Sendable, Equatable, Identifiable {
     public var manifestURL: String
     public var manifest: AddonManifest
     public var id: String { manifestURL }
+    /// Explicit values (nil = derived). Kept apart so a changed `manifestURL` (e.g. `withoutSecrets`) also changes
+    /// the derived identity.
+    private var storedInstanceID: String?
+    private var storedManifestID: String?
+
+    /// Stable key of this installation: set explicitly, or derived from the address (`AddonIdentity.instanceID`).
+    public var instanceID: String {
+        get { storedInstanceID ?? AddonIdentity.instanceID(manifestURL: manifestURL) }
+        set { storedInstanceID = newValue == AddonIdentity.instanceID(manifestURL: manifestURL) ? nil : newValue }
+    }
+
+    /// The addon kind (`manifest.id` unless set explicitly).
+    public var manifestID: String {
+        get { storedManifestID ?? manifest.id }
+        set { storedManifestID = newValue == manifest.id ? nil : newValue }
+    }
 
     public init(manifestURL: String, manifest: AddonManifest) {
         self.manifestURL = manifestURL; self.manifest = manifest
+    }
+
+    enum CodingKeys: String, CodingKey { case manifestURL, manifest, instanceID, manifestID }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        manifestURL = try c.decode(String.self, forKey: .manifestURL)
+        manifest = try c.decode(AddonManifest.self, forKey: .manifest)
+        let r = DecodeReportBox.of(decoder)
+        let instance = c.decodeLenient(String?.self, forKey: .instanceID, default: nil, report: r)
+        let kind = c.decodeLenient(String?.self, forKey: .manifestID, default: nil, report: r)
+        if let instance, !instance.isEmpty { instanceID = instance }
+        if let kind, !kind.isEmpty { manifestID = kind }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(manifestURL, forKey: .manifestURL)
+        try c.encode(manifest, forKey: .manifest)
+        try c.encodeIfPresent(storedInstanceID, forKey: .instanceID)
+        try c.encodeIfPresent(storedManifestID, forKey: .manifestID)
     }
 
     /// Basis-URL; Stremio erlaubt auch `stremio://`, das wird zu `https://`.
     public var baseURL: String { AddonClient.baseURL(fromManifest: manifestURL) ?? manifestURL }
     /// Wave W-a: query of the manifest link (variant links `…/manifest.json?v=…`), sent with every request.
     public var manifestQuery: String? { AddonClient.parseManifest(manifestURL)?.query }
+}
+
+/// Task 3.6 (A-A-9): which installation an entry belongs to. Lists in the app carry a display label per entry;
+/// `labels` makes that label unique per `instanceID` (the first installation keeps its name, a later one with the
+/// same name gets „Name (2)“), so failed/answered sets, cache merging, duplicate removal and the remembered source
+/// never mix two installations with the same `manifest.name`. With distinct names nothing changes.
+public enum AddonIdentity {
+    /// Derived from the normalised address (base plus manifest query); a short hash, so the address with its access
+    /// part never shows up where the ID is logged or compared. Unparsable addresses hash as given (trimmed).
+    public static func instanceID(manifestURL: String) -> String {
+        let key = AddonClient.parseManifest(manifestURL).map { $0.base + ($0.query.map { "?" + $0 } ?? "") }
+            ?? manifestURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        return "addon-" + NuvioImport.stableHash(key)
+    }
+
+    /// Display label per `instanceID`, unique within `addons` (installation order decides who keeps the plain name).
+    public static func labels(_ addons: [InstalledAddon]) -> [String: String] {
+        var out: [String: String] = [:]
+        var used = Set<String>()
+        // Plain names first, so a later „Name (2)“ never takes a name another addon really has.
+        let plain = Set(addons.map(\.manifest.name))
+        for a in addons where out[a.instanceID] == nil {
+            var label = a.manifest.name
+            var n = 2
+            while used.contains(label) || (label != a.manifest.name && plain.contains(label)) {
+                label = "\(a.manifest.name) (\(n))"; n += 1
+            }
+            used.insert(label)
+            out[a.instanceID] = label
+        }
+        return out
+    }
+
+    /// Label of `addon` among `addons`; its plain name if it is not (or no longer) installed.
+    public static func label(of addon: InstalledAddon, in addons: [InstalledAddon]) -> String {
+        labels(addons)[addon.instanceID] ?? addon.manifest.name
+    }
+
+    /// The installation an entry label points at.
+    public static func addon(labeled label: String, in addons: [InstalledAddon]) -> InstalledAddon? {
+        let l = labels(addons)
+        return addons.first { l[$0.instanceID] == label }
+    }
+
+    /// Labels of the asked installations without an answer, compared by `instanceID` (never by name).
+    public static func unanswered(asked: [InstalledAddon], answered: [InstalledAddon], in addons: [InstalledAddon]) -> Set<String> {
+        let l = labels(addons)
+        let done = Set(answered.map(\.instanceID))
+        return Set(asked.filter { !done.contains($0.instanceID) }.map { l[$0.instanceID] ?? $0.manifest.name })
+    }
 }
 
 public struct AddonClient: Sendable {
@@ -111,6 +202,15 @@ public struct AddonClient: Sendable {
         return segment.addingPercentEncoding(withAllowedCharacters: allowed) ?? segment
     }
 
+    /// Task 3.6 (A-A-13): keys and values of `extra` like Stremio (`encodeURIComponent`): only ASCII letters, digits
+    /// and `-_.!~*'()` stay, so `&`, `=`, `+`, `,`, `/` and spaces inside a value cannot split or end the segment.
+    static func encodeExtra(_ part: String) -> String {
+        part.addingPercentEncoding(withAllowedCharacters: extraAllowed) ?? part
+    }
+
+    private static let extraAllowed = CharacterSet(charactersIn:
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'()")
+
     public func install(manifestURL: String) async throws -> InstalledAddon {
         guard let parsed = Self.parseManifest(manifestURL) else { throw AddonError.invalidManifestURL(manifestURL) }
         let manifest = parsed.base + "/manifest.json" + (parsed.query.map { "?" + $0 } ?? "")
@@ -174,7 +274,7 @@ public struct AddonClient: Sendable {
         let parsed = Self.parseManifest(addon.manifestURL)
         var path = "\(parsed?.base ?? addon.manifestURL)/\(resource)/\(Self.encode(type))/\(Self.encode(id))"
         if !extra.isEmpty {
-            let parts = extra.sorted { $0.key < $1.key }.map { "\(Self.encode($0.key))=\(Self.encode($0.value))" }
+            let parts = extra.sorted { $0.key < $1.key }.map { "\(Self.encodeExtra($0.key))=\(Self.encodeExtra($0.value))" }
             path += "/" + parts.joined(separator: "&")
         }
         path += ".json" + (parsed?.query.map { "?" + $0 } ?? "")

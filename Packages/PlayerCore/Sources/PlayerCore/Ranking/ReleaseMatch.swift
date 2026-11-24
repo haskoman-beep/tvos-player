@@ -162,14 +162,19 @@ enum ReleaseName {
         return key.uppercased()
     }
 
-    /// Dienst aus dem Quellennamen ("[TB⚡] …", "[RD+]", "TorBox …"). Kurzzeichen nur als ganzes Wort mit "+", "⚡",
-    /// "⏳" oder "]" dahinter (nicht "CACHED+", nicht "WEB-DL"). "[EN]" ist ein Sprach-Etikett, kein Dienst.
+    /// Dienst aus dem Quellennamen ("[TB⚡] …", "[RD+]", "TorBox …"). "[EN]" ist ein Sprach-Etikett, kein Dienst.
+    /// Task 3.6 (A-A-14): a code counts only at a word boundary: right after „[“ („[TB⚡]“, „[RD+]“, „[DL]“), or outside
+    /// brackets after the start, a space, „(“, „|“ or a symbol, with „+“, „⚡“ or „⏳“ behind it („TB⚡ AIO“). Inside a
+    /// bracketed quality tag („[WEB-DL]“, „[GERMAN DL]“) and after „-“/„.“ it is no service („CACHED+“, „WEB-DL“ neither).
+    /// Written-out names („TorBox“) need word boundaries too.
     static func service(_ s: StreamItem) -> String? {
         if let id = s.behaviorHints?.service, let code = serviceCode(id: id) { return code }
         let up = (s.name ?? "").uppercased()
+        let outside = up.replacingOccurrences(of: #"\[[^\[\]]*\]"#, with: " ", options: .regularExpression)
         for (code, names) in services {
-            if up.range(of: #"(^|[^A-Z0-9])"# + code + #"(\+|⚡|⏳|\])"#, options: .regularExpression) != nil
-                || names.contains(where: { up.contains($0) }) { return code }
+            if up.range(of: #"\["# + code + #"(\+|⚡|⏳|\])"#, options: .regularExpression) != nil
+                || outside.range(of: #"(^|[\s(|]|[^\x00-\x7F])"# + code + #"(\+|⚡|⏳)"#, options: .regularExpression) != nil
+                || names.contains(where: { StreamTraits.containsToken(up, $0) }) { return code }
         }
         return nil
     }

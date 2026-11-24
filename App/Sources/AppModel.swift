@@ -699,9 +699,12 @@ final class AppModel: ObservableObject {
             // Rohergebnis aller Addons leer (fehlgeschlagene fehlen in `all`, zählen also als leer): vermutlich
             // Ratenbegrenzung → Vorladen pausiert. Bewusst vor dem Filtern auf abspielbare Quellen.
             if !profile.addons.isEmpty, all.allSatisfy({ $0.streams.isEmpty }) { streamsAllEmptyAt = Date() }
-            let list = all.flatMap { r in playableStreams(r.streams).map { (r.addon.manifest.name, $0) } }
+            // Task 3.6 (A-A-9): entries, answered and failed carry the unique label per installation (`AddonIdentity`).
+            let labels = AddonIdentity.labels(profile.addons)
+            let label = { (a: InstalledAddon) in labels[a.instanceID] ?? a.manifest.name }
+            let list = all.flatMap { r in playableStreams(r.streams).map { (label(r.addon), $0) } }
             // Welle C-b: Addons ohne Antwort behalten ihre alten Einträge; leer ersetzt keinen Stand.
-            return storeStreams(id: id, fresh: list, answered: Set(all.map { $0.addon.manifest.name }), failed: search.failed)
+            return storeStreams(id: id, fresh: list, answered: Set(all.map { label($0.addon) }), failed: search.failed)
         }
         let ticket = streamTasks.begin(id, task)
         let list = await task.value

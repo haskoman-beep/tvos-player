@@ -22,8 +22,10 @@ final class StreamSearchStatus: ObservableObject {
     }
 
     /// Schon eingetroffene, abspielbare Treffer in Addon-Reihenfolge.
+    /// Task 3.6: entries carry the unique label of their installation (`AddonIdentity`), not the bare name.
     func partial(_ id: String) -> [(addon: String, stream: StreamItem)] {
-        (progress[id]?.results ?? []).flatMap { r in playableStreams(r.streams).map { (r.addon.manifest.name, $0) } }
+        guard let p = progress[id] else { return [] }
+        return p.results.flatMap { r in playableStreams(r.streams).map { (p.label(of: r.addon), $0) } }
     }
 }
 
@@ -38,7 +40,8 @@ extension AppModel {
     /// alte Suche nach dem Profilwechsel füllt sonst die Quellenliste des neuen Profils.
     func searchAddons(type: String, id: String, owner: UUID, epoch: Int) async -> (results: [(addon: InstalledAddon, streams: [StreamItem])], failed: Set<String>) {
         let timeout = profile.addonTimeout
-        let asked = profile.addons.filter { $0.manifest.supports("stream", type: type, id: id) }.map(\.manifest.name)
+        let installed = profile.addons
+        let asked = installed.filter { $0.manifest.supports("stream", type: type, id: id) }
         let result = await addons.streams(from: profile.addons, type: type, id: id, timeout: timeout) { p in
             await MainActor.run {
                 guard self.searchStillCurrent(owner: owner, epoch: epoch) else { return }
@@ -48,7 +51,8 @@ extension AppModel {
         if searchStillCurrent(owner: owner, epoch: epoch), let p = StreamSearchStatus.shared.progress[id] {
             RemoteLog.info("streams", "\(id): Addon-Status \(p.logText) · Grenze \(Int(timeout)) s")
         }
-        return (result, Set(asked).subtracting(result.map(\.addon.manifest.name)))
+        // Task 3.6 (A-A-9): compared by `instanceID`; two installations with one name no longer cover for each other.
+        return (result, AddonIdentity.unanswered(asked: asked, answered: result.map(\.addon), in: installed))
     }
 
     /// Welle D-b: Suche gehört noch zum aktiven Profil und wurde nicht durch einen Profilwechsel vergessen.

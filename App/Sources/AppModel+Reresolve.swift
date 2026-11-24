@@ -9,7 +9,8 @@ extension AppModel {
         guard let last = progress.lastSource(for: r.id), last.contentID == r.id else {
             RemoteLog.info("player", "Neu auflösen: keine gemerkte Quelle für \(r.id)"); return nil
         }
-        guard let addon = profile.addons.first(where: { $0.manifest.name == last.addon }) else {
+        // Task 3.6 (A-A-9): the remembered label points at one installation, also among same-named ones.
+        guard let addon = AddonIdentity.addon(labeled: last.addon, in: profile.addons) else {
             RemoteLog.info("player", "Neu auflösen: Addon \(last.addon) nicht installiert"); return nil
         }
         do {
