@@ -124,6 +124,9 @@ public enum PhoneCommand: Equatable, Sendable {
     /// Task 1.4: `GET /export?secrets=1` – after the TV allowed it, the TV seals the full backup with a code it shows
     /// and the phone fetches the file from `PhoneInputPage.sealedPath`.
     case exportSecrets
+    /// Task 4.3: a look from the configurator (`LookImport`); sets the active profile's look. Changes only the
+    /// appearance, never keys or addons, so it needs no confirmation on the TV.
+    case look(Look)
 }
 
 /// Task 1.4: what the page may do with backups right now.
@@ -191,6 +194,7 @@ public struct PhoneInputPage: Sendable {
         switch (r.method, r.path) {
         case ("GET", "/"):
             return (HTTPResponse(status: 200, body: Data(page(profileName: profileName, note: r.query["ok"], importNote: r.query["imp"],
+                                                              lookNote: r.query["lk"], lookUnknown: r.query["lku"],
                                                               home: home, backupBlocked: backups.blocked,
                                                               requestWaiting: r.query["wt"] == "offen").utf8)), [])
         case ("GET", "/export"), ("GET", Self.sealedPath):
@@ -220,8 +224,20 @@ public struct PhoneInputPage: Sendable {
             var cmds: [PhoneCommand] = []
             func val(_ k: String) -> String? { f[k].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 } }
             var importNote: String?
+            // Task 4.3: answer to a look ("lk" = number of overrides or a failure code, "lku" = unknown values).
+            var lookParams: [String] = []
+            func takeLook(_ text: String) {
+                do {
+                    let (look, report) = try LookImport.parse(Data(text.utf8))
+                    cmds.append(.look(look))
+                    lookParams = ["lk=\(look.overrides.count)"] + (report.isEmpty ? [] : ["lku=\(report.ignored.count)"])
+                } catch {
+                    lookParams = ["lk=\((error as? LookImport.Failure ?? .notAnExport).code)"]
+                }
+            }
             if let x = val("import") {   // gemeinsames Feld, Erkennung in PhoneImportDetect
                 switch PhoneImportDetect.detect(x) {
+                case .command(.look): takeLook(x)
                 case .command(let c): cmds.append(c)
                 case .refused(let why): importNote = why.rawValue
                 case .unknown: importNote = "unknown"
@@ -239,6 +255,7 @@ public struct PhoneInputPage: Sendable {
             }
             if let k = val("kit_url") { cmds.append(.importFusionURL(k)) }
             if let i = val("icon_set") { cmds.append(.setRatingIconSet(i)) }
+            if let l = val("look_json") { takeLook(l) }
             // Fix round 1: while a request waits on the TV, everything that needs a confirmation is refused here, so
             // the phone hears of it; plain entries still go through.
             var busy = false
@@ -250,8 +267,9 @@ public struct PhoneInputPage: Sendable {
             let note = cmds.isEmpty ? "leer" : "\(cmds.count)"
             // Rückmeldung zum Schnell-Import immer mitgeben; „Nichts ausgefüllt“ entfällt, wenn nur er etwas meldet.
             var params: [String] = []
-            if !(cmds.isEmpty && (importNote != nil || backupRefused || busy)) { params.append("ok=\(note)") }
+            if !(cmds.isEmpty && (importNote != nil || backupRefused || busy || !lookParams.isEmpty)) { params.append("ok=\(note)") }
             if let importNote { params.append("imp=\(importNote)") }
+            params += lookParams
             if backupRefused { params.append("bk=gesperrt") }
             if busy { params.append("wt=offen") }
             let loc = "/" + (params.isEmpty ? "" : "?" + params.joined(separator: "&"))
@@ -266,6 +284,22 @@ public struct PhoneInputPage: Sendable {
         }
     }
 
+    /// Task 4.3: the page's answer to an imported look. `note` is the number of overrides or a failure code
+    /// (`LookImport.Failure.code`), `unknown` the number of values this build did not know.
+    static func lookText(_ note: String?, unknown: String?) -> String? {
+        guard let note else { return nil }
+        guard let n = Int(note) else {
+            return note == LookImport.Failure.foreignSchema("").code
+                ? "Aussehen nicht übernommen: die Datei hat ein fremdes Format, keine Aussehen-Datei aus dem Konfigurator."
+                : "Aussehen nicht übernommen: keine lesbare Aussehen-Datei aus dem Konfigurator."
+        }
+        var t = "Aussehen übernommen · \(n) " + (n == 1 ? "Abweichung" : "Abweichungen")
+        if let k = unknown.flatMap(Int.init), k > 0 {
+            t += " · \(k) " + (k == 1 ? "Wert" : "Werte") + " kannte" + " diese App-Version nicht"
+        }
+        return t
+    }
+
     static let sealedWaitBody = """
     <p>Am Fernseher „Erlauben“ wählen. Danach lädt diese Seite die verschlüsselte Datei von selbst \
     (<a href="\(sealedPath)">sonst hier tippen</a>).</p><p>Den Code (12 Zeichen in drei Vierergruppen, etwa K7QM-2XPA-9DRT) \
@@ -277,7 +311,8 @@ public struct PhoneInputPage: Sendable {
         HTTPResponse(status: 200, body: Data(html("Sicherung", "<p>\(escape(text))</p><p><a href=\"/\">Zurück</a></p>").utf8))
     }
 
-    func page(profileName: String, note: String?, importNote: String? = nil, home: PhoneHomeState = .empty,
+    func page(profileName: String, note: String?, importNote: String? = nil, lookNote: String? = nil,
+              lookUnknown: String? = nil, home: PhoneHomeState = .empty,
               backupBlocked: Bool = false, requestWaiting: Bool = false) -> String {
         var msg: String
         switch note {
@@ -286,6 +321,7 @@ public struct PhoneInputPage: Sendable {
         case let n?: msg = "<p class=ok>✓ \(Self.escape(n)) Eingabe(n) an den Fernseher geschickt. Ergebnis siehst du dort.</p>"
         }
         if let t = importNote.flatMap(PhoneImportDetect.noteText) { msg += "<p class=ok>\(Self.escape(t))</p>" }
+        if let t = Self.lookText(lookNote, unknown: lookUnknown) { msg += "<p class=ok>\(Self.escape(t))</p>" }
         if backupBlocked { msg += "<p class=ok>\(Self.blockedText)</p>" }
         if requestWaiting { msg += "<p class=ok>\(Self.busyText)</p>" }
         func field(_ name: String, _ label: String, _ ph: String, area: Bool = false) -> String {
@@ -314,6 +350,7 @@ public struct PhoneInputPage: Sendable {
         \(field("kit_url", "Fusion-Kit: „Copy JSON URL“ einfügen (braucht meist die Trakt Client ID)", "https://raw.githubusercontent.com/…json"))
         <p><a href="\(FusionKitCatalog.siteURL)">Kit-Katalog öffnen</a></p>
         \(orderSection(home, note: note))</section>
+        <section id=\(PhoneSection.look.rawValue)>\(head(.look))\(field("look_json", "Aussehen aus dem Konfigurator: exportierte JSON-Datei einfügen (ändert nur das Aussehen des Profils)", "{…}", area: true))</section>
         <section id=\(PhoneSection.system.rawValue)>\(head(.system))\(field("key_atvloadly", "App-Update: atvloadly-Adresse (Pi)", "http://pi-name.local:5533"))
         \(field("key_playerlog", "Fern-Log: gemeinsames Geheimnis (dasselbe wie PLAYERLOG_SECRET am Log-Rechner)", ""))
         \(field("icon_set", "Eigener Bewertungs-Icon-Satz (JSON-Adresse, nur https)", "https://…/icons.json"))
