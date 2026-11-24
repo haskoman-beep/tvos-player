@@ -169,6 +169,7 @@ extension PlayerControls {
         guard !restorePending, !restoring else { RemoteLog.info("player", "Kapitel-Sprung gesperrt bis Play/Neuaufbau (nach Hintergrund)"); return }
         onUserInput()
         seekTask?.cancel(); pendingSeek = nil
+        dropFractionJump()   // Task 3.2 fix: the chapter wins over a pending sync jump
         RemoteLog.info("player", "Seitenpanel: Kapitel-Sprung \(Int(engine.currentTime)) → \(Int(t))s")
         Task { await engine.seek(t) }
         poke()

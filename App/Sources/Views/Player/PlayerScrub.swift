@@ -581,6 +581,7 @@ extension PlayerControls {
         guard !leaving else { _ = scrub.cancel(log: false); return }
         guard let t = scrub.confirm() else { poke(); return }
         guard !restorePending, !restoring else { RemoteLog.info("player", "Spulen gesperrt bis Play/Neuaufbau (nach Hintergrund)"); return }
+        dropFractionJump()   // Task 3.2 fix: the user's target wins over a pending sync jump
         // Ziel bis zur Landung halten (wie `queueSeek`), sonst springt die Zeitleiste kurz zurück.
         seekTask?.cancel(); pendingSeek = t
         RemoteLog.info("player", "Spulen \(Int(engine.currentTime)) → \(Int(t))s")

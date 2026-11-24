@@ -88,6 +88,8 @@ extension PlayerControls {
         let a = engine.loadActivity
         if a.hasFirstFrame { stabilityFirstFrame() }
         if engine.isPlaying, engine.errorText == nil, !a.buffering {
+            // W-A-9: the ladder counts the same healthy time, and only while the position moves on.
+            recoveryPlan.notePlaying(position: engine.currentTime)
             stab.healthySeconds += 1
             if !stab.healthyReported, stab.healthySeconds >= FailedLinkBook.healthySeconds {
                 stab.healthyReported = true

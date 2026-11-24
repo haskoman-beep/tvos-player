@@ -154,7 +154,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
     /// Abgelaufenen Link derselben Quelle neu auflösen (nil = geht nicht, z. B. Trailer).
     var reresolve: (@MainActor () async -> (url: URL, headers: [String: String])?)? = nil
     /// Fehlerleiter, TV-aus-Verhalten, Fehlermeldung, neu aufgelöster Link (Logik in PlayerCore, PlayerLifecycle.swift).
-    @State private var recoveryPlan = RecoveryPlanner()
+    /// Intern auch für PlayerStability.swift (gesunde Spielzeit, W-A-9).
+    @State var recoveryPlan = RecoveryPlanner()
     @State var life = PlaybackLifecycle()
     @State var lifeTask: Task<Void, Never>?
     @State private var failureNotice: String?
@@ -229,7 +230,13 @@ struct PlayerControls<E: PlaybackEngine>: View {
     @State private var hideTask: Task<Void, Never>?
     @State private var loadError: String?
     @State private var tick = 0
-    @State private var fractionApplied = false
+    /// Task 3.2: which start steps run after each successful load (PlayerCore `StartSequence`).
+    /// Intern auch für PlayerScrub.swift und PlayerSidePanel.swift (Nutzersprung verwirft den Sync-Sprung).
+    @State var startSeq = StartSequence()
+    /// Fix round 1: audio reload of a start step's `selectAudio`; the sync jump waits until it has finished.
+    @State private var jumpAudio = AudioSwitchWatch()
+    /// Sync fraction jump waiting for the duration (runs from `onChange(of: engine.duration)`).
+    @State private var fractionAwaitingDuration: Double?
     /// Gesammeltes Sprungziel: mehrere ±10-s-Drücke werden zu einem Sprung (Muxer-Neustarts sparen).
     /// Intern auch für PlayerScrub.swift (`confirmScrub`); sonst nur hier setzen.
     @State var pendingSeek: Double?
@@ -270,6 +277,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                                   seekTask?.cancel(); pendingSeek = nil
                                   // Wie queueSeek: Bild nach dem Hintergrund freigegeben, erst Play baut neu auf.
                                   guard !restorePending, !restoring else { RemoteLog.info("player", "Überspringen gesperrt bis Play/Neuaufbau (nach Hintergrund)"); return false }
+                                  dropFractionJump()   // Task 3.2 fix: the skip wins over a pending sync jump
                                   return true
                               },
                               // Wave P-a: action per type, cards that cover the credits, jumps without side effects.
@@ -343,7 +351,9 @@ struct PlayerControls<E: PlaybackEngine>: View {
         }
         .onReceive(timer) { _ in
             tick &+= 1
-            if engine.isPlaying, engine.errorText == nil { lastGoodTime = engine.currentTime; recoveryPlan.notePlaying() }
+            // Gesunde Spielzeit für die Fehlerleiter zählt stabilityTick (nur ohne Puffern, Position läuft; W-A-9).
+            if engine.isPlaying, engine.errorText == nil { lastGoodTime = engine.currentTime }
+            driveFractionJump()
             if tick % 10 == 0 && engine.isPlaying { saveProgress() }
             upNextTick()
             stabilityTick(blocked: failureNotice != nil || loadError != nil)
@@ -389,10 +399,10 @@ struct PlayerControls<E: PlaybackEngine>: View {
             recover(e)
         }
         .onChange(of: engine.duration) { _, d in
-            // Stand aus Trakt/Simkl kennt nur den Anteil: springen, sobald die Laufzeit da ist.
-            guard d > 0, !fractionApplied, start == nil, let f = startFraction else { return }
-            fractionApplied = true
-            Task { await engine.seek(f * d) }
+            // Stand aus Trakt/Simkl kennt nur den Anteil: der Startschritt `seek` wartet hier auf die Laufzeit.
+            guard d > 0, let f = fractionAwaitingDuration else { return }
+            fractionAwaitingDuration = nil
+            seekToFraction(f)
         }
         .onChange(of: engine.isEnded) { _, ended in
             guard ended else { return }
@@ -416,8 +426,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
                                  onRemember: onRemember, onCoverBottom: { coverBottom = $0 })
             }
         }
-        .onChange(of: engine.isLoading) { _, _ in checkAudioSwitch(); noteStartAudioReload() }
-        .onChange(of: engine.activeAudioID) { _, _ in checkAudioSwitch(); noteStartAudioReload() }
+        .onChange(of: engine.isLoading) { _, _ in checkAudioSwitch(); noteStartAudioReload(); driveFractionJump() }
+        .onChange(of: engine.activeAudioID) { _, _ in checkAudioSwitch(); noteStartAudioReload(); driveFractionJump() }
         // Play von außen (Siri, Kontrollzentrum) nach dem Hintergrund: erst neu aufbauen.
         .onChange(of: engine.isPlaying) { _, p in if p { stabilityPlaying(); pauseCard.noteInput() }; if p, restorePending { restoreAndPlay() } }
         .onPlayerLifecycle { handlePhase($0) }
@@ -440,31 +450,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             // Während des Ladens verlassen (oder Start vom Lade-Wächter abgebrochen): nicht mehr wählen und nicht starten.
             guard !Task.isCancelled, !leaving else { return }
             stabilityLoadEnded()
-            if checksPlaceholder, isPlaceholderVideo(duration: engine.duration, expectedRuntimeMinutes: runtimeMinutes) {
-                RemoteLog.info("player", "Platzhalter erkannt (\(Int(engine.duration))s, erwartet \(runtimeMinutes.map { Int($0) } ?? 0) min) → nächste Quelle")
-                onSourceVerdict(.placeholder)
-                engine.stop(); leave { onFallback("Quelle noch nicht bereit (Platzhalter)") }; return
-            }
-            RemoteLog.info("player", "Geladen · \(Int(engine.duration))s · \(engine.infoText) · Ton: " +
-                engine.audioTracks.map { "\($0.id):\($0.language ?? "?")/\($0.channels ?? 0)ch" }.joined(separator: " ") +
-                " · UT: \(engine.subtitleTracks.count)")
-            // Spur-Gedächtnis (Welle D-a) vor der Automatik, nur wenn die Sprache da ist.
-            let best = rememberedAudio() ?? preferredAudioTrack(engine.audioTracks, priority: profile.audioPriority)
-            if let best, best.id != engine.activeAudioID {
-                startAudioReload = (target: best.id, at: ContinuousClock.now, sawLoading: false)
-                engine.selectAudio(best.id)
-            } else {
-                startAudioReload = nil
-                RemoteLog.metric(.playerAudioReload, ms: 0, fields: ["neu": "nein"])
-            }
-            // Tonwahl läuft asynchron: die Sprache der gewählten Spur direkt mitgeben (auch an die Addon-UT).
-            let startAudio = (best ?? engine.audioTracks.first(where: { $0.id == engine.activeAudioID }))?.language
-            engine.subtitlePreferences = SubtitlePreferences(profile: profile)
-            if !applyRememberedSubtitles() { engine.reconsiderSubtitles(audioLanguage: startAudio) }
-            addonSubTask = Task { await loadAddonSubtitles(audioLanguage: startAudio) }
-            RemoteLog.info("player", "Spielt · Tonspur \(engine.activeAudioID.map(String.init) ?? "-") · UT \(engine.activeSubtitleID.map(String.init) ?? "aus") · \(engine.infoText)")
-            playUnlessHeld()
-            poke()
+            runStartSteps(startSeq.afterSuccessfulLoad(isFirst: true, remembered: nil, pendingFraction: syncFraction))
         } catch {
             // Abgebrochen, weil der Player verlassen wurde: kein Fehlertext, keine nächste Quelle.
             guard !Task.isCancelled, !leaving else { RemoteLog.info("player", "Laden abgebrochen (verlassen oder Neustart)"); return }
@@ -473,6 +459,113 @@ struct PlayerControls<E: PlaybackEngine>: View {
             let shown = LogRedact.text("\(error)")
             if fallsBackOnLoadError { engine.stop(); leave { onFallback("Laden fehlgeschlagen: \(shown)") } } else { loadError = shown }
         }
+    }
+
+    /// Task 3.2: one executor for the start steps of both ways in (loadAndStart and the error ladder).
+    /// `audioBefore`: the audio track active before a reload (for `selectAudio(restore:)`).
+    private func runStartSteps(_ steps: [StartSequence.Step], audioBefore: TrackMemory.Entry? = nil) {
+        RemoteLog.info("player", "Startschritte \(StartSequence.logText(steps))")
+        let wholeStart = steps.contains(.placeholderCheck)
+        // Tonwahl läuft asynchron: die Sprache der gewählten Spur direkt mitgeben (auch an die Addon-UT).
+        var startAudio = engine.audioTracks.first(where: { $0.id == engine.activeAudioID })?.language
+        for step in steps {
+            switch step {
+            case .placeholderCheck:
+                if checksPlaceholder, isPlaceholderVideo(duration: engine.duration, expectedRuntimeMinutes: runtimeMinutes) {
+                    RemoteLog.info("player", "Platzhalter erkannt (\(Int(engine.duration))s, erwartet \(runtimeMinutes.map { Int($0) } ?? 0) min) → nächste Quelle")
+                    onSourceVerdict(.placeholder)
+                    engine.stop(); leave { onFallback("Quelle noch nicht bereit (Platzhalter)") }; return
+                }
+                RemoteLog.info("player", "Geladen · \(Int(engine.duration))s · \(engine.infoText) · Ton: " +
+                    engine.audioTracks.map { "\($0.id):\($0.language ?? "?")/\($0.channels ?? 0)ch" }.joined(separator: " ") +
+                    " · UT: \(engine.subtitleTracks.count)")
+            case .selectAudio(restore: .none):
+                // Spur-Gedächtnis (Welle D-a) vor der Automatik, nur wenn die Sprache da ist.
+                let best = rememberedAudio() ?? preferredAudioTrack(engine.audioTracks, priority: profile.audioPriority)
+                if let best, best.id != engine.activeAudioID {
+                    if wholeStart { startAudioReload = (target: best.id, at: ContinuousClock.now, sawLoading: false) }
+                    jumpAudio.begin(best.id, now: Date())
+                    engine.selectAudio(best.id)
+                } else if wholeStart {
+                    startAudioReload = nil
+                    RemoteLog.metric(.playerAudioReload, ms: 0, fields: ["neu": "nein"])
+                }
+                if let best { startAudio = best.language }
+            case .selectAudio(restore: let id?):
+                // W-A-3: a fresh load starts with the engine's choice; choose the previous track again (ID, else language).
+                let before = audioBefore ?? TrackMemory.Entry(audioID: id, audioLanguage: nil)
+                if let t = before.track(in: engine.audioTracks) {
+                    if t.id != engine.activeAudioID {
+                        jumpAudio.begin(t.id, now: Date())
+                        engine.selectAudio(t.id)
+                        RemoteLog.info("player", "Tonspur wiederhergestellt: \(t.id) · \(t.language ?? "?")")
+                    }
+                    startAudio = t.language
+                } else {
+                    RemoteLog.info("player", "Tonspur \(id) (\(before.audioLanguage ?? "?")) nach dem Neuladen nicht da → Engine-Wahl")
+                }
+            case .subtitleAutomatic:
+                engine.subtitlePreferences = SubtitlePreferences(profile: profile)
+                if !applyRememberedSubtitles() { engine.reconsiderSubtitles(audioLanguage: startAudio) }
+            case .addonSubtitles:
+                let audio = startAudio
+                addonSubTask = Task { await loadAddonSubtitles(audioLanguage: audio) }
+            case .seek(let f):
+                if let f { seekToFraction(f) }
+            case .play:
+                if wholeStart {
+                    RemoteLog.info("player", "Spielt · Tonspur \(engine.activeAudioID.map(String.init) ?? "-") · UT \(engine.activeSubtitleID.map(String.init) ?? "aus") · \(engine.infoText)")
+                }
+                playUnlessHeld()
+                if wholeStart { poke() }
+            }
+        }
+    }
+
+    /// Synced fraction (Trakt/Simkl) to jump to; nil = fixed start position or none.
+    private var syncFraction: Double? { start == nil ? startFraction : nil }
+
+    /// W-A-4/W-B-4: jump to the synced fraction. PlayerCore `StartSequence` decides when: after the start's audio
+    /// reload, retried once if it did not land, given up after a limit; until then no progress is saved.
+    private func seekToFraction(_ f: Double) {
+        let d = engine.duration
+        guard d > 0 else { fractionAwaitingDuration = f; return }
+        startSeq.planJump(target: f * d, now: ProcessInfo.processInfo.systemUptime)
+        RemoteLog.info("player", "Sprung auf Sync-Anteil \(Int((f * 100).rounded())) % geplant → \(Int(f * d))s")
+        driveFractionJump()
+    }
+
+    /// After planning, every tick and on engine changes: carry out what `StartSequence.observeJump` decides.
+    private func driveFractionJump() {
+        if jumpAudio.isActive, let o = jumpAudio.update(activeID: engine.activeAudioID, isLoading: engine.isLoading,
+                                                        failed: engine.errorText != nil, now: Date()),
+           startSeq.holdsProgress {
+            RemoteLog.info("player", "Start-Tonwahl \(o.logText) → Sync-Sprung frei")
+        }
+        guard startSeq.holdsProgress, !leaving else { return }
+        let busy = engine.isLoading || engine.loadActivity.seeking || engine.errorText != nil || recovering
+            || stab.loadInFlight || restorePending || restoring
+        switch startSeq.observeJump(audioReloading: jumpAudio.isActive, busy: busy, position: engine.currentTime,
+                                    now: ProcessInfo.processInfo.systemUptime) {
+        case .wait: break
+        case .seek(let t):
+            RemoteLog.info("player", "Sprung auf Sync-Anteil → \(Int(t))s")
+            Task { await engine.seek(t) }
+        case .retry(let t):
+            RemoteLog.info("player", "Sprung wiederholt → \(Int(t))s · bei \(Int(engine.currentTime))s")
+            Task { await engine.seek(t) }
+        case .arrived:
+            RemoteLog.info("player", "Sprung auf Sync-Anteil angekommen · bei \(Int(engine.currentTime))s")
+        case .gaveUp:
+            RemoteLog.info("player", "Sprung auf Sync-Anteil aufgegeben · bei \(Int(engine.currentTime))s")
+        }
+    }
+
+    /// The user jumped himself: the pending sync jump must not pull him back (and progress saving resumes).
+    func dropFractionJump() {
+        guard startSeq.holdsProgress else { return }
+        startSeq.userSeeked()
+        RemoteLog.info("player", "Sprung auf Sync-Anteil verworfen (Nutzer springt)")
     }
 
     /// Task 1.8: start of loading until the first frame (and from the press, if there was one); once per load.
@@ -685,6 +778,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
         guard !leaving else { return }
         // Bild nach dem Hintergrund freigegeben: erst Play baut neu auf (ein Neuaufbau würde von selbst starten).
         guard !restorePending, !restoring else { RemoteLog.info("player", "Sprung gesperrt bis Play/Neuaufbau (nach Hintergrund)"); return }
+        dropFractionJump()
         let base = pendingSeek ?? engine.currentTime
         let limit = engine.duration > 10 ? engine.duration - 5 : .greatestFiniteMagnitude
         let target = min(max(0, base + delta), limit)
@@ -707,6 +801,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                                    lastArrowAge: age, forward: forward)
         if pendingSeek != nil { RemoteLog.info("player", "Gesammelter Sprung → Schnellsuchlauf ab \(Int(from))s") }
         seekTask?.cancel(); seekTask = nil; pendingSeek = nil
+        dropFractionJump()   // Task 3.2 fix: holding ◀/▶ wins over a pending sync jump
         return from
     }
 
@@ -783,6 +878,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
         let external = ExternalSubtitleRestore(track: engine.subtitleTracks.first { $0.id == sub },
                                                url: sub.flatMap { addonTrackURLs[$0] }, byUser: subByUser)
         let audioLanguage = engine.audioTracks.first { $0.id == engine.activeAudioID }?.language
+        // W-A-3: the audio track before the teardown, chosen again after the reload.
+        let audioBefore = engine.activeAudioID.map { TrackMemory.Entry(audioID: $0, audioLanguage: audioLanguage) }
         recoverTask?.cancel()
         recoverGen &+= 1
         let gen = recoverGen
@@ -826,6 +923,9 @@ struct PlayerControls<E: PlaybackEngine>: View {
             loadError = nil
             // Nach dem Ersatz-Laden sind alle externen Spuren weg, ihre IDs gelten nicht mehr.
             if reloaded { addonTrackURLs = [:] }
+            let steps = startSeq.afterSuccessfulLoad(isFirst: false, remembered: audioBefore, pendingFraction: syncFraction)
+            // W-A-1: first successful load of this player (the first load failed): run the whole start.
+            if steps.contains(.placeholderCheck) { runStartSteps(steps); return }
             // Externe Spur nach dem Ersatz-Laden (oder wenn sie fehlt) nicht per alter ID setzen: das macht
             // loadAddonSubtitles mit `restore` nach dem Neuanlegen.
             let externalGone = external != nil
@@ -839,7 +939,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             if externalGone || !engine.subtitleTracks.contains(where: \.isExternal) {
                 addonSubTask = Task { await loadAddonSubtitles(audioLanguage: audioLanguage, restore: externalGone ? external : nil) }
             }
-            playUnlessHeld()
+            runStartSteps(steps, audioBefore: audioBefore)   // Ton wiederherstellen, Sprung (falls offen), weiterspielen
         }
     }
 
@@ -860,7 +960,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
     }
 
     func saveProgress() {
-        guard engine.duration > 0, engine.currentTime > 0, !sideHoldsProgress else { return }
+        // Fix round 1: a pending sync jump holds progress (the start position would overwrite the synced one).
+        guard engine.duration > 0, engine.currentTime > 0, !sideHoldsProgress, !startSeq.holdsProgress else { return }
         report(engine.currentTime, engine.duration)
     }
 
