@@ -353,11 +353,12 @@ public enum SyncWriteResult: Sendable, Equatable {
     /// Sent, but nothing could be changed remotely (no entry or no entry ID): stays pending until it expires.
     case unconfirmed(String)
 
-    /// A thrown send: an HTTP status is classified as usual; a transport error (no network, timeout) is `.offline`;
-    /// anything else (broken answer) is `.retry`.
+    /// A thrown send: an HTTP status is classified as usual; a transport error (no network, timeout, connection lost,
+    /// cancelled pass) is `.offline`; anything else (broken answer, body over the size limit) is `.retry`.
     public static func failure(_ error: Error) -> SyncWriteResult {
         if case APIError.status(let s) = error { return classify(status: s) }
-        if error is URLError { return .offline }
+        if error is URLError || error is CancellationError { return .offline }
+        if let e = error as? HTTPClientError, e == .timedOut || e == .incomplete { return .offline }
         return .retry
     }
 

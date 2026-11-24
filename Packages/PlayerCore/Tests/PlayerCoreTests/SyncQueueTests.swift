@@ -538,3 +538,12 @@ private final class HistoryFake: APISending, @unchecked Sendable {
     #expect(try await simkl.poll(code) == .expired)
 }
 private func kinds(_ e: [ScrobbleEvent<String>]) -> [ScrobbleAction] { e.map(\.action) }
+
+/// Final review I3: errors of the limited HTTP client (total time, connection lost) and a cancelled pass are
+/// network trouble, not a failed attempt; a body over the size limit stays a retry.
+@Test func syncFailureMapsHTTPClientErrorsToOffline() {
+    #expect(SyncWriteResult.failure(HTTPClientError.timedOut) == .offline)
+    #expect(SyncWriteResult.failure(HTTPClientError.incomplete) == .offline)
+    #expect(SyncWriteResult.failure(CancellationError()) == .offline)
+    #expect(SyncWriteResult.failure(HTTPClientError.tooLarge(limit: 1)) == .retry)
+}
