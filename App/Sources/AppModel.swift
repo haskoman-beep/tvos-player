@@ -569,20 +569,24 @@ final class AppModel: ObservableObject {
     // MARK: Import
 
     func importNuvio(from urlString: String) async {
+        let scope = scopes.current   // Task 3.1: the import belongs to the profile it was asked for
         do {
             guard let url = URL(string: urlString) else { throw AddonError.invalidManifestURL(urlString) }
-            importNuvio(data: try await URLSessionFetcher().data(from: url))
+            let data = try await URLSessionFetcher().data(from: url)
+            if scope.profile != profile.id { RemoteLog.info("profil", "Import nach Profilwechsel ins vorige Profil übernommen") }
+            importNuvio(data: data, profile: scope.profile)
         } catch { lastError = "Import fehlgeschlagen: \(error)" }
     }
 
-    func importNuvio(data: Data) {
-        do { importNuvio(result: try NuvioImport.parse(data)) } catch { lastError = "Import fehlgeschlagen: \(error)" }
+    /// `profile`: target profile by ID (Task 3.1); nil = the active one.
+    func importNuvio(data: Data, profile id: UUID? = nil) {
+        do { importNuvio(result: try NuvioImport.parse(data), profile: id) } catch { lastError = "Import fehlgeschlagen: \(error)" }
     }
 
     /// Wave F-o round 3: `refresh` (media of the last import of a stored link) → the fresh media addresses win, the
     /// user's own changes stay (`NuvioImport.refreshFolders`); nil → first import, only gaps are filled.
-    func importNuvio(result r: NuvioImportResult, refresh previous: [String: FolderMedia]? = nil) {
-        update { p in
+    func importNuvio(result r: NuvioImportResult, refresh previous: [String: FolderMedia]? = nil, profile id: UUID? = nil) {
+        update(profile: id ?? profile.id) { p in
             for c in r.collections {
                 if let i = p.collections.firstIndex(where: { $0.title == c.title }) {
                     p.collections[i].folders = previous.map {
