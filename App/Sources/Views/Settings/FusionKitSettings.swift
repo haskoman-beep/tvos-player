@@ -9,6 +9,8 @@ struct FusionKitSettingsView: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var kit = FusionKitStore.shared
     @State private var removeCandidate: FusionKitSource?
+    /// F-B-3: phone page opened from the Trakt row; outside the row so saving the ID does not close it.
+    @State private var phoneOpen = false
 
     var body: some View {
         SettingsToggleRow(symbol: "sparkles", tint: Theme.CategoryTint.home.color, title: "Fusion-Kit",
@@ -34,17 +36,14 @@ struct FusionKitSettingsView: View {
                 Task { await kit.refresh(force: true, all: true) }
             }
             .settingsUnavailable(busy)   // fokussierbar bleiben statt .disabled (F-a M2)
-            if !model.hasTraktID {
-                // E11: ein Hinweis mit Weg zum Handy statt Text ohne Ausweg.
-                NavigationLink { PhoneInputView(section: .keys) } label: {
-                    SettingsRowLabel(symbol: Theme.Tone.warn.symbol, tint: Theme.Tone.warn.color,
-                                     title: "Trakt Client ID fehlt",
-                                     detail: "Ohne sie fehlen Trakt-Reihen und -Kacheln · Am Handy eintragen",
-                                     accessory: .chevron, detailAlwaysVisible: true, reserveDetailSpace: false)
-                }
-                .buttonStyle(ThemeRowButtonStyle())
-                .settingsRowAccessibility(title: "Trakt Client ID fehlt", detail: "Am Handy eintragen", accessory: .chevron)
-            }
+            // F-B-3: the row stays in the tree once the ID is saved (the open phone page keeps its link); only the
+            // text changes. E11: a hint with a way to the phone instead of text without a way out.
+            let missing = !model.hasTraktID
+            SettingsRow(symbol: missing ? Theme.Tone.warn.symbol : "key", tint: missing ? Theme.Tone.warn.color : Theme.CategoryTint.home.color,
+                        title: missing ? "Trakt Client ID fehlt" : "Trakt Client ID",
+                        detail: missing ? "Ohne sie fehlen Trakt-Reihen und -Kacheln · Am Handy eintragen" : "Eingetragen · am Handy ändern",
+                        accessory: .chevron, detailAlwaysVisible: missing, reserveDetailSpace: false) { phoneOpen = true }
+                .navigationDestination(isPresented: $phoneOpen) { PhoneInputView(section: .keys) }
         }
         // Eigene Kit-Dateien (per Handy eingefügt, nicht im Katalog) lassen sich hier wieder entfernen –
         // auch bei ausgeschaltetem Kit (F-b2-Review M5).

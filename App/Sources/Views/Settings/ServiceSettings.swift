@@ -7,29 +7,49 @@ import PlayerCore
 struct AccountSettingsRows: View {
     @EnvironmentObject var model: AppModel
     @State private var logout: String?
+    /// F-B-3: page opened from an account row. It lives outside the state switch, so the success of the page itself
+    /// (keys saved, login done) only changes the row's value, never removes the link behind the open page.
+    @State private var page: AccountPage?
+
+    private enum AccountPage: Hashable, Identifiable {
+        case login(String)
+        case phoneKeys
+        var id: Self { self }
+    }
 
     private let tint = SettingsCategory.profile.tint
 
     private static func name(_ s: String) -> String { s == "trakt" ? "Trakt" : "Simkl" }
+
+    private static func detail(_ state: SettingsSummary.AccountState) -> String {
+        switch state {
+        case .connected: "OK meldet ab."
+        case .connectable: "Anmelden mit Code auf einem anderen Gerät."
+        case .missingClient: "Client ID am Handy unter „Konten & Schlüssel“ eintragen."
+        }
+    }
 
     var body: some View {
         SettingsSection("Konten") {
             ForEach(AppModel.syncServices, id: \.self) { s in
                 let name = Self.name(s)
                 let state = SettingsSummary.AccountState.of(hasClient: model.hasClient(s), connected: model.isConnected(s))
-                switch state {
-                case .connected:
-                    SettingsRow(symbol: "person.badge.key", tint: tint, title: name, detail: "OK meldet ab.",
-                                accessory: .value(state.valueText), reserveDetailSpace: false) { logout = s }
-                case .connectable:
-                    SettingsLinkRow(symbol: "person.badge.key", tint: tint, title: name,
-                                    detail: "Anmelden mit Code auf einem anderen Gerät.", value: state.valueText) {
-                        SyncLoginView(service: s)
+                // One row with a stable identity in every state (F-B-3); only value, detail and action change.
+                SettingsRow(symbol: "person.badge.key", tint: tint, title: name, detail: Self.detail(state),
+                            accessory: state == .connected ? .value(state.valueText) : .valueChevron(state.valueText),
+                            reserveDetailSpace: false) {
+                    switch state {
+                    case .connected: logout = s
+                    case .connectable: page = .login(s)
+                    case .missingClient: page = .phoneKeys
                     }
-                case .missingClient:
-                    PhoneLinkRow(section: .keys, symbol: "person.badge.key", tint: tint, title: name,
-                                 detail: "Client ID am Handy unter „Konten & Schlüssel“ eintragen.", value: state.valueText)
                 }
+            }
+        }
+        .navigationDestination(item: $page) { p in
+            switch p {
+            case .login(let s): SyncLoginView(service: s)
+            case .phoneKeys: PhoneInputView(section: .keys)
             }
         }
         SettingsSection("Schlüssel") {
