@@ -93,6 +93,8 @@ struct HomeView: View {
         // Neue Reihen ändern den Schlüssel und laden damit gleich.
         .task(id: rows.map(\.content.key)) { await model.preloadHomeRows(rows) }
         .navigationDestination(item: $manager) { t in HomeManagerView(focusRow: t.row, openBrowser: t.openBrowser) }
+        // Task 4.1a (F-A-8): back from the manager (outside the path, no depth change): a new visit with a check.
+        .onChange(of: manager) { old, new in if old != nil, new == nil { TabBarGuard.shared.check(.popped) } }
         // Eigene Rückfrage (F-a SettingsConfirmationView): „Behalten“ oben mit sicherem Standardfokus (§2.4).
         .settingsConfirmation(item: $hideCandidate, title: { "„\(model.homeRowTitle($0.content))“ ausblenden?" },
                               message: { _ in "Die Reihe verschwindet von der Startseite. In „Reihen & Collections“ lässt sie sich wieder einblenden." },

@@ -38,10 +38,22 @@ import PlayerCore
 
     func configure(navigation: NavigationStyle) { self.navigation = navigation }
 
-    /// The visible page changed (`popped`: back to `page` by a pop).
-    func visit(_ page: String, popped: Bool) {
+    /// The visible page changed (`popped`: back to `page` by a pop). Task 4.1a (F-A-8): a tab change starts a new
+    /// visit too (`NavigationGuard.startsVisit`), so the repair steps may run again on the other tab's page.
+    func visit(_ page: String, popped: Bool, startsVisit: Bool = false) {
         self.page = page
-        if popped { check(.popped) }
+        if popped {
+            check(.popped)
+        } else if startsVisit {
+            newVisit()
+        }
+    }
+
+    /// Task 4.1a (F-A-8): a new visit without a check of its own (tab change): the steps are allowed again.
+    func newVisit() {
+        guard task == nil else { return }   // a running check finishes; its own visit stays
+        lastRepair = nil
+        loggedExhausted = false
     }
 
     /// Checks the bar after the trigger's delay and repairs it while it is stuck. A new visit (pop, player closed)

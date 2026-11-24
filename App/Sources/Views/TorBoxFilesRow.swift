@@ -72,7 +72,8 @@ struct TorBoxFilesRow: View {
                 }
             }
             .task(id: key) { await load(key: key, fresh: false) }
-            .fullScreenCover(item: $playing) { p in
+            // Task 4.1a (F-A-8): the top bar is checked after this player like after the source list's player.
+            .fullScreenCover(item: $playing, onDismiss: { TabBarGuard.shared.check(.playerClosed) }) { p in
                 PlayerScreen(url: p.url,
                              request: PlayRequest(type: "movie", id: "torbox:\(p.file.id)", title: p.file.name,
                                                   item: MetaPreview(id: "torbox:\(p.file.id)", type: "movie", name: p.file.name)),

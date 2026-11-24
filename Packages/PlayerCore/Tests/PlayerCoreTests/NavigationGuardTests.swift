@@ -16,3 +16,12 @@ import Testing
         #expect(!NavigationGuard.mayPush(startedAt: s, now: NavigationStamp(tab: .home, depth: 0, visit: 1)))
     }
 }
+
+// Task 4.1a (F-A-8): a tab change or a pop starts a new visit of the tab bar guard; a push does not.
+@Test func tabChangeAndPopStartAVisit() {
+    let home0 = NavigationStamp(tab: .home, depth: 0)
+    #expect(NavigationGuard.startsVisit(old: home0, new: NavigationStamp(tab: .library, depth: 0)))
+    #expect(NavigationGuard.startsVisit(old: NavigationStamp(tab: .home, depth: 2), new: NavigationStamp(tab: .home, depth: 1)))
+    #expect(!NavigationGuard.startsVisit(old: home0, new: NavigationStamp(tab: .home, depth: 1)))
+    #expect(!NavigationGuard.startsVisit(old: home0, new: home0))
+}
