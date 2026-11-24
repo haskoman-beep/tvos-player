@@ -50,6 +50,10 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     public var subtitleStyle: SubtitleStyle = SubtitleStyle()
     /// Wave P-a: skip action per segment type and the card after a movie.
     public var skip: SkipSettings = SkipSettings()
+    /// Task 4.2: the look (preset "Mein Look" plus overrides). Missing in older profiles: built once from
+    /// `appearance`, `player` and `sources` (`Look.migrated`). The old fields keep being written so going back to the
+    /// previous build loses nothing.
+    public var look: Look = Look()
 
     public init(id: UUID = UUID(), name: String, language: AppLanguage = .de, audioPriority: [String] = ["de", "en", "orig"],
                 subtitleMode: SubtitleMode = .forcedOnly, subtitleLanguage: String = "de", progressSource: ProgressSource = .local,
@@ -63,6 +67,7 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         self.stillWatchingAfter = stillWatchingAfter
         self.syncTokens = syncTokens; self.appearance = appearance
         self.diskCache = diskCache
+        self.look = Look.migrated(from: appearance, player: player, sources: sources)
     }
 
     enum CodingKeys: String, CodingKey {
@@ -75,6 +80,7 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         case hiddenRows
         case subtitleStyle
         case skip
+        case look
     }
     /// Nur zum Lesen alter Profile.
     private enum LegacyKeys: String, CodingKey { case subtitlesEnabled }
@@ -117,6 +123,8 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         (hiddenRows, unknownHiddenRows) = c.decodeSalvagedList(HomeRow.self, forKey: .hiddenRows, report: r)
         subtitleStyle = c.decodeLenient(SubtitleStyle.self, forKey: .subtitleStyle, default: d.subtitleStyle, report: r)
         skip = c.decodeLenient(SkipSettings.self, forKey: .skip, default: d.skip, report: r)
+        let migratedLook = Look.migrated(from: appearance, player: player, sources: sources)
+        look = c.decodeLenient(Look.self, forKey: .look, default: migratedLook, report: r)
     }
 
     /// Same keys, order and format as the former synthesized encoding; only `hiddenRows` gets the raw leftovers
@@ -147,6 +155,11 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         for raw in unknownHiddenRows { try hidden.encode(raw) }
         try c.encode(subtitleStyle, forKey: .subtitleStyle)
         try c.encode(skip, forKey: .skip)
+        // Task 4.2: a look that only mirrors the old fields is not written; reading rebuilds the same one. So a
+        // profile nobody restyled keeps its exact Build 3 bytes (export and round-trip tests compare them).
+        if look != Look.migrated(from: appearance, player: player, sources: sources) {
+            try c.encode(look, forKey: .look)
+        }
     }
 
     public static func makeDefault(name: String = "Ich") -> Profile {
