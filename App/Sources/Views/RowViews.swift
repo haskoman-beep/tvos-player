@@ -478,7 +478,8 @@ struct PosterCard: View {
             try? await Task.sleep(for: .milliseconds(350))
             guard !Task.isCancelled else { return }
             // Verankern nur zusammen mit dem Aufklappen: schnelles Durchscrollen löst kein Programm-Scrollen aus.
-            withAnimation(.easeInOut(duration: 0.25)) { expanded = true; anchor(item.id) }
+            // Task 4.1a (C1): the anchor id must equal the row's `ForEach` id (`rowKey`, type|id since F-A-5).
+            withAnimation(.easeInOut(duration: 0.25)) { expanded = true; anchor(item.rowKey) }
         }
     }
 }
@@ -735,6 +736,7 @@ extension EnvironmentValues {
         set { self[ExpandPostersKey.self] = newValue }
     }
     /// Fokussierte, aufklappbare Karte meldet ihre ID; die Reihe verankert die Scrollposition daran.
+    /// The id is the `ForEach` id of the strip: `MetaPreview.rowKey` (Task 4.1a, C1).
     var anchorFocusedCard: (String) -> Void {
         get { self[AnchorFocusedCardKey.self] }
         set { self[AnchorFocusedCardKey.self] = newValue }
