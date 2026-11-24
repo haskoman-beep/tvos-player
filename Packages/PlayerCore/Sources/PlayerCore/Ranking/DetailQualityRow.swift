@@ -35,6 +35,33 @@ public struct DetailQuality: Equatable, Sendable {
     }
 
     public static func from(_ streams: [StreamItem]) -> DetailQuality? { from(streams.map(StreamTraits.parse)) }
+
+    /// Task 3.7 (A-A-6): the detail page builds its row from the first intermediate result; the final result may
+    /// only add to it (no jump under the eye). Shown values stay as they are; missing ones come from `later`.
+    /// DV only fills an empty HDR slot (it would replace a shown HDR badge). A missing audio format comes with its
+    /// own channels (shown channels stay if it has none); a shown format keeps its channels.
+    public func adding(_ later: DetailQuality?) -> DetailQuality {
+        guard let l = later else { return self }
+        var q = self
+        let b = l.best
+        if q.best.resolution == nil { q.best.resolution = b.resolution }
+        if !q.best.dolbyVision, q.best.hdr == nil {
+            q.best.dolbyVision = b.dolbyVision
+            q.best.hdr = b.hdr
+        }
+        q.best.atmos = q.best.atmos || b.atmos
+        q.best.dtsX = q.best.dtsX || b.dtsX
+        q.best.dtsHDMA = q.best.dtsHDMA || b.dtsHDMA
+        q.best.remux = q.best.remux || b.remux
+        if q.best.channels == nil { q.best.channels = b.channels }
+        if q.audioFormat == nil, l.audioFormat != nil {
+            q.audioFormat = l.audioFormat
+            q.audioChannels = l.audioChannels ?? q.audioChannels
+        } else if q.audioFormat == nil, q.audioChannels == nil {
+            q.audioChannels = l.audioChannels
+        }
+        return q
+    }
 }
 
 extension QualityBadges {

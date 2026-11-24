@@ -74,25 +74,62 @@ public struct YouTubeResolver: Sendable {
         s.count == 11 && s.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }
     }
 
-    /// Erste abspielbare Adresse oder nil. `log` bekommt je Client eine Zeile.
-    public func resolve(videoID: String, log: @Sendable (String) -> Void = { _ in }) async -> YouTubeStream? {
+    /// Task 3.7 (A-A-17): one deadline across visitor token and all clients (analysis: 8 s). Before, the steps ran
+    /// one after another with 6 s each, up to about 24 s until „Trailer nicht verfügbar“.
+    public static let overallDeadline: Double = 8
+
+    private enum Outcome: Sendable { case found(YouTubeStream), missing }
+
+    /// Erste abspielbare Adresse oder nil. `log` bekommt je Schritt eine Zeile mit Dauer.
+    /// Task 3.7: after `deadline` seconds nil at once (the remaining requests are cancelled); with an MP4 address
+    /// in hand the search ends after the second client (only HLS is still worth asking the third for).
+    public func resolve(videoID: String, deadline: Double = YouTubeResolver.overallDeadline,
+                        log: @escaping @Sendable (String) -> Void = { _ in }) async -> YouTubeStream? {
         guard Self.isVideoID(videoID) else { log("ungültige Video-ID"); return nil }
-        let visitor = await visitorData()
-        if visitor == nil { log("kein Besucher-Token") }
-        var fallback: YouTubeStream?
-        for c in Self.clients {
+        let work = Task { () -> Outcome? in
+            await self.steps(videoID: videoID, log: log).map(Outcome.found) ?? Outcome.missing
+        }
+        let start = ContinuousClock.now
+        let outcome = await withTaskCancellationHandler {
+            await AddonMetaFetch.wait(for: work, atMost: deadline)
+        } onCancel: { work.cancel() }
+        switch outcome {
+        case .found(let s)?: return Task.isCancelled ? nil : s
+        case .missing?: return nil
+        case nil:
+            work.cancel()
             if Task.isCancelled { log("abgebrochen"); return nil }
+            log("Gesamtfrist \(Int(deadline)) s überschritten (\(Self.ms(since: start)) ms) → nicht verfügbar")
+            return nil
+        }
+    }
+
+    private func steps(videoID: String, log: @Sendable (String) -> Void) async -> YouTubeStream? {
+        var t = ContinuousClock.now
+        let visitor = await visitorData()
+        log(visitor == nil ? "Besucher-Token: keins (\(Self.ms(since: t)) ms)" : "Besucher-Token \(Self.ms(since: t)) ms")
+        var fallback: YouTubeStream?
+        for (i, c) in Self.clients.enumerated() {
+            if Task.isCancelled { log("abgebrochen"); return nil }
+            // Task 3.7: an MP4 address from the first two clients is enough; the third one only adds no HLS.
+            if i >= 2, fallback != nil { break }
+            t = ContinuousClock.now
             do {
                 let data = try await player(videoID: videoID, client: c, visitor: visitor)
                 let r = Self.parsePlayer(data, client: c.key)
-                log("\(c.key): \(r.status ?? "?") · HLS \(r.hls != nil ? "ja" : "nein") · MP4 \(r.progressive.count)")
+                log("\(c.key): \(r.status ?? "?") · HLS \(r.hls != nil ? "ja" : "nein") · MP4 \(r.progressive.count) (\(Self.ms(since: t)) ms)")
                 if let h = r.hls { return h }
                 if fallback == nil, let p = r.progressive.first { fallback = p }
             } catch {
-                log("\(c.key): \(error)")
+                log("\(c.key): \(error) (\(Self.ms(since: t)) ms)")
             }
         }
         return Task.isCancelled ? nil : fallback
+    }
+
+    static func ms(since t: ContinuousClock.Instant) -> Int {
+        let d = ContinuousClock.now - t
+        return Int(d.components.seconds * 1000 + d.components.attoseconds / 1_000_000_000_000_000)
     }
 
     func visitorData() async -> String? {

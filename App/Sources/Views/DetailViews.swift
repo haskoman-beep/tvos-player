@@ -172,6 +172,9 @@ struct DetailView: View {
             // Die App-Akzentfarbe (RootView .tint) färbte Knöpfe und Text-Knöpfe hier flächig: normale tvOS-Knöpfe.
             .tint(Color?.none)
         }
+        // Task 3.7 (A-A-6): badges (and the „Sofort abspielen“ pick) from the first intermediate result of the
+        // search, not only after the slowest addon. Movies only; the cache path above wins when it has a state.
+        .streamSearchPartials(id: imdb ?? "", loading: !isSeries && imdb != nil && best == nil) { applyPartialStreams($0) }
         .onAppear {
             if loaded, openedPlayback {
                 openedPlayback = false
@@ -212,7 +215,9 @@ struct DetailView: View {
                     let id = imdb
                     Task {
                         let list = await model.streams(type: "movie", id: id)
-                        best = detailQuality(id)
+                        // Task 3.7: the final state only adds to a row built from an intermediate result (no jump).
+                        let final = detailQuality(id)
+                        best = best.map { $0.adding(final) } ?? final
                         updateChoice(id, list: list)
                         if !techBadges.isEmpty { logFirstBadges("Technik") }
                         markLoad(.tech, source: "neu, \(list.count) Quellen")
@@ -452,6 +457,21 @@ struct DetailView: View {
     /// Welle E-a: eine Zeile, höchstens 5 (Auflösung, DV/HDR, Atmos, Ton + Kanäle, Remux).
     private var techBadges: [QualityBadge] {
         best.map { QualityBadges.detailRow($0, settings: model.profile.appearance.badges) } ?? []
+    }
+
+    /// Task 3.7 (A-A-6): first intermediate result of this page's search: badges right away; the pick of
+    /// „Sofort abspielen“ too, if there is one (no „Keine Quelle gefunden“ before the search is through).
+    private func applyPartialStreams(_ list: [(addon: String, stream: StreamItem)]) {
+        guard !isSeries, best == nil, let id = imdb, let q = DetailQuality.from(list.map(\.stream)) else { return }
+        best = q
+        let ms = appeared.map { Int(Date().timeIntervalSince($0) * 1000) } ?? -1
+        RemoteLog.info("detail", "Plaketten aus Zwischenstand nach \(ms) ms (\(list.count) Quellen)")
+        logFirstBadges("Technik, Zwischenstand")
+        markLoad(.tech, source: "Zwischenstand, \(list.count) Quellen")
+        if instantPlayOn, choice == nil, let pick = model.bestChoice(list, title: id) {
+            RemoteLog.info("play", "Beste Wahl aus Zwischenstand: \(pick.reason.rawValue) · \(pick.addon)")
+            choice = pick
+        }
     }
 
     /// Technik-Werte aus dem Quellen-Cache (keine Abfrage); nil ohne gecachte Quellen.
@@ -923,7 +943,7 @@ struct StreamListView: View {
             // Welle D-b (M3, Nacharbeit I2): lückenhafter alter Stand → Erneuerung abwarten und nur die neuen Quellen
             // anhängen (bestehende Zeilen bleiben: Fokus, `failed`, Rückfall). Nicht, wenn inzwischen etwas spielt oder
             // startet oder die Liste schon eine andere Folge zeigt.
-            if playing == nil, current == nil, model.partialNeedsRefresh(id: request.id) {
+            if playing == nil, current == nil, model.partialNeedsRefresh(id: request.id, forPage: true) {
                 refreshingPartial = true
                 let fresh = await model.refreshedPartialStreams(type: request.type, id: request.id)
                 refreshingPartial = false
