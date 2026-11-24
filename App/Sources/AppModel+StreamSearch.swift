@@ -107,6 +107,9 @@ struct AddonSearchStatusLine: View {
 }
 
 /// Zwischenstand der Suche in die Liste übernehmen, solange sie noch lädt (Treffer erscheinen sofort).
+/// Task 3.7 (A-A-7): also the state that already exists when the view appears (joining a running search of the
+/// detail page or the prefetch), not only the next finished addon. A finished search is left to the caller's own
+/// result (its last state may be an older search of this title).
 struct StreamSearchPartials: ViewModifier {
     let id: String
     let loading: Bool
@@ -114,10 +117,12 @@ struct StreamSearchPartials: ViewModifier {
     @ObservedObject private var search = StreamSearchStatus.shared
 
     func body(content: Content) -> some View {
-        content.onChange(of: search.progress[id]?.finishedCount ?? 0) { _, _ in
-            guard loading else { return }
+        content.onChange(of: search.progress[id]?.finishedCount ?? 0, initial: true) { old, new in
+            guard loading, let p = search.progress[id], !p.isComplete else { return }
             let list = search.partial(id)
-            if !list.isEmpty { apply(list) }
+            guard !list.isEmpty else { return }
+            if old == new { RemoteLog.info("streams", "\(id): Beitritt mit Zwischenstand (\(p.finishedCount)/\(p.statuses.count) Addons, \(list.count) Quellen)") }
+            apply(list)
         }
     }
 }
