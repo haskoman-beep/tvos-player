@@ -47,4 +47,8 @@ Tasks 2.1–2.6 of docs/superpowers/plans/2026-11-22-verbesserungen.md. Way back
 **Fallback triggers:** login lost; playback does not start; images missing everywhere.
 
 ## 6. Observations during the device test
-(empty)
+- 24.11. Phone-input screen: the backup code was cut off („Y25M-DWYP-T8…“) → backup useless. Fixed in a3c292d
+  (code on its own line, never truncated; hint texts wrap).
+- 24.11. Home (hero): moving focus into a row hides that row's heading (it scrolls under the hero info).
+- 24.11. Home (hero): title logo above the hero info missing (planned: `heroTitle` logo, Build 5a).
+- 24.11. Wish: sign in with a Nuvio account and sync its addons etc.
