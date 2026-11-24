@@ -1202,6 +1202,14 @@ Schlüssel weiter aus der Keychain
 
 **Voraussetzung:** Am Gerät bestätigt, dass Keychain-Einträge die 7-Tage-Neusignatur über atvloadly überstehen.
 
+> **Konflikt (Schlussreview Build 2, I5):** Die Annahme „Build 2 bis 5 lesen die Schlüssel weiter aus der Keychain“
+> stimmt so nicht. Seit Build 2 ist beim normalen Start das geladene Profil maßgeblich: Ein Profil ohne Geheimnisse
+> *löscht* alle Keychain-Einträge dieses Profils (`SecretMigration.copyIntoStore`, `SecretStore.swift`). Außerdem
+> lehnen Builds mit `currentSchema = 1` eine Datei mit `schemaVersion = 2` als „neuere Version“ ab
+> (`ProfileStore.swift`). Der Weg zurück von Build 6 braucht deshalb vorher ein Release mit einer Markerregel:
+> Sagt das Profil „Geheimnisse liegen im Schlüsselbund“, wird von dort gelesen und nie gelöscht; und dieses Release
+> muss `schemaVersion = 2` lesen können.
+
 - [ ] Schreiben von `apiKeys` und `syncTokens` ins Profil endet; `encode` schreibt leere Wörterbücher.
 - [ ] Test: Export ohne Geheimnisse enthält keinen Schlüssel; Profil-JSON enthält keinen Schlüssel.
 
