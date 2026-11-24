@@ -189,7 +189,7 @@ private let seasonTwo = #"{"episodes":[{"season_number":2,"episode_number":4,"na
     #expect(Set(eps.map { "\($0.season)x\($0.episode)" }).isSuperset(of: ["1x8", "1x9", "2x5", "2x6"]))
 }
 
-/// A-B-5 / A-B-10: day key for "recompute on day change" (local calendar day, not 24 h).
+/// A-B-5: day key for "recompute on day change" (local calendar day, not 24 h).
 @Test func upcomingDayChangeWakesRows() {
     let cal = berlin
     let evening = cal.date(from: DateComponents(year: 2026, month: 11, day: 24, hour: 23, minute: 50))!

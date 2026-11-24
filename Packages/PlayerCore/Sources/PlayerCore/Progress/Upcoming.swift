@@ -51,8 +51,8 @@ public enum Upcoming {
         return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
     }
 
-    /// A-B-5 / A-B-10: rows load again when the app becomes active and a shown catalog is due, or when the local day
-    /// changed since `lastDay` ("Heute neu", date filters and the calendar depend on the day, not only on the cache).
+    /// A-B-5: rows load again when the app becomes active and a shown catalog is due, or when the local day
+    /// changed since `lastDay` ("Heute neu" and the calendar depend on the day, not only on the cache).
     public static func wakeNeeded(lastDay: String, now: Date, calendar: Calendar, cacheDue: Bool) -> Bool {
         cacheDue || dayKey(now, calendar: calendar) != lastDay
     }
