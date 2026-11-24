@@ -121,6 +121,40 @@ extension StoredProfiles {
     }
 }
 
+extension StoredProfiles {
+    /// Task 3.9: whether any profile holds a non-empty API key or a login. The plain export (`withoutSecrets`) never
+    /// does; a sealed backup normally does.
+    public var carriesSecrets: Bool {
+        profiles.contains { p in !p.syncTokens.isEmpty || p.apiKeys.values.contains { !$0.isEmpty } }
+    }
+
+    /// Task 3.9 (Build 2 final review I4, user decision 24.11.): a restore without keys on the same TV keeps the keys,
+    /// logins and the remote-log secret of every profile whose ID already exists here (`current`); gaps of the current
+    /// profile are filled from `store` (Keychain copy) for those IDs only. A profile with a new ID gets none. A backup
+    /// that carries secrets is returned unchanged: its own values win. Never replaces a value the backup has.
+    /// Returns the number of profiles that kept at least one value.
+    public func keepingSecrets(from current: [Profile], store: SecretStore? = nil) -> (profiles: StoredProfiles, kept: Int) {
+        guard !carriesSecrets else { return (self, 0) }
+        let here = Dictionary(current.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        var s = self
+        var kept = 0
+        for i in s.profiles.indices {
+            guard let old = here[s.profiles[i].id] else { continue }
+            var p = s.profiles[i]
+            var n = 0
+            for (k, v) in old.apiKeys where !v.isEmpty && (p.apiKeys[k] ?? "").isEmpty { p.apiKeys[k] = v; n += 1 }
+            for (k, t) in old.syncTokens where p.syncTokens[k] == nil { p.syncTokens[k] = t; n += 1 }
+            if let store {
+                var one = [p]
+                n += SecretMigration.fillMissing(&one, store: store)
+                p = one[0]
+            }
+            if n > 0 { s.profiles[i] = p; kept += 1 }
+        }
+        return (s, kept)
+    }
+}
+
 /// Task 2.4 (S-12): the stored blocks of one profile, named `<kind>-<profile uuid>.json` or
 /// `<kind>-<profile uuid>-<id>.json` (plus `.bak` copies).
 public enum ProfileBlocks {

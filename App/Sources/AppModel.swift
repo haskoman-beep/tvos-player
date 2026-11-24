@@ -84,7 +84,7 @@ final class AppModel: ObservableObject {
             Task { @MainActor in RemoteLog.info("fortschritt", "beschnitten \(n)") }
         })
         adoptProfileLoad(loaded)
-        adoptSecrets(recovery: loaded.needsSecretRecovery)   // file lost or read leniently: the Keychain fills gaps
+        adoptSecrets(recovery: loaded.needsSecretRecovery)   // file lost or a secret field unreadable: the Keychain fills gaps
         scopes = ScopeClock(profile: profile.id)
         let progressStart = ContinuousClock.now
         progress = loadProgress(profile.id)
@@ -386,8 +386,8 @@ final class AppModel: ObservableObject {
 
     /// After a load or a replacement of the profiles. Fix round 1: normally the loaded profile is authoritative (it
     /// may hold values changed under Build 1): its secrets go into the Keychain, nothing goes back into profiles.json.
-    /// `recovery` (older version restored, profile file lost or reset, profiles read leniently with a non-empty
-    /// report): first fill the secrets the profiles lack from
+    /// `recovery` (older version restored, profile file lost or reset, profiles read leniently with a report that
+    /// names `apiKeys` or `syncTokens`, Task 3.9): first fill the secrets the profiles lack from
     /// the Keychain. Nothing while the profiles are unreadable.
     private func adoptSecrets(recovery: Bool) {
         guard storeState == .ready else { return }
@@ -946,11 +946,16 @@ final class AppModel: ObservableObject {
                     let (backup, report) = try Backup.decodeReporting(d)
                     // Final review: like the load line, paths only (a backup from a newer build).
                     if !report.isEmpty { RemoteLog.info("speicher", "Import · ignoriert: \(report.ignored.joined(separator: ", "))") }
-                    let (imported, expired) = backup.profiles.droppingExpiredTokens()
+                    // Task 3.9 (user decision 24.11.): a backup without keys keeps the keys, logins and remote-log
+                    // secret of profiles that already exist here (same ID; Keychain fills gaps); a new ID gets none.
+                    // A backup that carries keys keeps its own values.
+                    let (withKeys, keptKeys) = backup.profiles.keepingSecrets(from: stored.profiles, store: secrets)
+                    let (imported, expired) = withKeys.droppingExpiredTokens()
                     // Fix round 2: saved directly, so the cleanup below runs only after the restored profiles are
                     // stored (a failed save ends in the catch: nothing is removed).
                     try store.save(imported)
                     stored = imported
+                    if keptKeys > 0 { RemoteLog.info("speicher", "Sicherung ohne Schlüssel: \(keptKeys) Profil(e) behalten ihre Schlüssel") }
                     mirrorSecrets()   // Task 2.2 write rule also after a restore (Keychain follows the saved profiles)
                     for gone in ProfileBlocks.removedByRestore(before: before, after: imported.profiles.map(\.id)) {
                         removeProfileData(gone)

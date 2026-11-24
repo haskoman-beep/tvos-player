@@ -42,12 +42,14 @@ public enum ProfileLoad: Sendable {
     case unreadable(reason: String, candidates: [RecoveryCandidate])
 
     /// Task 2.2, final review I1: whether the Keychain should fill gaps instead of following the profiles. True when
-    /// the file was missing (`.fresh`) or read leniently (a non-empty report: one bad value can empty `apiKeys` or
-    /// drop a login, and the Keychain copy is then the only good one). A Build 1 rollback never produces a report.
+    /// the file was missing (`.fresh`) or a secret-bearing field was read leniently (one bad value can empty `apiKeys`
+    /// or drop a login, and the Keychain copy is then the only good one). Task 3.9 (Build 2 re-review): a report about
+    /// unrelated fields is no recovery, so a key deleted under Build 1 is not put back. A Build 1 rollback never
+    /// produces a report. (An older version restored by the user is recovery at the call site.)
     public var needsSecretRecovery: Bool {
         switch self {
         case .fresh: return true
-        case .loaded(_, let report): return !report.isEmpty
+        case .loaded(_, let report): return report.touchesSecrets
         case .unreadable: return false
         }
     }

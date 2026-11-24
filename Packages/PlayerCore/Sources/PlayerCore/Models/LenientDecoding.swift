@@ -7,6 +7,20 @@ public struct DecodeReport: Sendable, Equatable {
     public var ignored: [String]
     public init(ignored: [String] = []) { self.ignored = ignored }
     public var isEmpty: Bool { ignored.isEmpty }
+
+    /// Fields whose loss empties a secret: API keys (the remote-log secret is one of them) and sync logins.
+    public static let secretFields: Set<String> = ["apiKeys", "syncTokens"]
+
+    /// Task 3.9: whether an ignored path runs through a secret-bearing field (`profiles[0].apiKeys`,
+    /// `profiles[1].syncTokens.trakt`). Matches whole path segments (an index suffix like `[2]` aside), not substrings.
+    public var touchesSecrets: Bool {
+        ignored.contains { path in
+            path.split(separator: ".").contains { seg in
+                let name = seg.split(separator: "[", maxSplits: 1).first.map(String.init) ?? ""
+                return Self.secretFields.contains(name)
+            }
+        }
+    }
 }
 
 /// Collects the `DecodeReport` while a decoder runs; handed to the models via `decoder.userInfo[.decodeReport]`.
