@@ -735,7 +735,7 @@ Fehler `LookImport.Failure.notAnExport`, `.foreignSchema(String)`; `PhoneCommand
   App-Version nicht“.
 
 - [ ] **Step 1: Tests:** die sechs aus §8.5/§8.4 plus `importFromOtherPresetBecomesOverrides` (Edel-Beispiel aus
-  `07` §5.2 → 25 Abweichungen gegenüber Apple TV, `preset == .appleTV`).
+  `07` §5.2 → 26 Abweichungen gegenüber Apple TV, `preset == .appleTV`).
 - [ ] **Step 2 bis 4:** rot, umsetzen, grün.
 - [ ] **Step 5:** Commit „Aussehen: JSON aus dem Konfigurator über die Handy-Seite einspielen“.
 
