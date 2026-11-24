@@ -301,21 +301,24 @@ struct PhoneInputView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     Text("Am Handy eingeben").font(.title2.bold())
                     Text("QR-Code mit der iPhone-Kamera scannen. Auf der Seite Addon-URLs, Schlüssel, Nuvio-Export oder TMDB-Links einfügen und senden. Unter „Startseite ordnen“ Reihen per Finger verschieben und ausblenden. Dort kannst du auch alle Profile sichern.")
-                        .frame(maxWidth: 900, alignment: .leading)
+                        .frame(maxWidth: 900, alignment: .leading).fixedSize(horizontal: false, vertical: true)
                     if let a = server.shownAddress { Text(a).font(.caption.monospaced()).foregroundStyle(.secondary) }
                     if server.connected {
                         Text("Handy verbunden. Der QR-Code gilt nur einmal; für ein anderes Gerät „Neuer QR-Code“ wählen.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     if let code = server.exportCode {
-                        Text("Code der Sicherung: " + (BackupCrypto.groupedCode(code) ?? code)).font(.title3.monospaced().bold())
+                        // Label and code on separate lines; the code must never be truncated (a cut-off code makes the backup useless).
+                        Text("Code der Sicherung:").font(.headline)
+                        Text(BackupCrypto.groupedCode(code) ?? code).font(.title3.monospaced().bold())
+                            .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                         Text("Jetzt notieren: Ohne diesen Code lässt sich die Datei nicht wiederherstellen. Er wird nirgends gespeichert.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                     if let f = server.failure { Text(f).foregroundStyle(.red) }
                     if let n = model.notice { Text("✓ " + n).foregroundStyle(.green) }
                     Text("Das Handy muss im selben WLAN sein. Die Seite ist nur erreichbar, solange diese Ansicht offen ist; nach 30 Minuten braucht es einen neuen QR-Code. Sichern, Wiederherstellen, Addons und Schlüssel bestätigst du hier am Fernseher.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: Theme.Space.l) {
                         // Sichtbarer Fokusanker (A4/N6): ohne ihn hat die Seite nichts Fokussierbares.
                         Button("Fertig") { dismiss() }
