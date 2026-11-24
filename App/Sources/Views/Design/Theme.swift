@@ -297,14 +297,15 @@ enum Theme {
 
 extension View {
     /// Schrift einer Textrolle; sekundäre Rollen bekommen `fg.secondary`.
-    func textRole(_ role: Theme.TextRole) -> some View {
-        modifier(TextRoleModifier(role: role, focusAware: false))
+    /// `tracking` (points) is added to the role's own tracking; an outer `.tracking` no longer works on a role.
+    func textRole(_ role: Theme.TextRole, tracking: CGFloat = 0) -> some View {
+        modifier(TextRoleModifier(role: role, focusAware: false, extraTracking: tracking))
     }
 
     /// Wie `textRole`, aber mit Fokusfarben, wenn der Text im Label eines fokussierten Knopfs liegt
     /// (Schwarz bzw. Schwarz 60 % auf der weißen Fokusfläche).
-    func textRoleInRow(_ role: Theme.TextRole) -> some View {
-        modifier(TextRoleModifier(role: role, focusAware: true))
+    func textRoleInRow(_ role: Theme.TextRole, tracking: CGFloat = 0) -> some View {
+        modifier(TextRoleModifier(role: role, focusAware: true, extraTracking: tracking))
     }
 
     /// Dunkler, ruhiger Grund für Bedienseiten (Einstellungen, Verwalter, Quellen) statt heller Glasfläche.
@@ -326,6 +327,7 @@ private struct SettingsSurfaceModifier: ViewModifier {
 private struct TextRoleModifier: ViewModifier {
     let role: Theme.TextRole
     let focusAware: Bool
+    var extraTracking: CGFloat = 0
     @Environment(\.isFocused) private var focused
     /// Task 4.4: fonts and colors from the runtime theme (`standard` = today's `role.font` and `Theme.Palette`).
     @Environment(\.theme) private var theme
@@ -333,7 +335,9 @@ private struct TextRoleModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .font(theme.type.font(role))
-            .tracking(theme.type.tracking(role))
+            // The modifier nearest the Text wins, so an outer `.tracking` on a role would be overridden by this
+            // one: pass extra spacing through `textRole(_:tracking:)` instead.
+            .tracking(theme.type.tracking(role) + extraTracking)
             .foregroundStyle(focusAware
                              ? theme.color.foreground(secondary: role.isSecondary, focused: focused)
                              : (role.isSecondary ? theme.color.secondary : theme.color.primary))

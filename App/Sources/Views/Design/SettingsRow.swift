@@ -162,8 +162,7 @@ struct SettingsSectionLabel: View {
 
     var body: some View {
         Text(title.uppercased())
-            .textRole(.rowDetail)
-            .tracking(1)
+            .textRole(.rowDetail, tracking: 1)
             .padding(.top, Theme.Space.l - Theme.Space.m)
             .accessibilityAddTraits(.isHeader)
             .accessibilityLabel(title)

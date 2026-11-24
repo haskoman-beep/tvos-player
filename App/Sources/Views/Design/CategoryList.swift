@@ -133,8 +133,7 @@ private struct CategoryGroupHeader: View {
         switch label {
         case .title(let t):
             Text(t.uppercased())
-                .textRole(.rowDetail)
-                .tracking(1)
+                .textRole(.rowDetail, tracking: 1)
                 .lineLimit(1)
                 // Same inset as the row content (row padding of ThemeRowButtonStyle).
                 .padding(.leading, Theme.Space.m)

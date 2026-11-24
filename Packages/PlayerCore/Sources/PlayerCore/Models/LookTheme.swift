@@ -80,6 +80,25 @@ public enum LookTheme {
         return scaled
     }
 
+    // MARK: Plan table or today's design
+
+    /// Task 4.4: the theme keeps today's design for a token as long as the look keeps the "Mein Look" preset value
+    /// there (`ThemeValues.standard`); only a different value switches that token to the plan table. These three
+    /// decisions are the whole "no visible change" guarantee of Build 4, so they live here with tests.
+    public static func usesPlanBackground(_ v: LookValues) -> Bool {
+        v.global.background != LookPreset.values(.appleTV).global.background
+    }
+
+    public static func usesPlanType(scale: LookTypeScale, character: LookTypeCharacter) -> Bool {
+        let p = LookPreset.values(.appleTV).global
+        return scale != p.typeScale || character != p.typeCharacter
+    }
+
+    /// System "reduce motion" always switches to the table (all times zero).
+    public static func usesPlanMotion(_ v: LookValues, reduceMotion: Bool) -> Bool {
+        reduceMotion || v.global.motion != LookPreset.values(.appleTV).global.motion
+    }
+
     /// Motion times, all zero when the system asks to reduce motion (Q-28).
     public static func motion(_ m: LookMotion, reduceMotion: Bool) -> LookMotionTimes {
         LookMetrics.motion(reduceMotion ? .aus : m)

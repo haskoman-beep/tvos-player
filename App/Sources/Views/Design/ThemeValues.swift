@@ -51,7 +51,8 @@ struct ThemeValues: Equatable {
         var scale: LookTypeScale
         var character: LookTypeCharacter
 
-        var isToday: Bool { scale == .standard && character == .neutral }
+        /// Decision in PlayerCore (`LookTheme.usesPlanType`, tested): the preset's scale and character keep today's styles.
+        var isToday: Bool { !LookTheme.usesPlanType(scale: scale, character: character) }
 
         func font(_ role: Theme.TextRole) -> Font {
             guard !isToday else { return role.font }
@@ -150,6 +151,11 @@ struct ThemeValues: Equatable {
     }
 
     /// Today's values, taken from the `Theme` constants (so both stay equal by construction).
+    /// `make(defaultProfile.themeLook, false, false)` equals this **except `color.accent` / `onAccent`**: `standard`
+    /// carries the preset's accent (weiss), while `make` always takes the profile's accent, and the old default
+    /// accent (blue) maps to blau (test `defaultThemeLookUsesNoPlanTokens`). No view draws `color.accent` in
+    /// Build 4 (the tint still comes from `.tint`), so nothing is visible; do not compare a theme with `.standard`
+    /// to mean "unstyled" — compare the look (`LookTheme.usesPlan…`) instead.
     static let standard = ThemeValues(
         color: Colors(base: Theme.Palette.base, surface: Theme.Palette.surface, raised: Theme.Palette.overlayCard,
                       row: Theme.Palette.row, rowFocused: Theme.Palette.rowFocused, scrim: Theme.Palette.scrim,
@@ -172,11 +178,10 @@ struct ThemeValues: Equatable {
     /// The theme for a profile's look (`Profile.themeLook`, see the ruling there) and the system settings.
     static func make(_ values: LookValues, reduceMotion: Bool, reduceTransparency: Bool) -> ThemeValues {
         var t = standard
-        let preset = LookPreset.values(.appleTV)
         let accent = LookTheme.accent(values.global.accent)
         t.color.accent = rgb(accent.accent)
         t.color.onAccent = rgb(accent.onAccent)
-        if values.global.background != preset.global.background {
+        if LookTheme.usesPlanBackground(values) {
             let bg = LookTheme.background(values.global.background)
             t.color.base = rgb(bg.base)
             t.color.surface = rgb(bg.surface)
@@ -187,7 +192,7 @@ struct ThemeValues: Equatable {
         }
         if reduceTransparency { t.color.scrim = t.color.base }
         t.type = TypeScale(scale: values.global.typeScale, character: values.global.typeCharacter)
-        if reduceMotion || values.global.motion != preset.global.motion {
+        if LookTheme.usesPlanMotion(values, reduceMotion: reduceMotion) {
             let m = LookTheme.motion(values.global.motion, reduceMotion: reduceMotion)
             t.motion = Motion(focus: m.focus, press: m.focus == 0 ? 0 : t.motion.press, fade: m.fade,
                               backdrop: m.backdrop, expand: m.expand)

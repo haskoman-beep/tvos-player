@@ -74,3 +74,43 @@ import Testing
     #expect(LookTheme.motion(.standard, reduceMotion: true) == LookMetrics.motion(.aus))
     #expect(LookTheme.motion(.dezent, reduceMotion: false).focus == 0.18)
 }
+
+// Fix round 1 (review M1/M2): the "no visible change" decisions, and why make(default) differs from standard only
+// in the accent.
+@Test func defaultThemeLookUsesNoPlanTokens() {
+    let v = Profile.makeDefault().themeLook
+    #expect(!LookTheme.usesPlanBackground(v))
+    #expect(!LookTheme.usesPlanType(scale: v.global.typeScale, character: v.global.typeCharacter))
+    #expect(!LookTheme.usesPlanMotion(v, reduceMotion: false))
+    #expect(LookTheme.usesPlanMotion(v, reduceMotion: true))
+    // ThemeValues.standard carries the preset accent; the default profile's old accent (blue) maps to blau.
+    #expect(LookPreset.values(.appleTV).global.accent == .weiss)
+    #expect(v.global.accent == .blau)
+}
+
+@Test func planTokenDecisionsFollowThePreset() {
+    var v = LookPreset.values(.appleTV)
+    v.global.background = .warm
+    #expect(LookTheme.usesPlanBackground(v))
+    #expect(LookTheme.usesPlanType(scale: .gross, character: .neutral))
+    #expect(LookTheme.usesPlanType(scale: .standard, character: .editorial))
+    v.global.motion = .dezent
+    #expect(LookTheme.usesPlanMotion(v, reduceMotion: false))
+}
+
+// Review M3: every row of both color tables against the plan.
+@Test func themeColorTablesCompleteAgainstPlan() {
+    let accents: [LookAccent: (UInt32, UInt32)] = [
+        .champagner: (0xD4B87A, 0x17140C), .weiss: (0xF2F1EC, 0x111111), .eisblau: (0x8FC7FF, 0x06121D),
+        .blau: (0x3B82F6, 0xFFFFFF), .rot: (0xE5383B, 0xFFFFFF), .koralle: (0xFF7A59, 0x1D0A04),
+        .salbei: (0x9FC5A8, 0x0B160E), .violett: (0xA78BFA, 0x120A26),
+    ]
+    #expect(accents.count == LookAccent.allCases.count)
+    for (a, c) in accents { #expect(LookTheme.accent(a) == .init(accent: c.0, onAccent: c.1)) }
+    let bgs: [LookBackground: (UInt32, UInt32, UInt32)] = [
+        .schwarz: (0x000000, 0x131314, 0x1F1F20), .graphit: (0x0B0C0E, 0x17191D, 0x22252B),
+        .tinte: (0x070B14, 0x111827, 0x1E2432), .warm: (0x0E0B08, 0x1C1713, 0x27231F),
+    ]
+    #expect(bgs.count == LookBackground.allCases.count)
+    for (b, c) in bgs { #expect(LookTheme.background(b) == .init(base: c.0, surface: c.1, raised: c.2)) }
+}
