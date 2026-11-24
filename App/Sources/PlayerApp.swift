@@ -73,6 +73,8 @@ struct RootView: View {
     /// Wurzel der Einstellungen sichtbar (keine NavigationLink-Unterseite offen): deren Unterseiten liegen nicht
     /// in `settingsPath`, darum zählt hier onAppear/onDisappear der Wurzel (Review F-c I2).
     @State private var settingsRootVisible = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
         Group {
@@ -94,6 +96,9 @@ struct RootView: View {
                     .onAppear { pickedProfile = true }   // F-B-2: the picker decision is made once
             }
         }
+        // Task 4.4: runtime theme from the profile's look (derived from the old fields, `Profile.themeLook`).
+        .environment(\.theme, ThemeValues.make(model.profile.themeLook, reduceMotion: reduceMotion,
+                                               reduceTransparency: reduceTransparency))
         .alert("Fehler", isPresented: Binding(get: { model.lastError != nil }, set: { if !$0 { model.lastError = nil } })) {
             Button("OK") { model.lastError = nil }
         } message: { Text(LogRedact.text(model.lastError ?? "")) }   // Schlüssel nie auf dem Bildschirm
