@@ -23,13 +23,21 @@ Tasks 2.1–2.6 of docs/superpowers/plans/2026-11-22-verbesserungen.md. Way back
 - Restoring a backup replaces the TV's progress with the backup's; profiles not in the backup lose their data.
 - A plain (unsealed) backup has no keys, no logins and no URLs that may carry secrets; restoring it on the same TV
   also replaces kit and link settings with the scrubbed ones.
-- Expired logins are dropped on restore even when they could be refreshed → log in again there.
+- On restore, expired logins are dropped only when they have no refresh token (cannot be renewed) → log in again
+  there. An expired Trakt login with a refresh token stays and is renewed on first use.
 - Old watched entries (beyond the newest 1500 and older than 18 months) are pruned.
 
 ## 4. Expected remote-log lines
-`geheimnisse: <n> in den Schlüsselbund kopiert` (first start only), `netz: … Schattenbetrieb` (target check, at most
-5 per start), `sync: Warteschlange <n> offen · <n> abgelegt`, `fortschritt: beschnitten <n>` (only large books),
-`Profildaten entfernt · N Blöcke` (delete or restore).
+- `speicher: Schlüsselbund: <n> Eintrag/Einträge abgeglichen` (every start; `<n>` is 0 when nothing changed). On
+  recovery (older version loaded, profile file lost, or a profile value unreadable) it ends with
+  `, <n> fehlende Wert(e) ergänzt`.
+- `streams: <addon> <type>/<id>: Zielprüfung würde <n> von <m> Streams ablehnen (Schattenbetrieb)` (target check,
+  every stream answer with refusals) and `bilder: Zielprüfung würde Bild ablehnen (Schattenbetrieb, <scheme>, Nr. <n>)`
+  (at most 5 per start).
+- `sync: Warteschlange: <n> ausstehend, <n> gemerkt, <n> abgelaufen` (at the first queue use per profile, only when
+  changes are remembered or entries expired; queued actions and dead letters are not counted in this line).
+- `fortschritt: beschnitten <n>` (only large books).
+- `speicher: Profildaten entfernt · <n> Block/Blöcke` (delete or restore).
 
 ## 5. Also check
 - [ ] Images still come from the disk cache after a restart; scrolling smooth.
