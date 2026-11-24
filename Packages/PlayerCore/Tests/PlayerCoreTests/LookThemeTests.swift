@@ -114,3 +114,34 @@ import Testing
     #expect(bgs.count == LookBackground.allCases.count)
     for (b, c) in bgs { #expect(LookTheme.background(b) == .init(base: c.0, surface: c.1, raised: c.2)) }
 }
+
+// Round 2: a key with an old field takes the stored look's value while the old field still maps to it (import),
+// and the old field's value once the user changed it in the old settings.
+@Test func importedChampagnerShowsInTheme() {
+    var p = Profile(name: "T")
+    var o = LookOverrides()
+    o.global.accent = .champagner
+    o.detail.badgeStyle = .umriss
+    o.home.cardSize = .klein
+    p.applyImportedLook(Look(preset: .appleTV, overrides: o))
+    let v = p.themeLook
+    #expect(v.global.accent == .champagner)
+    #expect(v.detail.badgeStyle == .umriss)
+    #expect(v.home.cardSize == .klein)
+}
+
+@Test func oldFieldEditAfterImportWins() {
+    var p = Profile(name: "T")
+    var o = LookOverrides()
+    o.global.accent = .eisblau
+    o.detail.badgeStyle = .gefuellt
+    p.applyImportedLook(Look(preset: .appleTV, overrides: o))
+    #expect(p.themeLook.global.accent == .eisblau)
+    p.appearance.accent = .green
+    p.appearance.badges.style = .logo
+    p.appearance.cardSize = .large
+    let v = p.themeLook
+    #expect(v.global.accent == .salbei)
+    #expect(v.detail.badgeStyle == .logos)
+    #expect(v.home.cardSize == .gross)
+}
