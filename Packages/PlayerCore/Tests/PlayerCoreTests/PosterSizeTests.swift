@@ -92,16 +92,3 @@ import Testing
     #expect(a.rowKey != b.rowKey && a.rowKey == a2.rowKey)
     #expect(RowItems.deduped([]).isEmpty)
 }
-
-// Task 4.1a (A-B-5): day key of "Heute neu" changes at local midnight, not before.
-@Test func homeRowDayKeyChangesAtMidnight() {
-    var cal = Calendar(identifier: .gregorian)
-    cal.timeZone = TimeZone(identifier: "Europe/Berlin")!
-    let evening = cal.date(from: DateComponents(year: 2026, month: 11, day: 24, hour: 23, minute: 59, second: 30))!
-    let night = cal.date(from: DateComponents(year: 2026, month: 11, day: 25, hour: 0, minute: 0, second: 5))!
-    #expect(HomeRowDay.key(evening, calendar: cal) == "2026-11-24")
-    #expect(HomeRowDay.key(night, calendar: cal) == "2026-11-25")
-    let wait = HomeRowDay.secondsUntilNextDay(evening, calendar: cal)
-    #expect(wait > 30 && wait <= 31.5)   // 30 s to midnight plus a second of slack
-    #expect(HomeRowDay.secondsUntilNextDay(night, calendar: cal) > 86_000)
-}

@@ -144,18 +144,3 @@ public enum RowItems {
         return items.filter { seen.insert($0.rowKey).inserted }
     }
 }
-
-/// Task 4.1a (A-B-5): local calendar day of "Heute neu" (part of the row's load key).
-public enum HomeRowDay {
-    public static func key(_ date: Date, calendar: Calendar = .current) -> String {
-        let c = calendar.dateComponents([.year, .month, .day], from: date)
-        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
-    }
-
-    /// Seconds until the next local midnight, plus one second so the new day has begun.
-    public static func secondsUntilNextDay(_ date: Date, calendar: Calendar = .current) -> Double {
-        let start = calendar.startOfDay(for: date)
-        let next = calendar.date(byAdding: .day, value: 1, to: start) ?? date.addingTimeInterval(86_400)
-        return max(1, next.timeIntervalSince(date) + 1)
-    }
-}

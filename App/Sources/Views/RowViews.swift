@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 import Combine
 import PlayerCore
 
@@ -21,8 +20,6 @@ struct HomeRowView: View {
     @State private var failed = false
     /// Erhöht durch „erneut versuchen“: startet die Ladung neu.
     @State private var retry = 0
-    /// Task 4.1a (A-B-5): local calendar day; "Heute neu" loads again when it changes (wake-up, midnight).
-    @State private var day = HomeRowDay.key(Date())
     /// Welle F-f: fokussierter Platzhalter bzw. Statuskachel (0); nach dem Laden geht der Fokus an dieselbe Stelle.
     @FocusState private var focusedPlaceholder: Int?
     /// Startseite mit Hero: fokussierte Kachel meldet sich (nil außerhalb der Startseite).
@@ -46,7 +43,7 @@ struct HomeRowView: View {
                 .defaultFocus($focusedRoute, rememberedRoute, priority: .userInitiated)
         }
         .task(id: row.content.key + (row.content == .list(.continueWatching) ? "\(model.progress.entries.count)-\(model.progress.continueWatching().first?.updated.timeIntervalSince1970 ?? 0)" : "") + model.catalogStamp(row.content)
-               + (row.content == .list(.upcoming) ? "|r\(upcomingRevision.value)|d\(day)" : "") + "|t\(retry)") {
+               + (row.content == .list(.upcoming) ? "|r\(upcomingRevision.value)" : "") + "|t\(retry)") {
             guard case .list(let s) = row.content else { return }
             // Welle F-f: geteilte Ladung (AppModel+HomeRows), läuft beim Wegscrollen weiter.
             let r = await model.homeRowItems(s)
@@ -68,14 +65,6 @@ struct HomeRowView: View {
         }
         .onChange(of: focusedRoute != nil || focusedPlaceholder != nil) { _, f in onFocusInside?(f) }
         .onAppear { if focusedRoute != nil || focusedPlaceholder != nil { onFocusInside?(true) } }
-        // Task 4.1a (A-B-5): "Heute neu" follows the calendar day: on becoming active and at local midnight.
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in refreshDay() }
-        .task(id: row.content == .list(.upcoming) ? day : "") {
-            guard row.content == .list(.upcoming) else { return }
-            try? await Task.sleep(for: .seconds(HomeRowDay.secondsUntilNextDay(Date())))
-            guard !Task.isCancelled else { return }
-            refreshDay()
-        }
         // Task 4.1a (F-A-2): collection rows hand over like list rows: a focused placeholder (or status tile) goes to
         // the tile at the same place when the kit file arrives, else to the status tile.
         .onChange(of: collectionLoadPhase) { _, p in
@@ -132,13 +121,6 @@ struct HomeRowView: View {
         CollectionRowPhase.of(collectionID: id, folders: c?.folders, kitErrors: kit.errors, kitLoading: kit.loading)
     }
 
-    private func refreshDay() {
-        guard row.content == .list(.upcoming) else { return }
-        let now = HomeRowDay.key(Date())
-        guard now != day else { return }
-        RemoteLog.info("home", "Tageswechsel: \(title) lädt neu")
-        day = now
-    }
 
     /// Task 4.1a (F-A-2): phase of a collection row as `HomeRowPhase` (nil for list rows).
     private var collectionLoadPhase: HomeRowPhase? {
