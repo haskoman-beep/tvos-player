@@ -22,7 +22,10 @@ extension AppModel {
         guard let tmdb else { return [] }
         let cache = UpcomingCache.shared
         let airtimes = profile.sources.tvmazeAirtimes
-        let key = "\(profile.id.uuidString):\(tmdb.language):\(airtimes)"
+        // Review M3 (A-B-5): the local day is part of the key, so after midnight no entry fetched with yesterday's
+        // window (from/through) is returned.
+        let day = Upcoming.dayKey(Date(), calendar: Upcoming.localCalendar)
+        let key = "\(profile.id.uuidString):\(tmdb.language):\(airtimes):\(day)"
         let watchlist = await items(.watchlist)
         let ids = Upcoming.seriesIDs(continueWatching: progress.continueWatching(limit: 200), watchlist: watchlist)
         if let e = cache.entries[key], Date().timeIntervalSince(e.at) < e.ttl, Set(e.ids) == Set(ids) {
