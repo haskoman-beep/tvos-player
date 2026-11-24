@@ -2,8 +2,9 @@ import SwiftUI
 import PlayerCore
 
 /// Designsystem der App (Plan §4.1–4.4): Textrollen, Abstände, Radien, Flächen und Farben.
-/// Views nehmen diese Tokens statt fester Zahlen. Noch an keiner bestehenden Stelle eingesetzt (Welle F-0);
-/// F-a, F-b2 und F-d stellen die Bildschirme darauf um.
+/// Views nehmen diese Tokens statt fester Zahlen.
+/// Task 4.4: these constants are today's design and the source of `ThemeValues.standard`. New and moved views read
+/// the runtime theme (`@Environment(\.theme)`); the static API stays as a forwarding layer until every view is moved.
 enum Theme {
 
     // MARK: Textrollen (§4.2)
@@ -309,8 +310,16 @@ extension View {
     /// Dunkler, ruhiger Grund für Bedienseiten (Einstellungen, Verwalter, Quellen) statt heller Glasfläche.
     /// (`scrollContentBackground` gibt es auf tvOS nicht; tvOS-Listen zeichnen ohnehin keinen eigenen Grund.)
     func settingsSurface() -> some View {
-        self
-            .background(Theme.Palette.surface.ignoresSafeArea())
+        modifier(SettingsSurfaceModifier())
+    }
+}
+
+/// Task 4.4: reads `bg.surface` from the runtime theme (`standard` = `Theme.Palette.surface`).
+private struct SettingsSurfaceModifier: ViewModifier {
+    @Environment(\.theme) private var theme
+
+    func body(content: Content) -> some View {
+        content.background(theme.color.surface.ignoresSafeArea())
     }
 }
 
@@ -318,13 +327,16 @@ private struct TextRoleModifier: ViewModifier {
     let role: Theme.TextRole
     let focusAware: Bool
     @Environment(\.isFocused) private var focused
+    /// Task 4.4: fonts and colors from the runtime theme (`standard` = today's `role.font` and `Theme.Palette`).
+    @Environment(\.theme) private var theme
 
     func body(content: Content) -> some View {
         content
-            .font(role.font)
+            .font(theme.type.font(role))
+            .tracking(theme.type.tracking(role))
             .foregroundStyle(focusAware
-                             ? Theme.Palette.foreground(secondary: role.isSecondary, focused: focused)
-                             : (role.isSecondary ? Theme.Palette.secondary : Theme.Palette.primary))
+                             ? theme.color.foreground(secondary: role.isSecondary, focused: focused)
+                             : (role.isSecondary ? theme.color.secondary : theme.color.primary))
     }
 }
 
@@ -357,27 +369,30 @@ struct ThemeRowButtonStyle: ButtonStyle {
         let restFill: Color
         let verticalPadding: CGFloat
         @Environment(\.isFocused) private var focused
+        /// Task 4.4: surfaces, focus, shadow and timing from the runtime theme (`standard` = the `Theme` constants).
+        @Environment(\.theme) private var theme
         @State private var height: CGFloat = 0
 
         /// Fokus-Anheben, bei `maxFocusGrowth` so begrenzt, dass die Zeile oben und unten höchstens so viel wächst.
         private var focusScale: CGFloat {
-            guard let g = maxFocusGrowth, height > 0 else { return Theme.Focus.scale }
-            return min(Theme.Focus.scale, 1 + 2 * g / height)
+            guard let g = maxFocusGrowth, height > 0 else { return theme.focus.scale }
+            return min(theme.focus.scale, 1 + 2 * g / height)
         }
 
         var body: some View {
+            let shadow = theme.elevation.focus
             configuration.label
-                .padding(.horizontal, Theme.Space.m)
+                .padding(.horizontal, theme.space.m)
                 .padding(.vertical, verticalPadding)
                 .frame(maxWidth: maxWidth, minHeight: minHeight, alignment: .leading)
-                .background(focused ? Theme.Palette.rowFocused : restFill,
-                            in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
+                .background(focused ? theme.color.rowFocused : restFill,
+                            in: RoundedRectangle(cornerRadius: theme.radius.row, style: .continuous))
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { if maxFocusGrowth != nil { height = $0 } }
-                .scaleEffect(configuration.isPressed ? Theme.Focus.pressedScale : (focused ? focusScale : 1))
-                .shadow(color: .black.opacity(focused ? Theme.Focus.shadowOpacity : 0),
-                        radius: focused ? Theme.Focus.shadowRadius : 0, y: focused ? Theme.Focus.shadowY : 0)
-                .animation(.easeOut(duration: Theme.Focus.duration), value: focused)
-                .animation(.easeOut(duration: Theme.Focus.pressDuration), value: configuration.isPressed)
+                .scaleEffect(configuration.isPressed ? theme.focus.pressedScale : (focused ? focusScale : 1))
+                .shadow(color: .black.opacity(focused ? shadow.opacity : 0),
+                        radius: focused ? shadow.radius : 0, y: focused ? shadow.y : 0)
+                .animation(theme.motion.focusAnimation, value: focused)
+                .animation(theme.motion.pressAnimation, value: configuration.isPressed)
         }
     }
 }
