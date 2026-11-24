@@ -105,3 +105,36 @@ private func secretProfile() -> Profile {
     try store.set(nil, name: "n", profile: p.id)
     #expect(store.get("n", profile: p.id) == nil)
 }
+
+/// Final review I1: one unreadable value empties `apiKeys` on a lenient load. Such a load is recovery: the secrets
+/// come back from the store and nothing is deleted there.
+@Test func lenientLoadCountsAsSecretRecovery() throws {
+    let secrets = MemorySecretStore()
+    var s = StoredProfiles.makeDefault()
+    s.profiles[0] = secretProfile()
+    s.activeProfileID = s.profiles[0].id
+    let id = s.profiles[0].id
+    SecretMigration.copyIntoStore(profiles: s.profiles, store: secrets)
+    // Stored file where one API key has the wrong type: the whole dictionary falls back to [:].
+    var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(s)) as? [String: Any])
+    var profiles = try #require(json["profiles"] as? [[String: Any]])
+    profiles[0]["apiKeys"] = ["tmdb": 42]
+    json["profiles"] = profiles
+    let store = ProfileStore(directory: tempDir())
+    try JSONSerialization.data(withJSONObject: json).write(to: store.fileURL)
+    let load = store.loadResult()
+    guard case .loaded(let loaded, let report) = load else { Issue.record("expected .loaded"); return }
+    #expect(!report.isEmpty)
+    #expect(loaded.profiles[0].apiKeys.isEmpty)
+    #expect(load.needsSecretRecovery)
+    var list = loaded.profiles
+    #expect(SecretMigration.fillMissing(&list, store: secrets) == 2)
+    #expect(list[0].apiKeys["tmdb"] == "k-tmdb" && list[0].apiKeys[LogSignature.secretKey] == "log-secret")
+    #expect(SecretMigration.copyIntoStore(profiles: list, store: secrets) == 0)   // nothing deleted
+    #expect(secrets.get(SecretNames.apiKey("tmdb"), profile: id) == "k-tmdb")
+    // A clean load stays normal (the profile is authoritative); a missing file is recovery.
+    var clean = s; clean.profiles[0].apiKeys = ["tmdb": "k-tmdb"]
+    #expect(!ProfileLoad.loaded(clean, DecodeReport()).needsSecretRecovery)
+    #expect(ProfileLoad.fresh(clean).needsSecretRecovery)
+    #expect(!ProfileLoad.unreadable(reason: "x", candidates: []).needsSecretRecovery)
+}

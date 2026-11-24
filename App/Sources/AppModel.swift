@@ -81,7 +81,7 @@ final class AppModel: ObservableObject {
             Task { @MainActor in RemoteLog.info("fortschritt", "beschnitten \(n)") }
         })
         adoptProfileLoad(loaded)
-        if case .fresh = loaded { adoptSecrets(recovery: true) } else { adoptSecrets(recovery: false) }   // fresh: file lost
+        adoptSecrets(recovery: loaded.needsSecretRecovery)   // file lost or read leniently: the Keychain fills gaps
         let progressStart = ContinuousClock.now
         progress = loadProgress(profile.id)
         RemoteLog.metric(.startProfiles, ms: Metric.ms(profilesStart.duration(to: progressStart)),
@@ -308,7 +308,8 @@ final class AppModel: ObservableObject {
 
     /// After a load or a replacement of the profiles. Fix round 1: normally the loaded profile is authoritative (it
     /// may hold values changed under Build 1): its secrets go into the Keychain, nothing goes back into profiles.json.
-    /// `recovery` (older version restored, profile file lost or reset): first fill the secrets the profiles lack from
+    /// `recovery` (older version restored, profile file lost or reset, profiles read leniently with a non-empty
+    /// report): first fill the secrets the profiles lack from
     /// the Keychain. Nothing while the profiles are unreadable.
     private func adoptSecrets(recovery: Bool) {
         guard storeState == .ready else { return }
@@ -375,7 +376,7 @@ final class AppModel: ObservableObject {
         switch l {
         case .loaded(let s, _), .fresh(let s):
             adoptProfileLoad(l)
-            if case .fresh = l { profilesReplaced(s, recovery: true) } else { profilesReplaced(s, recovery: false) }
+            profilesReplaced(s, recovery: l.needsSecretRecovery)
             return true
         case .unreadable:
             adoptProfileLoad(l)

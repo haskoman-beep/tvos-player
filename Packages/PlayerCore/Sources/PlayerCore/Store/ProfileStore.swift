@@ -40,6 +40,17 @@ public enum ProfileLoad: Sendable {
     case fresh(StoredProfiles)
     /// Stored profiles exist but cannot be read. Nothing may be saved until the user picks a way out.
     case unreadable(reason: String, candidates: [RecoveryCandidate])
+
+    /// Task 2.2, final review I1: whether the Keychain should fill gaps instead of following the profiles. True when
+    /// the file was missing (`.fresh`) or read leniently (a non-empty report: one bad value can empty `apiKeys` or
+    /// drop a login, and the Keychain copy is then the only good one). A Build 1 rollback never produces a report.
+    public var needsSecretRecovery: Bool {
+        switch self {
+        case .fresh: return true
+        case .loaded(_, let report): return !report.isEmpty
+        case .unreadable: return false
+        }
+    }
 }
 
 /// Task 1.3: a readable older version the user can load instead (`ProfileStore.restore`).
