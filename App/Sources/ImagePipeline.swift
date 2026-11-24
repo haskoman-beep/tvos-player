@@ -3,6 +3,7 @@ import UIKit
 import ImageIO
 import CoreImage
 import os
+import Network
 import PlayerCore
 
 /// Bildlader: Plattencache (URLCache), Speichercache nach Bytes,
@@ -32,7 +33,8 @@ actor ImagePipeline {
     private var playbackVersion = 0
     private var lastBudgetCheck = Date.distantPast
     private var inFlight: [String: Task<UIImage?, Never>] = [:]
-    private var failed: [String: Date] = [:]
+    /// A-B-3: failed loads with their kind; 404/410 stay blocked 5 min, everything else 20 s (`ImageFailure`).
+    private var failed: [String: (at: Date, kind: ImageFailure)] = [:]
     /// Höchstens 3 gleichzeitige Dekodierungen, damit das Scrollen flüssig bleibt.
     private var decoding = 0
     private var waiters: [CheckedContinuation<Void, Never>] = []
@@ -82,9 +84,13 @@ actor ImagePipeline {
         let key = Self.memoryKey(url, target: target, blur: blur)
         if let img = memory.object(forKey: key as NSString) { stats.hit(); return img }
         stats.miss()
-        if let t = failed[key], Date().timeIntervalSince(t) < 300 { return nil }
+        if isBlocked(key) { return nil }
         if let running = inFlight[key] { return await running.value }
-        let task = Task<UIImage?, Never> { await self.fetch(url, target: target, blur: blur) }
+        let task = Task<UIImage?, Never> {
+            let (img, kind) = await self.fetch(url, target: target, blur: blur)
+            if img == nil, let kind { await self.noteFailure(key, kind) }
+            return img
+        }
         inFlight[key] = task
         let img = await task.value
         inFlight[key] = nil
@@ -94,8 +100,23 @@ actor ImagePipeline {
             memory.setObject(img, forKey: key as NSString, cost: c)
             lastKeys.set(Self.lastKey(url, blur: blur), key)
             updateBudget()
-        } else { failed[key] = Date() }
+            failed[key] = nil
+        }
         return img
+    }
+
+    private func isBlocked(_ key: String, now: Date = Date()) -> Bool {
+        guard let f = failed[key] else { return false }
+        if f.kind.blocks(since: f.at, now: now) { return true }
+        failed[key] = nil
+        return false
+    }
+
+    private func noteFailure(_ key: String, _ kind: ImageFailure) { failed[key] = (Date(), kind) }
+
+    /// A-B-3: the network is back – forget short-lived failures at once (404/410 stay).
+    func networkReturned() {
+        failed = failed.filter { $0.value.kind == .gone }
     }
 
     nonisolated static func memoryKey(_ url: URL, target: ImageTarget, blur: Int) -> String {
@@ -188,7 +209,7 @@ actor ImagePipeline {
         guard !playback else { return nil }
         let key = "\(url.absoluteString)#anim\(maxPixels)"
         if let img = animated.object(forKey: key as NSString) { return img }
-        if let t = failed[key], Date().timeIntervalSince(t) < 300 { return nil }
+        if isBlocked(key) { return nil }
         let caller = UUID()
         let load: AnimLoad
         if let running = animInFlight[key] { load = running } else {
@@ -220,13 +241,13 @@ actor ImagePipeline {
         let data: Data
         do {
             let (d, resp) = try await load(url)
-            guard (resp as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true else {
-                failed[key] = Date(); return nil
+            if let status = (resp as? HTTPURLResponse)?.statusCode, let kind = ImageFailure.classify(status: status) {
+                noteFailure(key, kind); return nil
             }
             data = d
         } catch {
-            // Abbruch (Fokus weg) ist kein Fehlschlag: sonst bliebe das GIF 5 min gesperrt.
-            if !Task.isCancelled && (error as? URLError)?.code != .cancelled && !(error is CancellationError) { failed[key] = Date() }
+            // Abbruch (Fokus weg) ist kein Fehlschlag: sonst bliebe das GIF gesperrt.
+            if !Task.isCancelled, let kind = ImageFailure.classify(error: error) { noteFailure(key, kind) }
             return nil
         }
         guard !Task.isCancelled else { return nil }
@@ -238,7 +259,7 @@ actor ImagePipeline {
         } onCancel: { flag.set() }
         releaseGIF()
         guard !Task.isCancelled else { return nil }
-        guard let (img, cost) = decoded else { failed[key] = Date(); return nil }
+        guard let (img, cost) = decoded else { noteFailure(key, .transient); return nil }
         if !playback { animated.setObject(img, forKey: key as NSString, cost: cost) }
         return img
     }
@@ -292,22 +313,36 @@ actor ImagePipeline {
         return (d, resp)
     }
 
-    /// Größenvariante zuerst, bei Fehlschlag die Original-Adresse.
-    private func fetch(_ url: URL, target: ImageTarget, blur: Int) async -> UIImage? {
+    /// Größenvariante zuerst, bei Fehlschlag die Original-Adresse. A-B-3: with no picture, the kind of failure
+    /// (nil = cancelled, not remembered).
+    private func fetch(_ url: URL, target: ImageTarget, blur: Int) async -> (UIImage?, ImageFailure?) {
         noteTargetPolicy(url)
         let candidates = ImageURLVariant.candidates(for: url.absoluteString, neededWidth: target.neededSourceWidth).compactMap(URL.init(string:))
+        var failure: ImageFailure?
+        var cancelled = false
         for (i, u) in candidates.enumerated() {
-            guard let (data, resp) = try? await load(u),
-                  (resp as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true else {
+            let data: Data
+            do {
+                let (d, resp) = try await load(u)
+                if let status = (resp as? HTTPURLResponse)?.statusCode, let kind = ImageFailure.classify(status: status) {
+                    failure = ImageFailure.combine(failure, kind)
+                    if i + 1 < candidates.count { noteVariantMiss(u) }
+                    continue
+                }
+                data = d
+            } catch {
+                if Task.isCancelled { cancelled = true; break }
+                if let kind = ImageFailure.classify(error: error) { failure = ImageFailure.combine(failure, kind) } else { cancelled = true; break }
                 if i + 1 < candidates.count { noteVariantMiss(u) }
                 continue
             }
             await acquire()
             let img = await Task.detached(priority: .utility) { Self.downsample(data, target: target, blur: blur) }.value
             release()
-            if let img { return img }
+            if let img { return (img, nil) }
+            failure = ImageFailure.combine(failure, .transient)   // undecodable: short memory only
         }
-        return nil
+        return (nil, cancelled ? nil : (failure ?? .transient))
     }
 
     /// Fehlende Größenvarianten melden (höchstens 5 Zeilen je Start), damit falsche Stufen auffallen.
@@ -404,6 +439,34 @@ private final class CacheCostTracker: NSObject, NSCacheDelegate, @unchecked Send
     }
 }
 
+/// A-B-3: counts "network back" moments (NWPath unsatisfied → satisfied). Visible `RemoteImage`s without a picture
+/// load again when it changes; the pipeline forgets its short-lived failures first.
+@MainActor final class NetworkReturn: ObservableObject {
+    static let shared = NetworkReturn()
+    @Published private(set) var generation = 0
+    private var online = true
+    private let monitor = NWPathMonitor()
+
+    private init() {
+        monitor.pathUpdateHandler = { path in
+            let ok = path.status == .satisfied
+            Task { @MainActor in NetworkReturn.shared.changed(online: ok) }
+        }
+        monitor.start(queue: DispatchQueue(label: "player.bilder.netzpfad"))
+    }
+
+    private func changed(online ok: Bool) {
+        guard ok != online else { return }
+        online = ok
+        guard ok else { return }
+        Task {
+            await ImagePipeline.shared.networkReturned()
+            generation += 1
+            RemoteLog.info("bilder", "Netz wieder da · sichtbare Bilder laden neu")
+        }
+    }
+}
+
 /// Bild aus dem Netz über `ImagePipeline`. Dekodiert nach der gezeichneten Größe × Bildschirmfaktor (#16);
 /// solange die Größe unbekannt ist (erster Layout-Durchlauf), wird nichts angefordert.
 /// `maxPixels` begrenzt optional die längere Seite. Große Bitmaps (Vollbild-Hintergründe) gibt die Ansicht
@@ -423,6 +486,8 @@ struct RemoteImage: View {
     /// Wave F-k: called with the address when it cannot be loaded (not on cancel); poster tiles then try the next one.
     var onFailure: (@MainActor (String) -> Void)? = nil
     @Environment(\.displayScale) private var displayScale
+    /// A-B-3: retry trigger when the network comes back.
+    @ObservedObject private var network = NetworkReturn.shared
     @State private var image: UIImage?
     @State private var loadedURL: String?
     /// Weichzeichner, mit dem `image` geladen wurde: nach einem Wechsel (Spoilerschutz) nie das alte Bild zeigen.
@@ -444,6 +509,8 @@ struct RemoteImage: View {
         let target: ImageTarget?
         /// Weichzeichner an/aus (z. B. Spoilerschutz nach „gesehen“) lädt die passende Variante.
         let blur: CGFloat
+        /// A-B-3: `NetworkReturn.generation`; a change loads again (a shown picture comes from the memory cache).
+        let network: Int
     }
 
     var body: some View {
@@ -467,7 +534,7 @@ struct RemoteImage: View {
             if let cap = maxPixels { t.width = min(t.width, cap); t.height = min(t.height, cap) }
             if t != target { target = t }
         }
-        .task(id: LoadKey(url: url, target: fixedTarget ?? target, blur: blur)) {
+        .task(id: LoadKey(url: url, target: fixedTarget ?? target, blur: blur, network: network.generation)) {
             guard let s = url, let u = URL(string: s) else {
                 image = nil
                 if let url { onFailure?(url) }
