@@ -34,10 +34,13 @@ struct RatingIconSettingsPage: View {
                 SettingsInfoRow(symbol: "photo.on.rectangle", tint: tint, title: "Status",
                                 detail: current.flatMap { URL(string: $0)?.host },
                                 value: Self.value(current, status: store.status))
-                if current != nil {
-                    SettingsRow(symbol: "arrow.uturn.backward", tint: tint, title: "Eingebaute Plaketten verwenden",
-                                reserveDetailSpace: false) { model.setRatingIconSet("") }
+                // F-B-9: the row stays (focus keeps its view) and is only dimmed once the built-in set is active.
+                SettingsRow(symbol: "arrow.uturn.backward", tint: tint, title: "Eingebaute Plaketten verwenden",
+                            reserveDetailSpace: false) {
+                    guard current != nil else { return }
+                    model.setRatingIconSet("")
                 }
+                .settingsUnavailable(current == nil)
                 PhoneLinkRow(section: .system, symbol: "iphone", tint: tint, title: "Adresse am Handy eintragen",
                              detail: "Feld „Eigener Bewertungs-Icon-Satz“ im Abschnitt System.")
             }
