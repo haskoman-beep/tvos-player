@@ -1,0 +1,91 @@
+import Foundation
+
+/// Task 3.2: which start steps run after a successful load, for both ways in (start path `loadAndStart` and the
+/// error ladder). W-A-1: the first successful load of a session always runs the whole start, also when it comes
+/// from the ladder. W-A-3: every later load restores the last chosen audio track. W-A-4/W-B-4: the jump to the
+/// synced fraction is repeated until it has been executed.
+public struct StartSequence: Sendable {
+    public enum Step: Sendable, Equatable {
+        /// Placeholder clip check (short "not cached" clips → next source); logs „Geladen ·“.
+        case placeholderCheck
+        /// Audio choice. nil = automatic (track memory, then profile priority); an ID = restore that track.
+        case selectAudio(restore: Int?)
+        /// Subtitle preferences, remembered subtitles and offset, else the subtitle automatic.
+        case subtitleAutomatic
+        /// Query subtitle addons.
+        case addonSubtitles
+        /// Jump to the synced fraction (Trakt/Simkl); nil = nothing to jump to.
+        case seek(fraction: Double?)
+        /// Start or continue playback (unless the system holds it); logs „Spielt ·“ on the whole start.
+        case play
+    }
+
+    /// The whole start has been delivered once in this session.
+    public private(set) var startCompleted = false
+    /// The fraction jump has arrived (playback ran at the target); it is never repeated afterwards.
+    public private(set) var seekExecuted = false
+
+    public init() {}
+
+    /// Steps after a successful load. `isFirst`: the load comes from the start path, which always runs the whole
+    /// start (it only runs again while the start is unfinished). `remembered`: the audio track active before the
+    /// reload. `pendingFraction`: the synced fraction to jump to (nil = none, e.g. a fixed start position).
+    public mutating func afterSuccessfulLoad(isFirst: Bool, remembered: TrackMemory.Entry?,
+                                             pendingFraction: Double?) -> [Step] {
+        let fraction = seekExecuted ? nil : pendingFraction
+        if isFirst || !startCompleted {
+            startCompleted = true
+            return [.placeholderCheck, .selectAudio(restore: nil), .subtitleAutomatic, .addonSubtitles,
+                    .seek(fraction: fraction), .play]
+        }
+        var steps: [Step] = [.selectAudio(restore: remembered?.audioID)]
+        if let fraction { steps.append(.seek(fraction: fraction)) }
+        steps.append(.play)
+        return steps
+    }
+
+    /// The jump arrived: later loads keep the position instead of jumping again.
+    public mutating func noteSeekExecuted() { seekExecuted = true }
+
+    /// For the log line `player: Startschritte <list>`, e.g. "selectAudio(restore),play".
+    public static func logText(_ steps: [Step]) -> String {
+        steps.map { step -> String in
+            switch step {
+            case .placeholderCheck: "placeholderCheck"
+            case .selectAudio(let r): r == nil ? "selectAudio" : "selectAudio(restore)"
+            case .subtitleAutomatic: "subtitleAutomatic"
+            case .addonSubtitles: "addonSubtitles"
+            case .seek(let f): f == nil ? "seek" : "seek(fraction)"
+            case .play: "play"
+            }
+        }.joined(separator: ",")
+    }
+}
+
+extension TrackMemory {
+    /// Task 3.2 (W-A-3): the audio track active before a reload, to choose it again afterwards. Not stored.
+    public struct Entry: Sendable, Equatable {
+        public var audioID: Int
+        /// Language of that track as the engine reported it (nil = unknown).
+        public var audioLanguage: String?
+
+        public init(audioID: Int, audioLanguage: String?) {
+            self.audioID = audioID; self.audioLanguage = audioLanguage
+        }
+
+        /// The track to choose after the reload: the same ID if it still has the same language, else the best
+        /// track of that language; nil = keep the engine's choice. A fresh load can renumber the tracks.
+        public func track(in tracks: [AudioTrackInfo]) -> AudioTrackInfo? {
+            let lang = MediaLabels.languageCode(audioLanguage)
+            // Without a known language only the ID counts.
+            if let same = tracks.first(where: { $0.id == audioID }),
+               lang == nil || MediaLabels.languageCode(same.language) == lang {
+                return same
+            }
+            guard let lang else { return nil }
+            let matching = tracks.filter { MediaLabels.languageCode($0.language) == lang }
+            guard !matching.isEmpty else { return nil }
+            return preferredAudioTrack(matching, priority: [lang])
+        }
+    }
+}

@@ -221,6 +221,17 @@ public struct RecoveryPlanner: Sendable {
         if playedSinceAttempt >= healthySeconds { reset() }
     }
 
+    /// Position of the last tick (W-A-9): a tick only counts when the position moved on since then.
+    private var lastTickPosition: Double?
+
+    /// Task 3.2 (W-A-9): a tick of playback at `position`. Counts as healthy only when the position moved on since
+    /// the last tick; buffering mid-playback (state stays „spielt“) does not reset the ladder.
+    public mutating func notePlaying(position: Double, seconds: Double = 1) {
+        defer { lastTickPosition = position }
+        guard let last = lastTickPosition, position > last else { return }
+        notePlaying(seconds: seconds)
+    }
+
     /// Neuer Anlauf (Nutzer drückt „Erneut versuchen“ oder Play/Pause).
     public mutating func reset() { attempts = [:]; total = 0; playedSinceAttempt = 0 }
 
