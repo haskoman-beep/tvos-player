@@ -101,11 +101,15 @@ public enum LookOptionCatalog {
         return rawString(value, isBool: e.choices.map(\.raw) == ["true", "false"])
     }
 
-    /// `overrides` with `key` set to `raw`, or removed for `nil` (back to the preset). `nil` when the key or the
-    /// raw value is unknown; the result is read back through the lenient decoder, so only valid values land.
-    public static func overrides(_ overrides: LookOverrides, setting key: String, to raw: String?) -> LookOverrides? {
+    /// `overrides` with `key` set to `raw`, or removed for `nil` or the value of `preset` (that is no deviation, so
+    /// no accent dot and no count). `nil` when the key or the raw value is unknown; the result is read back through
+    /// the lenient decoder, so only valid values land.
+    public static func overrides(_ overrides: LookOverrides, setting key: String, to raw: String?,
+                                 preset: LookPresetID = .appleTV) -> LookOverrides? {
         guard let e = entry(key) else { return nil }
-        if let raw, !e.choices.contains(where: { $0.raw == raw }) { return nil }
+        if let r = raw, !e.choices.contains(where: { $0.raw == r }) { return nil }
+        let base = LookPreset.values(preset)
+        let raw = raw == rawValue(key, in: base) ? nil : raw
         guard let data = try? JSONEncoder().encode(overrides),
               var obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         var area = obj[e.area.rawValue] as? [String: Any] ?? [:]
@@ -113,7 +117,7 @@ public enum LookOptionCatalog {
         obj[e.area.rawValue] = area
         guard let out = try? JSONSerialization.data(withJSONObject: obj),
               let decoded = try? JSONDecoder().decode(LookOverrides.self, from: out) else { return nil }
-        if let raw, rawValue(key, in: decoded.applied(to: LookPreset.values(.appleTV))) != raw { return nil }
+        if let raw, rawValue(key, in: decoded.applied(to: base)) != raw { return nil }
         return decoded
     }
 

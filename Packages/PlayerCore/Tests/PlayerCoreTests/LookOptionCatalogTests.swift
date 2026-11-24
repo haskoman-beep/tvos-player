@@ -42,11 +42,14 @@ private func lookValueKeys() throws -> [String: Set<String>] {
         for c in e.choices {
             // Every choice decodes as a valid override of exactly this key.
             let o = try #require(LookOptionCatalog.overrides(LookOverrides(), setting: e.key, to: c.raw), "\(e.key)")
-            #expect(o.count == 1, "\(e.key)=\(c.raw)")
+            // The Mein Look value is no deviation: picking it drops the override (fix round 1, I1).
+            #expect(o.count == (c.raw == current ? 0 : 1), "\(e.key)=\(c.raw)")
             #expect(LookOptionCatalog.rawValue(e.key, in: o.applied(to: base)) == c.raw)
         }
         // Clearing the override again leaves none.
-        let set = try #require(LookOptionCatalog.overrides(LookOverrides(), setting: e.key, to: e.choices[0].raw))
+        let other = try #require(e.choices.first { $0.raw != current })
+        let set = try #require(LookOptionCatalog.overrides(LookOverrides(), setting: e.key, to: other.raw))
+        #expect(set.count == 1)
         #expect(LookOptionCatalog.overrides(set, setting: e.key, to: nil)?.isEmpty == true)
     }
 }
@@ -92,3 +95,4 @@ private func lookValueKeys() throws -> [String: Set<String>] {
     #expect(SettingsSummary.look(Look(overrides: o)) == "Mein Look · angepasst · 3")
     #expect(SettingsSummary.lookValue(Look(overrides: o)) == "angepasst · 3")
 }
+
