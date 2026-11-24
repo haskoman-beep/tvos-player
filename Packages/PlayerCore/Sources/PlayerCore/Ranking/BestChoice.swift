@@ -35,17 +35,22 @@ public enum BestChoice {
     /// `list` in beliebiger Reihenfolge (die automatische Ordnung wird hier gebildet).
     public static func pick(_ list: [(addon: String, stream: StreamItem)], context: SourceRankContext,
                             last: LastSource?, isFailed: (StreamItem) -> Bool) -> Pick? {
-        let candidates = StreamListOrder.automatic(list, context: context)
+        pick(ranked: RankedStream.rank(list), context: context, last: last, isFailed: isFailed)
+    }
+
+    /// Task 3.8: like the tuple form, with traits parsed once (`RankedStream`); nothing is parsed again here.
+    public static func pick(ranked: [RankedStream], context: SourceRankContext,
+                            last: LastSource?, isFailed: (StreamItem) -> Bool) -> Pick? {
+        let candidates = StreamListOrder.automatic(ranked, context: context)
             .filter { isPlayable($0.stream) && !isFailed($0.stream) }
         guard let first = candidates.first else { return nil }
         if let last, let s = last.match(in: candidates), let e = candidates.first(where: { $0.stream.id == s.id }) {
             return Pick(addon: e.addon, stream: e.stream, reason: .lastSource)
         }
-        let top = SourceRanking.tier(StreamTraits.parse(first.stream), context: context)
-        let tier = candidates.enumerated().compactMap { i, e -> (Int, (addon: String, stream: StreamItem), [Int])? in
-            let t = StreamTraits.parse(e.stream)
-            guard SourceRanking.tier(t, context: context) == top else { return nil }
-            return (i, e, preference(t, context: context))
+        let top = SourceRanking.tier(first.traits, context: context)
+        let tier = candidates.enumerated().compactMap { i, e -> (Int, RankedStream, [Int])? in
+            guard SourceRanking.tier(e.traits, context: context) == top else { return nil }
+            return (i, e, preference(e.traits, context: context))
         }
         let best = tier.min { a, b in a.2 != b.2 ? a.2.lexicographicallyPrecedes(b.2) : a.0 < b.0 }!
         return Pick(addon: best.1.addon, stream: best.1.stream, reason: .best)

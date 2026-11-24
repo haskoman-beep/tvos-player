@@ -21,7 +21,10 @@ extension AppModel {
         let mode = profile.sources.order
         let ctx = sourceRankContext
         let unique = StreamDedupe.unique(list)   // einmal berechnet, auch für die Log-Zeile (Review E-b M3)
-        let out = StreamListOrder.ordered(unique, mode: mode, context: ctx)
+        // Task 3.8: smart order parses each source once (`RankedStream`); „Wie Addon“ parses nothing.
+        let out = mode == .smart && unique.count > 1
+            ? StreamListOrder.ordered(RankedStream.rank(unique), mode: mode, context: ctx).map(\.entry)
+            : unique
         if unique.count < list.count {
             RemoteLog.info("streams", "Dubletten entfernt: \(list.count - unique.count) von \(list.count)")
         }
@@ -41,9 +44,15 @@ extension AppModel {
     /// Welle G-a: „Sofort abspielen / Beste Wahl“ (Regeln in PlayerCore `BestChoice`): letzte Quelle, sonst die beste
     /// der klugen Ordnung, nie eine im 8-h-Gedächtnis.
     func bestChoice(_ list: [(addon: String, stream: StreamItem)], title: String) -> BestChoice.Pick? {
+        bestChoice(ranked: RankedStream.rank(list), title: title)
+    }
+
+    /// Task 3.8: with a list ranked once (the detail page shares it with its badges); traits pass through
+    /// ordering, last source and tier choice without a second parse.
+    func bestChoice(ranked: [RankedStream], title: String) -> BestChoice.Pick? {
         let stability = PlaybackStability.shared
         let last = progress.lastSource(for: title).flatMap { $0.contentID == title ? $0 : nil }
-        return BestChoice.pick(list, context: sourceRankContext, last: last,
+        return BestChoice.pick(ranked: ranked, context: sourceRankContext, last: last,
                                isFailed: { stability.isRecentlyFailed($0, title: title) })
     }
 

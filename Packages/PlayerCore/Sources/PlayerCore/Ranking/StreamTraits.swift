@@ -167,10 +167,11 @@ public struct StreamTraits: Equatable, Sendable {
     /// Units that make a number a size or rate („MB“ also covers „Mbps“), not a channel layout.
     private static let sizeUnits = ["GB", "MB", "TB", "KB", "GIB", "MIB", "TIB", "KIB"]
 
+    /// Task 3.8 ([04 §6.2]): built once, not on every parse (40 sources × several parses per list).
+    nonisolated(unsafe) private static let sizePattern = try! NSRegularExpression(pattern: #"(\d+(?:[.,]\d+)?)\s*(TB|GB|MB)"#)
+
     static func parseSize(_ up: String) -> Int64? {
-        let pattern = #"(\d+(?:[.,]\d+)?)\s*(TB|GB|MB)"#
-        guard let re = try? NSRegularExpression(pattern: pattern),
-              let m = re.firstMatch(in: up, range: NSRange(up.startIndex..., in: up)),
+        guard let m = sizePattern.firstMatch(in: up, range: NSRange(up.startIndex..., in: up)),
               let nr = Range(m.range(at: 1), in: up), let ur = Range(m.range(at: 2), in: up),
               let n = Double(up[nr].replacingOccurrences(of: ",", with: ".")) else { return nil }
         let mult: Double = switch up[ur] { case "TB": 1e12; case "GB": 1e9; default: 1e6 }

@@ -157,6 +157,15 @@ public struct ProgressBook: Codable, Sendable, Equatable {
             .prefix(limit).map { $0 }
     }
 
+    /// Task 3.8 ([04 §6.5]): play targets of the continue row in one pass: item id → its entry in
+    /// `continueWatching()`, only entries with a remembered source (those start right away, the rest opens the
+    /// detail page). The row builds this once, not once per card on every focus step.
+    public func resumeTargets(limit: Int = 30) -> [String: WatchProgress] {
+        var out: [String: WatchProgress] = [:]
+        for e in continueWatching(limit: limit) where lastSource(for: e.id) != nil { out[e.item.id] = e }
+        return out
+    }
+
     /// Neuester Eintrag einer Serie (für die Staffelauswahl auf der Detailseite).
     public func latest(forItem itemID: String) -> WatchProgress? {
         entries.values.filter { $0.item.id == itemID }.max { $0.updated < $1.updated }
@@ -272,16 +281,11 @@ public struct LastSource: Codable, Sendable, Hashable {
 
     /// Passende Quelle in einer neuen Liste: gleiche Datei (gleicher Inhalt), sonst gleiche bingeGroup,
     /// sonst gleicher Addon + gleicher Quellenname mit gleicher Auflösung. Nicht gecachte nur als letzte Wahl.
+    /// Task 3.8: the rules live in `match(in: [RankedStream])`; the same file is found without parsing anything.
     public func match(in streams: [(addon: String, stream: StreamItem)]) -> StreamItem? {
         let list = streams.filter { $0.stream.url != nil }
-        func fp(_ s: StreamItem) -> String { s.behaviorHints?.filename ?? s.label }
-        if let e = list.first(where: { fp($0.stream) == fingerprint }) { return e.stream }
-        let ready = list.filter { StreamTraits.parse($0.stream).cached != false }
-        if let g = bingeGroup, let e = ready.first(where: { $0.stream.behaviorHints?.bingeGroup == g }) { return e.stream }
-        let res = StreamTraits.parse(StreamItem(name: name, title: fingerprint)).resolution
-        if let e = ready.first(where: { $0.addon == addon && $0.stream.name == name
-                                        && StreamTraits.parse($0.stream).resolution == res }) { return e.stream }
-        return nil
+        if let e = list.first(where: { Self.fileKey($0.stream) == fingerprint }) { return e.stream }
+        return match(in: RankedStream.rank(list))
     }
 }
 
