@@ -43,6 +43,7 @@ private struct HomeManagerContent: View {
     @State private var hideCandidate: HomeRow?
     @State private var deleteCandidate: HomeRow?
     @State private var positionRow: HomeRow?
+    @State private var positionChoice: PositionChoice?
     @State private var showBrowser = false
     @State private var beforeBrowser: HomeManager.Focus = .add
     @State private var started = false
@@ -122,14 +123,25 @@ private struct HomeManagerContent: View {
             expanded = nil
             set(session.delete(row.id))
         }
-        .sheet(item: $positionRow) { row in
+        // Task 4.1a (F-A-7): like the confirmations, move and focus only after the sheet closed (`onDismiss`);
+        // before, the focus was set while it still lay in the sheet and the trigger (action bar) went away with it.
+        .sheet(item: $positionRow, onDismiss: applyPositionChoice) { row in
             PositionPicker(title: session.title(row), current: manager.position(of: row.id) ?? 1,
                            positions: manager.positions) { p in
+                positionChoice = PositionChoice(row: row.id, position: p)
                 positionRow = nil
-                expanded = nil
-                if let p { set(session.move(row.id, toPosition: p)) } else { set(.row(row.id)) }
             }
         }
+    }
+
+    /// Task 4.1a (F-A-7): result of the position sheet, applied in its `onDismiss`.
+    private struct PositionChoice { let row: UUID; let position: Int? }
+
+    private func applyPositionChoice() {
+        guard let c = positionChoice else { return }
+        positionChoice = nil
+        expanded = nil
+        if let p = c.position { set(session.move(c.row, toPosition: p)) } else { set(.row(c.row)) }
     }
 
     private var summary: String {
