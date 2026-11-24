@@ -325,6 +325,17 @@ public enum FusionImport {
         return f
     }
 
+    /// A-B-10 review M1: IDs of the sources whose result depends on the day (kit discover rows with a "released"
+    /// cut-off). Their catalog cache entries expire on a new local day, so the rows refetch with today's date.
+    public static func dayBoundSourceIDs(_ sources: [CatalogSource]) -> [String] {
+        var seen = Set<String>()
+        return sources.compactMap { s in
+            guard isKitID(s.id), case .tmdbDiscover(let f) = s.kind,
+                  releasedDateKeys.contains(where: { f[$0] != nil }), seen.insert(s.id).inserted else { return nil }
+            return s.id
+        }
+    }
+
     /// `yyyy-MM-dd` (UTC) für TMDB-Datumsfilter.
     static func day(_ d: Date) -> String {
         var cal = Calendar(identifier: .gregorian)

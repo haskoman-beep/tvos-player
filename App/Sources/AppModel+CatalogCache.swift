@@ -44,7 +44,13 @@ extension AppModel {
                     let due = !self.cache.keysNeedingRefresh(includingRestored: false).isEmpty
                     guard Upcoming.wakeNeeded(lastDay: day.value, now: now, calendar: cal, cacheDue: due) else { return }
                     let today = Upcoming.dayKey(now, calendar: cal)
-                    if today != day.value { RemoteLog.info("katalog", "Neuer Tag · Reihen rechnen neu") }
+                    if today != day.value {
+                        RemoteLog.info("katalog", "Neuer Tag · Reihen rechnen neu")
+                        // A-B-10 review M1: kit rows with a "released" cut-off refetch with today's date.
+                        let sources = HomeRowPreload.sources(self.profile.home.rows)
+                            + self.profile.collections.flatMap { $0.folders.flatMap(\.sources) }
+                        for id in FusionImport.dayBoundSourceIDs(sources) { self.cache.expire(id) }
+                    }
                     day.value = today
                     self.catalogWake += 1
                 }

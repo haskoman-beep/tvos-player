@@ -62,6 +62,12 @@ public struct TimedCache<Value: Sendable>: Sendable {
         entries[key]?.failedAt = now
     }
 
+    /// A-B-10 review M1: mark an entry as expired (value stays readable, `needsRefresh` becomes true).
+    public mutating func expire(_ key: String) {
+        entries[key]?.storedAt = .distantPast
+        entries[key]?.failedAt = nil
+    }
+
     public mutating func removeAll() { entries.removeAll(); generation += 1 }
 
     /// Gespeicherten Stand übernehmen (Plattencache beim Start). Überschreibt keinen vorhandenen Eintrag

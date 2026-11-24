@@ -100,3 +100,22 @@ private func releasedKitSource(type: String = "movie") throws -> CatalogSource {
                                         calendar: kiritimati)
     #expect(f["primary_release_date.lte"] == "2026-11-22")
 }
+
+// A-B-10 review M1: only kit discover sources with a released cut-off expire on a new day.
+@Test func dayBoundSourcesAreKitReleasedOnly() throws {
+    let kit = try releasedKitSource()
+    let kitPlain = CatalogSource(id: "fusion.s.x", title: "x", kind: .tmdbDiscover(filters: ["with_genres": "28"]), mediaType: .movie)
+    let own = CatalogSource(id: "own", title: "x", kind: .tmdbDiscover(filters: ["primary_release_date.lte": "1999-12-31"]), mediaType: .movie)
+    let kitList = CatalogSource(id: "fusion.s.y", title: "x", kind: .tmdbList(id: "1"), mediaType: .movie)
+    #expect(FusionImport.dayBoundSourceIDs([kit, kitPlain, own, kitList, kit]) == [kit.id])
+}
+
+@Test func timedCacheExpireMakesEntryDue() {
+    var c = TimedCache<[Int]>()
+    let t = Date(timeIntervalSince1970: 1_000_000)
+    c.store([1], for: "a", now: t)
+    c.markFailed("a", now: t)
+    #expect(!c.needsRefresh("a", now: t))
+    c.expire("a"); c.expire("missing")
+    #expect(c.needsRefresh("a", now: t) && c["a"] == [1] && c["missing"] == nil)
+}
