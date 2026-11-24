@@ -149,3 +149,111 @@ private func entry(leaving: Bool = false, scrubbing: Bool = false, upNext: Bool 
     #expect(TrackChoice.audioAction(selected: 1, active: 2, locked: false, switching: true) == .apply)
     #expect(TrackChoice.audioAction(selected: 2, active: 2, locked: true, switching: true) == .locked)
 }
+
+// MARK: Automatische Tonwahl ohne Kommentar und Hörfilm
+
+private func sp(_ id: Int, _ lang: String?, ch: Int, codec: String, commentary: Bool = false,
+                hoerfilm: Bool = false) -> AudioTrackInfo {
+    AudioTrackInfo(id: id, language: lang, channels: ch, codec: codec,
+                   isCommentary: commentary, isVisualImpaired: hoerfilm)
+}
+
+@Test func commentaryInDolbyLosesToMainAAC() {
+    // Hauptton AAC 2.0 gegen Kommentar AC-3 2.0 (früher 2 gegen 102 Punkte).
+    let tracks = [sp(0, "ger", ch: 2, codec: "aac"), sp(1, "ger", ch: 2, codec: "ac3", commentary: true)]
+    #expect(preferredAudioTrack(tracks, priority: ["de"])?.id == 0)
+    // Auch Surround-Kommentar gegen Mono-Hauptton.
+    let t2 = [sp(0, "eng", ch: 1, codec: "flac"), sp(1, "eng", ch: 6, codec: "eac3", commentary: true),
+              sp(2, "ger", ch: 6, codec: "eac3")]
+    #expect(preferredAudioTrack(t2, priority: ["en", "de"])?.id == 0)
+    // Gibt es in der Sprache nur den Kommentar, gilt er (statt die Sprache zu überspringen).
+    #expect(preferredAudioTrack([sp(0, "jpn", ch: 2, codec: "aac"), sp(1, "ger", ch: 2, codec: "ac3", commentary: true)],
+                                priority: ["de"])?.id == 1)
+}
+
+@Test func hoerfilmOnlyWhenNoOtherTrackOfLanguage() {
+    // Hörfilm E-AC-3 5.1 gegen Hauptton TrueHD 7.1 (früher 1106 gegen 1008 Punkte).
+    let tracks = [sp(0, "eng", ch: 8, codec: "truehd"), sp(1, "eng", ch: 6, codec: "eac3", hoerfilm: true)]
+    #expect(preferredAudioTrack(tracks, priority: ["en"])?.id == 0)
+    // Nur Hörfilm in der Sprache: er wird gewählt, vor einem Kommentar derselben Sprache.
+    let only = [sp(0, "eng", ch: 6, codec: "eac3"), sp(1, "ger", ch: 2, codec: "ac3", commentary: true),
+                sp(2, "ger", ch: 2, codec: "aac", hoerfilm: true)]
+    #expect(preferredAudioTrack(only, priority: ["de", "en"])?.id == 2)
+    // Gedächtnis ohne Hörfilm-Merker folgt derselben Regel.
+    #expect(TrackMemoryPlan.audio(TrackMemory(audioLanguage: "en"), tracks: tracks)?.id == 0)
+    #expect(TrackMemoryPlan.audio(TrackMemory(audioLanguage: "de"), tracks: only)?.id == 2)
+    // Als Hörfilm gemerkt: der Hörfilm kommt wieder; fehlt er, die übliche Wahl.
+    var m = TrackMemory()
+    m.apply(.audio(tracks[1]))
+    #expect(m.audioLanguage == "en" && m.audioVisualImpaired == true && m.audioCommentary == false)
+    #expect(TrackMemoryPlan.audio(m, tracks: tracks)?.id == 1)
+    #expect(TrackMemoryPlan.audio(m, tracks: [tracks[0]])?.id == 0)
+}
+
+@Test func trackMemoryMayRepickCommentaryExplicitly() {
+    let tracks = [sp(0, "ger", ch: 2, codec: "aac"), sp(1, "ger", ch: 2, codec: "ac3", commentary: true),
+                  sp(2, "ger", ch: 6, codec: "eac3", commentary: true)]
+    var m = TrackMemory()
+    m.apply(.audio(tracks[1]))
+    #expect(m.audioLanguage == "de" && m.audioCommentary == true && m.audioVisualImpaired == false)
+    // Gemerkt als Kommentar: beste Kommentarspur der Sprache.
+    #expect(TrackMemoryPlan.audio(m, tracks: tracks)?.id == 2)
+    // Wieder Hauptton gewählt: Merker fällt.
+    m.apply(.audio(tracks[0]))
+    #expect(m.audioCommentary == false)
+    #expect(TrackMemoryPlan.audio(m, tracks: tracks)?.id == 0)
+    // Alter Eintrag (nur Sprache): nie Kommentar, auch wenn es in der Sprache nur Kommentar gibt (wie bisher).
+    #expect(TrackMemoryPlan.audio(TrackMemory(audioLanguage: "de"), tracks: Array(tracks.dropFirst())) == nil)
+    // Spur ohne Sprache löscht auch die Merker.
+    m.apply(.audio(tracks[1])); m.apply(.audio(sp(3, nil, ch: 2, codec: "aac")))
+    #expect(m.audioLanguage == nil && m.audioCommentary == nil && m.audioVisualImpaired == nil)
+}
+
+/// Spur-Gedächtnis wie Build 249/250, Build 1 und Build 2 es lesen (Decoder unverändert seit Build 249).
+private struct OldTrackMemory: Decodable {
+    var audioLanguage: String?
+    var subtitle: TrackMemory.SubtitleChoice?
+    var subtitleOffset: Double?
+    var updated: Date
+    enum CodingKeys: String, CodingKey { case audioLanguage, subtitle, subtitleOffset, updated }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        audioLanguage = (try? c.decodeIfPresent(String.self, forKey: .audioLanguage)) ?? nil
+        subtitle = (try? c.decodeIfPresent(TrackMemory.SubtitleChoice.self, forKey: .subtitle)) ?? nil
+        subtitleOffset = (try? c.decodeIfPresent(Double.self, forKey: .subtitleOffset)) ?? nil
+        updated = (try? c.decodeIfPresent(Date.self, forKey: .updated)) ?? nil ?? .distantPast
+    }
+}
+
+private struct OldTrackMemoryBook: Decodable { var entries: [String: OldTrackMemory] }
+
+@Test func trackMemoryFixtureOfBuild2StillLoadsAndNewKeysStayReadable() throws {
+    let data = try fixture("build2-trackmemory.json")
+    let book = try JSONDecoder().decode(TrackMemoryBook.self, from: data)
+    #expect(book.entries.count == 3)
+    let bb = try #require(book.memory(for: "tt0903747"))
+    #expect(bb.audioLanguage == "en" && bb.subtitle == .language("de", forced: true, hearingImpaired: false))
+    #expect(bb.subtitleOffset == -0.5 && bb.audioCommentary == nil && bb.audioVisualImpaired == nil)
+    #expect(book.memory(for: "tmdb:1396")?.subtitle == .off)
+    #expect(book.memory(for: "tt1160419")?.audioLanguage == "de")
+    // Alte Einträge ohne Merker schreiben genau die alten Schlüssel.
+    let reencoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(book)) as! [String: Any]
+    let entry = try #require((reencoded["entries"] as? [String: Any])?["tt1160419"] as? [String: Any])
+    #expect(Set(entry.keys) == ["audioLanguage", "updated"])
+    // Neue Merker: ältere Builds ignorieren sie und lesen den Rest.
+    var nb = book
+    nb.update("tt0903747", now: Date(timeIntervalSince1970: 1_000_000_000)) {
+        $0.apply(.audio(AudioTrackInfo(id: 1, language: "eng", isCommentary: true)))
+    }
+    let out = try JSONEncoder().encode(nb)
+    let old = try JSONDecoder().decode(OldTrackMemoryBook.self, from: out)
+    let oe = try #require(old.entries["tt0903747"])
+    #expect(oe.audioLanguage == "en" && oe.subtitle == .language("de", forced: true, hearingImpaired: false))
+    #expect(oe.subtitleOffset == -0.5)
+    let back = try JSONDecoder().decode(TrackMemoryBook.self, from: out)
+    #expect(back == nb && back.entries["tt0903747"]?.audioCommentary == true)
+    // Kaputter Merker kippt den Eintrag nicht.
+    let bad = try JSONDecoder().decode(TrackMemory.self,
+        from: Data(#"{"audioLanguage":"de","audioCommentary":"ja","audioVisualImpaired":3}"#.utf8))
+    #expect(bad.audioLanguage == "de" && bad.audioCommentary == nil && bad.audioVisualImpaired == nil)
+}

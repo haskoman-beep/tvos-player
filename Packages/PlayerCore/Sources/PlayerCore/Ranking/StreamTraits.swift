@@ -241,14 +241,29 @@ func audioScore(_ t: AudioTrackInfo) -> Int {
 }
 
 /// Sprache nach Vorrang ("de", "en", "orig" = erste Spur); bei gleicher Sprache die beste nach `audioScore`.
+/// Commentary and audio-description tracks are taken only when the language has no regular track
+/// (then audio description before commentary).
 public func preferredAudioTrack(_ tracks: [AudioTrackInfo], priority: [String]) -> AudioTrackInfo? {
     for p in priority {
         if p == "orig" { return tracks.first }
         let want = MediaLabels.languageCode(p) ?? p
         let m = tracks.filter { MediaLabels.languageCode($0.language) == want }
-        if let best = m.max(by: { audioScore($0) < audioScore($1) }) { return best }
+        if let best = bestAudio(regularFirst(m)) { return best }
     }
     return tracks.first
+}
+
+/// Regular tracks if any, else audio description, else the rest (commentary).
+func regularFirst(_ tracks: [AudioTrackInfo]) -> [AudioTrackInfo] {
+    let regular = tracks.filter { !$0.isCommentary && !$0.isVisualImpaired }
+    if !regular.isEmpty { return regular }
+    let described = tracks.filter { $0.isVisualImpaired && !$0.isCommentary }
+    return described.isEmpty ? tracks : described
+}
+
+/// Best by `audioScore`; on a tie the first track wins.
+func bestAudio(_ tracks: [AudioTrackInfo]) -> AudioTrackInfo? {
+    tracks.max(by: { audioScore($0) < audioScore($1) })
 }
 
 /// "Nicht gecacht"-Platzhalter von AIOStreams/TorBox: kurze Clips statt Film/Folge.
