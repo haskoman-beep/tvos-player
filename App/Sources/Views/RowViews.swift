@@ -8,6 +8,8 @@ struct HomeRowView: View {
     @EnvironmentObject var model: AppModel
     let row: HomeRow
     let onActivate: (Route) -> Route?
+    /// Task 4.1a (F-A-3): home page focus target after a context-menu action (nil elsewhere).
+    var focusTarget: HomeFocusTarget? = nil
     /// Welle F-b2: Kontextmenü der Startseite (langer Druck auf eine Kachel), nil = keins.
     var menu: HomeRowMenu? = nil
     /// Wave F-j: focus enters (true) or leaves (false) this row (home page: top edge watch, heading scroll).
@@ -62,6 +64,8 @@ struct HomeRowView: View {
         }
         .onChange(of: focusedRoute != nil || focusedPlaceholder != nil) { _, f in onFocusInside?(f) }
         .onAppear { if focusedRoute != nil || focusedPlaceholder != nil { onFocusInside?(true) } }
+        // Task 4.1a (F-A-3): `initial` also claims a target when the lazy list builds this row after the scroll.
+        .onChange(of: focusTarget?.serial, initial: true) { _, _ in claimFocusTarget() }
         .onDisappear {
             onFocusInside?(false)
             // Wave F-p R1: page left with focus in this row within the 350 ms rest: no stale request.
@@ -229,6 +233,28 @@ struct HomeRowView: View {
         .buttonStyle(.card)
         .focused($focusedPlaceholder, equals: 0)
         .homeRowMenu(menu)
+    }
+
+    /// Task 4.1a (F-A-3): this row is the home page's focus target: remembered tile, else the first tile, else
+    /// placeholder/status tile 0. Next run loop, after the layout change built the row.
+    private func claimFocusTarget() {
+        guard let focusTarget, focusTarget.claim(.row(row.id)) else { return }
+        let target = rememberedRoute ?? firstRoute
+        DispatchQueue.main.async {
+            if let target { focusedRoute = target } else { focusedPlaceholder = 0 }
+        }
+    }
+
+    /// First tile of the row, if tiles are shown.
+    private var firstRoute: Route? {
+        switch row.content {
+        case .collection(let id):
+            guard case .tiles = collectionPhase(id, model.collection(id)) else { return nil }
+            return model.collection(id)?.folders.first.map { Route.folder($0) }
+        case .list:
+            guard case .items = phase, let m = displayed.first else { return nil }
+            return routeTable[m.id] ?? .detail(m)
+        }
     }
 
     /// Zuletzt fokussierte Kachel dieser Reihe, sofern noch vorhanden (sonst entscheidet die Fokus-Engine).

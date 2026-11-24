@@ -21,6 +21,8 @@ struct HomeView: View {
     @State private var topWatch = HomeTopEdgeWatch()
     /// Build 3 device test: row whose heading is being snapped to the list's top edge (focus inside it).
     @State private var headingRow: UUID?
+    /// Task 4.1a (F-A-3): focus target after a context-menu action (claimed by the row or the action button).
+    @State private var focusTarget = HomeFocusTarget()
 
     var body: some View {
         let layout = model.profile.home
@@ -208,7 +210,7 @@ struct HomeView: View {
         let layout = model.profile.home
         let firstRow = rows.first?.id
         ForEach(rows) { row in
-            HomeRowView(row: row, onActivate: { $0 }, menu: HomeRowMenu(
+            HomeRowView(row: row, onActivate: { $0 }, focusTarget: focusTarget, menu: HomeRowMenu(
                 canMoveUp: (layout.index(of: row.id) ?? 0) > 0,
                 edit: { manager = ManagerTarget(row: row.id) },
                 moveToTop: { quick { $0.moveToTop(row.id) } },
@@ -227,25 +229,40 @@ struct HomeView: View {
                     .textRole(.rowDetail)
                     .multilineTextAlignment(.leading)
                 FocusReportingButton(title: "Reihen hinzufügen", action: { manager = ManagerTarget(openBrowser: true) },
-                                     onFocus: { topWatch.report(.actionButton, $0) })
+                                     onFocus: { topWatch.report(.actionButton, $0) }, focusTarget: focusTarget)
             }
             .padding(.leading, Theme.Space.edge)
         } else {
             // Keine Akzentfarbe (RootView .tint) auf der Startseite; Welle F-i: Token-Knopf wie Abspielen/Details.
             FocusReportingButton(title: "Reihen & Collections", action: { manager = ManagerTarget() },
-                                 onFocus: { topWatch.report(.actionButton, $0) })
+                                 onFocus: { topWatch.report(.actionButton, $0) }, focusTarget: focusTarget)
                 .padding(.top, 20)
                 .padding(.leading, Theme.Space.edge)
         }
     }
 
     /// Kontextmenü-Aktion über dieselbe Logik wie der Verwalter; speichert und loggt nur mit Wirkung.
+    /// Task 4.1a (F-A-3): the outcome's focus target is applied too (hide/delete: the row moving up, else the
+    /// action button; "Ganz nach oben": the moved row, scrolled to). The confirmations run this in `onDismiss`,
+    /// after the system put the focus back on the tile, so the request wins over the vanished tile.
     private func quick(_ action: (inout HomeManager) -> HomeManager.Outcome) {
         var m = HomeManager(layout: model.profile.home, hidden: model.profile.hiddenRows)
-        guard let e = action(&m).event else { return }
+        let outcome = action(&m)
+        guard let e = outcome.event else { return }
         let layout = m.layout, hidden = m.hidden
         model.update { $0.home = layout; $0.hiddenRows = hidden }
         RemoteLog.info("home", e.logText(title: model.homeRowTitle(e.row.content)) + " (Kontextmenü)")
+        let shown = layout.rowsBelowHero(model.profile.appearance).map(\.id)
+        let target = HomeManager.homeTarget(outcome.focus, rows: layout.rows.map(\.id), shown: shown)
+        focusTarget.request(target)
+        let name = focusTarget.logName(target) { id in
+            layout.rows.first { $0.id == id }.map { model.homeRowTitle($0.content) } ?? "?"
+        }
+        RemoteLog.info("fokus", "Kontextmenü: Ziel \(name)")
+        if case .row(let id) = target, let scroll = topWatch.scrollToRow {
+            // The row may sit outside the built part of the lazy list (moved to the top): scroll there first.
+            DispatchQueue.main.async { withAnimation(.easeOut(duration: 0.25)) { scroll(id) } }
+        }
     }
 }
 
@@ -271,6 +288,8 @@ private struct FocusReportingButton: View {
     let title: LocalizedStringKey
     let action: () -> Void
     let onFocus: (Bool) -> Void
+    /// Task 4.1a (F-A-3): claims a pending `.add` target (last row hidden or deleted).
+    var focusTarget: HomeFocusTarget? = nil
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -279,6 +298,37 @@ private struct FocusReportingButton: View {
             .focused($focused)
             .onChange(of: focused) { _, f in onFocus(f) }
             .onDisappear { onFocus(false) }
+            .onChange(of: focusTarget?.serial, initial: true) { _, _ in
+                guard focusTarget?.claim(.add) == true else { return }
+                DispatchQueue.main.async { focused = true }
+            }
+    }
+}
+
+/// Task 4.1a (F-A-3): pending focus target of the home page after a context-menu action. The row (or the action
+/// button) it names claims it once: on the change, or when the lazy list builds it after the scroll.
+@MainActor @Observable final class HomeFocusTarget {
+    private(set) var pending: HomeManager.Focus?
+    /// Increases with every request, so the same target twice still fires `onChange`.
+    private(set) var serial = 0
+
+    func request(_ f: HomeManager.Focus) {
+        pending = f
+        serial += 1
+    }
+
+    /// True once for the view that matches the pending target.
+    func claim(_ f: HomeManager.Focus) -> Bool {
+        guard pending == f else { return false }
+        pending = nil
+        return true
+    }
+
+    func logName(_ f: HomeManager.Focus, title: (UUID) -> String) -> String {
+        switch f {
+        case .row(let id): "Reihe \(title(id))"
+        case .add, .hidden: "Knopf unten"
+        }
     }
 }
 

@@ -266,3 +266,27 @@ private func rows(_ n: Int) -> HomeLayout {
     _ = m.delete(l.rows[0].id)
     #expect(m.moving == nil && m.count == 2)
 }
+
+// Task 4.1a (F-A-3): the home page applies `Outcome.focus` of every context-menu action; a target that is not
+// shown as a row (hero source of style hero) goes to the row after it, else the one before, else the action button.
+@Test func homeFocusTargetSkipsRowsNotShown() {
+    let l = rows(4)
+    let ids = l.rows.map(\.id)
+    let shown = [ids[1], ids[2], ids[3]]   // row 0 feeds the hero
+    #expect(HomeManager.homeTarget(.row(ids[2]), rows: ids, shown: shown) == .row(ids[2]))
+    #expect(HomeManager.homeTarget(.row(ids[0]), rows: ids, shown: shown) == .row(ids[1]))
+    #expect(HomeManager.homeTarget(.row(ids[3]), rows: ids, shown: [ids[1]]) == .row(ids[1]))
+    #expect(HomeManager.homeTarget(.row(ids[0]), rows: ids, shown: []) == .add)
+    #expect(HomeManager.homeTarget(.add, rows: ids, shown: shown) == .add)
+    #expect(HomeManager.homeTarget(.hidden(ids[0]), rows: ids, shown: shown) == .add)
+}
+
+@Test func homeContextMenuHideAndDeleteFocusTheNextRow() {
+    let l = rows(3)
+    var m = HomeManager(layout: l)
+    let ids = l.rows.map(\.id)
+    let o = m.hide(ids[1])
+    #expect(HomeManager.homeTarget(o.focus, rows: m.rows.map(\.id), shown: m.rows.map(\.id)) == .row(ids[2]))
+    let d = m.delete(ids[2])
+    #expect(HomeManager.homeTarget(d.focus, rows: m.rows.map(\.id), shown: m.rows.map(\.id)) == .row(ids[0]))
+}
