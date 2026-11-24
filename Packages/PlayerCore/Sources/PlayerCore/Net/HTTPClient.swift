@@ -54,6 +54,8 @@ public struct LimitedHTTPClient: HTTPClient {
 
     /// The shared client of the app.
     public static let shared = LimitedHTTPClient()
+    /// Task 3.10: on the ephemeral transport (nothing cached, no cookies).
+    public static let ephemeral = LimitedHTTPClient(transport: URLSessionByteTransport.ephemeral)
 
     static func prepared(_ request: URLRequest, limits: HTTPLimits, fresh: Bool) -> URLRequest {
         var r = request
@@ -64,10 +66,20 @@ public struct LimitedHTTPClient: HTTPClient {
     }
 
     public func data(_ request: URLRequest, limits: HTTPLimits, fresh: Bool) async throws -> (Data, HTTPURLResponse) {
+        try await run(request, limits: limits, fresh: fresh, prefixOnly: false)
+    }
+
+    /// Task 3.10: the first `limits.maxBytes` bytes of the body, without `tooLarge` (Range probes: a server that
+    /// ignores the Range header is not read further). Time limits and the cut-body check stay as in `data`.
+    public func prefix(_ request: URLRequest, limits: HTTPLimits, fresh: Bool) async throws -> (Data, HTTPURLResponse) {
+        try await run(request, limits: limits, fresh: fresh, prefixOnly: true)
+    }
+
+    func run(_ request: URLRequest, limits: HTTPLimits, fresh: Bool, prefixOnly: Bool) async throws -> (Data, HTTPURLResponse) {
         let r = Self.prepared(request, limits: limits, fresh: fresh)
         let transport = self.transport
         return try await withThrowingTaskGroup(of: (Data, HTTPURLResponse)?.self) { group in
-            group.addTask { try await Self.read(r, transport: transport, maxBytes: limits.maxBytes) }
+            group.addTask { try await Self.read(r, transport: transport, maxBytes: limits.maxBytes, prefixOnly: prefixOnly) }
             group.addTask {
                 try await Task.sleep(nanoseconds: UInt64(max(0, limits.resourceTimeout) * 1_000_000_000))
                 return nil
@@ -87,14 +99,22 @@ public struct LimitedHTTPClient: HTTPClient {
         return Int64(received) < declared
     }
 
-    static func read(_ r: URLRequest, transport: HTTPByteTransport, maxBytes: Int) async throws -> (Data, HTTPURLResponse) {
+    static func read(_ r: URLRequest, transport: HTTPByteTransport, maxBytes: Int,
+                     prefixOnly: Bool = false) async throws -> (Data, HTTPURLResponse) {
         let (resp, stream) = try await transport.open(r)
-        if resp.expectedContentLength > Int64(maxBytes) { throw HTTPClientError.tooLarge(limit: maxBytes) }
+        if !prefixOnly, resp.expectedContentLength > Int64(maxBytes) { throw HTTPClientError.tooLarge(limit: maxBytes) }
         var out = Data()
         for try await chunk in stream {
-            if out.count + chunk.count > maxBytes { throw HTTPClientError.tooLarge(limit: maxBytes) }
+            if out.count + chunk.count > maxBytes {
+                guard prefixOnly else { throw HTTPClientError.tooLarge(limit: maxBytes) }
+                // Prefix read: keep exactly maxBytes and stop (leaving the loop drops the stream, which ends the download).
+                out.append(chunk.prefix(maxBytes - out.count))
+                try Task.checkCancellation()
+                return (out, resp)
+            }
             out.append(chunk)
             try Task.checkCancellation()
+            if prefixOnly, out.count == maxBytes { return (out, resp) }
         }
         // Fix round 1: a cancelled caller ends the stream without an error; never return that partial body.
         try Task.checkCancellation()
@@ -113,6 +133,15 @@ public struct URLSessionByteTransport: HTTPByteTransport {
         // Fix round 1: high so each request's own timeoutInterval (from its HTTPLimits) governs.
         cfg.timeoutIntervalForRequest = 60
         // Outer bound only; the per-request resourceTimeout is enforced by LimitedHTTPClient.
+        cfg.timeoutIntervalForResource = 60
+        return URLSessionByteTransport(session: URLSession(configuration: cfg))
+    }()
+
+    /// Task 3.10: no cache, no cookies (collection links, Range probes). Same outer bounds as `shared`.
+    public static let ephemeral: URLSessionByteTransport = {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.urlCache = nil
+        cfg.timeoutIntervalForRequest = 60
         cfg.timeoutIntervalForResource = 60
         return URLSessionByteTransport(session: URLSession(configuration: cfg))
     }()

@@ -195,13 +195,12 @@ final class AppUpdater: ObservableObject {
         }
     }
 
-    /// Kurzer Test (4 s) – URLSessionSender hat keine eigene Zeitgrenze.
+    /// Kurzer Test (4 s ohne Daten, 8 s insgesamt) über den gemeinsamen HTTPClient (Task 3.10), nie aus dem Cache.
     private nonisolated static func probe(_ base: URL) async -> String? {
-        var r = URLRequest(url: base.appendingPathComponent("api/version"), timeoutInterval: 4)
-        r.cachePolicy = .reloadIgnoringLocalCacheData
-        // Task 2.3 exception (direct URLSession, not via HTTPClient in Build 2): update check against a fixed address, small answer; migrate later.
-        guard let res = try? await URLSession.shared.data(for: r) else { return nil }
-        guard (res.1 as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        let r = URLRequest(url: base.appendingPathComponent("api/version"))
+        let limits = HTTPLimits(requestTimeout: 4, resourceTimeout: 8, maxBytes: HTTPLimits.json.maxBytes)
+        guard let res = try? await LimitedHTTPClient.shared.data(r, limits: limits, fresh: true) else { return nil }
+        guard res.1.statusCode == 200 else { return nil }
         return try? Atvloadly.parseVersion(res.0)
     }
 }

@@ -54,24 +54,17 @@ enum VideoHash {
     }
 
     private static func range(_ url: URL, _ headers: [String: String], from: Int64, to: Int64) async -> (data: Data, contentRange: String?)? {
-        var r = URLRequest(url: url, timeoutInterval: 8)
+        var r = URLRequest(url: url)
         for (k, v) in headers { r.setValue(v, forHTTPHeaderField: k) }
         r.setValue("bytes=\(from)-\(to)", forHTTPHeaderField: "Range")
         r.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
-        // Task 2.3 exception (direct URLSession, not via HTTPClient in Build 2): two 64 KiB Range reads with own timeout and byte cap (VideoHash); migrate later.
-        guard let res = try? await URLSession.shared.bytes(for: r) else { return nil }
-        let (bytes, resp) = res
-        defer { bytes.task.cancel() }   // Server ohne Range-Unterstützung: nie die ganze Datei laden
-        guard let http = resp as? HTTPURLResponse, http.statusCode == 206 else { return nil }
         let want = Int(to - from + 1)
-        var data = Data(); data.reserveCapacity(want)
-        do {
-            for try await b in bytes {
-                data.append(b)
-                if data.count >= want { break }
-            }
-        } catch { return nil }
-        guard data.count == want else { return nil }
+        // Task 3.10: prefix read of the shared HTTPClient (8 s without data as before, 8 s in total; the caller
+        // allows 4 s for the whole hash anyway). It stops at `want` bytes: a server without Range support never
+        // sends the whole file.
+        let limits = HTTPLimits(requestTimeout: 8, resourceTimeout: 8, maxBytes: want)
+        guard let (data, http) = try? await LimitedHTTPClient.shared.prefix(r, limits: limits, fresh: false),
+              http.statusCode == 206, data.count == want else { return nil }
         return (data, http.value(forHTTPHeaderField: "Content-Range"))
     }
 }
