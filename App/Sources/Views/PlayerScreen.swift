@@ -224,9 +224,10 @@ struct PlayerControls<E: PlaybackEngine>: View {
     @State private var loadError: String?
     @State private var tick = 0
     /// Task 3.2: which start steps run after each successful load (PlayerCore `StartSequence`).
-    @State private var startSeq = StartSequence()
-    /// Sync fraction jump issued, not yet arrived (target in seconds); nil = none in flight.
-    @State private var fractionSeekTarget: Double?
+    /// Intern auch für PlayerScrub.swift und PlayerSidePanel.swift (Nutzersprung verwirft den Sync-Sprung).
+    @State var startSeq = StartSequence()
+    /// Fix round 1: audio reload of a start step's `selectAudio`; the sync jump waits until it has finished.
+    @State private var jumpAudio = AudioSwitchWatch()
     /// Sync fraction jump waiting for the duration (runs from `onChange(of: engine.duration)`).
     @State private var fractionAwaitingDuration: Double?
     /// Gesammeltes Sprungziel: mehrere ±10-s-Drücke werden zu einem Sprung (Muxer-Neustarts sparen).
@@ -269,6 +270,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                                   seekTask?.cancel(); pendingSeek = nil
                                   // Wie queueSeek: Bild nach dem Hintergrund freigegeben, erst Play baut neu auf.
                                   guard !restorePending, !restoring else { RemoteLog.info("player", "Überspringen gesperrt bis Play/Neuaufbau (nach Hintergrund)"); return false }
+                                  dropFractionJump()   // Task 3.2 fix: the skip wins over a pending sync jump
                                   return true
                               },
                               // Wave P-a: action per type, cards that cover the credits, jumps without side effects.
@@ -344,7 +346,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             tick &+= 1
             // Gesunde Spielzeit für die Fehlerleiter zählt stabilityTick (nur ohne Puffern, Position läuft; W-A-9).
             if engine.isPlaying, engine.errorText == nil { lastGoodTime = engine.currentTime }
-            noteFractionSeekArrival()
+            driveFractionJump()
             if tick % 10 == 0 && engine.isPlaying { saveProgress() }
             upNextTick()
             stabilityTick(blocked: failureNotice != nil || loadError != nil)
@@ -417,8 +419,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
                                  onRemember: onRemember, onCoverBottom: { coverBottom = $0 })
             }
         }
-        .onChange(of: engine.isLoading) { _, _ in checkAudioSwitch(); noteStartAudioReload() }
-        .onChange(of: engine.activeAudioID) { _, _ in checkAudioSwitch(); noteStartAudioReload() }
+        .onChange(of: engine.isLoading) { _, _ in checkAudioSwitch(); noteStartAudioReload(); driveFractionJump() }
+        .onChange(of: engine.activeAudioID) { _, _ in checkAudioSwitch(); noteStartAudioReload(); driveFractionJump() }
         // Play von außen (Siri, Kontrollzentrum) nach dem Hintergrund: erst neu aufbauen.
         .onChange(of: engine.isPlaying) { _, p in if p { stabilityPlaying(); pauseCard.noteInput() }; if p, restorePending { restoreAndPlay() } }
         .onPlayerLifecycle { handlePhase($0) }
@@ -475,6 +477,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                 let best = rememberedAudio() ?? preferredAudioTrack(engine.audioTracks, priority: profile.audioPriority)
                 if let best, best.id != engine.activeAudioID {
                     if wholeStart { startAudioReload = (target: best.id, at: ContinuousClock.now, sawLoading: false) }
+                    jumpAudio.begin(best.id, now: Date())
                     engine.selectAudio(best.id)
                 } else if wholeStart {
                     startAudioReload = nil
@@ -486,6 +489,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                 let before = audioBefore ?? TrackMemory.Entry(audioID: id, audioLanguage: nil)
                 if let t = before.track(in: engine.audioTracks) {
                     if t.id != engine.activeAudioID {
+                        jumpAudio.begin(t.id, now: Date())
                         engine.selectAudio(t.id)
                         RemoteLog.info("player", "Tonspur wiederhergestellt: \(t.id) · \(t.language ?? "?")")
                     }
@@ -514,24 +518,47 @@ struct PlayerControls<E: PlaybackEngine>: View {
     /// Synced fraction (Trakt/Simkl) to jump to; nil = fixed start position or none.
     private var syncFraction: Double? { start == nil ? startFraction : nil }
 
-    /// W-A-4/W-B-4: jump to the synced fraction. Counts as done only once playback ran at the target
-    /// (`noteFractionSeekArrival`); until then every reload repeats it (`StartSequence`).
+    /// W-A-4/W-B-4: jump to the synced fraction. PlayerCore `StartSequence` decides when: after the start's audio
+    /// reload, retried once if it did not land, given up after a limit; until then no progress is saved.
     private func seekToFraction(_ f: Double) {
         let d = engine.duration
         guard d > 0 else { fractionAwaitingDuration = f; return }
-        let target = f * d
-        fractionSeekTarget = target
-        RemoteLog.info("player", "Sprung auf Sync-Anteil \(Int((f * 100).rounded())) % → \(Int(target))s")
-        Task { await engine.seek(target) }
+        startSeq.planJump(target: f * d, now: ProcessInfo.processInfo.systemUptime)
+        RemoteLog.info("player", "Sprung auf Sync-Anteil \(Int((f * 100).rounded())) % geplant → \(Int(f * d))s")
+        driveFractionJump()
     }
 
-    /// Every tick: the fraction jump has arrived when playback runs (no load, no seek) at or behind the target.
-    private func noteFractionSeekArrival() {
-        guard let t = fractionSeekTarget, engine.isPlaying, engine.errorText == nil, !engine.isLoading,
-              !engine.loadActivity.seeking, engine.currentTime >= t - 15 else { return }
-        fractionSeekTarget = nil
-        startSeq.noteSeekExecuted()
-        RemoteLog.info("player", "Sprung auf Sync-Anteil angekommen · bei \(Int(engine.currentTime))s")
+    /// After planning, every tick and on engine changes: carry out what `StartSequence.observeJump` decides.
+    private func driveFractionJump() {
+        if jumpAudio.isActive, let o = jumpAudio.update(activeID: engine.activeAudioID, isLoading: engine.isLoading,
+                                                        failed: engine.errorText != nil, now: Date()),
+           startSeq.holdsProgress {
+            RemoteLog.info("player", "Start-Tonwahl \(o.logText) → Sync-Sprung frei")
+        }
+        guard startSeq.holdsProgress, !leaving else { return }
+        let busy = engine.isLoading || engine.loadActivity.seeking || engine.errorText != nil || recovering
+            || stab.loadInFlight || restorePending || restoring
+        switch startSeq.observeJump(audioReloading: jumpAudio.isActive, busy: busy, position: engine.currentTime,
+                                    now: ProcessInfo.processInfo.systemUptime) {
+        case .wait: break
+        case .seek(let t):
+            RemoteLog.info("player", "Sprung auf Sync-Anteil → \(Int(t))s")
+            Task { await engine.seek(t) }
+        case .retry(let t):
+            RemoteLog.info("player", "Sprung wiederholt → \(Int(t))s · bei \(Int(engine.currentTime))s")
+            Task { await engine.seek(t) }
+        case .arrived:
+            RemoteLog.info("player", "Sprung auf Sync-Anteil angekommen · bei \(Int(engine.currentTime))s")
+        case .gaveUp:
+            RemoteLog.info("player", "Sprung auf Sync-Anteil aufgegeben · bei \(Int(engine.currentTime))s")
+        }
+    }
+
+    /// The user jumped himself: the pending sync jump must not pull him back (and progress saving resumes).
+    func dropFractionJump() {
+        guard startSeq.holdsProgress else { return }
+        startSeq.userSeeked()
+        RemoteLog.info("player", "Sprung auf Sync-Anteil verworfen (Nutzer springt)")
     }
 
     /// Task 1.8: start of loading until the first frame (and from the press, if there was one); once per load.
@@ -744,6 +771,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
         guard !leaving else { return }
         // Bild nach dem Hintergrund freigegeben: erst Play baut neu auf (ein Neuaufbau würde von selbst starten).
         guard !restorePending, !restoring else { RemoteLog.info("player", "Sprung gesperrt bis Play/Neuaufbau (nach Hintergrund)"); return }
+        dropFractionJump()
         let base = pendingSeek ?? engine.currentTime
         let limit = engine.duration > 10 ? engine.duration - 5 : .greatestFiniteMagnitude
         let target = min(max(0, base + delta), limit)
@@ -766,6 +794,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                                    lastArrowAge: age, forward: forward)
         if pendingSeek != nil { RemoteLog.info("player", "Gesammelter Sprung → Schnellsuchlauf ab \(Int(from))s") }
         seekTask?.cancel(); seekTask = nil; pendingSeek = nil
+        dropFractionJump()   // Task 3.2 fix: holding ◀/▶ wins over a pending sync jump
         return from
     }
 
@@ -924,7 +953,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
     }
 
     func saveProgress() {
-        guard engine.duration > 0, engine.currentTime > 0, !sideHoldsProgress else { return }
+        // Fix round 1: a pending sync jump holds progress (the start position would overwrite the synced one).
+        guard engine.duration > 0, engine.currentTime > 0, !sideHoldsProgress, !startSeq.holdsProgress else { return }
         report(engine.currentTime, engine.duration)
     }
 

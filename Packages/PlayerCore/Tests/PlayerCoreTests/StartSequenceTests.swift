@@ -98,3 +98,62 @@ private let english = TrackMemory.Entry(audioID: 2, audioLanguage: "en")
     p.notePlaying(position: 170)
     #expect(p.total == 0)   // 120 s of real playing: the ladder starts again
 }
+
+// MARK: Fix round 1: the sync jump waits for the start's audio reload, retries once, holds progress until done.
+
+private func planned(_ target: Double = 3000) -> StartSequence {
+    var s = StartSequence()
+    _ = s.afterSuccessfulLoad(isFirst: true, remembered: nil, pendingFraction: 0.6)
+    s.planJump(target: target, now: 0)
+    return s
+}
+
+@Test func startJumpWaitsForAudioReload() {
+    var s = planned()
+    #expect(s.holdsProgress)
+    #expect(s.observeJump(audioReloading: true, busy: false, position: 0, now: 0) == .wait)
+    #expect(s.observeJump(audioReloading: true, busy: true, position: 0, now: 2) == .wait)
+    #expect(s.observeJump(audioReloading: false, busy: true, position: 0, now: 4) == .wait)
+    #expect(s.observeJump(audioReloading: false, busy: false, position: 1, now: 5) == .seek(3000))
+    #expect(s.holdsProgress)
+}
+
+@Test func startJumpArrives() {
+    var s = planned()
+    #expect(s.observeJump(audioReloading: false, busy: false, position: 0, now: 0) == .seek(3000))
+    #expect(s.observeJump(audioReloading: false, busy: true, position: 0, now: 1) == .wait)
+    #expect(s.observeJump(audioReloading: false, busy: false, position: 2992, now: 2) == .arrived)
+    #expect(!s.holdsProgress)
+    #expect(s.seekExecuted)
+    #expect(s.afterSuccessfulLoad(isFirst: false, remembered: nil, pendingFraction: 0.6) == [.selectAudio(restore: nil), .play])
+    #expect(s.observeJump(audioReloading: false, busy: false, position: 0, now: 3) == .wait)
+}
+
+@Test func startJumpRetriesOnceThenGivesUp() {
+    var s = planned()
+    #expect(s.observeJump(audioReloading: false, busy: false, position: 0, now: 0) == .seek(3000))
+    // Jump lost (e.g. the audio reload restored the old position): no retry before the settle time.
+    #expect(s.observeJump(audioReloading: false, busy: false, position: 1, now: 2) == .wait)
+    #expect(s.observeJump(audioReloading: false, busy: false, position: 3, now: 3) == .retry(3000))
+    #expect(s.holdsProgress)
+    #expect(s.observeJump(audioReloading: false, busy: false, position: 4, now: 5) == .wait)
+    #expect(s.observeJump(audioReloading: false, busy: false, position: 6, now: 6) == .gaveUp)
+    #expect(!s.holdsProgress)
+    #expect(s.seekExecuted)   // not repeated on later loads
+}
+
+@Test func startJumpGivesUpAfterLimitEvenWhileWaiting() {
+    var s = planned()
+    #expect(s.observeJump(audioReloading: true, busy: true, position: 0, now: 59) == .wait)
+    #expect(s.observeJump(audioReloading: true, busy: true, position: 0, now: StartSequence.jumpGiveUpSeconds) == .gaveUp)
+    #expect(!s.holdsProgress)
+}
+
+@Test func startJumpDroppedByUserSeek() {
+    var s = planned()
+    #expect(s.observeJump(audioReloading: false, busy: false, position: 0, now: 0) == .seek(3000))
+    s.userSeeked()
+    #expect(!s.holdsProgress)
+    #expect(s.observeJump(audioReloading: false, busy: false, position: 100, now: 5) == .wait)
+    #expect(s.afterSuccessfulLoad(isFirst: false, remembered: nil, pendingFraction: 0.6) == [.selectAudio(restore: nil), .play])
+}

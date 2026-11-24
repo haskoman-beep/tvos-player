@@ -45,7 +45,63 @@ public struct StartSequence: Sendable {
     }
 
     /// The jump arrived: later loads keep the position instead of jumping again.
-    public mutating func noteSeekExecuted() { seekExecuted = true }
+    public mutating func noteSeekExecuted() { seekExecuted = true; jumpTarget = nil }
+
+    // MARK: Pending sync jump (fix round 1)
+
+    /// What the view does with the pending sync jump on this observation.
+    public enum JumpAction: Sendable, Equatable {
+        /// Nothing now (audio reload or engine busy, or settling after a seek, or no jump pending).
+        case wait
+        /// Issue the jump.
+        case seek(Double)
+        /// The jump did not land: issue it once more (log `player: Sprung wiederholt`).
+        case retry(Double)
+        /// Playback is at the target.
+        case arrived
+        /// Not landed after the retry or after `jumpGiveUpSeconds`: stop holding progress.
+        case gaveUp
+    }
+
+    /// After a seek, wait this long (engine idle) before judging it lost.
+    public static let jumpSettleSeconds: Double = 3
+    /// Hard limit from planning: then the jump is given up, so progress saving never stays blocked.
+    public static let jumpGiveUpSeconds: Double = 60
+    /// The jump counts as landed at or behind target minus this (keyframe seeks land a little early).
+    public static let jumpTolerance: Double = 15
+
+    /// Target (seconds) of the planned, not yet landed jump; nil = none.
+    public private(set) var jumpTarget: Double?
+    private var jumpPlannedAt: Double = 0
+    private var jumpIssuedAt: Double?
+    private var jumpIssues = 0
+
+    /// A jump is pending: do not save progress (the synced position would be overwritten by the start position).
+    public var holdsProgress: Bool { jumpTarget != nil }
+
+    /// The `seek(fraction:)` step with a known duration: plan the jump (`now` = uptime in seconds).
+    public mutating func planJump(target: Double, now: Double) {
+        jumpTarget = target; jumpPlannedAt = now; jumpIssuedAt = nil; jumpIssues = 0
+    }
+
+    /// Every tick and after planning. The jump waits for the start's audio reload (a seek during it can be lost),
+    /// is issued once the engine is idle, and is retried once if it has not landed after `jumpSettleSeconds`.
+    /// `busy`: the engine loads or seeks (or the player reloads after an error).
+    public mutating func observeJump(audioReloading: Bool, busy: Bool, position: Double, now: Double) -> JumpAction {
+        guard let target = jumpTarget else { return .wait }
+        if !busy, !audioReloading, position >= target - Self.jumpTolerance { finishJump(); return .arrived }
+        if now - jumpPlannedAt >= Self.jumpGiveUpSeconds { finishJump(); return .gaveUp }
+        if audioReloading || busy { return .wait }
+        guard let issued = jumpIssuedAt else { jumpIssues = 1; jumpIssuedAt = now; return .seek(target) }
+        guard now - issued >= Self.jumpSettleSeconds else { return .wait }
+        if jumpIssues < 2 { jumpIssues = 2; jumpIssuedAt = now; return .retry(target) }
+        finishJump(); return .gaveUp
+    }
+
+    /// The user jumped himself (arrows, scrubbing, chapter, skip): drop the pending jump, never repeat it.
+    public mutating func userSeeked() { finishJump() }
+
+    private mutating func finishJump() { jumpTarget = nil; jumpIssuedAt = nil; seekExecuted = true }
 
     /// For the log line `player: Startschritte <list>`, e.g. "selectAudio(restore),play".
     public static func logText(_ steps: [Step]) -> String {
