@@ -45,6 +45,9 @@ final class AppModel: ObservableObject {
     let catalogDisk = CatalogDiskStore()
     /// Welle F-f: laufende Reihen-Ladungen je Profil und Quelle (AppModel+HomeRows); Reihe und Vorladen teilen sie.
     var homeRowLoads: [String: Task<CatalogLoad, Never>] = [:]
+    /// Task 3.1: profile epoch. `advance` on a profile switch or backup import, `bump` on a language or addon set
+    /// change. A task that awaits and then writes profile data remembers `scopes.current` and checks it afterwards.
+    @Published private(set) var scopes = ScopeClock(profile: UUID())
 
     /// Cinemeta liefert Metadaten/Folgenlisten für IMDb-IDs (kostenlos, ohne Key).
     static let cinemeta = InstalledAddon(
@@ -82,6 +85,7 @@ final class AppModel: ObservableObject {
         })
         adoptProfileLoad(loaded)
         adoptSecrets(recovery: loaded.needsSecretRecovery)   // file lost or read leniently: the Keychain fills gaps
+        scopes = ScopeClock(profile: profile.id)
         let progressStart = ContinuousClock.now
         progress = loadProgress(profile.id)
         RemoteLog.metric(.startProfiles, ms: Metric.ms(profilesStart.duration(to: progressStart)),
@@ -145,11 +149,15 @@ final class AppModel: ObservableObject {
     /// Scrobbles laufen nacheinander, damit stop/start/pause in der richtigen Reihenfolge ankommen.
     private var scrobbleChain: Task<Void, Never>?
     /// Laufende Trakt-Erneuerung; gleichzeitige Aufrufer warten auf dieselbe.
-    private var traktRefresh: Task<SyncToken?, Never>?
+    private var traktRefresh = TaskSlots<SyncToken?>()   // Task 3.1: key = profile ID
 
-    var trakt: TraktClient? {
-        guard let id = profile.apiKeys["trakt_id"], let sec = profile.apiKeys["trakt_secret"], !id.isEmpty, !sec.isEmpty else { return nil }
-        return TraktClient(clientID: id, clientSecret: sec, onUnauthorized: { [weak self] old in await self?.refreshTrakt(after: old) })
+    var trakt: TraktClient? { traktClient(for: profile) }
+
+    /// Task 3.1 (S-4): a 401 renews the token of the profile the client was made for, never of the active one.
+    func traktClient(for p: Profile) -> TraktClient? {
+        guard let id = p.apiKeys["trakt_id"], let sec = p.apiKeys["trakt_secret"], !id.isEmpty, !sec.isEmpty else { return nil }
+        let owner = p.id
+        return TraktClient(clientID: id, clientSecret: sec, onUnauthorized: { [weak self] old in await self?.refreshTrakt(after: old, profile: owner) })
     }
 
     var simkl: SimklClient? {
@@ -170,6 +178,7 @@ final class AppModel: ObservableObject {
 
     /// Einmal nachfragen; bei Erfolg wird die Anmeldung im Profil gespeichert.
     func pollLogin(_ s: String, _ code: DeviceCode) async -> DevicePoll {
+        let scope = scopes.current
         let r: DevicePoll
         do {
             if s == "trakt", let trakt { r = try await trakt.poll(code) }
@@ -179,7 +188,9 @@ final class AppModel: ObservableObject {
         // Nur den Fall loggen (success/pending/…), nie das SyncToken mit Zugangs-/Erneuerungsschlüssel.
         RemoteLog.info("sync", "\(s) Login: \(String(describing: r).prefix(while: { $0 != "(" }))")
         if case .success(let t) = r {
-            update { $0.syncTokens[s] = t }
+            // Task 3.1: the login belongs to the profile it was started in, even after a switch.
+            update(profile: scope.profile) { $0.syncTokens[s] = t }
+            guard scopeStillCurrent(scope, "\(s) Login") else { return r }
             clearCatalogCache()
             await syncRemoteProgress()
         }
@@ -193,36 +204,61 @@ final class AppModel: ObservableObject {
         return t
     }
 
-    /// Trakt-Token erneuern; nur eine Erneuerung zur Zeit (der Refresh-Token rotiert).
+    /// Trakt-Token erneuern; nur eine Erneuerung zur Zeit je Profil (der Refresh-Token rotiert).
     /// Hat ein anderer Aufrufer `old` schon ersetzt, wird das neue Token zurückgegeben.
-    func refreshTrakt(after old: SyncToken) async -> SyncToken? {
-        if let running = traktRefresh { return await running.value }
-        guard let trakt, let cur = profile.syncTokens["trakt"] else { return nil }
+    /// Task 3.1 (S-4): the running renewal is bound to `scope.profile`; only callers of that profile join it, and
+    /// the new token is always written into that profile by ID (active or not), as long as it still holds `cur`.
+    func refreshTrakt(after old: SyncToken, profile id: UUID? = nil) async -> SyncToken? {
+        let owner = id ?? profile.id, key = owner.uuidString
+        if let running = traktRefresh[key] { return await running.value }
+        guard let p = stored.profiles.first(where: { $0.id == owner }), let trakt = traktClient(for: p),
+              let cur = p.syncTokens["trakt"] else { return nil }
         if cur != old, !cur.needsRefresh() { return cur }
-        let profileID = profile.id
         let task = Task { [weak self] () -> SyncToken? in
-            defer { self?.traktRefresh = nil }
             do {
                 let n = try await trakt.refresh(cur)
-                if self?.profile.id == profileID { self?.update { $0.syncTokens["trakt"] = n } }
+                self?.writeRenewedToken(n, replacing: cur, service: "trakt", profile: owner)
                 return n
             } catch {
                 RemoteLog.error("sync", "Trakt-Erneuerung fehlgeschlagen: \(error)")
                 return nil
             }
         }
-        traktRefresh = task
-        return await task.value
+        let ticket = traktRefresh.begin(key, task)
+        let n = await task.value
+        traktRefresh.finish(key, ticket)
+        return n
+    }
+
+    /// Task 3.1 (S-4): renewed token into the profile with `id`, also when another profile is active now.
+    private func writeRenewedToken(_ n: SyncToken, replacing cur: SyncToken, service: String, profile id: UUID) {
+        var list = stored.profiles
+        guard SyncTokenWriteBack.apply(n, replacing: cur, service: service, profile: id, in: &list) else {
+            RemoteLog.info("sync", "\(service): erneuertes Token nicht übernommen (abgemeldet, neu angemeldet oder Profil fort)")
+            return
+        }
+        stored.profiles = list
+        save()
+        if id != profile.id { RemoteLog.info("profil", "\(service): erneuertes Token im vorigen Profil gespeichert") }
+    }
+
+    /// Task 3.1: false (and one log line) when `s` is no longer the current scope; the late result is dropped.
+    func scopeStillCurrent(_ s: ProfileScope, _ what: String) -> Bool {
+        guard !scopes.isCurrent(s) else { return true }
+        RemoteLog.info("profil", "Ergebnis verworfen (Epoche) · \(what)")
+        return false
     }
 
     /// Angefangenes aus dem gewählten Dienst holen und mit dem lokalen Stand zusammenführen.
     func syncRemoteProgress() async {
         await processSyncQueue()   // Wave L: send pending tile changes before pulling
+        let scope = scopes.current   // Task 3.1 (S-3): the pull belongs to this profile and epoch
         let s: String
         switch profile.progressSource { case .local: return; case .trakt: s = "trakt"; case .simkl: s = "simkl" }
-        guard let t = await token(s) else { return }
+        guard let t = await token(s), scopeStillCurrent(scope, "\(s) Abgleich") else { return }
         do {
             let remote = s == "trakt" ? try await trakt?.playback(token: t) : try await simkl?.playback(token: t)
+            guard scopeStillCurrent(scope, "\(s) Abgleich") else { return }
             let mergeStart = ContinuousClock.now
             let before = progress
             progress.merge(remote: applySyncQueue(remote ?? []))
@@ -231,7 +267,10 @@ final class AppModel: ObservableObject {
             RemoteLog.info("sync", "\(s): \(remote?.count ?? 0) angefangene Titel geholt")
             if progressSaveHeld { RemoteLog.info("speicher", "Fortschritt nach Abgleich nicht gespeichert: Datei war unlesbar, wartet auf nächsten Fortschritt") }
             else { try saveProgressBook() }
-        } catch { lastError = "\(s == "trakt" ? "Trakt" : "Simkl") nicht erreichbar: \(error)" }
+        } catch {
+            guard scopeStillCurrent(scope, "\(s) Abgleich") else { return }
+            lastError = "\(s == "trakt" ? "Trakt" : "Simkl") nicht erreichbar: \(error)"
+        }
     }
 
     private func scrobbleProgress(_ r: PlayRequest, fraction: Double) {
@@ -290,9 +329,48 @@ final class AppModel: ObservableObject {
     var hasMultipleProfiles: Bool { stored.profiles.count > 1 }
 
     func update(_ change: (inout Profile) -> Void) {
-        guard let i = stored.profiles.firstIndex(where: { $0.id == profile.id }) else { return }
+        update(profile: profile.id, change)
+    }
+
+    /// Task 3.1: change one profile by ID (a late result goes into the profile it was started for). In the active
+    /// profile a new language or addon set starts a new epoch.
+    func update(profile id: UUID, _ change: (inout Profile) -> Void) {
+        guard let i = stored.profiles.firstIndex(where: { $0.id == id }) else { return }
+        let before = stored.profiles[i]
         change(&stored.profiles[i])
         save()
+        guard id == profile.id else { return }
+        let after = stored.profiles[i]
+        if before.addons != after.addons { addonSetChanged() }
+        if before.language != after.language { languageChanged() }
+    }
+
+    /// Task 3.1 (A-A-8): addon installed, removed, moved or replaced: sources, running searches, empty pauses and
+    /// addon metadata of the old set go; running tasks of the old epoch drop their results.
+    func addonSetChanged() {
+        scopes.bump()
+        resetStreamState()
+        HeroDetailsCache.all.removeAll(); AddonMetaCache.reset()
+        RemoteLog.info("profil", "Addon-Satz geändert · Quellen und Metadaten verworfen")
+    }
+
+    /// Task 3.1 (A-A-12, A-B-2): texts, catalog rows and hero data in the old language go.
+    private func languageChanged() {
+        scopes.bump()
+        clearCatalogCache()
+        HeroDetailsCache.all.removeAll()
+        RemoteLog.info("profil", "Sprache geändert · Texte und Kataloge neu")
+    }
+
+    /// Source cache, running searches, empty pauses and gap marks (profile switch, addon set change).
+    private func resetStreamState() {
+        // Quellen des vorigen Profils (andere Addons) nicht ungefiltert als Cache-Treffer liefern.
+        streamCache.removeAll(); streamAddonFetchedAt.removeAll()
+        // Welle D-b (M1): laufende Suchen des alten Profils vergessen (sie legen nichts mehr ab, niemand wartet neu
+        // auf sie), Leer-Pausen und Lückenmerker gelten nur für das Profil, in dem sie entstanden.
+        streamTasks.reset(); streamEmptyUntil.removeAll(); streamsAllEmptyAt = nil; streamPartial.removeAll()
+        streamTiers.removeAll()   // Wave F-k R2
+        StreamSearchStatus.shared.reset(); StreamPrefetcher.shared.reset()
     }
 
     func save() {
@@ -408,6 +486,7 @@ final class AppModel: ObservableObject {
     private func profilesReplaced(_ s: StoredProfiles, recovery: Bool) {
         clearCatalogCache()   // memory cache and snapshot of the stand-in default profile
         stored = s
+        scopes.advance(to: profile.id)   // Task 3.1
         adoptSecrets(recovery: recovery)   // Task 2.2: a restored version gets missing keys and logins from the Keychain
         progress = loadProgress(profile.id)
         restoreCatalogSnapshot()
@@ -435,13 +514,9 @@ final class AppModel: ObservableObject {
         // Welle D-b (Mi3): das schon aktive Profil erneut wählen ändert nichts (laufende Suchen bleiben gültig).
         guard id != stored.activeProfileID else { return }
         stored.activeProfileID = id; cache.removeAll(); save()
-        // Quellen des vorigen Profils (andere Addons) nicht ungefiltert als Cache-Treffer liefern.
-        streamCache.removeAll(); streamAddonFetchedAt.removeAll()
-        // Welle D-b (M1): laufende Suchen des alten Profils vergessen (sie legen nichts mehr ab, niemand wartet neu
-        // auf sie), Leer-Pausen und Lückenmerker gelten nur für das Profil, in dem sie entstanden.
-        streamTasks.reset(); streamEmptyUntil.removeAll(); streamsAllEmptyAt = nil; streamPartial.removeAll()
-        streamTiers.removeAll()   // Wave F-k R2
-        StreamSearchStatus.shared.reset(); StreamPrefetcher.shared.reset()
+        // Task 3.1: new epoch; late results of the old profile are dropped, its token renewal still lands in it.
+        scopes.advance(to: id)
+        resetStreamState()
         // Welle E-a (I3): Addon-Bilder/-Bewertungen des alten Profils nicht weiter zeigen.
         HeroDetailsCache.all.removeAll(); AddonMetaCache.reset()
         restoreCatalogSnapshot()
@@ -478,13 +553,16 @@ final class AppModel: ObservableObject {
     // MARK: Addons
 
     func installAddon(_ url: String) async {
+        let scope = scopes.current
         do {
             let a = try await addons.install(manifestURL: url)
-            update { p in
+            // Task 3.1: into the profile it was asked for, even if another one is active by now.
+            if scope.profile != profile.id { RemoteLog.info("profil", "Addon nach Profilwechsel ins vorige Profil übernommen") }
+            update(profile: scope.profile) { p in
                 p.addons.removeAll { $0.manifestURL == a.manifestURL }
                 p.addons.append(a)
             }
-            clearCatalogCache()
+            if scope.profile == profile.id { clearCatalogCache() } else { removeCatalogFile(profile: scope.profile) }
         } catch { lastError = "Addon nicht geladen: \(error)" }
     }
 
@@ -609,30 +687,34 @@ final class AppModel: ObservableObject {
     /// Welle E-a: Cinemeta + Metadaten-Addon (Bilder, Bewertung) + TMDB-Texte, zusammengeführt in AppModel+MetaAddon.
     func meta(type: String, imdb: String) async -> MetaDetail? { await mergedMeta(type: type, imdb: imdb) }
 
-    private var localizedCache: [String: LocalizedMeta] = [:]
+    /// Task 3.1 (A-A-12, A-B-2): keyed by (IMDb ID, language), bounded, bound to the scope (a profile switch,
+    /// language or addon change starts empty; a late answer of an older scope is not stored).
+    private var localizedCache = ScopedCache<TextCacheKey, LocalizedMeta>(limit: 300)
     private var localizedFlights: [String: Task<SharedLookup<LocalizedMeta>, Never>] = [:]
-    private var seasonCache: [String: [Int: LocalizedEpisode]] = [:]
+    private var seasonCache = ScopedCache<TextCacheKey, [Int: LocalizedEpisode]>(limit: 100)
 
     /// TMDB in Profilsprache (Titel, Text, Poster, Logo, FSK); nil ohne TMDB-Key.
     func localized(imdb: String, series: Bool) async -> LocalizedMeta? {
-        if let c = localizedCache[imdb] { return c }
+        guard let tmdb else { RemoteLog.info("tmdb", "kein TMDB-Key – keine Übersetzung"); return nil }
+        let scope = scopes.current
+        if let c = localizedCache.value(for: TextCacheKey(imdb: imdb, language: tmdb.language), in: scope) { return c }
         // Wave F-p: the detail page asks in parallel to the meta, which asks too: one request, both wait for it.
-        let key = "\(series ? "s" : "m"):\(imdb)"
+        // Task 3.1: a request of an older epoch or another language is never joined.
+        let key = "\(series ? "s" : "m"):\(imdb):\(tmdb.language):\(scope.epoch)"
         if let t = localizedFlights[key] {
             // R1/R2: joined a request that failed (timeout, network): ask once more, as the former second call did.
             // No match, no key or an unreadable answer stay as they are (no second lookup, no second log line).
             let o = await t.value
-            return o.retriesOnJoin ? await fetchLocalized(imdb: imdb, series: series).value : o.value
+            return o.retriesOnJoin ? await fetchLocalized(imdb: imdb, series: series, tmdb: tmdb, scope: scope).value : o.value
         }
-        let t = Task { await fetchLocalized(imdb: imdb, series: series) }
+        let t = Task { await fetchLocalized(imdb: imdb, series: series, tmdb: tmdb, scope: scope) }
         localizedFlights[key] = t
         let o = await t.value
         localizedFlights[key] = nil
         return o.value
     }
 
-    private func fetchLocalized(imdb: String, series: Bool) async -> SharedLookup<LocalizedMeta> {
-        guard let tmdb else { RemoteLog.info("tmdb", "kein TMDB-Key – keine Übersetzung"); return .none }
+    private func fetchLocalized(imdb: String, series: Bool, tmdb: TMDBClient, scope: ProfileScope) async -> SharedLookup<LocalizedMeta> {
         do {
             guard let id = try await tmdb.tmdbID(imdb: imdb, series: series) else {
                 RemoteLog.info("tmdb", "\(imdb): kein TMDB-Treffer (\(series ? "tv" : "movie"))"); return .none
@@ -641,18 +723,23 @@ final class AppModel: ObservableObject {
                 RemoteLog.info("tmdb", "\(imdb) → \(id): Antwort unlesbar"); return .none
             }
             RemoteLog.info("tmdb", "\(imdb) → \(id) · \(tmdb.language) · Titel \(l.name ?? "-") · Text \(l.overview == nil ? "nein" : "ja") · Logo \(l.logo == nil ? "nein" : "ja") · Freigabe \(l.certification ?? "-")")
-            localizedCache[imdb] = l
+            if !localizedCache.store(l, for: TextCacheKey(imdb: imdb, language: tmdb.language), from: scope, current: scopes.current) {
+                RemoteLog.info("profil", "Ergebnis verworfen (Epoche) · tmdb \(imdb)")
+            }
             return .found(l)
         } catch { RemoteLog.error("tmdb", "Übersetzung \(imdb): \(error)"); return .failed }
     }
 
     /// Folgennamen/-texte einer Staffel in Profilsprache.
     func localizedSeason(imdb: String, season: Int) async -> [Int: LocalizedEpisode] {
-        let key = "\(imdb):\(season)"
-        if let c = seasonCache[key] { return c }
-        guard let tmdb, let id = await localized(imdb: imdb, series: true)?.tmdbID,
+        guard let tmdb else { return [:] }
+        let scope = scopes.current, key = TextCacheKey(imdb: imdb, language: tmdb.language, season: season)
+        if let c = seasonCache.value(for: key, in: scope) { return c }
+        guard let id = await localized(imdb: imdb, series: true)?.tmdbID,
               let eps = try? await tmdb.season(tmdbID: id, season: season) else { return [:] }
-        seasonCache[key] = eps
+        if !seasonCache.store(eps, for: key, from: scope, current: scopes.current) {
+            RemoteLog.info("profil", "Ergebnis verworfen (Epoche) · Staffel \(imdb):\(season)")
+        }
         return eps
     }
 
@@ -768,11 +855,16 @@ final class AppModel: ObservableObject {
         return try (includeSecrets ? b : b.withoutSecrets()).encoded()
     }
 
-    /// Task 2.4: everything cached for the old profile set is dropped after a restore (Build 3 replaces this with
-    /// `ProfileScope`): catalog caches, a running token renewal, the kit and link state of the active profile.
+    /// Task 2.4: everything cached for the old profile set is dropped after a restore: catalog caches, the kit and
+    /// link state of the active profile. Task 3.1: a new epoch (texts, hero data, late results of running tasks),
+    /// the source state of the old addon set goes (A-A-8). A running token renewal is forgotten but not cancelled:
+    /// it writes its token by ID only into a profile that still holds the renewed one (S-4).
     func profileScopeChanged() {
         clearCatalogCache()
-        traktRefresh?.cancel(); traktRefresh = nil
+        if scopes.current.profile == profile.id { scopes.bump() } else { scopes.advance(to: profile.id) }
+        resetStreamState()
+        HeroDetailsCache.all.removeAll(); AddonMetaCache.reset()
+        traktRefresh.reset()
         FusionKitStore.shared.profileScopeChanged()
         CollectionLinkStore.shared.profileScopeChanged(self)
     }

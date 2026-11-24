@@ -40,6 +40,9 @@ struct PlayerScreen: View {
     @State private var prefetchToken = UUID()
     /// Spur-Panel (fullScreenCover) offen: ein onDisappear dabei ist kein Verlassen des Players.
     @State private var tracksOpen = false
+    /// Task 3.1 (Build 2 carry-over): profile scope of this playback session. The track memory is read and written
+    /// for this profile by ID, so a profile switch during playback never lands a choice in the new profile.
+    @State private var session: ProfileScope?
 
     var body: some View {
         Group {
@@ -78,9 +81,9 @@ struct PlayerScreen: View {
                                                        onUserInput: onUserInput,
                                                        onSourceVerdict: isTrailer ? { _ in } : onSourceVerdict,
                                                        releaseName: releaseName,
-                                                       trackMemory: memoryKey.flatMap { PlayerMemory.shared.trackMemory(profile: model.profile.id, key: $0) },
-                                                       onRemember: memoryKey.map { key -> (TrackMemoryChange) -> Void in
-                                                           { change in PlayerMemory.shared.remember(change, key: key, profile: model.profile.id) }
+                                                       trackMemory: memoryKey.flatMap { PlayerMemory.shared.trackMemory(profile: sessionProfile, key: $0) },
+                                                       onRemember: memoryKey.map { [sessionProfile] key -> (TrackMemoryChange) -> Void in
+                                                           { change in PlayerMemory.shared.remember(change, key: key, profile: sessionProfile) }
                                                        },
                                                        sideExtras: isTrailer ? nil : extras) }
             else {
@@ -106,9 +109,13 @@ struct PlayerScreen: View {
             StreamPrefetcher.shared.playerAppeared(prefetchToken)
             if !isTrailer { extras.attach(model: model, request: request, links: sideLinks?.closing { tracksOpen = false; sideExit = $0 }) }   // Wave P-b
             guard backend == nil else { return }
+            session = model.scopes.current   // Task 3.1: before the backend, so the controls see it from the start
             do { let b = try AetherBackend(); NowPlayingBridge.stage(b, request: request, skipSeconds: model.profile.player.remoteSkipSeconds); backend = b } catch { initError = "Player-Start fehlgeschlagen: \(error)"; RemoteLog.error("player", initError ?? "") }
         }
     }
+
+    /// Task 3.1: the profile this playback started in (the active one until `onAppear` ran).
+    private var sessionProfile: UUID { session?.profile ?? model.profile.id }
 
     /// Spur-Wahl je Serie/Film (Welle D-a): nil = aus (Einstellung) oder Trailer.
     private var memoryKey: String? {
