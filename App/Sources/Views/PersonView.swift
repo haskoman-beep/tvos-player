@@ -46,12 +46,19 @@ struct PersonView: View {
         .sheet(isPresented: $showBio) { FullTextSheet(title: person?.name ?? name, text: person?.biography ?? "") }
         .task {
             guard person == nil else { return }
+            // F-B-7: a later successful run must not keep the error text of an earlier (cancelled) one.
+            failed = false
             guard let tmdb = model.tmdb else { failed = true; RemoteLog.info("person", "kein TMDB-Key"); return }
             do {
                 let p = try await tmdb.personCredits(id: personID)
                 person = p
                 RemoteLog.info("person", "\(personID) \(p.name): \(p.credits.count) Titel, Bio \(p.biography == nil ? "fehlt" : "da")")
             } catch {
+                // A cancelled task (tab switch) is no failure; the next appearance loads again.
+                if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled {
+                    RemoteLog.info("person", "\(personID) laden abgebrochen")
+                    return
+                }
                 failed = true
                 RemoteLog.error("person", "\(personID) laden fehlgeschlagen: \(error)")
             }
