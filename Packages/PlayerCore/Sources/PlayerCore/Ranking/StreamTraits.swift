@@ -240,15 +240,31 @@ func audioScore(_ t: AudioTrackInfo) -> Int {
     return (ch >= 6 ? 1000 : 0) + (t.isPassthrough ? 100 : 0) + ch
 }
 
-/// Sprache nach Vorrang ("de", "en", "orig" = erste Spur); bei gleicher Sprache die beste nach `audioScore`.
+/// Sprache nach Vorrang ("de", "en", "orig" = erste Spur); within a language the best by `audioScore`.
+/// Commentary is never picked automatically: a language with only commentary falls through to the next one, and
+/// "orig" and the last-resort fallback take the first non-commentary track (the first track only if all are
+/// commentary). Audio description (Hörfilm) only when the language has no regular track.
 public func preferredAudioTrack(_ tracks: [AudioTrackInfo], priority: [String]) -> AudioTrackInfo? {
+    let firstUsable = tracks.first { !$0.isCommentary } ?? tracks.first
     for p in priority {
-        if p == "orig" { return tracks.first }
+        if p == "orig" { return firstUsable }
         let want = MediaLabels.languageCode(p) ?? p
         let m = tracks.filter { MediaLabels.languageCode($0.language) == want }
-        if let best = m.max(by: { audioScore($0) < audioScore($1) }) { return best }
+        if let best = bestAudio(regularFirst(m)) { return best }
     }
-    return tracks.first
+    return firstUsable
+}
+
+/// Regular tracks if any, else audio description; commentary never (empty = skip the language).
+func regularFirst(_ tracks: [AudioTrackInfo]) -> [AudioTrackInfo] {
+    let usable = tracks.filter { !$0.isCommentary }
+    let regular = usable.filter { !$0.isVisualImpaired }
+    return regular.isEmpty ? usable : regular
+}
+
+/// Best by `audioScore`; on a tie the first track wins.
+func bestAudio(_ tracks: [AudioTrackInfo]) -> AudioTrackInfo? {
+    tracks.max(by: { audioScore($0) < audioScore($1) })
 }
 
 /// "Nicht gecacht"-Platzhalter von AIOStreams/TorBox: kurze Clips statt Film/Folge.
