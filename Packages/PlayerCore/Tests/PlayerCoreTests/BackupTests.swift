@@ -155,3 +155,65 @@ private func kitRow(_ id: String) -> HomeRow { HomeRow(content: .collection(id: 
     #expect(ProfileBlocks.removedByRestore(before: [a, b, c, a], after: [b, d]) == [a, c])
     #expect(ProfileBlocks.removedByRestore(before: [a, b], after: [b, a]).isEmpty)
 }
+
+// MARK: Task 3.9: a restore without keys keeps the keys of this TV
+
+private func keyedProfile(_ name: String) -> Profile {
+    var p = Profile.makeDefault(name: name)
+    p.apiKeys = ["tmdb": "k-tmdb-\(name)", LogSignature.secretKey: "log-\(name)"]
+    p.syncTokens = ["trakt": SyncToken(accessToken: "a-\(name)", refreshToken: "r-\(name)")]
+    return p
+}
+
+/// Same profile ID: keys, logins and the remote-log secret of this TV stay. A new ID gets none.
+@Test func keylessRestoreKeepsKeysOfSameProfileID() throws {
+    let here = keyedProfile("A")
+    let current = [here, keyedProfile("Weg")]
+    var restoredA = here; restoredA.name = "A aus Sicherung"
+    let newcomer = Profile.makeDefault(name: "Neu")
+    let full = StoredProfiles(profiles: [restoredA, newcomer], activeProfileID: restoredA.id)
+    let plain = Backup(profiles: full).withoutSecrets().profiles
+    #expect(!plain.carriesSecrets)
+
+    let (out, kept) = plain.keepingSecrets(from: current)
+    #expect(kept == 1)
+    #expect(out.profiles[0].name == "A aus Sicherung")   // the rest comes from the backup
+    #expect(out.profiles[0].apiKeys == here.apiKeys)
+    #expect(out.profiles[0].apiKeys[LogSignature.secretKey] == "log-A")
+    #expect(out.profiles[0].syncTokens == here.syncTokens)
+    #expect(out.profiles[1].apiKeys.isEmpty && out.profiles[1].syncTokens.isEmpty)
+    #expect(out.profiles.count == 2 && out.activeProfileID == restoredA.id)
+}
+
+/// Gaps of the current profile are filled from the Keychain copy, but only for IDs that exist on this TV.
+@Test func keylessRestoreFillsFromStoreForKnownIDsOnly() {
+    let store = MemorySecretStore()
+    var here = Profile.makeDefault(name: "A")
+    here.apiKeys = ["tmdb": "k-tmdb"]
+    let stranger = Profile.makeDefault(name: "Fremd")
+    try? store.set("k-torbox", name: SecretNames.apiKey("torbox"), profile: here.id)
+    try? store.set("k-fremd", name: SecretNames.apiKey("tmdb"), profile: stranger.id)
+    let plain = StoredProfiles(profiles: [Profile(id: here.id, name: "A"), Profile(id: stranger.id, name: "Fremd")])
+    let (out, kept) = plain.keepingSecrets(from: [here], store: store)
+    #expect(kept == 1)
+    #expect(out.profiles[0].apiKeys == ["tmdb": "k-tmdb", "torbox": "k-torbox"])
+    #expect(out.profiles[1].apiKeys.isEmpty)   // not on this TV: nothing from the Keychain either
+}
+
+/// A backup that carries keys (sealed) is restored as it is: its own values win, nothing is added.
+@Test func backupWithKeysKeepsItsOwnValues() {
+    let here = keyedProfile("A")
+    var fromBackup = here
+    fromBackup.apiKeys = ["tmdb": "k-aus-sicherung"]
+    fromBackup.syncTokens = [:]
+    let sealed = StoredProfiles(profiles: [fromBackup], activeProfileID: here.id)
+    #expect(sealed.carriesSecrets)
+    let (out, kept) = sealed.keepingSecrets(from: [here], store: MemorySecretStore())
+    #expect(kept == 0)
+    #expect(out == sealed)
+    // A login alone also counts as carrying secrets; an empty key value does not.
+    var tokenOnly = Profile.makeDefault(); tokenOnly.syncTokens = ["simkl": SyncToken(accessToken: "s")]
+    #expect(StoredProfiles(profiles: [tokenOnly]).carriesSecrets)
+    var emptyKey = Profile.makeDefault(); emptyKey.apiKeys = ["tmdb": ""]
+    #expect(!StoredProfiles(profiles: [emptyKey]).carriesSecrets)
+}

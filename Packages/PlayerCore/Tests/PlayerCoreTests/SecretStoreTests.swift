@@ -138,3 +138,45 @@ private func secretProfile() -> Profile {
     #expect(ProfileLoad.fresh(clean).needsSecretRecovery)
     #expect(!ProfileLoad.unreadable(reason: "x", candidates: []).needsSecretRecovery)
 }
+
+/// Task 3.9 (Build 2 re-review Minor): only a decode problem in a secret-bearing field is recovery. An unrelated bad
+/// value must not bring back a key that was deleted under Build 1.
+@Test func onlySecretDecodeIssuesCountAsRecovery() throws {
+    let secrets = MemorySecretStore()
+    var s = StoredProfiles.makeDefault()
+    s.profiles[0] = secretProfile()
+    s.activeProfileID = s.profiles[0].id
+    SecretMigration.copyIntoStore(profiles: s.profiles, store: secrets)
+
+    func load(_ change: (inout [String: Any]) -> Void) throws -> ProfileLoad {
+        var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(s)) as? [String: Any])
+        var profiles = try #require(json["profiles"] as? [[String: Any]])
+        change(&profiles[0])
+        json["profiles"] = profiles
+        let store = ProfileStore(directory: tempDir())
+        try JSONSerialization.data(withJSONObject: json).write(to: store.fileURL)
+        return store.loadResult()
+    }
+    // Unrelated bad value (unknown accent): report not empty, but no recovery.
+    let unrelated = try load { p in
+        var a = p["appearance"] as? [String: Any] ?? [:]
+        a["accent"] = "neonlila"
+        p["appearance"] = a
+    }
+    guard case .loaded(_, let r1) = unrelated else { Issue.record("expected .loaded"); return }
+    #expect(!r1.isEmpty && !r1.touchesSecrets)
+    #expect(!unrelated.needsSecretRecovery)
+    // Bad apiKeys value → recovery.
+    let keys = try load { $0["apiKeys"] = ["tmdb": 42] }
+    #expect(keys.needsSecretRecovery)
+    // Bad login entry → recovery.
+    let token = try load { $0["syncTokens"] = ["trakt": ["accessToken": 7]] }
+    guard case .loaded(_, let r3) = token else { Issue.record("expected .loaded"); return }
+    #expect(r3.touchesSecrets && token.needsSecretRecovery)
+    // Paths: segment match, not substring; a skipped whole profile is no secret field.
+    #expect(DecodeReport(ignored: ["profiles[0].apiKeys"]).touchesSecrets)
+    #expect(DecodeReport(ignored: ["home.rows[2].style", "profiles[1].syncTokens.trakt"]).touchesSecrets)
+    #expect(!DecodeReport(ignored: ["profiles[1]", "profiles[0].home.rows[0].apiKeysHint"]).touchesSecrets)
+    // Missing file stays recovery.
+    #expect(ProfileStore(directory: tempDir()).loadResult().needsSecretRecovery)
+}
