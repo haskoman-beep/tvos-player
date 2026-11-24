@@ -16,6 +16,7 @@ extension Look {
     /// heroEnabled false → heroStyle aus; expandPosters as is; badges.style text/logo → text/logos;
     /// trackPanelStyle topBar/bottomBar/menu → seite/unten/mitte. `sources` holds content settings only
     /// (`appBadges` stays its own field), so nothing of it moves into the look.
+    /// Changing this table changes every profile without a written look (those are rebuilt from it on every read).
     public static func migrated(from appearance: Appearance, player: PlayerComfortSettings,
                                 sources: SourceSettings) -> Look {
         var v = LookPreset.values(.appleTV)

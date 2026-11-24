@@ -45,6 +45,18 @@ public struct Look: Codable, Sendable, Hashable {
         preset = c.decodeLenient(LookPresetID.self, forKey: .preset, default: .appleTV, report: r)
         overrides = c.decodeLenient(LookOverrides.self, forKey: .overrides, default: LookOverrides(), report: r)
     }
+
+    /// Writes `LookSchema.current`, not the version read: what this build writes is its own shape (unknown keys and
+    /// values were dropped while reading), so a later build must treat it as this version.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(LookSchema.current, forKey: .version)
+        try c.encode(preset, forKey: .preset)
+        try c.encode(overrides, forKey: .overrides)
+    }
+
+    /// Same preset and overrides; the schema version read does not count.
+    func sameStyle(as other: Look) -> Bool { preset == other.preset && overrides == other.overrides }
 }
 
 // MARK: - Complete values
