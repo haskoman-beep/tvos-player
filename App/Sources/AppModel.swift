@@ -1011,8 +1011,11 @@ extension AppModel {
         let series = m.type == "series"
         let detail = await self.meta(type: series ? "series" : "movie", imdb: imdb)
         guard series else { return moviePlayRequest(m, imdb: imdb, meta: detail, resumeLastSource: true) }
-        let eps = EpisodeRef.list(from: detail?.videos ?? [])
-        let n = progress.nextOpenEpisode(seriesID: imdb, in: eps)
+        let regular = EpisodeRef.list(from: detail?.videos ?? [])
+        let n = progress.nextOpenEpisode(seriesID: imdb, in: regular)
+        // Task 3.5 fix 1 (W-B-10): an open special plays with the specials in its list (up-next to the next special).
+        let eps = EpisodeRef.includesSpecials(playingSeason: n.season)
+            ? EpisodeRef.list(from: detail?.videos ?? [], includeSpecials: true) : regular
         return PlayRequest(type: "series", id: "\(imdb):\(n.season):\(n.episode)", title: "\(m.name) S\(n.season)E\(n.episode)",
                            item: progressItem(m, imdb: imdb, meta: detail), season: n.season, episode: n.episode,
                            episodes: eps, resumeLastSource: true)

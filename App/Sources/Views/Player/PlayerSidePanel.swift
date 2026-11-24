@@ -84,7 +84,8 @@ final class PlayerExtras: ObservableObject {
     /// Episodes: from the request (source list), else from the meta.
     var episodes: [EpisodeRef] {
         if let r = request, !r.episodes.isEmpty { return r.episodes }
-        return EpisodeRef.list(from: meta?.videos ?? [])
+        // Task 3.5 fix 1 (W-B-10): with specials while a special plays.
+        return EpisodeRef.list(from: meta?.videos ?? [], includeSpecials: EpisodeRef.includesSpecials(playingSeason: request?.season))
     }
 
     var isSeries: Bool { request?.season != nil && episodes.count > 1 }

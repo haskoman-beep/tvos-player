@@ -89,11 +89,28 @@ private let serie = MetaPreview(id: "tt9", type: "series", name: "Serie")
 }
 
 @Test func nextAfterSpecialStaysInSeasonZero() {
-    let l = [EpisodeRef(season: 0, episode: 2), EpisodeRef(season: 0, episode: 5), EpisodeRef(season: 1, episode: 1)]
+    // Fix round 1: the list the app builds while a special plays (`list(from:includeSpecials:)`).
+    let vids = [MetaVideo(id: "s2", season: 0, episode: 2), MetaVideo(id: "s5", season: 0, episode: 5),
+                MetaVideo(id: "a", season: 1, episode: 1), MetaVideo(id: "b", season: 1, episode: 2)]
+    let l = EpisodeRef.list(from: vids, includeSpecials: true)
+    #expect(l.map { [$0.season, $0.episode] } == [[0, 2], [0, 5], [1, 1], [1, 2]])
     #expect(EpisodeRef.next(after: 0, 3, in: l) == EpisodeRef(season: 0, episode: 5))
     #expect(EpisodeRef.next(after: 0, 5, in: l) == nil)
-    // Regular episodes are unchanged.
-    #expect(EpisodeRef.next(after: 1, 1, in: l + [EpisodeRef(season: 1, episode: 2)]) == EpisodeRef(season: 1, episode: 2))
+    // Regular episodes are unchanged, also on this list.
+    #expect(EpisodeRef.next(after: 1, 1, in: l) == EpisodeRef(season: 1, episode: 2))
+}
+
+@Test func episodeListKeepsSpecialsOutByDefault() {
+    // Fix round 1: normal playback never sees specials; up-next after a regular episode stays regular.
+    let vids = [MetaVideo(id: "s1", season: 0, episode: 1), MetaVideo(id: "a", season: 1, episode: 1),
+                MetaVideo(id: "b", season: 1, episode: 2)]
+    #expect(EpisodeRef.list(from: vids).allSatisfy { $0.season > 0 })
+    #expect(EpisodeRef.list(from: vids, includeSpecials: false).count == 2)
+    #expect(EpisodeRef.next(after: 1, 2, in: EpisodeRef.list(from: vids)) == nil)
+    // The app's choice: specials only while the playing episode is one.
+    #expect(EpisodeRef.includesSpecials(playingSeason: 0))
+    #expect(!EpisodeRef.includesSpecials(playingSeason: 3))
+    #expect(!EpisodeRef.includesSpecials(playingSeason: nil))
 }
 
 @Test func nextStreamPrefersBingeGroup() {
