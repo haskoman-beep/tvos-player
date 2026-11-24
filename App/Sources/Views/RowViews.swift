@@ -49,7 +49,8 @@ struct HomeRowView: View {
             let r = await model.homeRowItems(s)
             guard !Task.isCancelled else { return }   // abgebrochen (neue Ladung folgt): kein „Keine Einträge“-Flackern
             let placeholder = focusedPlaceholder
-            items = r.items; failed = r.failed; loaded = true
+            // Task 4.1a (F-A-5): a catalog may list a title twice; one card per (type, id), the first wins.
+            items = RowItems.deduped(r.items); failed = r.failed; loaded = true
             // Fokus lag auf einem Platzhalter: an dieselbe Stelle der fertigen Reihe (bzw. auf die Statuskachel).
             // Erst im nächsten Durchlauf: dann gibt es die Karten schon.
             if let placeholder {
@@ -179,7 +180,7 @@ struct HomeRowView: View {
             case .items:
                 let routes = routeTable   // Task 3.8: once per row pass, not once per card
                 Strip(expands: row.style == .poster, kind: tileKind) {
-                    ForEach(Array(displayed.enumerated()), id: \.element.id) { i, m in
+                    ForEach(Array(displayed.enumerated()), id: \.element.rowKey) { i, m in
                         card(routes[m.id] ?? .detail(m)) {
                             if row.content == .list(.upcoming) {
                                 UpcomingTodayCard(item: m, landscape: row.style == .landscape || row.style == .hero)

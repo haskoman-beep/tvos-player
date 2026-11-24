@@ -80,3 +80,15 @@ import Testing
     #expect(HomeRowPhase(collection: .tiles, count: 4).focusAfterLoad(placeholder: 6) == 3)
     #expect(HomeRowPhase(collection: .failed(sourceKey: "k"), count: 0).focusAfterLoad(placeholder: 2) == 0)
 }
+
+// Task 4.1a (F-A-5, A-B-8): one card per (type, id), first wins; film and series with the same number both stay.
+@Test func rowItemsDedupeByTypeAndID() {
+    let a = MetaPreview(id: "tmdb:1399", type: "movie", name: "Film")
+    let b = MetaPreview(id: "tmdb:1399", type: "series", name: "Serie")
+    let a2 = MetaPreview(id: "tmdb:1399", type: "movie", name: "Film doppelt")
+    let c = MetaPreview(id: "tt1", type: "movie", name: "C")
+    let out = RowItems.deduped([a, b, a2, c, c])
+    #expect(out.map(\.name) == ["Film", "Serie", "C"])
+    #expect(a.rowKey != b.rowKey && a.rowKey == a2.rowKey)
+    #expect(RowItems.deduped([]).isEmpty)
+}
