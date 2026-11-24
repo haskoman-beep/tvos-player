@@ -68,7 +68,9 @@ struct HomeRowView: View {
         // Task 4.1a (F-A-2): collection rows hand over like list rows: a focused placeholder (or status tile) goes to
         // the tile at the same place when the kit file arrives, else to the status tile.
         .onChange(of: collectionLoadPhase) { _, p in
-            guard let p, let placeholder = focusedPlaceholder, case .collection(let id) = row.content else { return }
+            // Review minor 1: the change into `.loading` (OK on the status tile) is no hand-over.
+            guard let p, p != .loading, let placeholder = focusedPlaceholder, case .collection(let id) = row.content
+            else { return }
             let slot = p.focusAfterLoad(placeholder: placeholder)
             var target: Route?
             if case .items = p, let folders = model.collection(id)?.folders, folders.indices.contains(slot) {
