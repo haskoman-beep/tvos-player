@@ -43,3 +43,40 @@ final class RecordingHTTP: HTTPFetching, @unchecked Sendable {
         try await TMDBClient(apiKey: "", http: RecordingHTTP("{}")).items(for: .init(id: "x", title: "x", kind: .tmdbList(id: "1"), mediaType: .movie))
     }
 }
+
+// A-B-10: a kit row with releaseStatus "released" is parsed on day 1; fetching on day 2 must use day 2, not the
+// date baked in at parse time. The stored filter keeps the literal date (Build 3 reads it unchanged).
+private let abDay1 = Date(timeIntervalSince1970: 1_795_262_400)   // 2026-11-21 12:00 UTC
+private let abDay2 = abDay1.addingTimeInterval(86_400)            // 2026-11-22 12:00 UTC
+private func utcCalendar() -> Calendar { var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "UTC")!; return c }
+
+private func releasedKitSource(type: String = "movie") throws -> CatalogSource {
+    let json = #"{"exportType":"fusionWidgets","widgets":[{"id":"w","title":"Neu","type":"row.classic","dataSource":{"kind":"tmdbDiscover","payload":{"type":"\#(type)","includeGenres":[28],"releaseStatus":"released"}}}]}"#
+    let c = try FusionImport.parse(Data(json.utf8), sourceKey: "s", now: abDay1)
+    guard case .list(let s) = try #require(c.rows.first).body else { throw TMDBError.unsupported }
+    return s
+}
+
+@Test func kitReleasedFetchOnDay2UsesDay2() async throws {
+    let src = try releasedKitSource()
+    guard case .tmdbDiscover(let f) = src.kind else { Issue.record("kein Discover"); return }
+    #expect(f["primary_release_date.lte"] == "2026-11-21")   // stored format unchanged
+    let http = RecordingHTTP(#"{"results":[]}"#)
+    let c = TMDBClient(apiKey: "K", http: http)
+    _ = try await c.items(for: src, now: abDay2, calendar: utcCalendar())
+    _ = try await c.page(for: src, page: 2, now: abDay2, calendar: utcCalendar())
+    let tv = try releasedKitSource(type: "tv")
+    _ = try await c.items(for: tv, now: abDay2, calendar: utcCalendar())
+    let u = http.urls.map(\.absoluteString)
+    #expect(u.count == 3)
+    #expect(u[0].contains("primary_release_date.lte=2026-11-22") && !u[0].contains("2026-11-21"))
+    #expect(u[1].contains("primary_release_date.lte=2026-11-22") && u[1].contains("page=2"))
+    #expect(u[2].contains("first_air_date.lte=2026-11-22"))
+}
+
+@Test func ownDiscoverRowKeepsLiteralDate() async throws {
+    let http = RecordingHTTP(#"{"results":[]}"#)
+    let src = CatalogSource(id: "own", title: "x", kind: .tmdbDiscover(filters: ["primary_release_date.lte": "1999-12-31"]), mediaType: .movie)
+    _ = try await TMDBClient(apiKey: "K", http: http).items(for: src, now: abDay2, calendar: utcCalendar())
+    #expect(http.urls[0].absoluteString.contains("primary_release_date.lte=1999-12-31"))
+}
