@@ -45,15 +45,11 @@ final class RatingIconStore: ObservableObject {
         running = Task {
             do {
                 // Welle D-b (N-M3): Größe und Gesamtzeit schon während des Downloads begrenzen.
-                let (data, code) = try await RatingIconSet.withDeadline(RatingIconSet.timeout) { () async throws -> (Data, Int) in
-                    var req = URLRequest(url: u)
-                    req.timeoutInterval = RatingIconSet.timeout
-                    // Task 2.3 exception (direct URLSession, not via HTTPClient in Build 2): rating icons from a fixed service, read via bytes(for:); migrate later.
-                    let (bytes, resp) = try await URLSession.shared.bytes(for: req)
-                    let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-                    guard (200..<300).contains(code) else { return (Data(), code) }
-                    return (try await RatingIconSet.collect(bytes, expectedLength: resp.expectedContentLength), code)
-                }
+                // Task 3.10: via the shared HTTPClient with the same limits (15 s idle and total, 256 KB).
+                let limits = HTTPLimits(requestTimeout: RatingIconSet.timeout, resourceTimeout: RatingIconSet.timeout,
+                                        maxBytes: RatingIconSet.maxBytes)
+                let (data, resp) = try await LimitedHTTPClient.shared.data(URLRequest(url: u), limits: limits, fresh: false)
+                let code = resp.statusCode
                 guard !Task.isCancelled, loadedURL == url else { return }
                 guard (200..<300).contains(code) else { fail(url, "Fehler \(code)"); return }
                 let set = RatingIconSet.parse(data)
@@ -64,10 +60,10 @@ final class RatingIconStore: ObservableObject {
                 if let d = try? JSONEncoder().encode(Cached(url: url, at: Date(), icons: set)) { try? d.write(to: file, options: .atomic) }
             } catch {
                 guard !Task.isCancelled, loadedURL == url else { return }
-                switch error as? RatingIconSet.DownloadError {
-                case .tooLarge: fail(url, "Datei zu groß (höchstens 256 KB)")
-                case .timedOut: fail(url, "Zeitüberschreitung")
-                case nil: fail(url, "Nicht erreichbar")
+                switch error as? HTTPClientError {
+                case .tooLarge?: fail(url, "Datei zu groß (höchstens 256 KB)")
+                case .timedOut?: fail(url, "Zeitüberschreitung")
+                case .incomplete?, nil: fail(url, "Nicht erreichbar")
                 }
                 RemoteLog.error("bewertung", "Icon-Satz: \(LogRedact.text("\(error)"))")
             }

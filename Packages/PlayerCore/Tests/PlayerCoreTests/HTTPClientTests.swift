@@ -195,3 +195,72 @@ private struct HangingTransport: HTTPByteTransport {
     #expect(AddonSearch.describe(HTTPClientError.tooLarge(limit: 1)) == "Antwort zu groß")
     #expect(TorBoxClient.userMessage(HTTPClientError.timedOut) == "TorBox antwortet nicht (Zeitüberschreitung)")
 }
+
+// Task 3.10: options for the former direct URLSession users.
+
+@Test func httpClientPrefixStopsAtLimitWithoutError() async throws {
+    let t = FakeTransport(chunks: [Data(repeating: 1, count: 60), Data(repeating: 2, count: 60), Data(count: 60)],
+                          contentLength: 300 * 1024 * 1024)
+    let (d, resp) = try await LimitedHTTPClient(transport: t).prefix(req, limits: HTTPLimits(maxBytes: 100), fresh: false)
+    #expect(d.count == 100)
+    #expect(d.prefix(60) == Data(repeating: 1, count: 60))
+    #expect(d.suffix(40) == Data(repeating: 2, count: 40))
+    #expect(resp.statusCode == 200)
+}
+
+@Test func httpClientPrefixReturnsShortBodyWhole() async throws {
+    let t = FakeTransport(chunks: [Data(count: 30)], status: 206)
+    let (d, resp) = try await LimitedHTTPClient(transport: t).prefix(req, limits: HTTPLimits(maxBytes: 100), fresh: false)
+    #expect(d.count == 30)
+    #expect(resp.statusCode == 206)
+}
+
+@Test func httpClientPrefixStillDetectsCutBody() async {
+    let t = FakeTransport(chunks: [Data(count: 10)], contentLength: 50)
+    await #expect(throws: HTTPClientError.incomplete) {
+        _ = try await LimitedHTTPClient(transport: t).prefix(req, limits: HTTPLimits(maxBytes: 100), fresh: false)
+    }
+}
+
+@Test func httpClientPrefixKeepsTimeLimits() async {
+    let limits = HTTPLimits(requestTimeout: 8, resourceTimeout: 0.1, maxBytes: 100)
+    await #expect(throws: HTTPClientError.timedOut) {
+        _ = try await LimitedHTTPClient(transport: HangingTransport()).prefix(req, limits: limits, fresh: false)
+    }
+}
+
+@Test func ephemeralTransportKeepsNoCache() {
+    let cfg = URLSessionByteTransport.ephemeral.session.configuration
+    #expect(cfg.urlCache == nil)
+    #expect(cfg.timeoutIntervalForRequest >= 60)
+}
+
+/// Records what the sender hands to the client.
+private final class RecordingClient: HTTPClient, @unchecked Sendable {
+    var request: URLRequest?
+    var limits: HTTPLimits?
+    var fresh: Bool?
+    func data(_ request: URLRequest, limits: HTTPLimits, fresh: Bool) async throws -> (Data, HTTPURLResponse) {
+        self.request = request; self.limits = limits; self.fresh = fresh
+        let resp = HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: "HTTP/1.1",
+                                   headerFields: ["Mcp-Session-Id": "S1"])!
+        return (Data("ok".utf8), resp)
+    }
+}
+
+@Test func timeoutSenderGoesThroughClientWithItsTimeout() async throws {
+    let c = RecordingClient()
+    let s = TimeoutSender(timeout: 10, client: c)
+    let r = try await s.sendFull(APIRequest(method: "POST", url: URL(string: "http://pi.example/mcp")!,
+                                            headers: ["Content-Type": "application/json"], body: Data("{}".utf8)))
+    #expect(r.status == 201)
+    #expect(String(decoding: r.data, as: UTF8.self) == "ok")
+    #expect(r.headers.contains { $0.key.lowercased() == "mcp-session-id" && $0.value == "S1" })
+    #expect(c.request?.httpMethod == "POST")
+    #expect(c.request?.httpBody == Data("{}".utf8))
+    #expect(c.request?.value(forHTTPHeaderField: "Content-Type") == "application/json")
+    #expect(c.limits?.requestTimeout == 10)
+    #expect((c.limits?.resourceTimeout ?? 0) >= 10)
+    #expect(c.limits?.maxBytes == HTTPLimits.json.maxBytes)
+    #expect(c.fresh == true)
+}

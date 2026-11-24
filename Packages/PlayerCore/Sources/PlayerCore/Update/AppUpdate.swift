@@ -658,9 +658,18 @@ public enum AppUpdateLog {
 // MARK: - Ablauf (Netz über APISending, in Tests ersetzbar)
 
 /// Wie `URLSessionSender`, aber mit fester Zeitgrenze je Anfrage (atvloadly im Heimnetz: 10 s).
+/// Task 3.10: goes through the shared `HTTPClient`; `timeout` stays the idle limit, never served from cache.
 public struct TimeoutSender: APISending {
     public let timeout: Double
-    public init(timeout: Double) { self.timeout = timeout }
+    let client: HTTPClient
+    public init(timeout: Double, client: HTTPClient = LimitedHTTPClient.shared) { self.timeout = timeout; self.client = client }
+
+    /// Idle limit = `timeout` (as before); whole request at most 60 s (the shared transport's outer bound), so a
+    /// slow install answer that keeps sending is not cut earlier than the transport would anyway.
+    var limits: HTTPLimits {
+        HTTPLimits(requestTimeout: timeout, resourceTimeout: max(timeout, 60), maxBytes: HTTPLimits.json.maxBytes)
+    }
+
     public func send(_ r: APIRequest) async throws -> (status: Int, data: Data) {
         let x = try await sendFull(r)
         return (x.status, x.data)
@@ -670,12 +679,10 @@ public struct TimeoutSender: APISending {
         u.httpMethod = r.method
         for (k, v) in r.headers { u.setValue(v, forHTTPHeaderField: k) }
         u.httpBody = r.body
-        // Task 2.3 exception (direct URLSession, not via HTTPClient in Build 2): TimeoutSender for atvloadly in the home network, already has a fixed per-request timeout; migrate later.
-        let (d, resp) = try await URLSession.shared.data(for: u)
-        let http = resp as? HTTPURLResponse
+        let (d, http) = try await client.data(u, limits: limits, fresh: true)
         var h: [String: String] = [:]
-        for (k, v) in http?.allHeaderFields ?? [:] { h[String(describing: k)] = String(describing: v) }
-        return APIResponse(status: http?.statusCode ?? 0, data: d, headers: h)
+        for (k, v) in http.allHeaderFields { h[String(describing: k)] = String(describing: v) }
+        return APIResponse(status: http.statusCode, data: d, headers: h)
     }
 }
 

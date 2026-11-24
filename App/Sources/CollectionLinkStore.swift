@@ -65,13 +65,13 @@ final class CollectionLinkStore: ObservableObject {
     private var memo: [String: (stamp: [Int], c: MediaCollection)] = [:]
     /// Video address → has a sound track (probed once per start).
     private var soundProbe: [String: Bool] = [:]
-    private let session: URLSession = {
-        let cfg = URLSessionConfiguration.ephemeral
-        cfg.urlCache = nil
-        cfg.timeoutIntervalForRequest = 10
-        // Task 2.3 exception (direct URLSession, not via HTTPClient in Build 2): own ephemeral session with range reads and sound probing; migrate later.
-        return URLSession(configuration: cfg)
-    }()
+    /// Task 3.10: link fetches and sound probes go through the shared client on its ephemeral transport (no cache,
+    /// no cookies, as the former own ephemeral sessions).
+    private nonisolated static let client = LimitedHTTPClient.ephemeral
+    /// Range probes: 10 s without data (as before), 20 s for one request.
+    private nonisolated static func probeLimits(_ bytes: Int) -> HTTPLimits {
+        HTTPLimits(requestTimeout: 10, resourceTimeout: 20, maxBytes: bytes)
+    }
 
     /// App storage (Application Support if writable, always Caches).
     private var storage: BlobStorage?
@@ -205,7 +205,7 @@ final class CollectionLinkStore: ObservableObject {
     /// Most stored imports per profile.
     static let maxLinks = 30
 
-    private enum LinkError: Error { case http(Int), tooLarge }
+    private enum LinkError: Error { case http(Int) }
 
     /// Parsed once, off the main actor.
     private enum Parsed: Sendable {
@@ -213,15 +213,6 @@ final class CollectionLinkStore: ObservableObject {
         case collections(NuvioImportResult)
         case pack([PreviewPackEntry], skipped: Int)
     }
-
-    private let linkSession: URLSession = {
-        let cfg = URLSessionConfiguration.ephemeral
-        cfg.urlCache = nil
-        cfg.timeoutIntervalForRequest = CollectionLinkStore.linkTimeout
-        cfg.timeoutIntervalForResource = CollectionLinkStore.linkTimeout
-        // Task 2.3 exception (direct URLSession, not via HTTPClient in Build 2): link checks read only a few bytes via Range; migrate later.
-        return URLSession(configuration: cfg)
-    }()
 
     /// Link from the TV field or the phone page: fetch, detect, import, keep the link.
     func importLink(_ raw: String, model: AppModel) async {
@@ -236,7 +227,7 @@ final class CollectionLinkStore: ObservableObject {
         defer { busy = false }
         RemoteLog.info("import", "Collection-Link: \(url.host ?? "?")")
         let data: Data
-        do { data = try await Self.fetch(url, session: linkSession) } catch {
+        do { data = try await Self.fetch(url) } catch {
             model.lastError = "Import: Link nicht geladen (\(Self.describe(error)))."
             return
         }
@@ -271,27 +262,21 @@ final class CollectionLinkStore: ObservableObject {
     }
 
     /// Body of a link, at most `maxLinkBytes` (a wrong link to a video or archive is stopped early).
-    private nonisolated static func fetch(_ url: URL, session: URLSession) async throws -> Data {
-        let (bytes, resp) = try await session.bytes(from: url)
-        if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            bytes.task.cancel()
-            throw LinkError.http(http.statusCode)
-        }
-        if resp.expectedContentLength > Int64(maxLinkBytes) { bytes.task.cancel(); throw LinkError.tooLarge }
-        var out = Data()
-        if resp.expectedContentLength > 0 { out.reserveCapacity(Int(resp.expectedContentLength)) }
-        for try await b in bytes {
-            out.append(b)
-            if out.count > maxLinkBytes { bytes.task.cancel(); throw LinkError.tooLarge }
-        }
-        return out
+    /// Task 3.10: via the shared client, `linkTimeout` as idle and total limit (as the former link session).
+    private nonisolated static func fetch(_ url: URL) async throws -> Data {
+        let limits = HTTPLimits(requestTimeout: linkTimeout, resourceTimeout: linkTimeout, maxBytes: maxLinkBytes)
+        let (data, http) = try await client.data(URLRequest(url: url), limits: limits, fresh: true)
+        guard (200..<300).contains(http.statusCode) else { throw LinkError.http(http.statusCode) }
+        return data
     }
 
     /// Plain German reason of a failed fetch.
     private nonisolated static func describe(_ error: Error) -> String {
         switch error {
         case LinkError.http(let code): return "HTTP \(code)"
-        case LinkError.tooLarge: return "Datei größer als 8 MB – ist es wirklich ein JSON-Export?"
+        case HTTPClientError.tooLarge: return "Datei größer als 8 MB – ist es wirklich ein JSON-Export?"
+        case HTTPClientError.timedOut: return "Zeitüberschreitung"
+        case HTTPClientError.incomplete: return "Verbindung abgebrochen"
         default:
             switch (error as? URLError)?.code {
             case .notConnectedToInternet?, .networkConnectionLost?: return "kein Netz"
@@ -428,14 +413,13 @@ final class CollectionLinkStore: ObservableObject {
     /// Reads the start and the end of each file (range requests) and looks for a sound track.
     private func probe(_ videos: [String]) async {
         let todo = videos.filter { soundProbe[$0] == nil && !FocusVideoURL.isStream($0) }
-        let session = self.session
         // Six at a time.
         for start in stride(from: 0, to: todo.count, by: 6) {
             let chunk = Array(todo[start..<min(start + 6, todo.count)])
             let results = await withTaskGroup(of: (String, Bool).self) { g -> [(String, Bool)] in
                 for v in chunk {
                     guard let url = URL(string: v) else { continue }
-                    g.addTask { (v, await Self.hasSound(url, session: session)) }
+                    g.addTask { (v, await Self.hasSound(url)) }
                 }
                 var out: [(String, Bool)] = []
                 for await r in g { out.append(r) }
@@ -445,34 +429,24 @@ final class CollectionLinkStore: ObservableObject {
         }
     }
 
-    private nonisolated static func hasSound(_ url: URL, session: URLSession) async -> Bool {
-        if let head = await range(url, "bytes=0-\(Mp4Probe.headBytes - 1)", limit: Mp4Probe.headBytes, session: session),
+    private nonisolated static func hasSound(_ url: URL) async -> Bool {
+        if let head = await range(url, "bytes=0-\(Mp4Probe.headBytes - 1)", limit: Mp4Probe.headBytes),
            Mp4Probe.hasSoundTrack(head) { return true }
-        if let tail = await range(url, "bytes=-\(Mp4Probe.tailBytes)", limit: Mp4Probe.tailBytes, session: session) {
+        if let tail = await range(url, "bytes=-\(Mp4Probe.tailBytes)", limit: Mp4Probe.tailBytes) {
             return Mp4Probe.hasSoundTrack(tail)
         }
         return false
     }
 
-    /// Bytes of a range request; a server that ignores the range (200) is read only up to `limit`.
-    private nonisolated static func range(_ url: URL, _ range: String, limit: Int, session: URLSession) async -> [UInt8]? {
+    /// Bytes of a range request; a server that ignores the range (200) is read only up to `limit`
+    /// (Task 3.10: prefix read of the shared client, which stops the transfer at `limit`).
+    private nonisolated static func range(_ url: URL, _ range: String, limit: Int) async -> [UInt8]? {
         var req = URLRequest(url: url)
         req.setValue(range, forHTTPHeaderField: "Range")
-        guard let answer = try? await session.bytes(for: req) else { return nil }
-        let bytes = answer.0
-        guard let http = answer.1 as? HTTPURLResponse else { bytes.task.cancel(); return nil }
+        guard let (data, http) = try? await client.prefix(req, limits: probeLimits(limit), fresh: true) else { return nil }
         // A full answer to a tail request would be the start of the file, not its end.
-        if http.statusCode == 200, range.hasPrefix("bytes=-") { bytes.task.cancel(); return nil }
-        guard http.statusCode == 206 || http.statusCode == 200 else { bytes.task.cancel(); return nil }
-        var out: [UInt8] = []
-        out.reserveCapacity(limit)
-        do {
-            for try await b in bytes {
-                out.append(b)
-                if out.count >= limit { break }
-            }
-        } catch { return out.isEmpty ? nil : out }
-        bytes.task.cancel()
-        return out
+        if http.statusCode == 200, range.hasPrefix("bytes=-") { return nil }
+        guard http.statusCode == 206 || http.statusCode == 200 else { return nil }
+        return [UInt8](data)
     }
 }

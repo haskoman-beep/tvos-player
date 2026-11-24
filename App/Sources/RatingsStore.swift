@@ -29,9 +29,10 @@ actor RatingsStore {
 
     private func fetch(key: String, imdb: String, series: Bool, apiKey: String, old: ExternalRatings?) async -> ExternalRatings? {
         guard let url = MDBList.url(imdb: imdb, series: series, apiKey: apiKey),
-              // Task 2.3 exception (direct URLSession, not via HTTPClient in Build 2): small ratings JSON from a fixed public service, no addon address; migrate later.
-              let (data, resp) = try? await URLSession.shared.data(from: url) else { return old }
-        switch MDBList.parse(status: (resp as? HTTPURLResponse)?.statusCode ?? 0, data: data) {
+              // Task 3.10: via the shared HTTPClient (JSON limits: 10 s idle, 20 s total, 8 MiB).
+              let (data, resp) = try? await LimitedHTTPClient.shared.data(URLRequest(url: url), limits: .json, fresh: false)
+        else { return old }
+        switch MDBList.parse(status: resp.statusCode, data: data) {
         case .ratings(let r):
             await MainActor.run { RemoteLog.info("bewertung", "\(imdb): \(r.values.keys.sorted().joined(separator: ",")) · Freigabe \(r.certification ?? "-")") }
             entries[key] = Entry(storedAt: Date(), ratings: r); save(); return r

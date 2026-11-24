@@ -46,7 +46,7 @@ actor FocusVideoCache {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.urlCache = nil
         cfg.timeoutIntervalForRequest = 15
-        // Task 2.3 exception (direct URLSession, not via HTTPClient in Build 2): focus video streams media for AVPlayer-style playback; migrate later.
+        // Permanent exception (direct URLSession): focus videos are whole media files downloaded to disk (download(from:), size checked on the file) for the video cache; the in-memory HTTPClient does not fit.
         session = URLSession(configuration: cfg)
     }
 

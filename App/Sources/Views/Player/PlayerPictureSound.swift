@@ -224,31 +224,23 @@ enum AddonSubtitleFiles {
     }
 
     /// Körper mit Bytezähler (Abbruch über `maxBytes`, auch bei falscher oder fehlender Längenangabe) und Gesamtfrist.
+    /// Task 3.10: via the shared HTTPClient with the same limits (`timeout` without data, `deadline` in total,
+    /// `maxBytes`); its errors become the notes as before.
     nonisolated static func download(_ r: URLRequest) async throws -> Data {
-        try await withThrowingTaskGroup(of: Data?.self) { group in
-            group.addTask {
-                // Task 2.3 exception (direct URLSession, not via HTTPClient in Build 2): subtitle download already has own byte cap (maxBytes) and deadline; migrate later.
-                let (stream, resp) = try await URLSession.shared.bytes(for: r)
-                defer { stream.task.cancel() }   // auch bei falschem Status oder zu großer Längenangabe nicht weiterladen
-                let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
-                guard (200..<300).contains(code) else { throw DownloadError.status(code) }
-                if resp.expectedContentLength > Int64(maxBytes) { throw DownloadError.tooLarge(resp.expectedContentLength) }
-                var data = Data()
-                if resp.expectedContentLength > 0 { data.reserveCapacity(Int(resp.expectedContentLength)) }
-                for try await b in stream {
-                    data.append(b)
-                    if data.count > maxBytes { throw DownloadError.tooLarge(Int64(data.count)) }
-                }
-                return data
+        let limits = HTTPLimits(requestTimeout: timeout, resourceTimeout: deadline, maxBytes: maxBytes)
+        let answer: (Data, HTTPURLResponse)
+        do {
+            answer = try await LimitedHTTPClient.shared.data(r, limits: limits, fresh: false)
+        } catch let e as HTTPClientError {
+            switch e {
+            case .tooLarge(let limit): throw DownloadError.tooLarge(Int64(limit))
+            case .timedOut: throw DownloadError.timeout
+            case .incomplete: throw e
             }
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(deadline * 1_000_000_000))
-                return nil
-            }
-            defer { group.cancelAll() }
-            guard let first = try await group.next(), let data = first else { throw DownloadError.timeout }
-            return data
         }
+        let (data, http) = answer
+        guard (200..<300).contains(http.statusCode) else { throw DownloadError.status(http.statusCode) }
+        return data
     }
 
     nonisolated static func cleanup() {
