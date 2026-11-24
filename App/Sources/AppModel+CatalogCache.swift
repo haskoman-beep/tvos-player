@@ -30,13 +30,31 @@ extension AppModel {
     }
 
     /// Apple TV beendet Apps selten: beim Zurückkehren abgelaufene Reihen anstoßen (sie rufen `items` erneut auf).
+    /// A-B-5: also when the local day changed since the last wake (on activation or at midnight while active), so
+    /// "Heute neu", the calendar and day-dependent rows recompute with the current date.
     func observeCatalogWake() {
-        _ = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                // Nur je gezeigte Reihen: übernommene, nie gezeigte Plattencache-Reihen erneuern sich beim ersten Zeigen.
-                guard let self, !self.cache.keysNeedingRefresh(includingRestored: false).isEmpty else { return }
-                self.catalogWake += 1
+        let day = WakeDay(Upcoming.dayKey(Date(), calendar: Upcoming.localCalendar))
+        let center = NotificationCenter.default
+        for name in [UIApplication.didBecomeActiveNotification, UIApplication.significantTimeChangeNotification] {
+            _ = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    let now = Date(), cal = Upcoming.localCalendar
+                    // Nur je gezeigte Reihen: übernommene, nie gezeigte Plattencache-Reihen erneuern sich beim ersten Zeigen.
+                    let due = !self.cache.keysNeedingRefresh(includingRestored: false).isEmpty
+                    guard Upcoming.wakeNeeded(lastDay: day.value, now: now, calendar: cal, cacheDue: due) else { return }
+                    let today = Upcoming.dayKey(now, calendar: cal)
+                    if today != day.value { RemoteLog.info("katalog", "Neuer Tag · Reihen rechnen neu") }
+                    day.value = today
+                    self.catalogWake += 1
+                }
             }
         }
     }
+}
+
+/// Last local day seen by `observeCatalogWake` (main queue only).
+private final class WakeDay: @unchecked Sendable {
+    var value: String
+    init(_ value: String) { self.value = value }
 }

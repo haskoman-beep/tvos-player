@@ -45,6 +45,18 @@ public enum Upcoming {
         return c
     }
 
+    /// A-B-5: local calendar day as "YYYY-MM-DD" (the key for "a new day began").
+    public static func dayKey(_ date: Date, calendar: Calendar) -> String {
+        let c = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
+    }
+
+    /// A-B-5 / A-B-10: rows load again when the app becomes active and a shown catalog is due, or when the local day
+    /// changed since `lastDay` ("Heute neu", date filters and the calendar depend on the day, not only on the cache).
+    public static func wakeNeeded(lastDay: String, now: Date, calendar: Calendar, cacheDue: Bool) -> Bool {
+        cacheDue || dayKey(now, calendar: calendar) != lastDay
+    }
+
     /// Tag relativ zu `today` (0 = heute), nil bei unlesbarem Datum.
     public static func dayOffset(_ airDate: String, today: Date, calendar: Calendar) -> Int? {
         let parts = airDate.prefix(10).split(separator: "-").compactMap { Int($0) }

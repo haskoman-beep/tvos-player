@@ -188,3 +188,17 @@ private let seasonTwo = #"{"episodes":[{"season_number":2,"episode_number":4,"na
     #expect(Set(http.urls.map(\.path)) == ["/3/tv/42", "/3/tv/42/season/1", "/3/tv/42/season/2"])
     #expect(Set(eps.map { "\($0.season)x\($0.episode)" }).isSuperset(of: ["1x8", "1x9", "2x5", "2x6"]))
 }
+
+/// A-B-5 / A-B-10: day key for "recompute on day change" (local calendar day, not 24 h).
+@Test func upcomingDayChangeWakesRows() {
+    let cal = berlin
+    let evening = cal.date(from: DateComponents(year: 2026, month: 11, day: 24, hour: 23, minute: 50))!
+    let later = cal.date(from: DateComponents(year: 2026, month: 11, day: 24, hour: 23, minute: 59))!
+    let morning = cal.date(from: DateComponents(year: 2026, month: 11, day: 25, hour: 0, minute: 10))!
+    #expect(Upcoming.dayKey(evening, calendar: cal) == "2026-11-24")
+    #expect(Upcoming.dayKey(morning, calendar: cal) == "2026-11-25")
+    let day = Upcoming.dayKey(evening, calendar: cal)
+    #expect(!Upcoming.wakeNeeded(lastDay: day, now: later, calendar: cal, cacheDue: false))
+    #expect(Upcoming.wakeNeeded(lastDay: day, now: later, calendar: cal, cacheDue: true))
+    #expect(Upcoming.wakeNeeded(lastDay: day, now: morning, calendar: cal, cacheDue: false))
+}
