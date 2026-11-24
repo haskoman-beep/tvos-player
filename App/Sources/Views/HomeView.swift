@@ -29,7 +29,9 @@ struct HomeView: View {
         let appearance = model.profile.appearance
         let hero = layout.heroSource(appearance)
         let rows = layout.rowsBelowHero(appearance)
-        let showsHero = hero != nil && !(slides.loaded && slides.items.isEmpty)
+        // Task 4.1a (F-A-4): a failed or empty hero source keeps the hero layout (status in the hero frame); switching
+        // the whole layout rebuilt every row and lost the focus.
+        let showsHero = hero != nil
         let edge = HomeTopEdge.topmost(hasHero: showsHero, rowCount: rows.count, layoutEmpty: layout.rows.isEmpty)
         Group {
             if showsHero {
@@ -76,14 +78,16 @@ struct HomeView: View {
             rowFocus.state.covered = true
             topWatch.stop()
         }
-        .task(id: hero.map { "\($0.id)|\($0.content.key)" } ?? "-") {
+        // Task 4.1a (F-A-4, A-B-6): the catalog stamp of the source is part of the key, so the slides follow a
+        // background refresh and a failed source tries again at the next `catalogWake`; `retry` is the status tile.
+        .task(id: hero.map { "\($0.id)|\($0.content.key)\(model.catalogStamp($0.content))|h\(slides.retry)" } ?? "-") {
             guard let hero else { return }
-            let items = await model.heroItems(for: hero)
-            // Abgebrochene Ladung (Neuaufbau beim Start, Katalog -999) liefert []: nicht als „kein Hero“ werten,
-            // sonst springt die Startseite kurz auf das Layout ohne Hero und die Knopfzeile verliert den Fokus.
+            guard case .list(let s) = hero.content else { slides.set([]); return }
+            let r = await model.homeRowItems(s)   // same shared load as the row (heroItems without the failure)
+            // Abgebrochene Ladung (Neuaufbau beim Start, Katalog -999) liefert []: nicht als „kein Hero“ werten.
             guard !Task.isCancelled else { return }
-            slides.set(items)
-            RemoteLog.info("hero", "\(slides.items.count) Folien")
+            slides.set(Array(RowItems.deduped(r.items).prefix(8)), failed: r.failed)
+            RemoteLog.info("hero", "\(slides.items.count) Folien\(slides.phase == .failed ? " (Laden fehlgeschlagen)" : "")")
         }
         // Welle F-f: alle Listen vorladen (oben zuerst, begrenzt); sichtbare Reihen laden zusätzlich sofort selbst.
         // Neue Reihen ändern den Schlüssel und laden damit gleich.
