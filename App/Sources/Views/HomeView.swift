@@ -80,6 +80,7 @@ struct HomeView: View {
             VisiblePage.covered()   // F-A-1: the manager is outside the path; a late hero jump is dropped too
             rowFocus.state.covered = true
             topWatch.stop()
+            focusTarget.drop("verworfen, Startseite verlassen")   // review I1
         }
         // Task 4.1a (F-A-4, A-B-6): the catalog stamp of the source is part of the key, so the slides follow a
         // background refresh and a failed source tries again at the next `catalogWake`; `retry` is the status tile.
@@ -265,7 +266,7 @@ struct HomeView: View {
         while !Task.isCancelled, !LaunchFocus.done, ContinuousClock.now < deadline {
             if focusedRows.isEmpty {
                 heldSince = nil
-                if focusTarget.pending == nil { focusTarget.request(target) }
+                if !focusTarget.isPending { focusTarget.request(target) }
             } else {
                 let since = heldSince ?? ContinuousClock.now
                 heldSince = since
@@ -350,17 +351,38 @@ private struct FocusReportingButton: View {
     private(set) var pending: HomeManager.Focus?
     /// Increases with every request, so the same target twice still fires `onChange`.
     private(set) var serial = 0
+    /// Review I1: a target that nobody claimed in time expires, so a row built minutes later (scrolled to, or
+    /// back from a detail page) does not pull the focus, and the F-A-11 launch claim is not blocked.
+    @ObservationIgnored private var pendingUntil: ContinuousClock.Instant?
+    static let lifetime: Duration = .seconds(2)
 
     func request(_ f: HomeManager.Focus) {
         pending = f
+        pendingUntil = ContinuousClock.now + Self.lifetime
         serial += 1
     }
 
-    /// True once for the view that matches the pending target.
-    func claim(_ f: HomeManager.Focus) -> Bool {
-        guard pending == f else { return false }
-        pending = nil
+    /// A target is pending and not expired yet (an expired one is dropped here).
+    var isPending: Bool {
+        guard pending != nil else { return false }
+        if let until = pendingUntil, ContinuousClock.now >= until { drop("verfallen"); return false }
         return true
+    }
+
+    /// True once for the view that matches the pending, unexpired target.
+    func claim(_ f: HomeManager.Focus) -> Bool {
+        guard isPending, pending == f else { return false }
+        pending = nil
+        pendingUntil = nil
+        return true
+    }
+
+    /// Clears a target nobody claimed (expired, or the home page went away).
+    func drop(_ reason: String) {
+        guard let p = pending else { return }
+        pending = nil
+        pendingUntil = nil
+        RemoteLog.info("fokus", "Ziel \(reason) (\(logName(p) { _ in "Reihe" }))")
     }
 
     func logName(_ f: HomeManager.Focus, title: (UUID) -> String) -> String {
