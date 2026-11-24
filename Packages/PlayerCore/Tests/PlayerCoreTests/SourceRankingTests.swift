@@ -243,8 +243,9 @@ private let de = SourceRankContext(audioPriority: ["de", "en", "orig"], av1Hardw
 @Test func tvmazeLookupAndCache() async throws {
     let http = FakeSender([(200, #"{"id":42,"name":"S"}"#), (200, #"[{"season":1,"number":1,"airstamp":"2026-11-21T01:00:00+00:00"}]"#)])
     let a = TVmazeAirtimes(client: TVmazeClient(http: http, sleep: { _ in }))
-    let s1 = await a.stamps(imdb: "tt123")
-    let s2 = await a.stamps(imdb: "tt123")
+    let now = try #require(ISO8601DateFormatter().date(from: "2026-11-21T01:00:00Z"))   // independent of today's date
+    let s1 = await a.stamps(imdb: "tt123", now: now)
+    let s2 = await a.stamps(imdb: "tt123", now: now)
     #expect(s1.count == 1 && s1 == s2)
     #expect(http.sent.count == 2)
     #expect(http.sent.first?.url.absoluteString == "https://api.tvmaze.com/lookup/shows?imdb=tt123")
