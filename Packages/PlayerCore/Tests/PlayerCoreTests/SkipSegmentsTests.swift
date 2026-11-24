@@ -144,7 +144,7 @@ private let episodeJSON = #"""
 @Test func plannerDoesNotTrustPositionWhileSeeking() {
     let intro = SkipSegment(kind: .intro, start: 60, end: 150, source: .chapter)
     var p = SkipPlanner(segments: [intro])
-    let target = p.beginSkip(intro, duration: 2600, now: 0)
+    let target = p.beginSkip(intro, position: 80, duration: 2600, now: 0)
     #expect(target == 150)
     // Alte Position noch im Bereich: kein Knopf während des Sprungs.
     p.observe(position: 80, engineSeeking: true, now: 1)
@@ -162,7 +162,7 @@ private let episodeJSON = #"""
 @Test func plannerSeekTimeoutAndClamp() {
     let tail = SkipSegment(kind: .recap, start: 10, end: 600, source: .introDB)
     var p = SkipPlanner(segments: [tail])
-    #expect(p.beginSkip(tail, duration: 300, now: 100) == 295)   // nie hinter das Dateiende
+    #expect(p.beginSkip(tail, position: 20, duration: 300, now: 100) == 299)   // nie hinter das Dateiende (Task 3.5: Ende − 1 s)
     p.observe(position: 20, engineSeeking: false, now: 105)
     #expect(p.seeking != nil)
     p.observe(position: 20, engineSeeking: false, now: 108)
@@ -210,7 +210,7 @@ private let episodeJSON = #"""
 @Test func plannerNoFlickerWhenArrivingJustBeforeEnd() {
     let intro = SkipSegment(kind: .intro, start: 60, end: 150, source: .chapter)
     var p = SkipPlanner(segments: [intro])
-    _ = p.beginSkip(intro, duration: 2600, now: 0)
+    _ = p.beginSkip(intro, position: 70, duration: 2600, now: 0)
     // Engine landet 1,5 s vor dem Ziel (Keyframe): gilt als angekommen, Knopf bleibt trotzdem weg.
     p.observe(position: 148.5, engineSeeking: false, now: 1)
     #expect(p.seeking == nil)

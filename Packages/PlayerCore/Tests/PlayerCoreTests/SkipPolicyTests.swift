@@ -85,7 +85,7 @@ private func seg(_ k: SkipSegment.Kind, _ s: Double, _ e: Double, _ src: SkipSeg
     #expect(d.prompt?.countdown == 3)
     d = p.evaluate(at: 66, engineSeeking: false, playing: true, now: 113, settings: s, context: ctx)
     #expect(d.prompt == nil && d.autoSkip == intro)
-    let t150 = p.beginSkip(intro, duration: 3000, now: 113)
+    let t150 = p.beginSkip(intro, position: 66, duration: 3000, now: 113)
     #expect(t150 == 150)
     _ = p.evaluate(at: 150, engineSeeking: false, playing: true, now: 114, settings: s, context: ctx)
     p.observe(position: 150, engineSeeking: false, now: 114)
@@ -150,7 +150,7 @@ private func seg(_ k: SkipSegment.Kind, _ s: Double, _ e: Double, _ src: SkipSeg
     #expect(SkipPolicy.sceneAfterCredits(list, duration: d) == 2850)
     #expect(SkipPolicy.target(for: credits, in: list, duration: d) == 2850)
     var p = SkipPlanner(segments: list)
-    let t2850 = p.beginSkip(credits, duration: d, now: 0)
+    let t2850 = p.beginSkip(credits, position: 2701, duration: d, now: 0)
     #expect(t2850 == 2850)
     // The next-episode card waits for the scene, so the button may lead there.
     let s = SkipSettings(credits: .button)
@@ -201,7 +201,7 @@ private func seg(_ k: SkipSegment.Kind, _ s: Double, _ e: Double, _ src: SkipSeg
     _ = p.evaluate(at: 2701, engineSeeking: false, playing: true, now: 0, settings: s, context: ctx)
     let r = p.evaluate(at: 2706, engineSeeking: false, playing: true, now: 5, settings: s, context: ctx)
     #expect(r.autoSkip == credits)
-    let t2850 = p.beginSkip(credits, duration: d, now: 5)
+    let t2850 = p.beginSkip(credits, position: 2706, duration: d, now: 5)
     #expect(t2850 == 2850)
     // The scene itself never gets a button.
     var q = SkipPlanner(segments: [credits, post])
@@ -281,4 +281,27 @@ private func seg(_ k: SkipSegment.Kind, _ s: Double, _ e: Double, _ src: SkipSeg
     p.skip.intro = .auto
     let back = try JSONDecoder().decode(Profile.self, from: JSONEncoder().encode(p))
     #expect(back.skip.intro == .auto)
+}
+
+// MARK: Task 3.5 (W-B-12): a skip never jumps backwards
+
+@Test func skipNearFileEndNeverJumpsBack() {
+    let d = 3000.0, tail = seg(.credits, d - 30, d)
+    var p = SkipPlanner(segments: [tail])
+    let t = p.beginSkip(tail, position: d - 3, duration: d, now: 0)
+    #expect(t >= d - 3)
+    #expect(t == d - 1)
+}
+
+@Test func skipTargetCappedOneSecondBeforeEnd() {
+    let d = 3000.0, tail = seg(.preview, d - 60, d + 20)
+    #expect(SkipPolicy.skipTarget(for: tail, in: [tail], position: d - 50, duration: d) == d - 1)
+    // Inside the last second the target is the position itself (no jump backwards).
+    #expect(SkipPolicy.skipTarget(for: tail, in: [tail], position: d - 0.5, duration: d) == d - 0.5)
+}
+
+@Test func skipTargetUnknownDurationKeepsSegmentEnd() {
+    let intro = seg(.intro, 60, 150)
+    #expect(SkipPolicy.skipTarget(for: intro, in: [intro], position: 70, duration: 0) == 150)
+    #expect(SkipPolicy.skipTarget(for: intro, in: [intro], position: 70, duration: 3000) == 150)
 }

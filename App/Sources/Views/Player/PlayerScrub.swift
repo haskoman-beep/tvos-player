@@ -48,6 +48,9 @@ final class ScrubController: ObservableObject {
     @Published private(set) var preview: CGImage?
     /// Zeit des gezeigten Bildes (kann vom Ziel abweichen, solange das neue lädt).
     @Published private(set) var previewTime: Double?
+    /// Task 3.5 (W-B-7): 2-s field of the time the shown image was requested for (the image's own time can be a
+    /// keyframe further away). Set together with `preview`.
+    private var previewField: Int?
     /// Welle G-a: Schnellsuchlauf (◀/▶ gehalten): Geschwindigkeit mit Vorzeichen, nil = nichts gehalten.
     @Published private(set) var holdSpeed: Double?
     /// Ziel steht an der Grenze (Anfang, Dateiende, vor dem Abspann).
@@ -223,7 +226,7 @@ final class ScrubController: ObservableObject {
         holdSpeed = nil; holdAtLimit = false
         previewTask?.cancel(); previewTask = nil
         idleTask?.cancel(); idleTask = nil
-        preview = nil; previewTime = nil
+        preview = nil; previewTime = nil; previewField = nil
         previewGen &+= 1; fetching = false
         // Bilder nicht über das Spulen hinaus halten (bis zu 48 × 480 px); die Engine behält ihre eigenen.
         cache.reset()
@@ -254,11 +257,23 @@ final class ScrubController: ObservableObject {
     /// Immer nur eine Abfrage gleichzeitig; danach gilt das dann aktuelle Ziel.
     private func requestPreview() {
         guard supportsPreview() else { return }
-        if let hit = cache.value(at: target) { preview = hit.image; previewTime = hit.seconds }
+        if let hit = cache.value(at: target) { show(hit, for: target) }
         guard !fetching else { return }
         previewTask?.cancel()
         let gen = previewGen
         previewTask = Task { [weak self] in await self?.runPreview(gen) }
+    }
+
+    private func show(_ img: ScrubStill, for t: Double) {
+        preview = img.image; previewTime = img.seconds
+        previewField = ScrubPreviewCache<ScrubStill>.key(t)
+    }
+
+    /// Task 3.5 (W-B-7): the image for the card. Hidden (placeholder) as soon as the target is more than one 2-s
+    /// field away from the time the image was made for, instead of an old image under the new target time.
+    var currentPreview: CGImage? {
+        guard let preview, let f = previewField else { return nil }
+        return abs(ScrubPreviewCache<ScrubStill>.key(target) - f) <= 1 ? preview : nil
     }
 
     private func runPreview(_ gen: Int) async {
@@ -274,7 +289,7 @@ final class ScrubController: ObservableObject {
                 guard !Task.isCancelled, isActive else { return }
                 if let img {
                     cache.store(img, at: t)
-                    if ScrubPreviewCache<ScrubStill>.key(target) == key { preview = img.image; previewTime = img.seconds }
+                    if ScrubPreviewCache<ScrubStill>.key(target) == key { show(img, for: t) }
                 }
                 continue
             }
@@ -283,7 +298,7 @@ final class ScrubController: ObservableObject {
             guard !Task.isCancelled, isActive else { return }
             guard target == t else { continue }
             usedPreview = true
-            if let img = await fetch(t, true), !Task.isCancelled, isActive, target == t { preview = img.image; previewTime = img.seconds }
+            if let img = await fetch(t, true), !Task.isCancelled, isActive, target == t { show(img, for: t) }
             // Bis zur nächsten Bewegung nichts mehr tun.
             while !Task.isCancelled, isActive, target == t { try? await Task.sleep(for: .milliseconds(100)) }
         }
@@ -480,7 +495,7 @@ struct ScrubPreviewCard: View {
                 VStack(spacing: 10) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 12).fill(.black.opacity(0.6))
-                        if let img = controller.preview {
+                        if let img = controller.currentPreview {
                             Image(decorative: img, scale: 1).resizable().scaledToFit()
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                         } else {

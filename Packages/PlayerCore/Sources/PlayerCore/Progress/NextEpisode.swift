@@ -11,10 +11,12 @@ public struct EpisodeRef: Codable, Sendable, Hashable {
     }
 
     /// Folgenliste ohne Specials und ohne noch nicht ausgestrahlte Folgen (released in der Zukunft).
-    public static func list(from videos: [MetaVideo], now: Date = Date()) -> [EpisodeRef] {
+    /// Task 3.5 fix 1 (W-B-10): `includeSpecials` keeps season 0 too (only while a special plays, so that
+    /// `next(after:)` finds the next special). Season 0 sorts first, so regular episodes never lead into it.
+    public static func list(from videos: [MetaVideo], now: Date = Date(), includeSpecials: Bool = false) -> [EpisodeRef] {
         var seen = Set<[Int]>()
         return videos.compactMap { v -> EpisodeRef? in
-            guard let s = v.season, let e = v.episode, s > 0 else { return nil }
+            guard let s = v.season, let e = v.episode, s > 0 || (includeSpecials && s == 0) else { return nil }
             if let r = v.released, let d = releaseDate(r), d > now { return nil }
             guard seen.insert([s, e]).inserted else { return nil }
             return EpisodeRef(season: s, episode: e, title: v.name ?? v.title)
@@ -22,13 +24,20 @@ public struct EpisodeRef: Codable, Sendable, Hashable {
         .sorted { ($0.season, $0.episode) < ($1.season, $1.episode) }
     }
 
+    /// Task 3.5 fix 1 (W-B-10): the app builds the list with specials only while the playing episode is one.
+    public static func includesSpecials(playingSeason: Int?) -> Bool { playingSeason == 0 }
+
     static func releaseDate(_ s: String) -> Date? {
         ISODate.parse(s)
     }
 
     /// Folge nach (season, episode); nil = Serie zu Ende.
+    /// Task 3.5 (W-B-10): after a special (season 0) only the next special counts, never S1E1; none = nil.
     public static func next(after season: Int, _ episode: Int, in list: [EpisodeRef]) -> EpisodeRef? {
-        list.first { ($0.season, $0.episode) > (season, episode) }
+        if season <= 0 {
+            return list.filter { $0.season == season && $0.episode > episode }.min { $0.episode < $1.episode }
+        }
+        return list.first { ($0.season, $0.episode) > (season, episode) }
     }
 }
 

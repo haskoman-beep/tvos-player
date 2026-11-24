@@ -218,7 +218,8 @@ final class SkipSegmentController: ObservableObject {
     /// Jump over a segment (button or countdown). Credits followed by a scene land at the scene (`SkipPolicy.target`).
     private func jump<E: PlaybackEngine>(_ s: SkipSegment, engine: E) async {
         guard canSkip() else { RemoteLog.info("skip", "\(s.kind.rawValue): Sprung gesperrt"); return }
-        let target = planner.beginSkip(s, duration: engine.duration, now: Self.now)
+        // Task 3.5 (W-B-12): never behind the current position.
+        let target = planner.beginSkip(s, position: engine.currentTime, duration: engine.duration, now: Self.now)
         let scene = s.kind == .credits && sceneStart.map { abs($0 - target) < 1 } == true ? " (Szene nach dem Abspann)" : ""
         RemoteLog.info("skip", "\(s.kind.rawValue) übersprungen \(Int(engine.currentTime)) → \(Int(target))s\(scene)")
         await engine.seek(target, exact: true)

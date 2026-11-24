@@ -622,7 +622,8 @@ struct DetailView: View {
                         markOpenedPlayback()
                         navigate(.streams(PlayRequest(type: "series", id: "\(imdb):\(season):\(e)", title: "\(item.name) S\(season)E\(e)",
                                                       item: progressItem(imdb), season: season, episode: e,
-                                                      episodes: EpisodeRef.list(from: meta?.videos ?? []))))
+                                                      episodes: EpisodeRef.list(from: meta?.videos ?? [],
+                                                                                includeSpecials: EpisodeRef.includesSpecials(playingSeason: season)))))
                     } label: {
                         HStack(spacing: Theme.Space.m) {
                             let spoiler = model.profile.sources.blurUnwatchedStills && !model.progress.isWatched("\(imdb):\(season):\(v.episode ?? 0)")
@@ -902,7 +903,9 @@ struct StreamListView: View {
             loading = false
             if request.type == "series", request.episodes.isEmpty, let base = request.id.split(separator: ":").first {
                 // Aus Weiterschauen: Folgenliste nachladen, damit die nächste Folge automatisch kommt.
-                let eps = EpisodeRef.list(from: await model.meta(type: "series", imdb: String(base))?.videos ?? [])
+                // Task 3.5 fix 1 (W-B-10): a special from Weiterschauen gets the specials, so up-next finds the next one.
+                let eps = EpisodeRef.list(from: await model.meta(type: "series", imdb: String(base))?.videos ?? [],
+                                          includeSpecials: EpisodeRef.includesSpecials(playingSeason: request.season))
                 if current == nil { var r = request; r.episodes = eps; current = r }
             }
             // Welle G-a R1: in dieser Liste schon gescheiterte Quellen nie automatisch (die Rückfallleiter entscheidet).

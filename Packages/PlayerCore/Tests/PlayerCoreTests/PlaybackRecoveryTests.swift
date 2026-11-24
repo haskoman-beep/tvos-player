@@ -50,6 +50,39 @@ private func url(_ code: Int, kind: String = "vodSourceFailed") -> PlaybackFailu
     #expect(PlaybackErrorClassifier.classify(PlaybackFailure(kind: "nativeItemFailed", domain: "AVFoundationErrorDomain", code: -11800)) == .unknown)
 }
 
+// Task 3.5 (W-A-5): transport errors the classifier does not know are not remembered for 8 h.
+@Test func unknownTransportErrorIsNotRemembered() {
+    let posix = PlaybackFailure(kind: "vodSourceFailed", domain: "NSPOSIXErrorDomain", code: 54)
+    #expect(PlaybackErrorClassifier.classify(posix) == .unknown)
+    #expect(SourceVerdict.forNextSource(.unknown, failure: posix, reachedFirstFrame: true) == nil)
+    let parse = url(-1017)
+    #expect(PlaybackErrorClassifier.classify(parse) == .unknown)
+    #expect(SourceVerdict.forNextSource(.unknown, failure: parse, reachedFirstFrame: false) == nil)
+    let cf = PlaybackFailure(kind: "vodSourceFailed", domain: "kCFErrorDomainCFNetwork", code: 303)
+    #expect(SourceVerdict.forNextSource(.unknown, failure: cf, reachedFirstFrame: true) == nil)
+}
+
+@Test func avFoundationWithUnknownURLCodeIsNotRemembered() {
+    let f = PlaybackFailure(kind: "nativeItemFailed", domain: "AVFoundationErrorDomain", code: -11800, underlyingURLCode: -1017)
+    #expect(PlaybackErrorClassifier.classify(f) == .unknown)
+    #expect(SourceVerdict.forNextSource(.unknown, failure: f, reachedFirstFrame: true) == nil)
+    // Without a URL error below, -11800 is not known to be transport: remembered as before.
+    let plain = PlaybackFailure(kind: "nativeItemFailed", domain: "AVFoundationErrorDomain", code: -11800)
+    #expect(SourceVerdict.forNextSource(.unknown, failure: plain, reachedFirstFrame: true) == .failed(.unknown))
+}
+
+@Test func classifiedSourceErrorsAreStillRemembered() {
+    #expect(SourceVerdict.forNextSource(.linkExpired, failure: refused(403), reachedFirstFrame: true) == .failed(.linkExpired))
+    let decoder = PlaybackFailure(kind: "vodSourceFailed")
+    #expect(SourceVerdict.forNextSource(.unknown, failure: decoder, reachedFirstFrame: true) == .failed(.unknown))
+    let dead = PlaybackFailure(kind: LoadWatchdog.Verdict.start.kind)
+    #expect(SourceVerdict.forNextSource(.timeout, failure: dead, reachedFirstFrame: false) == .deadStart)
+    var b = FailedLinkBook()
+    let s = StreamItem(name: "A", url: "https://x/token", behaviorHints: StreamBehaviorHints(filename: "a.mkv"))
+    if let v = SourceVerdict.forNextSource(.unknown, failure: decoder, reachedFirstFrame: true) { b.apply(v, stream: s, title: "tt1") }
+    #expect(b.isRecentlyFailed(s, title: "tt1"))
+}
+
 @Test func logTextHasNoMessage() {
     let f = PlaybackFailure(kind: "sourceRefused", code: 403, message: "https://host/token123")
     #expect(f.logText == "sourceRefused · 403")
