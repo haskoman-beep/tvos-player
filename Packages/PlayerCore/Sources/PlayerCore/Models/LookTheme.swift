@@ -106,24 +106,27 @@ public enum LookTheme {
 }
 
 extension Profile {
-    /// Task 4.4, controller ruling for Build 4: until Task 4.5 lets the user edit the look directly, the look the
-    /// theme is built from is derived at runtime. Keys that still have an old field (navigation, accent, cardSize,
-    /// heroStyle on/off via heroEnabled, expandPosters, detail badgeStyle, player trackPanel) always come from
-    /// `Look.migrated(from: appearance, ...)`, so the existing appearance settings stay the single source and `look`
-    /// can never drift from them (concern 1 of the 4.2 report). Every other key comes from the stored look
-    /// (preset plus its overrides). Task 4.5 decides who writes what once the look is edited directly.
+    /// Task 4.4, controller ruling for Build 4 (round 2): until Task 4.5 lets the user edit the look directly, the
+    /// look the theme is built from is derived at runtime. Every key without an old field comes from the stored look
+    /// (preset plus overrides). For a key that still has an old field (navigation, accent, cardSize, heroStyle on/off
+    /// via heroEnabled, expandPosters, detail badgeStyle, player trackPanel) the stored look's value wins while
+    /// `LookMigration.oldValues(for: stored)` maps to the current old field value (e.g. an imported champagner or
+    /// umriss, which the old fields can only approximate). Once the user changes the old field in the old settings it
+    /// no longer matches, and the value derived from the old field wins. So the old settings stay authoritative and
+    /// a stale look can never override them; an import is shown with its exact values.
     public var themeLook: LookValues {
         let old = Look.migrated(from: appearance, player: player, sources: sources).resolved()
         var v = look.resolved()
-        v.global.navigation = old.global.navigation
-        v.global.accent = old.global.accent
-        v.home.cardSize = old.home.cardSize
+        let stored = LookMigration.oldValues(for: v)
+        if stored.navigation != appearance.navigation { v.global.navigation = old.global.navigation }
+        if !stored.accents.contains(appearance.accent) { v.global.accent = old.global.accent }
+        if stored.cardSize != appearance.cardSize { v.home.cardSize = old.home.cardSize }
         // heroEnabled only says on/off: off → aus; on keeps a stored style other than aus (else the preset's).
         if !appearance.heroEnabled { v.home.heroStyle = .aus }
         else if v.home.heroStyle == .aus { v.home.heroStyle = LookPreset.values(look.preset).home.heroStyle }
-        v.home.expandPosters = old.home.expandPosters
-        v.detail.badgeStyle = old.detail.badgeStyle
-        v.player.trackPanel = old.player.trackPanel
+        if stored.expandPosters != appearance.expandPosters { v.home.expandPosters = old.home.expandPosters }
+        if stored.badgeStyle != appearance.badges.style { v.detail.badgeStyle = old.detail.badgeStyle }
+        if stored.trackPanelStyle != player.trackPanelStyle { v.player.trackPanel = old.player.trackPanel }
         return v
     }
 }
