@@ -23,6 +23,8 @@ struct HomeView: View {
     @State private var headingRow: UUID?
     /// Task 4.1a (F-A-3): focus target after a context-menu action (claimed by the row or the action button).
     @State private var focusTarget = HomeFocusTarget()
+    /// Task 4.1a (F-A-11): rows holding the focus (launch claim of the page without hero).
+    @State private var focusedRows: Set<UUID> = []
 
     var body: some View {
         let layout = model.profile.home
@@ -59,6 +61,7 @@ struct HomeView: View {
                     .padding(.bottom, bottom)
                     .ignoresSafeArea(edges: .bottom)
                 }
+                .task { await claimLaunchFocusWithoutHero(rows) }
             }
         }
         .environment(\.homeRowFocusMemory, rowFocus)
@@ -244,6 +247,34 @@ struct HomeView: View {
                                  onFocus: { topWatch.report(.actionButton, $0) }, focusTarget: focusTarget)
                 .padding(.top, 20)
                 .padding(.leading, Theme.Space.edge)
+        }
+    }
+
+    /// Task 4.1a (F-A-11): without a hero nobody claimed the first focus after a cold start, so the sidebar kept
+    /// it. Same rule as `HeroButtons.claimLaunchFocus`: the first row (remembered or first tile, else placeholder 0;
+    /// empty page: the action button) takes it back until a row held it 300 ms or the launch window is over.
+    private func claimLaunchFocusWithoutHero(_ rows: [HomeRow]) async {
+        guard !LaunchFocus.done else { return }
+        let deadline = LaunchFocus.deadline ?? ContinuousClock.now + LaunchFocus.window
+        LaunchFocus.deadline = deadline
+        if LaunchFocus.shownAt == nil { LaunchFocus.shownAt = ContinuousClock.now }
+        let target: HomeManager.Focus = rows.first.map { .row($0.id) } ?? .add
+        var heldSince: ContinuousClock.Instant?
+        while !Task.isCancelled, !LaunchFocus.done, ContinuousClock.now < deadline {
+            if focusedRows.isEmpty {
+                heldSince = nil
+                if focusTarget.pending == nil { focusTarget.request(target) }
+            } else {
+                let since = heldSince ?? ContinuousClock.now
+                heldSince = since
+                if ContinuousClock.now - since >= LaunchFocus.hold {
+                    LaunchFocus.finish("Reihe hält den Fokus (ohne Hero)", way: "reihen", usableAt: since); return
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        if !LaunchFocus.done, ContinuousClock.now >= deadline {
+            LaunchFocus.finish("Startfenster vorbei (ohne Hero)", way: "fenster", usableAt: LaunchFocus.shownAt ?? ContinuousClock.now)
         }
     }
 
