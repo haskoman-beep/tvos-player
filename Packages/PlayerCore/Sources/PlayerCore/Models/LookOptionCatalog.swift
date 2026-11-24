@@ -1,0 +1,320 @@
+import Foundation
+
+/// Task 4.5: the four areas of the look, named like the keys of `LookValues` / a configurator export.
+public enum LookArea: String, Sendable, Hashable, CaseIterable {
+    case global, home, detail, player
+}
+
+/// Task 4.5: the build from which an option takes effect (plan appendix A, column "ab Build").
+public enum LookBuild: Int, Sendable, Hashable, Comparable, CaseIterable {
+    case b4, b5a, b5b, b5c
+
+    /// The build this code ships in.
+    public static let current: LookBuild = .b4
+
+    public var title: String {
+        switch self {
+        case .b4: "4"
+        case .b5a: "5a"
+        case .b5b: "5b"
+        case .b5c: "5c"
+        }
+    }
+
+    public static func < (a: LookBuild, b: LookBuild) -> Bool { a.rawValue < b.rawValue }
+}
+
+/// One value of an option: the configurator raw value (`"true"`, `"2"` for bools and numbers) and its German name.
+public struct LookChoice: Sendable, Hashable {
+    public var raw: String
+    public var label: String
+
+    public init(raw: String, label: String) { self.raw = raw; self.label = label }
+}
+
+/// One row of Einstellungen › Aussehen. `label`, `help` and the value names are the German texts of appendix A.
+public struct LookOptionEntry: Sendable, Hashable, Identifiable {
+    public var area: LookArea
+    public var group: String
+    public var key: String
+    public var label: String
+    public var help: String
+    public var choices: [LookChoice]
+    public var availableFrom: LookBuild
+
+    /// `area.key`, unique across the catalog.
+    public var id: String { area.rawValue + "." + key }
+
+    public func choiceLabel(_ raw: String) -> String? { choices.first { $0.raw == raw }?.label }
+}
+
+/// Task 4.5 (D-14, D-19, D-28): all 35 configurator options in the order of plan appendix A, plus the rules that
+/// switch rows off. Pure data, so the settings page only renders it.
+public enum LookOptionCatalog {
+    public static let all: [LookOptionEntry] = makeAll()
+
+    public static func entry(_ key: String) -> LookOptionEntry? { all.first { $0.key == key } }
+
+    // MARK: Dependencies
+
+    static let glowReason = "Bei Glanz bestimmt tvOS Form, Größe und Schatten der Karte."
+    static let reduceMotionReason = "Das System reduziert Bewegung; diese Einstellung wirkt erst, wenn das aus ist."
+    static let noFocusSignHint = "Ohne Fokus-Zeichen setzt die App einen weißen Rahmen."
+    static let glowControlledKeys: Set<String> = ["corners", "focusScale", "focusBorder", "focusShadow"]
+
+    /// Whether the row `key` can be changed in `build`, and the note shown under it. An option of a later build is
+    /// off with "kommt mit Build …"; with glow on, tvOS draws the card (`.buttonStyle(.card)`), so shape, scale,
+    /// border and shadow are off. With system "reduce motion" the motion rows stay selectable but carry a note.
+    public static func isEnabled(_ key: String, in values: LookValues, build: LookBuild = .current,
+                                 reduceMotion: Bool = false) -> (enabled: Bool, reason: String?) {
+        guard let e = entry(key) else { return (false, nil) }
+        if e.availableFrom > build { return (false, "kommt mit Build \(e.availableFrom.title)") }
+        if glowControlledKeys.contains(key), values.home.focusGlow { return (false, glowReason) }
+        if reduceMotion, key == "motion" || key == "expandPosters" { return (true, reduceMotionReason) }
+        return (true, nil)
+    }
+
+    /// True when the look shows no focus sign at all (no scale, border, shadow or glow).
+    public static func hasNoFocusSign(_ v: LookValues) -> Bool {
+        v.home.focusScale == .keine && v.home.focusBorder == .keiner && v.home.focusShadow == .keiner
+            && !v.home.focusGlow
+    }
+
+    /// The border the theme draws: white when the look would otherwise show no focus sign.
+    public static func effectiveFocusBorder(_ v: LookValues) -> LookFocusBorder {
+        hasNoFocusSign(v) ? .weiss : v.home.focusBorder
+    }
+
+    /// The note under a group header, if any.
+    public static func groupHint(_ group: String, in values: LookValues) -> String? {
+        group == "Fokus-Effekt" && hasNoFocusSign(values) ? noFocusSignHint : nil
+    }
+
+    // MARK: Generic access (configurator key names)
+
+    /// The raw value of `key` in `values` (`"true"` / `"false"` for bools, `"2"` for numbers).
+    public static func rawValue(_ key: String, in values: LookValues) -> String? {
+        guard let e = entry(key),
+              let data = try? JSONEncoder().encode(values),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]],
+              let value = obj[e.area.rawValue]?[key] else { return nil }
+        return rawString(value, isBool: e.choices.map(\.raw) == ["true", "false"])
+    }
+
+    /// `overrides` with `key` set to `raw`, or removed for `nil` or the value of `preset` (that is no deviation, so
+    /// no accent dot and no count). `nil` when the key or the raw value is unknown; the result is read back through
+    /// the lenient decoder, so only valid values land.
+    public static func overrides(_ overrides: LookOverrides, setting key: String, to raw: String?,
+                                 preset: LookPresetID = .appleTV) -> LookOverrides? {
+        guard let e = entry(key) else { return nil }
+        if let r = raw, !e.choices.contains(where: { $0.raw == r }) { return nil }
+        let base = LookPreset.values(preset)
+        let raw = raw == rawValue(key, in: base) ? nil : raw
+        guard let data = try? JSONEncoder().encode(overrides),
+              var obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        var area = obj[e.area.rawValue] as? [String: Any] ?? [:]
+        if let raw { area[key] = jsonValue(raw) } else { area.removeValue(forKey: key) }
+        obj[e.area.rawValue] = area
+        guard let out = try? JSONSerialization.data(withJSONObject: obj),
+              let decoded = try? JSONDecoder().decode(LookOverrides.self, from: out) else { return nil }
+        if let raw, rawValue(key, in: decoded.applied(to: base)) != raw { return nil }
+        return decoded
+    }
+
+    /// Whether `key` is overridden (the row carries the accent dot and offers "Auf Apple TV zurücksetzen").
+    public static func isOverridden(_ key: String, in overrides: LookOverrides) -> Bool {
+        guard let e = entry(key),
+              let data = try? JSONEncoder().encode(overrides),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] else { return false }
+        return obj[e.area.rawValue]?[key] != nil
+    }
+
+    /// JSONSerialization reads bools and numbers both as NSNumber; the entry says which one it is.
+    private static func rawString(_ value: Any, isBool: Bool) -> String? {
+        if let n = value as? NSNumber { return isBool ? (n.boolValue ? "true" : "false") : n.stringValue }
+        return value as? String
+    }
+
+    private static func jsonValue(_ raw: String) -> Any {
+        if raw == "true" { return true }
+        if raw == "false" { return false }
+        if let n = Int(raw) { return n }
+        return raw
+    }
+
+    // MARK: Appendix A
+
+    private static func makeAll() -> [LookOptionEntry] {
+        func e(_ area: LookArea, _ group: String, _ key: String, _ label: String, _ choices: [(String, String)],
+               _ help: String, _ build: LookBuild) -> LookOptionEntry {
+            LookOptionEntry(area: area, group: group, key: key, label: label, help: help,
+                            choices: choices.map { LookChoice(raw: $0.0, label: $0.1) }, availableFrom: build)
+        }
+        let onOff = [("true", "An"), ("false", "Aus")]
+        return [
+            // global
+            e(.global, "Navigation", "navigation", "Hauptnavigation",
+              [("seitenleiste", "Seitenleiste"), ("oben", "Obere Leiste")],
+              "Seitenleiste links oder Leiste oben.", .b4),
+            e(.global, "Navigation", "clock", "Uhr", onOff, "Zeigt die Uhrzeit oben rechts.", .b5a),
+            e(.global, "Navigation", "settingsLayout", "Einstellungs-Layout",
+              [("spalten", "Zwei Spalten"), ("kacheln", "Kacheln"), ("liste", "Liste")],
+              "Zweispaltig mit Kategorien links, große Kacheln oder eine einzige Liste.", .b5a),
+            e(.global, "Farbe", "accent", "Akzentfarbe",
+              [("champagner", "Champagner"), ("weiss", "Weiß"), ("eisblau", "Eisblau"), ("blau", "Blau"),
+               ("rot", "Rot"), ("koralle", "Koralle"), ("salbei", "Salbei"), ("violett", "Violett")],
+              "Markiert Gewähltes und den Hauptknopf. Der Fokus selbst bleibt weiß.", .b4),
+            e(.global, "Farbe", "background", "Hintergrundton",
+              [("schwarz", "Schwarz (OLED)"), ("graphit", "Graphit"), ("tinte", "Tinte (bläulich)"),
+               ("warm", "Warm (bräunlich)")],
+              "Schwarz nutzt OLED voll aus. Die getönten Varianten wirken weicher.", .b4),
+            e(.global, "Schrift und Bewegung", "typeScale", "Schriftgröße",
+              [("kompakt", "Kompakt"), ("standard", "Standard"), ("gross", "Groß")],
+              "Skaliert alle Texte gemeinsam.", .b4),
+            e(.global, "Schrift und Bewegung", "typeCharacter", "Schriftcharakter",
+              [("neutral", "Neutral"), ("editorial", "Editorial"), ("technisch", "Technisch")],
+              "Neutral entspricht tvOS. Editorial setzt große Titel leichter und enger. Technisch setzt Metadaten "
+                + "kräftiger und weiter.", .b4),
+            e(.global, "Schrift und Bewegung", "motion", "Bewegung",
+              [("aus", "Aus"), ("dezent", "Dezent"), ("standard", "Standard")],
+              "Dauer und Stärke der Übergänge. Aus schaltet Überblendungen ab.", .b4),
+            // home
+            e(.home, "Hero", "heroStyle", "Hero-Stil",
+              [("vollbild", "Vollbild"), ("banner", "Banner"), ("karussell", "Karussell"), ("aus", "Aus")],
+              "Vollbild füllt den ganzen Bildschirm hinter den Reihen. Banner ist eine eigene Fläche über den Reihen. "
+                + "Karussell zeigt den Nachbartitel angeschnitten.", .b5a),
+            e(.home, "Hero", "heroInfo", "Info-Ebene",
+              [("minimal", "Minimal"), ("standard", "Standard"), ("ausfuehrlich", "Ausführlich")],
+              "Wie viel Text über dem Hero-Bild steht.", .b5a),
+            e(.home, "Hero", "heroTitle", "Logo oder Titel", [("logo", "Logo"), ("text", "Titel als Text")],
+              "Logo nimmt das Titel-Logo aus den Metadaten, wenn es eines gibt. Titel setzt den Namen immer als Text.",
+              .b5a),
+            e(.home, "Hero", "backdropFollowsFocus", "Hintergrund nach Fokus", onOff,
+              "Der Hintergrund wechselt auf den Titel, auf dem der Fokus kurz ruht.", .b5a),
+            e(.home, "Karten und Reihen", "cardShape", "Kartenform",
+              [("poster", "Poster"), ("querformat", "Querformat"), ("mischung", "Mischung")],
+              "Poster ist Hochformat, Querformat zeigt Szenenbilder. Mischung nutzt Querformat für Weiterschauen und "
+                + "Poster für den Rest.", .b5a),
+            e(.home, "Karten und Reihen", "cardSize", "Kartengröße",
+              [("klein", "Klein"), ("mittel", "Mittel"), ("gross", "Groß")],
+              "Größere Karten wirken ruhiger, zeigen aber weniger Titel pro Reihe.", .b4),
+            e(.home, "Karten und Reihen", "corners", "Ecken",
+              [("eckig", "Eckig"), ("leicht", "Leicht"), ("weich", "Weich"), ("rund", "Rund")],
+              "Radius der Karten und Flächen.", .b5a),
+            e(.home, "Karten und Reihen", "rowSpacing", "Abstände",
+              [("eng", "Eng"), ("normal", "Normal"), ("luftig", "Luftig")],
+              "Abstand zwischen Karten und zwischen Reihen.", .b5a),
+            e(.home, "Karten und Reihen", "rowTitle", "Reihentitel",
+              [("dezent", "Dezent"), ("standard", "Standard"), ("gross", "Groß")],
+              "Dezent ist klein und zurückgenommen, Groß setzt kräftige Überschriften.", .b5a),
+            e(.home, "Karten und Reihen", "cardTitles", "Titel unter Karten",
+              [("immer", "Immer"), ("fokus", "Nur bei Fokus"), ("aus", "Aus")],
+              "Zeigt den Namen unter der Karte: immer, nur bei Fokus oder nie.", .b5a),
+            e(.home, "Karten und Reihen", "expandPosters", "Poster aufklappen", onOff,
+              "Das fokussierte Poster wächst nach kurzer Ruhe zum Querformat mit Szenenbild.", .b4),
+            e(.home, "Fokus-Effekt", "focusScale", "Skalierung",
+              [("keine", "Keine"), ("dezent", "Dezent"), ("kraeftig", "Kräftig")],
+              "Wie stark die fokussierte Karte wächst.", .b5a),
+            e(.home, "Fokus-Effekt", "focusBorder", "Rahmen",
+              [("keiner", "Keiner"), ("weiss", "Weiß"), ("akzent", "Akzentfarbe")],
+              "Ein Rahmen um die fokussierte Karte.", .b5a),
+            e(.home, "Fokus-Effekt", "focusShadow", "Schatten",
+              [("keiner", "Keiner"), ("weich", "Weich"), ("tief", "Tief")],
+              "Schatten unter der fokussierten Karte.", .b5a),
+            e(.home, "Fokus-Effekt", "focusGlow", "Glanz", onOff,
+              "Ein Lichtreflex auf der fokussierten Karte, wie bei den Postern der Apple-TV-App.", .b5a),
+            // detail
+            e(.detail, "Aufbau", "layout", "Layout",
+              [("links", "Links"), ("zentriert", "Zentriert"), ("kino", "Kino-Vollbild")],
+              "Links stellt Text und Knöpfe an den linken Rand. Zentriert setzt alles mittig. Kino-Vollbild zeigt fast "
+                + "nur das Bild und schiebt den Rest nach unten.", .b5b),
+            e(.detail, "Aufbau", "descriptionLines", "Beschreibungslänge",
+              [("2", "2 Zeilen"), ("3", "3 Zeilen"), ("5", "5 Zeilen")],
+              "Wie viele Zeilen der Beschreibung sofort sichtbar sind.", .b5b),
+            e(.detail, "Aufbau", "cast", "Besetzung",
+              [("kreise", "Kreise"), ("karten", "Karten"), ("text", "Textzeile"), ("aus", "Aus")],
+              "Runde Porträts, Karten mit Rolle, eine Textzeile oder gar nicht.", .b5b),
+            e(.detail, "Plaketten und Bewertungen", "badgeStyle", "Plakettenstil",
+              [("umriss", "Umriss"), ("gefuellt", "Gefüllt"), ("text", "Nur Text"), ("logos", "Logos")],
+              "Umriss ist fein, Gefüllt ist gut lesbar, Text kommt ohne Fläche aus. Logos zeichnet die Schriftzüge "
+                + "nach.", .b5b),
+            e(.detail, "Plaketten und Bewertungen", "ratingStyle", "Bewertungen",
+              [("symbole", "Symbol + Zahl"), ("text", "Textzeile"), ("kacheln", "Kacheln")],
+              "Symbole mit Zahl, reine Textzeile oder kleine Kacheln mit Quelle.", .b5b),
+            e(.detail, "Quellenliste", "sourceList", "Darstellung",
+              [("kompakt", "Kompakt"), ("ausfuehrlich", "Ausführlich"), ("karten", "Karten")],
+              "Kompakt zeigt eine Zeile pro Quelle. Ausführlich zeigt den Text des Addons. Karten trennt Plaketten und "
+                + "Text klar.", .b5b),
+            // player
+            e(.player, "Steuerleiste", "controlBar", "Umfang",
+              [("minimal", "Minimal"), ("standard", "Standard"), ("ausfuehrlich", "Ausführlich")],
+              "Minimal zeigt nur Zeitleiste und Zeit. Standard ergänzt Titel und Knöpfe. Ausführlich zeigt zusätzlich "
+                + "Kapitelmarken und Technik.", .b5c),
+            e(.player, "Steuerleiste", "badges", "Plaketten",
+              [("aus", "Aus"), ("kompakt", "Kompakt"), ("voll", "Alle")],
+              "Technik-Plaketten in der Steuerleiste.", .b5c),
+            e(.player, "Steuerleiste", "timeDisplay", "Zeitanzeige",
+              [("rest", "Restzeit"), ("gesamt", "Position / Dauer"), ("ende", "Endet um")],
+              "Restzeit, Position und Gesamtdauer oder die Uhrzeit, zu der der Film endet.", .b5c),
+            e(.player, "Panels und Hinweise", "trackPanel", "Ton- und Untertitel-Panel",
+              [("seite", "Seite"), ("unten", "Unten"), ("mitte", "Mitte")],
+              "Seite schiebt ein Panel von rechts herein. Unten legt es über die Steuerleiste. Mitte zeigt eine "
+                + "schwebende Karte.", .b4),
+            e(.player, "Panels und Hinweise", "upNext", "Nächste Folge",
+              [("karte", "Karte"), ("leiste", "Leiste"), ("vollbild", "Vollbild")],
+              "Karte unten rechts, schmale Leiste am unteren Rand oder Vollbild mit Vorschaubild.", .b5c),
+            e(.player, "Panels und Hinweise", "stillWatching", "„Noch da?“",
+              [("dialog", "Dialog"), ("karte", "Karte")],
+              "Dialog in der Mitte, der das Bild abdunkelt, oder eine ruhige Karte unten.", .b5c),
+        ]
+    }
+}
+
+extension SettingsSummary {
+    /// Task 4.5: value of the "Mein Look" row: „Apple TV“ or „angepasst · 3“.
+    public static func lookValue(_ look: Look) -> String {
+        let n = look.overrides.count
+        return n == 0 ? "Apple TV" : "angepasst · \(n)"
+    }
+
+    /// Task 4.5: „Mein Look · Apple TV“ / „Mein Look · angepasst · 3“.
+    public static func look(_ look: Look) -> String {
+        DesignText.metaLine([look.preset.title, lookValue(look)])
+    }
+    /// Fix round 1 (I2): the row value from what the theme shows (`themeLook`), so a change in the old settings
+    /// counts too.
+    public static func lookValue(_ p: Profile) -> String { lookValue(p.shownLook) }
+
+    public static func look(_ p: Profile) -> String { look(p.shownLook) }
+}
+
+extension Profile {
+    /// Fix round 1 (I2): the look the theme shows, as preset plus deviations (for the count and the row dots).
+    public var shownLook: Look {
+        Look(preset: look.preset, overrides: LookOverrides.difference(themeLook, from: LookPreset.values(look.preset)))
+    }
+
+    /// The value a row shows (raw configurator value of `themeLook`).
+    public func lookRawValue(_ key: String) -> String? { LookOptionCatalog.rawValue(key, in: themeLook) }
+
+    /// Whether the row differs from the preset (accent dot, "Auf Apple TV zurücksetzen").
+    public func isLookOverridden(_ key: String) -> Bool {
+        LookOptionCatalog.rawValue(key, in: themeLook)
+            != LookOptionCatalog.rawValue(key, in: LookPreset.values(look.preset))
+    }
+
+    /// Sets one option (`nil` = back to the preset) starting from what the theme shows, and writes the old fields
+    /// it maps to through `applyImportedLook` (old fields first, look last), so `themeLook` shows the new value.
+    /// Unknown key or value: nothing changes.
+    public mutating func setLook(_ key: String, to raw: String?) {
+        let shown = shownLook
+        guard let o = LookOptionCatalog.overrides(shown.overrides, setting: key, to: raw, preset: look.preset)
+        else { return }
+        applyImportedLook(Look(preset: look.preset, overrides: o))
+    }
+
+    /// "Alles auf Apple TV zurücksetzen": no overrides, old fields mapped to the preset.
+    public mutating func resetLook() {
+        applyImportedLook(Look(preset: look.preset))
+    }
+}
