@@ -113,7 +113,9 @@ private struct LookOptionRow: View {
     @EnvironmentObject var model: AppModel
 
     private var value: String { raw.flatMap { entry.choiceLabel($0) } ?? "" }
-    private var detail: String { DesignText.metaLine([reason, entry.help]) }
+    /// Review M6: a disabled row shows only its reason, so it stays one line high; an enabled row keeps the help
+    /// text (after the reduce-motion note, if any).
+    private var detail: String { enabled ? DesignText.metaLine([reason, entry.help]) : (reason ?? entry.help) }
 
     var body: some View {
         Group {
