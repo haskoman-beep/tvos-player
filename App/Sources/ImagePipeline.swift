@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import ImageIO
 import CoreImage
+import Combine
 import os
 import Network
 import PlayerCore
@@ -15,6 +16,9 @@ actor ImagePipeline {
     /// Speicher-Anteil des URLCache (Plattencache bleibt unberührt).
     static let urlMemory = 20 << 20
     static let urlMemoryPlayback = 4 << 20
+    /// Bitmaps from this size on (≈ 2560×1600 and larger) count as large: views release them when they disappear
+    /// (`RemoteImage.releaseBytes`) and the decode does not copy them for display (review M2: no 2× peak).
+    static let largeBitmapBytes = 16 << 20
 
     private let session: URLSession
     private let http: LimitedHTTPClient
@@ -385,8 +389,18 @@ actor ImagePipeline {
         // Weichgezeichnet sieht ein Viertel der Auflösung gleich aus und kostet ein Sechzehntel.
         if blur > 0 { maxPixels = max(64, maxPixels / 4) }
         guard let img = downsample(src, maxPixels: maxPixels) else { return nil }
-        guard blur > 0 else { return img }
-        return blurred(img, radius: max(1, Double(blur) / 4)) ?? img
+        guard blur > 0 else { return prepared(img) }
+        return prepared(blurred(img, radius: max(1, Double(blur) / 4)) ?? img)
+    }
+
+    /// Build 4 follow-up S2: decode into the display format here (off the main thread), so the first frame that shows
+    /// the picture needs no colour/format conversion on commit. Kept only when it is still a CGImage-backed bitmap
+    /// (`cost` and the blur step read `cgImage`). Large bitmaps (4K backdrops) stay as they are: the copy would double
+    /// their memory at the peak of the decode.
+    nonisolated private static func prepared(_ img: UIImage) -> UIImage {
+        guard cost(img) < largeBitmapBytes else { return img }
+        guard let p = img.preparingForDisplay(), p.cgImage != nil else { return img }
+        return p
     }
 
     nonisolated static func downsample(_ data: Data, maxPixels: Int) -> UIImage? {
@@ -440,7 +454,8 @@ private final class CacheCostTracker: NSObject, NSCacheDelegate, @unchecked Send
 }
 
 /// A-B-3: counts "network back" moments (NWPath unsatisfied → satisfied). Visible `RemoteImage`s without a picture
-/// load again when it changes; the pipeline forgets its short-lived failures first.
+/// load again when it changes (they listen to `$generation`, they do not observe this object, so views that show
+/// their picture are not re-rendered); the pipeline forgets its short-lived failures first.
 @MainActor final class NetworkReturn: ObservableObject {
     static let shared = NetworkReturn()
     @Published private(set) var generation = 0
@@ -483,16 +498,31 @@ struct RemoteImage: View {
     var fixedTarget: ImageTarget? = nil
     /// Welle F-l: eigene Fläche, solange kein Bild da ist (Paket-Kachel: Farbverlauf), statt der grauen.
     var placeholder: AnyView? = nil
+    /// Build 4 follow-up S2: while a new address loads, keep showing the previous picture instead of the placeholder
+    /// (only one loaded with the same blur: spoiler rule). Only poster tiles use it (TMDB poster → addon poster).
+    var keepsPreviousWhileLoading = false
     /// Wave F-k: called with the address when it cannot be loaded (not on cancel); poster tiles then try the next one.
     var onFailure: (@MainActor (String) -> Void)? = nil
     @Environment(\.displayScale) private var displayScale
-    /// A-B-3: retry trigger when the network comes back.
-    @ObservedObject private var network = NetworkReturn.shared
+    /// A-B-3: bumped when the network comes back while this view has no picture for its address (part of `LoadKey`).
+    /// Build 4 follow-up S2: a local counter instead of observing `NetworkReturn`, so views showing their picture
+    /// neither re-render nor restart their load.
+    @State private var retry = 0
     @State private var image: UIImage?
     @State private var loadedURL: String?
     /// Weichzeichner, mit dem `image` geladen wurde: nach einem Wechsel (Spoilerschutz) nie das alte Bild zeigen.
     @State private var loadedBlur: CGFloat?
     @State private var target: ImageTarget?
+    /// S2: address of the last picture this view showed (swap log: did a swap start without any picture?).
+    @State private var shownURL: String?
+
+    /// What the body draws: the picture of this address and blur, else a memory-cache hit, else (poster tiles) the
+    /// previous picture of the same blur until the new address has one.
+    private var visible: UIImage? {
+        let exact = loadedURL == url && loadedBlur == blur ? image : nil
+        let kept = keepsPreviousWhileLoading && url != nil && loadedBlur == blur ? image : nil
+        return exact ?? syncHit ?? kept
+    }
 
     private var syncHit: UIImage? {
         guard let s = url, let u = URL(string: s) else { return nil }
@@ -502,22 +532,23 @@ struct RemoteImage: View {
     }
 
     /// Ab dieser Bitmap-Größe gibt die Ansicht beim Verschwinden frei (≈ 2560×1600 und größer).
-    static let releaseBytes = 16 << 20
+    static let releaseBytes = ImagePipeline.largeBitmapBytes
 
     private struct LoadKey: Equatable {
         let url: String?
         let target: ImageTarget?
         /// Weichzeichner an/aus (z. B. Spoilerschutz nach „gesehen“) lädt die passende Variante.
         let blur: CGFloat
-        /// A-B-3: `NetworkReturn.generation`; a change loads again (a shown picture comes from the memory cache).
-        let network: Int
+        /// A-B-3: `retry`; a change loads again.
+        let retry: Int
     }
 
     var body: some View {
         // Welle F-g: eine neu angelegte Zelle (LazyHStack) hat leeren @State; ihr erster Frame nimmt das Bild synchron
         // aus dem Speichercache statt grau zu zeichnen (die .task läuft erst nach dem ersten Frame).
         // Nur ein Bild derselben Adresse und desselben Weichzeichners zeigen (kein Spoiler nach Blur-Wechsel).
-        let shown = (loadedURL == url && loadedBlur == blur ? image : nil) ?? syncHit
+        // S2: a poster tile keeps its previous picture (same blur only) until the new address has one (`visible`).
+        let shown = visible
         ZStack {
             if let shown {
                 Image(uiImage: shown).resizable().aspectRatio(contentMode: fit ? .fit : .fill)
@@ -534,7 +565,12 @@ struct RemoteImage: View {
             if let cap = maxPixels { t.width = min(t.width, cap); t.height = min(t.height, cap) }
             if t != target { target = t }
         }
-        .task(id: LoadKey(url: url, target: fixedTarget ?? target, blur: blur, network: network.generation)) {
+        .onReceive(NetworkReturn.shared.$generation.dropFirst()) { _ in
+            // Only a view still missing the picture for its current address (and blur) tries again.
+            guard url != nil, image == nil || loadedURL != url || loadedBlur != blur else { return }
+            retry += 1
+        }
+        .task(id: LoadKey(url: url, target: fixedTarget ?? target, blur: blur, retry: retry)) {
             guard let s = url, let u = URL(string: s) else {
                 image = nil
                 if let url { onFailure?(url) }
@@ -542,15 +578,32 @@ struct RemoteImage: View {
             }
             guard let target = fixedTarget ?? target else { return }   // Größe noch unbekannt: nicht winzig dekodieren
             let blurPx = Int((blur * displayScale).rounded())
+            // S2: a poster tile moving on from a picture of another address; a gap when it draws no picture now.
+            let swapStart = keepsPreviousWhileLoading
+                ? PosterSwapStats.start(previous: shownURL, next: s, pictureVisible: visible != nil) : nil
             // Speichercache-Treffer (auch nach dem Freigeben beim Zurückkehren): sofort, ohne Überblendung.
             if let hit = ImagePipeline.shared.cachedImage(u, target: target, blur: blurPx) {
-                image = hit; loadedURL = s; loadedBlur = blur
+                image = hit; loadedURL = s; loadedBlur = blur; shownURL = s
+                if let swapStart { PosterSwapLog.note(gapMs: swapStart == .gap ? 0 : nil, waitMs: 0) }
                 return
             }
-            if loadedURL != s || loadedBlur != blur { image = nil }
+            let keep = keepsPreviousWhileLoading && loadedBlur == blur
+            if (loadedURL != s || loadedBlur != blur) && !keep { image = nil }
+            let started = ContinuousClock.now
             let img = await ImagePipeline.shared.image(u, target: target, blur: blurPx)
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.2)) { image = img; loadedURL = s; loadedBlur = blur }
+            if img == nil && keep && image != nil {
+                // S2: keep the previous picture; `onFailure` moves the tile on to its next address.
+            } else {
+                withAnimation(.easeOut(duration: 0.2)) { image = img; loadedURL = s; loadedBlur = blur }
+            }
+            if img != nil {
+                shownURL = s
+                if let swapStart {
+                    let ms = Metric.ms(started.duration(to: ContinuousClock.now))
+                    PosterSwapLog.note(gapMs: swapStart == .gap ? ms : nil, waitMs: ms)
+                }
+            }
             if img == nil { onFailure?(s) }
         }
         .onDisappear {
@@ -558,6 +611,7 @@ struct RemoteImage: View {
             self.image = nil
             loadedURL = nil
             loadedBlur = nil
+            shownURL = nil
         }
     }
 }
