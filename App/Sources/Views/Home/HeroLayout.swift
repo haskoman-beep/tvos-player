@@ -57,7 +57,10 @@ struct HeroLayout: View {
     @ViewBuilder private var variant: some View {
         let content = makeContent()
         switch style {
-        case .vollbild, .banner, .karussell, .aus:   // 5.2: banner and carousel follow in their own commits
+        case .banner:
+            HeroBanner(content: content, height: cardHeight)
+        case .vollbild, .karussell, .aus:   // 5.2: the carousel follows in its own commit
+
             HeroFullscreen(content: content)
         }
     }
