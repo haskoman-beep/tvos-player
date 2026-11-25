@@ -14,7 +14,11 @@ struct HomeRowView: View {
     var menu: HomeRowMenu? = nil
     /// Wave F-j: focus enters (true) or leaves (false) this row (home page: top edge watch, heading scroll).
     var onFocusInside: ((Bool) -> Void)? = nil
-    @State private var items: [MetaPreview] = []
+    /// Build 4 follow-up S4 (F-A-5): the loaded items and their cards (`ForEach` id `rowKey`, rank), built once when
+    /// the items arrive instead of on every body pass. One value (S4 review), so ids and items cannot drift apart.
+    @State private var list = RowList()
+    private var items: [MetaPreview] { list.items }
+    private var entries: [RowEntry] { list.entries }
     @State private var loaded = false
     /// Welle F-f: letzte Ladung schlug fehl (Statuskachel „erneut versuchen“).
     @State private var failed = false
@@ -50,6 +54,8 @@ struct HomeRowView: View {
     }
 
     var body: some View {
+        // Build 4 follow-up S4: `metric: home.rowBody` counts these passes (two integer adds, a log line per 5 s).
+        let _ = RowBodyMeter.pass(onHome: focusMemory != nil)
         VStack(alignment: .leading, spacing: Theme.Space.s) {
             if row.style != .hero {
                 Text(title).textRole(.sectionTitle).padding(.leading, Theme.Space.edge)
@@ -66,7 +72,7 @@ struct HomeRowView: View {
             guard !Task.isCancelled else { return }   // abgebrochen (neue Ladung folgt): kein „Keine Einträge“-Flackern
             let placeholder = focusedPlaceholder
             // Task 4.1a (F-A-5): a catalog may list a title twice; one card per (type, id), the first wins.
-            items = RowItems.deduped(r.items); failed = r.failed; loaded = true
+            list = RowList(loaded: r.items); failed = r.failed; loaded = true
             // Fokus lag auf einem Platzhalter: an dieselbe Stelle der fertigen Reihe (bzw. auf die Statuskachel).
             // Erst im nächsten Durchlauf: dann gibt es die Karten schon.
             if let placeholder {
@@ -126,6 +132,7 @@ struct HomeRowView: View {
             if let r = focusedRoute { StreamPrefetcher.shared.cancelRest(r) }
         }
         .onChange(of: focusedRoute) { old, r in
+            if r != nil { RowBodyMeter.focusMoved(onHome: focusMemory != nil) }   // S4: `fokus` field of `metric: home.rowBody`
             // Wave F-p: focus left this row's tile: its rest prefetch (pages without hero) does not start.
             if r == nil, let old { StreamPrefetcher.shared.cancelRest(old) }
             // S5: the hand-over landed: restart the heading snap (home page). Focus on any other tile ends the wait.
@@ -179,6 +186,8 @@ struct HomeRowView: View {
 
     /// Gezeigte Einträge (Top 10: höchstens zehn).
     private var displayed: [MetaPreview] { row.style == .top10 ? Array(items.prefix(10)) : items }
+    /// Cards of `displayed` (same prefix rule), ids already computed.
+    private var displayedEntries: [RowEntry] { row.style == .top10 ? Array(entries.prefix(10)) : entries }
 
     @ViewBuilder private var content: some View {
         switch row.content {
@@ -225,7 +234,8 @@ struct HomeRowView: View {
             case .items:
                 let routes = routeTable   // Task 3.8: once per row pass, not once per card
                 Strip(expands: row.style == .poster, kind: tileKind) {
-                    ForEach(Array(displayed.enumerated()), id: \.element.rowKey) { i, m in
+                    ForEach(displayedEntries) { e in
+                        let m = e.item
                         card(routes[m.id] ?? .detail(m)) {
                             if row.content == .list(.upcoming) {
                                 UpcomingTodayCard(item: m, landscape: row.style == .landscape || row.style == .hero)
@@ -233,7 +243,7 @@ struct HomeRowView: View {
                                 switch row.style {
                                 case .hero: HeroCard(item: m)
                                 case .landscape: LandscapeCard(item: m).equatable()
-                                case .top10: Top10Card(item: m, rank: i + 1).equatable()
+                                case .top10: Top10Card(item: m, rank: e.rank).equatable()
                                 default: PosterCard(item: m).equatable()
                                 }
                             }
@@ -461,7 +471,12 @@ struct Strip<C: View>: View {
     @ViewBuilder let content: C
     /// Wave F-p R1: write-only scroll target of this row (see below); never read.
     @State private var position = ScrollPosition(idType: String.self)
+    /// Build 4 follow-up S4: the anchor action handed to the cards. One box per strip, so every body pass puts the
+    /// same value into the environment (a fresh closure per pass made every card's environment differ).
+    @State private var anchorAction = CardAnchorAction()
     var body: some View {
+        // Points the box at this strip's scroll position (a plain store into the box, observed by nobody).
+        let _ = anchorAction.bind($position)
         let a = model.profile.appearance
         let s = a.cardSize.scale
         let expand = a.expandPosters && expands
@@ -499,7 +514,7 @@ struct Strip<C: View>: View {
         .environment(\.cardScale, s)
         .environment(\.expandPosters, expand)
         // Ohne eigene Animation: läuft in der Transaktion des Aufklappens mit, damit nur eine Bewegung entsteht.
-        .environment(\.anchorFocusedCard, { id in position.scrollTo(id: id, anchor: .leading) })
+        .environment(\.anchorFocusedCard, anchorAction)
     }
 }
 
@@ -510,10 +525,14 @@ struct PosterCard: View {
     @Environment(\.cardScale) private var scale
     @Environment(\.expandPosters) private var expandable
     @Environment(\.anchorFocusedCard) private var anchor
+    /// S4 review: set on the home page only (both layouts); gates the card counter of the row metric.
+    @Environment(\.homeRowFocusMemory) private var homeMemory
     /// Fokus + 350 ms Ruhe → Querformat mit Hintergrund und Logo.
     @State private var expanded = false
 
     var body: some View {
+        // S4 review: `karten` field of `metric: home.rowBody` (shows whether `.equatable()` skips unchanged cards).
+        let _ = RowBodyMeter.cardPass(onHome: homeMemory != nil)
         let w = Theme.Tile.width(.poster, scale), h = Theme.Tile.height(.poster, scale)
         // Welle E-a: Plaketten nie unten auf dem Bild; bei „Unten“ sitzen sie im Streifen darunter (PosterBadgeBand).
         VStack(spacing: 0) {
@@ -781,7 +800,29 @@ struct CardStateOverlay: View {
 private struct CardScaleKey: EnvironmentKey { static let defaultValue: CGFloat = 1 }
 /// Außerhalb der Startseiten-Reihen (Detail, Person) klappt nichts auf.
 private struct ExpandPostersKey: EnvironmentKey { static let defaultValue = false }
-private struct AnchorFocusedCardKey: EnvironmentKey { static let defaultValue: (String) -> Void = { _ in } }
+private struct AnchorFocusedCardKey: EnvironmentKey { static let defaultValue = CardAnchorAction() }
+
+/// Build 4 follow-up S4: the strip's "anchor this card" action. Equal only to itself (box identity), so a strip
+/// body pass hands its cards an unchanged environment value and their `.equatable()` holds. Outside a strip (no
+/// bound position) the call does nothing, as the former default closure did.
+struct CardAnchorAction: Equatable {
+    /// Used on the main thread only (strip body and card focus task).
+    final class Box: @unchecked Sendable {
+        var position: Binding<ScrollPosition>?
+    }
+    private let box = Box()
+
+    /// Strip body: the position the action scrolls (same binding on every pass).
+    func bind(_ position: Binding<ScrollPosition>) { box.position = position }
+
+    /// Card: scroll the strip so the card with this `ForEach` id sits at the leading edge.
+    func callAsFunction(_ id: String) {
+        guard let position = box.position else { return }
+        position.wrappedValue.scrollTo(id: id, anchor: .leading)
+    }
+
+    static func == (a: CardAnchorAction, b: CardAnchorAction) -> Bool { a.box === b.box }
+}
 private struct HidesCardTopLabelKey: EnvironmentKey { static let defaultValue = false }
 
 extension EnvironmentValues {
@@ -796,7 +837,7 @@ extension EnvironmentValues {
     }
     /// Fokussierte, aufklappbare Karte meldet ihre ID; die Reihe verankert die Scrollposition daran.
     /// The id is the `ForEach` id of the strip: `MetaPreview.rowKey` (Task 4.1a, C1).
-    var anchorFocusedCard: (String) -> Void {
+    var anchorFocusedCard: CardAnchorAction {
         get { self[AnchorFocusedCardKey.self] }
         set { self[AnchorFocusedCardKey.self] = newValue }
     }
