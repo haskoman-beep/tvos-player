@@ -525,9 +525,11 @@ struct TileMotionOverlay: View {
     let folder: Folder
     let focused: Bool
     let sound: Bool
+    /// Task 5.5 (Q-28): "reduce motion" keeps the still (no focus video, no GIF).
+    @Environment(\.theme) private var theme
 
     var body: some View {
-        switch TileMotion.of(folder) {
+        switch TileMotion.of(folder, reduceMotion: theme.system.reduceMotion) {
         case .video(let v): FocusVideo(url: v, tile: folder.title, focused: focused, sound: sound)
         case .gif(let g): FocusGIF(url: g, focused: focused)
         case .still: EmptyView()
