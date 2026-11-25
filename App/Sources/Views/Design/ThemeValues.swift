@@ -37,7 +37,7 @@ struct ThemeValues: Equatable {
     /// accent); `standard` carries the baseline (today's defaults).
     var chrome = LookChrome(LookPreset.baseline)
 
-    /// Task 5.1: the card and row options of the home page (`LookHome`) and the system's reduce motion.
+    /// Task 5.1: the card and row options of the home page (`LookHome`).
     var cards: Cards = Cards()
 
     struct Colors: Equatable {
