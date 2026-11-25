@@ -45,7 +45,10 @@ struct SettingsRowLabel: View {
     var accessory: SettingsRowAccessory = .none
     var detailAlwaysVisible = false
     var reserveDetailSpace = true
+    /// Task 4.5: accent dot before the value (the row differs from "Mein Look").
+    var marked = false
     @Environment(\.isFocused) private var focused
+    @Environment(\.theme) private var theme
 
     private var detailShown: Bool { focused || detailAlwaysVisible }
 
@@ -64,6 +67,13 @@ struct SettingsRowLabel: View {
             }
             .animation(.easeOut(duration: Theme.Focus.duration), value: detailShown)
             Spacer(minLength: Theme.Space.m)
+            if marked {
+                // On the focused (white) row a white accent would vanish, so it is drawn dark there (as the mark).
+                Circle()
+                    .fill(focused ? theme.color.primaryOnFocus : theme.color.accent)
+                    .frame(width: Theme.Space.s, height: Theme.Space.s)
+                    .accessibilityHidden(true)
+            }
             if let value = accessory.valueText {
                 Text(value).textRoleInRow(.rowDetail).monospacedDigit().lineLimit(1)
             }

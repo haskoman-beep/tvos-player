@@ -1,53 +1,40 @@
 import SwiftUI
 import PlayerCore
 
-/// Kategorie „Aussehen“ (§2.2): Allgemein (Sprache der App first since wave S, Navigation, Akzentfarbe), Karten,
-/// Detailseite, Plaketten. „Titelbild oben“ (früher Hero) steht unter Startseite. Wave S: Postergröße and the rating
-/// icon set appear only here.
+/// Kategorie „Aussehen“ (§2.2). Task 4.5: on top „Mein Look“ (`LookHeaderRow`), below all configurator options in
+/// four areas (`LookOptionRows`). The old rows for Navigation, Akzentfarbe, Postergröße and Poster aufklappen are
+/// gone: the catalog rows `navigation`, `accent`, `cardSize` and `expandPosters` replace them fully and write the
+/// old fields through `Profile.setLook`. What the catalog does not have stays below: Sprache der App, poster
+/// images, ratings and badges („Titelbild oben“ stays under Startseite; badge style stays until `badgeStyle`
+/// takes effect in Build 5b).
 struct AppearanceSettings: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var icons = RatingIconStore.shared
 
     private let tint = SettingsCategory.appearance.tint
 
-    /// Kachelfarbe für eine Akzentfarbe; Weiß wird zu Grau, damit das (weiße) Symbol sichtbar bleibt.
-    static func visibleTint(_ a: AccentChoice) -> Color { a == .white ? Color(white: 0.45) : a.color }
-
     var body: some View {
         let a = model.profile.appearance
-        CategoryPage(.appearance, summary: SettingsSummary.appearance(navigation: a.navigation, accent: a.accent, cardSize: a.cardSize)) {
-            SettingsSection("Allgemein") {
+        CategoryPage(.appearance, summary: SettingsSummary.look(model.profile)) {
+            LookHeaderRow()
+            LookOptionRows()
+            SettingsSection("Sprache") {
                 SettingsChoiceRow(symbol: "globe", tint: tint, title: "Sprache der App",
                                   detail: "Sprache von Titeln, Beschreibungen und Katalogen.",
                                   options: AppLanguage.allCases, selection: model.binding(\.language),
                                   alwaysList: true, label: SettingsSummary.languageName)
-                SettingsChoiceRow(symbol: "sidebar.left", tint: tint, title: "Navigation",
-                                  detail: "Bereiche als Seitenleiste links oder als Leiste oben.",
-                                  options: NavigationStyle.allCases, selection: model.binding(\.appearance.navigation),
-                                  alwaysList: true, label: SettingsSummary.navigationName)
-                // Review F-a M1: bei Weiß kein weißes Symbol auf weißer Kachel.
-                SettingsChoiceRow(symbol: "paintbrush", tint: Self.visibleTint(a.accent), title: "Akzentfarbe",
-                                  detail: "Markierungen und Fortschrittsbalken.",
-                                  options: AccentChoice.allCases, selection: model.binding(\.appearance.accent),
-                                  optionTint: Self.visibleTint, label: SettingsSummary.accentName)
             }
-            SettingsSection("Karten") {
-                PosterSizeSettingRow(tint: tint)
-                SettingsToggleRow(symbol: "rectangle.expand.vertical", tint: tint, title: "Poster aufklappen",
-                                  detail: "Die fokussierte Kachel klappt zum breiten Bild mit Titel auf.",
-                                  reserveDetailSpace: false, isOn: model.binding(\.appearance.expandPosters))
+            SettingsSection("Poster und Bilder") {
                 PosterQualitySettingRow()
                 MetadataAddonImagesSettingRow()
                 SpoilerSettingsRow()
             }
-            SettingsSection("Detailseite") {
+            SettingsSection("Bewertungen und Plaketten") {
                 SettingsLinkRow(symbol: "star", tint: tint, title: "Bewertungen",
                                 detail: "Welche Bewertungen auf Detailseite und Startseite stehen.",
                                 value: RatingChoiceSettingRow.summary(a.titles)) {
                     RatingsSettingsPage()
                 }
-            }
-            SettingsSection("Plaketten") {
                 SettingsChoiceRow(symbol: "seal", tint: tint, title: "Plaketten-Stil",
                                   detail: "Logos oder schlichter Text für Auflösung, HDR und Ton.",
                                   options: [BadgeStyle.logo, .text], selection: model.binding(\.appearance.badges.style),
