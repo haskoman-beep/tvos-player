@@ -601,12 +601,30 @@ struct RemoteImage: View {
                 placeholder
             } else if !fit {
                 Color.white.opacity(0.08)
+            } else {
+                // Device test 1 (Build 4 follow-up 2): a logo (`fit`) without its picture had no content here, so this
+                // view measured 0×0, `target` stayed nil and the load below never started (since wave C-b, 21.11.):
+                // hero, detail page, pause card and logo tiles showed a logo only when some size of it was already in
+                // the memory cache. The clear area takes the room it is offered (none where no room is offered).
+                Color.clear.frame(idealWidth: 0, idealHeight: 0)
             }
         }
         .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
             guard fixedTarget == nil else { return }
-            guard var t = ImageTarget(points: size.width, size.height, scale: displayScale, fit: fit) else { return }
+            let picture = visible != nil
+            var w = size.width, h = size.height
+            // b4n2: a logo without its picture measures its room; a side with no room offered (a vertical scroll view
+            // proposes no height) is bounded by `maxPixels` only.
+            if fit, !picture, let cap = maxPixels {
+                let capPoints = CGFloat(cap) / max(displayScale, 1)
+                if w < 1 { w = capPoints }
+                if h < 1 { h = capPoints }
+            }
+            guard var t = ImageTarget(points: w, h, scale: displayScale, fit: fit) else { return }
             if let cap = maxPixels { t.width = min(t.width, cap); t.height = min(t.height, cap) }
+            // b4n2: once the logo shows, the view shrinks from its room to the fitted picture; the picture decoded for
+            // the room stays (no second decode). More room than it was decoded for loads again.
+            if fit, picture, let old = target, t.width <= old.width, t.height <= old.height { return }
             if t != target { target = t }
         }
         .onReceive(NetworkReturn.shared.$generation.dropFirst()) { _ in
@@ -632,6 +650,7 @@ struct RemoteImage: View {
                 image = hit; loadedURL = s; loadedBlur = blur; shownURL = s
                 if let swapStart { PosterSwapLog.note(gapMs: swapStart == .gap ? 0 : nil, waitMs: 0, fades: false) }
                 if firstPoster { PictureArrivalLog.firstPoster.note(hit, fromMemory: true, waitMs: 0, fades: false) }
+                if fit { LogoArrivalLog.note(hit, fromMemory: true, waitMs: 0) }   // b4n2
                 return
             }
             let keep = keepsPreviousWhileLoading && loadedBlur == blur
@@ -649,6 +668,7 @@ struct RemoteImage: View {
                 let ms = Metric.ms(started.duration(to: ContinuousClock.now))
                 if let swapStart { PosterSwapLog.note(gapMs: swapStart == .gap ? ms : nil, waitMs: ms, fades: true) }
                 if firstPoster { PictureArrivalLog.firstPoster.note(img, fromMemory: false, waitMs: ms, fades: true) }
+                if fit { LogoArrivalLog.note(img, fromMemory: false, waitMs: ms) }   // b4n2
             }
             if img == nil { onFailure?(s) }
         }
@@ -771,5 +791,24 @@ final class CacheStats: @unchecked Sendable {
         }
         lock.unlock()
         if let line { Task { @MainActor in RemoteLog.info("bilder", line) } }
+    }
+}
+
+/// Device test 1 (Build 4 follow-up 2): logos (`RemoteImage` with `fit`) that went on screen, one `bilder` line per
+/// 10 s with activity ("Logos 3 · aus Speicher 1 · geladen 2 …", `PictureArrivalStats`). Before the fix no logo
+/// loaded unless some size of it was in the memory cache; this line shows that they arrive (and how fast).
+@MainActor
+enum LogoArrivalLog {
+    private static var stats = PictureArrivalStats(title: "Logos")
+
+    static func note(_ img: UIImage, fromMemory: Bool, waitMs: Int) {
+        let opened = stats.record(fromMemory: fromMemory, waitMs: waitMs, pixelWidth: img.cgImage?.width ?? 0,
+                                  pixelHeight: img.cgImage?.height ?? 0, bytes: ImagePipeline.cost(img),
+                                  fades: !fromMemory)
+        guard opened else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(PictureArrivalStats.window))
+            if let line = stats.take() { RemoteLog.info("bilder", line) }
+        }
     }
 }

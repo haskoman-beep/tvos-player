@@ -3,30 +3,44 @@ import Foundation
 // P2 (Build 4 follow-up 2): on the home page with hero the list starts below the hero info (page top + 470). A poster
 // row (heading, tile, lift room) is taller than the list's visible height there, so with its heading at the list's
 // top edge the row's bottom was off screen (device log 25.11.: list 627…1035, row 580 pt). Like the Apple TV app,
-// the info collapses while the focus is in the rows (logo or title + meta line) and the list top moves up so the
-// tallest row fits between the list's top and its visible bottom. Pure maths; the tokens come from the app.
+// the info collapses while the focus is in the rows and the list top moves up so the tallest row fits between the
+// list's top and its visible bottom. Device test 1 (user decision): the collapsed info keeps everything (logo, meta
+// line, ratings, two-line overview), only moved up and more compact (smaller logo, tighter gaps), and it may reach
+// down to the collapsed list top. Pure maths; the tokens come from the app.
 
 public enum HeroInfoCollapse {
-    /// The compact info, top to bottom (points): inset above the logo, logo (or title), gap, meta line.
+    /// The collapsed info, top to bottom (points): inset above the logo, logo (or title), meta line, ratings and the
+    /// two-line overview, with `spacing` between each of the four.
     public struct CompactInfo: Hashable, Sendable {
         public var topInset: CGFloat
-        /// Logo height of the full info; the compact logo never grows past it.
+        /// Logo height of the collapsed info when there is room (it never grows past it).
         public var logoMax: CGFloat
-        /// Smallest compact logo (sets the floor of the collapsed list top).
+        /// Smallest collapsed logo (sets the floor of the collapsed list top); ratings and overview never go.
         public var logoMin: CGFloat
+        /// Gap between logo, meta line, ratings and overview.
         public var spacing: CGFloat
         public var metaLine: CGFloat
+        /// Ratings line (`InfoBadges`).
+        public var ratings: CGFloat
+        /// Overview, two lines of its font.
+        public var overview: CGFloat
 
-        public init(topInset: CGFloat, logoMax: CGFloat, logoMin: CGFloat, spacing: CGFloat, metaLine: CGFloat) {
+        public init(topInset: CGFloat, logoMax: CGFloat, logoMin: CGFloat, spacing: CGFloat, metaLine: CGFloat,
+                    ratings: CGFloat, overview: CGFloat) {
             self.topInset = topInset
             self.logoMax = logoMax
             self.logoMin = min(logoMin, logoMax)
             self.spacing = spacing
             self.metaLine = metaLine
+            self.ratings = ratings
+            self.overview = overview
         }
 
-        /// Height of the compact info with a logo of `logo` points.
-        func height(logo: CGFloat) -> CGFloat { max(0, topInset) + max(0, logo) + max(0, spacing) + max(0, metaLine) }
+        /// Height of the collapsed info with a logo of `logo` points.
+        func height(logo: CGFloat) -> CGFloat {
+            max(0, topInset) + max(0, logo) + 3 * max(0, spacing) + max(0, metaLine) + max(0, ratings)
+                + max(0, overview)
+        }
     }
 
     /// Height of one home row of tiles of `kind`: heading line and gap above the tile row, the tile (plus the quality
@@ -58,7 +72,7 @@ public enum HeroInfoCollapse {
         public var expandedTop: CGFloat
         /// List top while the info is collapsed.
         public var collapsedTop: CGFloat
-        /// Lowest collapsed top: room for the compact info with its smallest logo plus the lift band above the list.
+        /// Lowest collapsed top: room for the collapsed info with its smallest logo.
         public var floor: CGFloat
         /// Logo (or title) height of the compact info.
         public var compactLogo: CGFloat
@@ -81,36 +95,37 @@ public enum HeroInfoCollapse {
     public static let fitSlack: CGFloat = 4
 
     /// `screenHeight`: window height; `pageTop`: the page's top in the window; `bottomRoom`: room between the list and
-    /// the screen bottom (`FocusHeadroom.listBottomRoom`); `edgeBand`: band above the list top where a lifted card
-    /// draws (`FocusHeadroom.edgeBand`), kept clear of the info; `slack`: room kept below the row.
+    /// the screen bottom (`FocusHeadroom.listBottomRoom`); `slack`: room kept below the row.
     /// `collapsedTop = min(expandedTop, max(floor, needed))`, with `needed` the top that leaves the tallest row plus
-    /// `slack` above the list bottom (whole points, rounded so the row fits). The collapsed top is never a larger y
-    /// than the expanded top, so the floor (room for the compact info) holds only while it is smaller than the
-    /// expanded top; above that the expanded top wins and the compact logo is clamped to `logoMin`. When the floor
-    /// wins over `needed`, the row may not fit (`fits` false).
+    /// `slack` above the list bottom (whole points, rounded so the row fits). The collapsed info fills the room above
+    /// the collapsed top (device test 1: the list's edge band is not kept clear of it any more; with the row at the
+    /// list top the band holds only the row gap and the lift room of the row above). The collapsed top is never a
+    /// larger y than the expanded top, so the floor (room for the collapsed info with `logoMin`) holds only while it
+    /// is smaller than the expanded top; above that the expanded top wins and the logo is clamped to `logoMin`. When
+    /// the floor wins over `needed`, the row may not fit (`fits` false).
     public static func layout(screenHeight: CGFloat, pageTop: CGFloat, bottomRoom: CGFloat, rowHeight: CGFloat,
-                              expandedTop: CGFloat, edgeBand: CGFloat, info: CompactInfo,
-                              slack: CGFloat = fitSlack) -> Layout {
+                              expandedTop: CGFloat, info: CompactInfo, slack: CGFloat = fitSlack) -> Layout {
         let page = max(0, pageTop)
         let listBottom = max(0, screenHeight - page - max(0, bottomRoom))
         let row = max(0, rowHeight)
-        let band = max(0, edgeBand)
         let needed = (listBottom - row - max(0, slack)).rounded(.down)
-        let floor = (band + info.height(logo: info.logoMin)).rounded(.up)
+        let floor = info.height(logo: info.logoMin).rounded(.up)
         let top = min(expandedTop, max(floor, needed))
-        let logo = min(info.logoMax, max(info.logoMin, top - band - info.height(logo: 0)))
+        let logo = min(info.logoMax, max(info.logoMin, top - info.height(logo: 0)))
         return Layout(expandedTop: expandedTop, collapsedTop: top, floor: floor, compactLogo: logo.rounded(.down),
                       rowHeight: row, listBottom: listBottom, pageTop: page)
     }
 
-    /// `nav` line per collapse / expand: "Info eingeklappt: Liste 455…1035, höchste Reihe 580" (window coordinates:
-    /// list top … visible list bottom, as the heading lines print the list frame).
+    /// `nav` line per collapse / expand: "Info eingeklappt: Liste 451…1035, höchste Reihe 580, Logo 100" (window
+    /// coordinates: list top … visible list bottom, as the heading lines print the list frame; the collapsed logo
+    /// height only when collapsed).
     public static func line(collapsed: Bool, layout l: Layout) -> String {
         let top = l.pageTop + l.top(collapsed: collapsed)
         let bottom = l.pageTop + l.listBottom
         let state = collapsed ? "eingeklappt" : "ausgeklappt"
+        let logo = collapsed ? ", Logo \(pt(l.compactLogo))" : ""
         let tight = collapsed && !l.fits ? " (passt nicht, Untergrenze der Info)" : ""
-        return "Info \(state): Liste \(pt(top))…\(pt(bottom)), höchste Reihe \(pt(l.rowHeight))\(tight)"
+        return "Info \(state): Liste \(pt(top))…\(pt(bottom)), höchste Reihe \(pt(l.rowHeight))\(logo)\(tight)"
     }
 
     private static func pt(_ v: CGFloat) -> String { "\(Int(v.rounded()))" }
