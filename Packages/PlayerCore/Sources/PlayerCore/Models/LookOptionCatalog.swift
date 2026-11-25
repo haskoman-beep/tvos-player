@@ -121,12 +121,13 @@ public enum LookOptionCatalog {
         return decoded
     }
 
-    /// Whether `key` is overridden (the row carries the accent dot and offers "Auf Apple TV zurücksetzen").
-    public static func isOverridden(_ key: String, in overrides: LookOverrides) -> Bool {
-        guard let e = entry(key),
-              let data = try? JSONEncoder().encode(overrides),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] else { return false }
-        return obj[e.area.rawValue]?[key] != nil
+    /// Whether `key` differs from the baseline (`LookPreset.baseline`, the old defaults; the row carries the
+    /// accent dot and offers "Auf Apple TV zurücksetzen"). `overrides` are stored ones, relative to `preset`.
+    /// Task 4.5-base: an override that only restates the baseline (e.g. navigation seitenleiste) is no change.
+    public static func isOverridden(_ key: String, in overrides: LookOverrides,
+                                    preset: LookPresetID = .appleTV) -> Bool {
+        guard let shown = rawValue(key, in: overrides.applied(to: LookPreset.values(preset))) else { return false }
+        return shown != rawValue(key, in: LookPreset.baseline)
     }
 
     /// JSONSerialization reads bools and numbers both as NSNumber; the entry says which one it is.
@@ -271,9 +272,11 @@ public enum LookOptionCatalog {
 }
 
 extension SettingsSummary {
-    /// Task 4.5: value of the "Mein Look" row: „Apple TV“ or „angepasst · 3“.
+    /// Task 4.5: value of the "Mein Look" row: „Apple TV“ or „angepasst · 3“. Task 4.5-base (user decision 25.11.):
+    /// counts the keys that differ from the baseline (`LookPreset.baseline`, the old defaults), not the stored
+    /// overrides, so an untouched profile shows „Apple TV“ and an imported Apple TV export counts its differences.
     public static func lookValue(_ look: Look) -> String {
-        let n = look.overrides.count
+        let n = LookOverrides.difference(look.resolved(), from: LookPreset.baseline).count
         return n == 0 ? "Apple TV" : "angepasst · \(n)"
     }
 
@@ -289,7 +292,8 @@ extension SettingsSummary {
 }
 
 extension Profile {
-    /// Fix round 1 (I2): the look the theme shows, as preset plus deviations (for the count and the row dots).
+    /// Fix round 1 (I2): the look the theme shows, as preset plus deviations in the stored shape (relative to the
+    /// preset). The count compares it with the baseline (`SettingsSummary.lookValue(Look)`).
     public var shownLook: Look {
         Look(preset: look.preset, overrides: LookOverrides.difference(themeLook, from: LookPreset.values(look.preset)))
     }
@@ -297,24 +301,28 @@ extension Profile {
     /// The value a row shows (raw configurator value of `themeLook`).
     public func lookRawValue(_ key: String) -> String? { LookOptionCatalog.rawValue(key, in: themeLook) }
 
-    /// Whether the row differs from the preset (accent dot, "Auf Apple TV zurücksetzen").
+    /// Whether the row differs from the baseline (`LookPreset.baseline`, the old defaults; accent dot,
+    /// "Auf Apple TV zurücksetzen").
     public func isLookOverridden(_ key: String) -> Bool {
-        LookOptionCatalog.rawValue(key, in: themeLook)
-            != LookOptionCatalog.rawValue(key, in: LookPreset.values(look.preset))
+        LookOptionCatalog.rawValue(key, in: themeLook) != LookOptionCatalog.rawValue(key, in: LookPreset.baseline)
     }
 
-    /// Sets one option (`nil` = back to the preset) starting from what the theme shows, and writes the old fields
-    /// it maps to through `applyImportedLook` (old fields first, look last), so `themeLook` shows the new value.
-    /// Unknown key or value: nothing changes.
+    /// Sets one option starting from what the theme shows (`nil` = back to the baseline value, the old default),
+    /// and writes the old fields it maps to through `applyImportedLook` (old fields first, look last), so
+    /// `themeLook` shows the new value. The stored overrides stay relative to the preset. Unknown key or value:
+    /// nothing changes.
     public mutating func setLook(_ key: String, to raw: String?) {
-        let shown = shownLook
-        guard let o = LookOptionCatalog.overrides(shown.overrides, setting: key, to: raw, preset: look.preset)
+        guard let target = raw ?? LookOptionCatalog.rawValue(key, in: LookPreset.baseline),
+              let o = LookOptionCatalog.overrides(shownLook.overrides, setting: key, to: target, preset: look.preset)
         else { return }
         applyImportedLook(Look(preset: look.preset, overrides: o))
     }
 
-    /// "Alles auf Apple TV zurücksetzen": no overrides, old fields mapped to the preset.
+    /// "Alles auf Apple TV zurücksetzen" (Task 4.5-base): back to the baseline, the old defaults. The old fields
+    /// return to their `Appearance()` / `PlayerComfortSettings()` values, and the look is again the one they
+    /// migrate to (so it is not written and the summary says „Apple TV“).
     public mutating func resetLook() {
-        applyImportedLook(Look(preset: look.preset))
+        let base = LookOverrides.difference(LookPreset.baseline, from: LookPreset.values(look.preset))
+        applyImportedLook(Look(preset: look.preset, overrides: base))
     }
 }

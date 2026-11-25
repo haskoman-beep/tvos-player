@@ -88,7 +88,8 @@ private func lookValueKeys() throws -> [String: Set<String>] {
 }
 
 @Test func summaryCountsOverrides() {
-    var o = LookOverrides()
+    // Task 4.5-base: the count is against the baseline (old defaults), so start from its overrides.
+    var o = LookOverrides.difference(LookPreset.baseline, from: LookPreset.values(.appleTV))
     #expect(SettingsSummary.look(Look(overrides: o)) == "Mein Look · Apple TV")
     #expect(SettingsSummary.lookValue(Look(overrides: o)) == "Apple TV")
     o.global.accent = .rot; o.home.corners = .eckig; o.player.upNext = .leiste
@@ -100,7 +101,6 @@ private func lookValueKeys() throws -> [String: Set<String>] {
 
 @Test func setLookShowsInThemeAndOldFields() {
     var p = Profile(name: "T")
-    p.resetLook() // a new profile's old fields differ from Apple TV in several keys; start from Apple TV
     p.setLook("accent", to: "rot")
     #expect(p.themeLook.global.accent == .rot)
     #expect(p.appearance.accent == .pink)
@@ -112,9 +112,9 @@ private func lookValueKeys() throws -> [String: Set<String>] {
     #expect(SettingsSummary.lookValue(p) == "angepasst · 3")
     #expect(p.lookRawValue("accent") == "rot")
     #expect(p.isLookOverridden("accent"))
-    // Back to the preset value: no deviation left for that key.
-    p.setLook("accent", to: "weiss")
-    #expect(p.themeLook.global.accent == .weiss)
+    // Back to the baseline value (old default blue): no deviation left for that key.
+    p.setLook("accent", to: "blau")
+    #expect(p.themeLook.global.accent == .blau)
     #expect(!p.isLookOverridden("accent"))
     p.setLook("corners", to: nil)
     #expect(SettingsSummary.lookValue(p) == "angepasst · 1")
@@ -122,7 +122,6 @@ private func lookValueKeys() throws -> [String: Set<String>] {
 
 @Test func summaryCountsOldFieldChanges() {
     var p = Profile(name: "T")
-    p.resetLook()
     #expect(SettingsSummary.lookValue(p) == "Apple TV")
     p.appearance.accent = .green
     #expect(p.themeLook.global.accent == .salbei)
@@ -131,16 +130,16 @@ private func lookValueKeys() throws -> [String: Set<String>] {
     #expect(p.lookRawValue("accent") == "salbei")
 }
 
-@Test func resetLookReturnsToAppleTV() {
+@Test func resetLookAfterOldFieldChanges() {
     var p = Profile(name: "T")
     p.appearance.accent = .green
     p.appearance.heroEnabled = false
     p.player.trackPanelStyle = .menu
     p.setLook("background", to: "tinte")
     p.resetLook()
-    #expect(p.themeLook == LookPreset.values(.appleTV))
+    #expect(p.themeLook == LookPreset.baseline)   // Task 4.5-base: back to the old defaults
     #expect(SettingsSummary.lookValue(p) == "Apple TV")
     #expect(SettingsSummary.look(p) == "Mein Look · Apple TV")
-    #expect(p.appearance.accent == .white)
+    #expect(p.appearance.accent == .blue)
     #expect(p.appearance.heroEnabled)
 }
