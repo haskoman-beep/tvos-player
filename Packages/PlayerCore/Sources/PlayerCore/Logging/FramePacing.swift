@@ -15,6 +15,9 @@ public struct FramePacing: Sendable {
         public var frames: Int
         /// Intervals longer than `missFactor` × the nominal frame.
         public var missed: Int
+        /// Frames dropped in those intervals (review M2): rounded nominal frames per interval minus the one shown,
+        /// at least 1 each, so an 80 ms stall at 60 Hz counts 4 and a 26 ms one 1.
+        public var dropped: Int
         /// Longest interval in milliseconds.
         public var longestMs: Int
         /// Nominal display rate (last frame of the window).
@@ -24,8 +27,8 @@ public struct FramePacing: Sendable {
         /// Last note set in the window.
         public var note: String?
 
-        public init(frames: Int, missed: Int, longestMs: Int, hz: Int, tenths: Int, note: String?) {
-            self.frames = frames; self.missed = missed; self.longestMs = longestMs
+        public init(frames: Int, missed: Int, dropped: Int, longestMs: Int, hz: Int, tenths: Int, note: String?) {
+            self.frames = frames; self.missed = missed; self.dropped = dropped; self.longestMs = longestMs
             self.hz = hz; self.tenths = tenths; self.note = note
         }
     }
@@ -53,6 +56,7 @@ public struct FramePacing: Sendable {
     private var lastCounted: TimeInterval = 0
     private var frames = 0
     private var missed = 0
+    private var dropped = 0
     private var longest: TimeInterval = 0
     private var nominal: TimeInterval = FramePacing.fallbackFrame
     private var lastNote: String?
@@ -92,7 +96,10 @@ public struct FramePacing: Sendable {
         if gap > 0 {
             frames += 1
             lastCounted = timestamp
-            if gap > Self.missFactor * self.nominal { missed += 1 }
+            if gap > Self.missFactor * self.nominal {
+                missed += 1
+                dropped += max(1, Int((gap / self.nominal).rounded()) - 1)
+            }
             if gap > longest { longest = gap }
         }
         guard let start = windowStart, timestamp - start >= window else { return Tick(report: nil, keepRunning: true) }
@@ -123,18 +130,18 @@ public struct FramePacing: Sendable {
     }
 
     private func report(end: TimeInterval, start: TimeInterval) -> Report {
-        Report(frames: frames, missed: missed, longestMs: Int((longest * 1000).rounded()),
+        Report(frames: frames, missed: missed, dropped: dropped, longestMs: Int((longest * 1000).rounded()),
                hz: Int((1 / nominal).rounded()), tenths: max(0, Int(((end - start) * 10).rounded())), note: lastNote)
     }
 
     private mutating func resetWindow() {
-        frames = 0; missed = 0; longest = 0; lastNote = nil
+        frames = 0; missed = 0; dropped = 0; longest = 0; lastNote = nil
     }
 
     /// Log text of a report (category `ruckler`).
     public static func text(_ r: Report) -> String {
         var s = "Startseite \(r.tenths / 10),\(r.tenths % 10) s: \(r.frames) Bilder (\(r.hz) Hz)"
-        s += " · \(r.missed) verpasst · längstes \(r.longestMs) ms"
+        s += " · \(r.missed) verpasst · ≈\(r.dropped) Bilder fehlen · längstes \(r.longestMs) ms"
         if let n = r.note, !n.isEmpty { s += " · zuletzt: \(n)" }
         return s
     }

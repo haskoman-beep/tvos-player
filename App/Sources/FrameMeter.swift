@@ -5,7 +5,7 @@ import PlayerCore
 /// Build 4 follow-up S1: frame meter of the home page. The hitch watchdog only sees the main thread stopping for
 /// 250 ms; the stutter of the Build 4 device test (fast right presses while posters arrive) lies at 30–100 ms.
 /// While the home page is visible and focus moves, a display link counts frames; every 5 s with activity one
-/// `ruckler` line goes out (frames, missed frames, longest frame, last note; rules in `FramePacing`). Silent when
+/// `ruckler` line goes out (frames, missed frames, dropped frames, longest frame, last note; rules in `FramePacing`). Silent when
 /// nothing moves, off during playback and with Settings › System › Diagnose › „Ruckler protokollieren“ off.
 @MainActor
 enum FrameMeter {

@@ -42,7 +42,7 @@ private func feed(_ p: inout FramePacing, from start: TimeInterval, count: Int, 
     r = feed(&p, from: r.end + 0.120, count: 212, step: hz60)   // up to 4.995 s
     #expect(r.reports.isEmpty)
     r = feed(&p, from: r.end, count: 1, step: hz60)              // 5.011 s: the window closes
-    #expect(r.reports == [FramePacing.Report(frames: 315, missed: 2, longestMs: 80, hz: 64, tenths: 50, note: nil)])
+    #expect(r.reports == [FramePacing.Report(frames: 315, missed: 2, dropped: 6, longestMs: 80, hz: 64, tenths: 50, note: nil)])
     #expect(r.stops == 1)                               // last activity 5 s ago (> keepAlive): the link stops
     let stray = p.frame(at: r.end + hz60, nominal: hz60)
     #expect(stray.report == nil && !stray.keepRunning)
@@ -70,7 +70,7 @@ private func feed(_ p: inout FramePacing, from start: TimeInterval, count: Int, 
     _ = p.frame(at: hz60 * 1.5, nominal: hz60)          // exactly 1.5×: not missed
     _ = p.frame(at: hz60 * 1.5 + hz60 * 1.75, nominal: hz60)   // 1.75×: missed
     let last = p.stop()
-    #expect(last?.frames == 2 && last?.missed == 1 && last?.longestMs == 27)
+    #expect(last?.frames == 2 && last?.missed == 1 && last?.dropped == 1 && last?.longestMs == 27)
 }
 
 @Test func framePacingPauseLongerThanASecondClosesTheWindow() {
@@ -81,11 +81,11 @@ private func feed(_ p: inout FramePacing, from start: TimeInterval, count: Int, 
     _ = p.frame(at: 0, nominal: hz60)
     _ = p.frame(at: hz60, nominal: hz60)
     let paused = p.frame(at: hz60 + 1.5, nominal: hz60)  // focus moved 1.5 s ago: measuring goes on
-    #expect(paused == FramePacing.Tick(report: FramePacing.Report(frames: 1, missed: 0, longestMs: 16, hz: 64, tenths: 0,
+    #expect(paused == FramePacing.Tick(report: FramePacing.Report(frames: 1, missed: 0, dropped: 0, longestMs: 16, hz: 64, tenths: 0,
                                                                   note: nil), keepRunning: true))
     _ = p.frame(at: hz60 * 2 + 1.5, nominal: hz60)      // new window from the frame after the pause
     let last = p.stop()
-    #expect(last == FramePacing.Report(frames: 1, missed: 0, longestMs: 16, hz: 64, tenths: 0, note: nil))
+    #expect(last == FramePacing.Report(frames: 1, missed: 0, dropped: 0, longestMs: 16, hz: 64, tenths: 0, note: nil))
 }
 
 @Test func framePacingLongPauseEndsMeasuringWithoutStretchedWindow() {
@@ -94,7 +94,7 @@ private func feed(_ p: inout FramePacing, from start: TimeInterval, count: Int, 
     _ = p.frame(at: 0, nominal: hz60)
     let r = feed(&p, from: 0, count: 64, step: hz60)    // 1 s
     let resumed = p.frame(at: r.end + 600, nominal: hz60)   // back after 10 min, no focus move since
-    #expect(resumed.report == FramePacing.Report(frames: 64, missed: 0, longestMs: 16, hz: 64, tenths: 10, note: nil))
+    #expect(resumed.report == FramePacing.Report(frames: 64, missed: 0, dropped: 0, longestMs: 16, hz: 64, tenths: 10, note: nil))
     #expect(!resumed.keepRunning && !p.isRunning)
     let none = p.stop()
     #expect(none == nil)
@@ -117,7 +117,7 @@ private func feed(_ p: inout FramePacing, from start: TimeInterval, count: Int, 
     #expect(r.reports.isEmpty)
     p.note("Quellen abgelegt")
     let last = p.stop()
-    #expect(last == FramePacing.Report(frames: 128, missed: 0, longestMs: 16, hz: 64, tenths: 20, note: "Quellen abgelegt"))
+    #expect(last == FramePacing.Report(frames: 128, missed: 0, dropped: 0, longestMs: 16, hz: 64, tenths: 20, note: "Quellen abgelegt"))
     #expect(!p.isRunning)
     let twice = p.stop()
     #expect(twice == nil)
@@ -126,7 +126,7 @@ private func feed(_ p: inout FramePacing, from start: TimeInterval, count: Int, 
     _ = p.frame(at: 100, nominal: hz60)
     _ = p.frame(at: 100 + hz60, nominal: hz60)
     let fresh = p.stop()
-    #expect(fresh == FramePacing.Report(frames: 1, missed: 0, longestMs: 16, hz: 64, tenths: 0, note: nil))
+    #expect(fresh == FramePacing.Report(frames: 1, missed: 0, dropped: 0, longestMs: 16, hz: 64, tenths: 0, note: nil))
 }
 
 @Test func framePacingNoteResetsPerWindow() {
@@ -149,14 +149,30 @@ private func feed(_ p: inout FramePacing, from start: TimeInterval, count: Int, 
     _ = p.frame(at: 0.020, nominal: 0)                  // 20 ms against 16.7 ms: below 1.5×
     _ = p.frame(at: 0.050, nominal: -1)                 // 30 ms: missed
     let last = p.stop()
-    #expect(last?.hz == 60 && last?.missed == 1 && last?.longestMs == 30)
+    #expect(last?.hz == 60 && last?.missed == 1 && last?.dropped == 1 && last?.longestMs == 30)
 }
 
 @Test func framePacingText() {
-    let r = FramePacing.Report(frames: 296, missed: 3, longestMs: 48, hz: 60, tenths: 50, note: "Poster angekommen")
-    #expect(FramePacing.text(r) == "Startseite 5,0 s: 296 Bilder (60 Hz) · 3 verpasst · längstes 48 ms · zuletzt: Poster angekommen")
-    let quiet = FramePacing.Report(frames: 120, missed: 0, longestMs: 17, hz: 60, tenths: 21, note: nil)
-    #expect(FramePacing.text(quiet) == "Startseite 2,1 s: 120 Bilder (60 Hz) · 0 verpasst · längstes 17 ms")
-    let empty = FramePacing.Report(frames: 120, missed: 0, longestMs: 17, hz: 60, tenths: 21, note: "")
+    let r = FramePacing.Report(frames: 296, missed: 3, dropped: 7, longestMs: 48, hz: 60, tenths: 50, note: "Poster angekommen")
+    #expect(FramePacing.text(r)
+            == "Startseite 5,0 s: 296 Bilder (60 Hz) · 3 verpasst · ≈7 Bilder fehlen · längstes 48 ms · zuletzt: Poster angekommen")
+    let quiet = FramePacing.Report(frames: 120, missed: 0, dropped: 0, longestMs: 17, hz: 60, tenths: 21, note: nil)
+    #expect(FramePacing.text(quiet) == "Startseite 2,1 s: 120 Bilder (60 Hz) · 0 verpasst · ≈0 Bilder fehlen · längstes 17 ms")
+    let empty = FramePacing.Report(frames: 120, missed: 0, dropped: 0, longestMs: 17, hz: 60, tenths: 21, note: "")
     #expect(FramePacing.text(empty) == FramePacing.text(quiet))
+}
+
+@Test func framePacingSumsDroppedFrames() {
+    // Review M2: an 80 ms stall drops about four frames, a 26 ms one about one; both are one missed interval.
+    var p = FramePacing(window: 5, keepAlive: 2)
+    _ = p.activity(at: 0)
+    _ = p.frame(at: 0, nominal: hz60)
+    var t = 0.0
+    for gap in [hz60, 0.080, hz60, hz60 * 1.6, hz60 * 2.4, hz60 * 3] {   // 5.12x, 1.6x, 2.4x, 3x the nominal frame
+        t += gap
+        _ = p.frame(at: t, nominal: hz60)
+    }
+    let last = p.stop()
+    #expect(last?.frames == 6 && last?.missed == 4)
+    #expect(last?.dropped == 4 + 1 + 1 + 2)                // rounded frames per interval minus the one shown, at least 1
 }
