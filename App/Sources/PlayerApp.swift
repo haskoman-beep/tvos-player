@@ -77,6 +77,9 @@ struct RootView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
+        // Task 4.4: runtime theme from the profile's look (derived from the old fields, `Profile.themeLook`).
+        let theme = ThemeValues.make(model.profile.themeLook, reduceMotion: reduceMotion,
+                                     reduceTransparency: reduceTransparency)
         Group {
             if case .unreadable(let reason, let candidates) = model.storeState {
                 // Task 1.3: nothing is saved until the user picks a way out here.
@@ -92,13 +95,12 @@ struct RootView: View {
                         ClockView(followsTabBar: top).padding(.top, 40).padding(.trailing, 80)
                             .opacity(top ? 1 : 0)
                     }
-                    .tint(model.profile.appearance.accent.color)
+                    // Task 4.5 (D-14): the tint is the look's accent (all eight configurator colours).
+                    .tint(theme.color.accent)
                     .onAppear { pickedProfile = true }   // F-B-2: the picker decision is made once
             }
         }
-        // Task 4.4: runtime theme from the profile's look (derived from the old fields, `Profile.themeLook`).
-        .environment(\.theme, ThemeValues.make(model.profile.themeLook, reduceMotion: reduceMotion,
-                                               reduceTransparency: reduceTransparency))
+        .environment(\.theme, theme)
         .alert("Fehler", isPresented: Binding(get: { model.lastError != nil }, set: { if !$0 { model.lastError = nil } })) {
             Button("OK") { model.lastError = nil }
         } message: { Text(LogRedact.text(model.lastError ?? "")) }   // Schlüssel nie auf dem Bildschirm

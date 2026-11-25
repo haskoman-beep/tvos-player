@@ -7,8 +7,8 @@ import PlayerCore
 /// `standard` is exactly today's design: it is built from the `Theme` constants, so nothing changes visibly.
 /// `make` starts from `standard` and replaces a token by the plan table (PlayerCore `LookTheme`, `LookMetrics`)
 /// only where the look's value differs from the preset "Mein Look" (or the system asks to reduce motion or
-/// transparency). The accent is the exception: it always follows the look, but in Build 4 no view draws
-/// `color.accent` yet; the tint still comes from `.tint(appearance.accent.color)` (Task 4.5 switches it).
+/// transparency). The accent is the exception: it always follows the look; since Task 4.5 the root tint
+/// (`PlayerApp`) and the settings' accent dots draw `color.accent`.
 struct ThemeValues: Equatable {
     var color: Colors
     var type: TypeScale
@@ -136,6 +136,9 @@ struct ThemeValues: Equatable {
         var scale: CGFloat
         var tileScale: CGFloat
         var pressedScale: CGFloat
+        /// Task 4.5: the card's focus border (`LookOptionCatalog.effectiveFocusBorder`: white when the look shows
+        /// no other focus sign). No view draws it before Build 5a.
+        var border: LookFocusBorder
     }
 
     struct Motion: Equatable {
@@ -153,8 +156,8 @@ struct ThemeValues: Equatable {
     /// Today's values, taken from the `Theme` constants (so both stay equal by construction).
     /// `make(defaultProfile.themeLook, false, false)` equals this **except `color.accent` / `onAccent`**: `standard`
     /// carries the preset's accent (weiss), while `make` always takes the profile's accent, and the old default
-    /// accent (blue) maps to blau (test `defaultThemeLookUsesNoPlanTokens`). No view draws `color.accent` in
-    /// Build 4 (the tint still comes from `.tint`), so nothing is visible; do not compare a theme with `.standard`
+    /// accent (blue) maps to blau (test `defaultThemeLookUsesNoPlanTokens`). Since Task 4.5 the root tint is
+    /// `color.accent` of `make`, never of `standard`; do not compare a theme with `.standard`
     /// to mean "unstyled" — compare the look (`LookTheme.usesPlan…`) instead.
     static let standard = ThemeValues(
         color: Colors(base: Theme.Palette.base, surface: Theme.Palette.surface, raised: Theme.Palette.overlayCard,
@@ -171,7 +174,7 @@ struct ThemeValues: Equatable {
             focus: Shadow(opacity: Theme.Focus.shadowOpacity, radius: Theme.Focus.shadowRadius, y: Theme.Focus.shadowY),
             overlay: Shadow(opacity: 0.5, radius: 30, y: 12)),
         focus: FocusStyle(scale: Theme.Focus.scale, tileScale: Theme.Focus.tileScale,
-                          pressedScale: Theme.Focus.pressedScale),
+                          pressedScale: Theme.Focus.pressedScale, border: .keiner),
         motion: Motion(focus: Theme.Focus.duration, press: Theme.Focus.pressDuration, fade: 0.38, backdrop: 0.7,
                        expand: 0.3))
 
@@ -192,6 +195,7 @@ struct ThemeValues: Equatable {
         }
         if reduceTransparency { t.color.scrim = t.color.base }
         t.type = TypeScale(scale: values.global.typeScale, character: values.global.typeCharacter)
+        t.focus.border = LookOptionCatalog.effectiveFocusBorder(values)
         if LookTheme.usesPlanMotion(values, reduceMotion: reduceMotion) {
             let m = LookTheme.motion(values.global.motion, reduceMotion: reduceMotion)
             t.motion = Motion(focus: m.focus, press: m.focus == 0 ? 0 : t.motion.press, fade: m.fade,
