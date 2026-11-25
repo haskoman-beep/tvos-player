@@ -77,3 +77,8 @@ User decisions 25.11.: the summary counts against the old default values (unchan
   buttons that have no `ThemeActionButtonStyle`; the system button pulls the tint into the focused platter and the
   label. Same risk: ProfileRecoveryView („Erneut versuchen“, „Diese Fassung laden“, „Neu anfangen“), ProfileSettings
   („Profil anlegen“, „Abbrechen“), possibly StillWatchingPrompt („Beenden“).
+- **25.11. – home rows: scrolling right quickly stutters while posters load.** The row hitches during fast right
+  presses as new posters come in.
+- **25.11. – posters still cut off at the bottom; normal again after selecting once.** On first display the poster
+  tiles are clipped at the bottom edge; after a tile has been selected (opened and back) the rows show the posters
+  in full.
