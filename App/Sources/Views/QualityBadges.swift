@@ -56,9 +56,10 @@ struct PosterQualityBadges: View {
             // Wave F-k R1: badges switched on/off while the card is on screen.
             StreamPrefetcher.shared.tile(item, row: prefetchRow, visible: onScreen && placement != .off, model: model)
         }
-        .onReceive(QualityBadgeCache.shared.stored) { id in
+        .onReceive(QualityBadgeCache.shared.stored) { ids in
             // S3: cheap test (no progress search per tile on screen), same answer as `streamCacheKey(for:) == id`.
-            guard placement != .off, model.streamCacheKeyMatches(id, for: item) else { return }
+            // P3: one batch of IDs per pass; at most one of them is this tile's key.
+            guard placement != .off, let id = QualityBadgeCache.shared.match(ids, for: item, model: model) else { return }
             withAnimation(.easeOut(duration: 0.2)) { best = QualityBadgeCache.shared.best(id: id, model: model) }
         }
         // Wave F-k R1: on screen (≥ half of the card inside the screen, both scroll views applied) → quiet source
@@ -97,11 +98,19 @@ struct PosterBadgeBand: View {
 
 /// Beste Werte je Quellen-Cache-ID, einmal berechnet (nicht in jedem body). `AppModel` meldet neue Quellen über
 /// `streamsStored`, wartende Poster aktualisieren sich dann über `stored`.
+/// Build 4 follow-up 2 (P3): the values are stored at once (a card appearing reads them in its `.task`), the
+/// notification goes out collected (`BadgeBatch`): one pass for all results of 0.5 s, not before the focus has been
+/// quiet for 1 s (no badge fade during the card lift, expansion or backdrop crossfade), at the latest 3 s after the
+/// first result. Only the cards whose key is in the batch change state (`PosterQualityBadges.best`); rows only log.
 @MainActor
 final class QualityBadgeCache {
     static let shared = QualityBadgeCache()
-    /// Sendet die Cache-ID, sobald neue Quellen im AppModel-Cache liegen.
-    let stored = PassthroughSubject<String, Never>()
+    /// Sendet die Cache-IDs mit neuen Quellen im AppModel-Cache, gebündelt (P3).
+    let stored = PassthroughSubject<Set<String>, Never>()
+    private var batch = BadgeBatch()
+    private var flushTask: Task<Void, Never>?
+    /// P3: one `ruckler` line per 10 s with passes (`Plaketten gebündelt: …`).
+    private var passStats = BadgePassStats()
     /// S3 review (Minor 1): values with the number of entries they were computed from (`CachedBest`).
     private var cache: [String: CachedBest] = [:]
 
@@ -124,13 +133,50 @@ final class QualityBadgeCache {
             cache[id] = nil
             remembered[id] = nil
         }
-        stored.send(id)
+        queue(id)
     }
 
     /// Wave F-k R1: profile switch (other addons, other sources).
     func forget() {
         cache.removeAll()
         remembered.removeAll()
+        batch.clear()   // P3: the waiting flush finds nothing and ends
+    }
+
+    /// P3: focus moved to another tile (via `StreamPrefetcher.focusMoved`): waiting values wait for 1 s of quiet.
+    func focusMoved() { batch.focusMoved(now: Date()) }
+
+    /// P3: the key of `item` among the sent IDs (nil = the batch does not concern this tile).
+    func match(_ ids: Set<String>, for item: MetaPreview, model: AppModel) -> String? {
+        ids.first { model.streamCacheKeyMatches($0, for: item) }
+    }
+
+    private func queue(_ id: String) {
+        batch.add(id, now: Date())
+        guard flushTask == nil else { return }
+        flushTask = Task { [weak self] in await self?.flushWhenDue() }
+    }
+
+    /// Sleeps until the batch is due (the due time moves later while the focus moves), then sends it in one pass.
+    private func flushWhenDue() async {
+        while let due = batch.flushAt {
+            let wait = due.timeIntervalSinceNow
+            if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+            guard let flush = batch.take(now: Date()) else { continue }
+            flushTask = nil
+            FrameMeter.event(.badges)   // counted in the next `ruckler` line
+            stored.send(flush.ids)
+            if passStats.record(flush) { logPassesLater() }
+            return
+        }
+        flushTask = nil
+    }
+
+    private func logPassesLater() {
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(BadgePassStats.window))
+            if let line = self?.passStats.take() { RemoteLog.info("ruckler", line) }
+        }
     }
 
     /// Aus dem AppModel-Cache; danach noch bis zum Ablauf der Quellen (`RevalidationPolicy.streams`) gemerkt.

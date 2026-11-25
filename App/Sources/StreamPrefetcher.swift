@@ -278,9 +278,10 @@ extension StreamPrefetcher {
 
     /// Build 4 follow-up 2 (P3): focus moved to another tile (rows). Visible-tile searches wait until the focus has
     /// been quiet for `FocusRest.prefetchQuiet` (1 s), so they never run while the focus moves on; the pass already
-    /// planned looks again at the new due time (`visiblePass`).
+    /// planned looks again at the new due time (`visiblePass`). Badge passes wait for the same quiet (`QualityBadgeCache`).
     func focusMoved() {
         visible.focusMoved(now: Date())
+        QualityBadgeCache.shared.focusMoved()   // P3: badge passes wait for the same quiet
     }
 
     private func tileState(_ key: String, model: AppModel) -> VisiblePrefetchPlan.TileState {

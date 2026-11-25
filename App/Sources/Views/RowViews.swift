@@ -255,13 +255,19 @@ struct HomeRowView: View {
                 .environment(\.prefetchRow, PrefetchRow(key: "home|\(row.id.uuidString)", title: title))
                 // Wave F-k: how many tiles know their quality (source cache only), again when a prefetch lands here.
                 .task(id: displayed.map(\.id)) { noteBadges() }
-                .onReceive(QualityBadgeCache.shared.stored) { id in
+                .onReceive(QualityBadgeCache.shared.stored) { ids in
                     // S3: cheap per item (`streamCacheKeyMatches`), same answer as comparing `streamCacheKey(for:)`.
-                    guard tileKind == .poster, displayed.contains(where: { model.streamCacheKeyMatches(id, for: $0) }) else { return }
+                    // Log only: no state of the row changes here (P3 check), so the row body does not run again.
+                    guard tileKind == .poster, batchTouchesRow(ids) else { return }
                     noteBadges()
                 }
             }
         }
+    }
+
+    /// P3: one of the batched cache IDs belongs to a tile of this row.
+    private func batchTouchesRow(_ ids: Set<String>) -> Bool {
+        displayed.contains { QualityBadgeCache.shared.match(ids, for: $0, model: model) != nil }
     }
 
     /// Wave F-k: log line „Plaketten: <row> n/m mit Qualität“ for poster rows (only these carry quality badges);
