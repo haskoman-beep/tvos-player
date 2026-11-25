@@ -58,6 +58,9 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     /// `appearance`, `player` and `sources` (`Look.migrated`). The old fields keep being written so going back to the
     /// previous build loses nothing.
     public var look: Look = Look()
+    /// Task 5.3 (ruling 24.11.): the detail options outside the look (`episodes`, `titleArt`). Missing in older
+    /// profiles: defaults; written only when changed, so Build 4 reads the same bytes it wrote.
+    public var detailExtras: LookDetailExtras = LookDetailExtras()
 
     public init(id: UUID = UUID(), name: String, language: AppLanguage = .de, audioPriority: [String] = ["de", "en", "orig"],
                 subtitleMode: SubtitleMode = .forcedOnly, subtitleLanguage: String = "de", progressSource: ProgressSource = .local,
@@ -85,6 +88,7 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         case subtitleStyle
         case skip
         case look
+        case detailExtras
     }
     /// Nur zum Lesen alter Profile.
     private enum LegacyKeys: String, CodingKey { case subtitlesEnabled }
@@ -129,6 +133,7 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         skip = c.decodeLenient(SkipSettings.self, forKey: .skip, default: d.skip, report: r)
         let migratedLook = Look.migrated(from: appearance, player: player, sources: sources)
         look = c.decodeLenient(Look.self, forKey: .look, default: migratedLook, report: r)
+        detailExtras = c.decodeLenient(LookDetailExtras.self, forKey: .detailExtras, default: d.detailExtras, report: r)
     }
 
     /// Same keys, order and format as the former synthesized encoding; only `hiddenRows` gets the raw leftovers
@@ -164,6 +169,7 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         if !look.sameStyle(as: Look.migrated(from: appearance, player: player, sources: sources)) {
             try c.encode(look, forKey: .look)
         }
+        if detailExtras != LookDetailExtras() { try c.encode(detailExtras, forKey: .detailExtras) }
     }
 
     /// Task 4.2 fix round 1: while `look` only mirrors the old fields (the app still edits `appearance`/`player`),

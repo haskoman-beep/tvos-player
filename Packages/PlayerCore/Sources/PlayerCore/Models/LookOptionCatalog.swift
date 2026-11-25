@@ -53,7 +53,34 @@ public struct LookOptionEntry: Sendable, Hashable, Identifiable {
 public enum LookOptionCatalog {
     public static let all: [LookOptionEntry] = makeAll()
 
-    public static func entry(_ key: String) -> LookOptionEntry? { all.first { $0.key == key } }
+    /// Task 5.3 (ruling 24.11.): the two detail rows outside the configurator (`Profile.detailExtras`), in their
+    /// own group after „Quellenliste“. Not part of `all` (the 35 configurator options, export and import).
+    public static let extras: [LookOptionEntry] = [
+        LookOptionEntry(area: .detail, group: "Folgen und Titel", key: "episodes", label: "Folgen",
+                        help: "Reihe zeigt die Folgen nebeneinander mit Bild und beginnt bei der ersten ungesehenen. "
+                            + "Liste zeigt sie untereinander mit Text.",
+                        choices: [LookChoice(raw: "reihe", label: "Reihe"), LookChoice(raw: "liste", label: "Liste")],
+                        availableFrom: .b5b),
+        LookOptionEntry(area: .detail, group: "Folgen und Titel", key: "titleArt", label: "Titel oben",
+                        help: "Logo setzt das Titel-Logo an die Stelle des Posters; ohne Logo bleibt das Poster. "
+                            + "Poster zeigt immer das Poster.",
+                        choices: [LookChoice(raw: "logo", label: "Logo"), LookChoice(raw: "poster", label: "Poster")],
+                        availableFrom: .b5b),
+    ]
+
+    /// All rows of Einstellungen › Aussehen: the 35 configurator options plus `extras`.
+    public static let rows: [LookOptionEntry] = all + extras
+
+    /// Whether `key` is one of the profile-owned extras (not in `LookValues`).
+    public static func isExtra(_ key: String) -> Bool { extras.contains { $0.key == key } }
+
+    /// Task 5.3: options of a later build that this code already draws; their rows are active although
+    /// `LookBuild.current` stays `.b4` (the 5a/5c rows stay dimmed until their builds land).
+    public static let implemented: Set<String> = [
+        "layout", "descriptionLines", "cast", "badgeStyle", "ratingStyle", "sourceList", "episodes", "titleArt",
+    ]
+
+    public static func entry(_ key: String) -> LookOptionEntry? { rows.first { $0.key == key } }
 
     // MARK: Dependencies
 
@@ -65,10 +92,12 @@ public enum LookOptionCatalog {
     /// Whether the row `key` can be changed in `build`, and the note shown under it. An option of a later build is
     /// off with "kommt mit Build …"; with glow on, tvOS draws the card (`.buttonStyle(.card)`), so shape, scale,
     /// border and shadow are off. With system "reduce motion" the motion rows stay selectable but carry a note.
+    /// Task 5.3: `implemented` lists the later-build options already drawn (default `LookOptionCatalog.implemented`).
     public static func isEnabled(_ key: String, in values: LookValues, build: LookBuild = .current,
-                                 reduceMotion: Bool = false) -> (enabled: Bool, reason: String?) {
+                                 reduceMotion: Bool = false,
+                                 implemented: Set<String> = implemented) -> (enabled: Bool, reason: String?) {
         guard let e = entry(key) else { return (false, nil) }
-        if e.availableFrom > build { return (false, "kommt mit Build \(e.availableFrom.title)") }
+        if e.availableFrom > build, !implemented.contains(key) { return (false, "kommt mit Build \(e.availableFrom.title)") }
         if glowControlledKeys.contains(key), values.home.focusGlow { return (false, glowReason) }
         if reduceMotion, key == "motion" || key == "expandPosters" { return (true, reduceMotionReason) }
         return (true, nil)
@@ -305,12 +334,16 @@ extension Profile {
     }
 
     /// The value a row shows (raw configurator value of `themeLook`).
-    public func lookRawValue(_ key: String) -> String? { LookOptionCatalog.rawValue(key, in: themeLook) }
+    public func lookRawValue(_ key: String) -> String? {
+        if LookOptionCatalog.isExtra(key) { return detailExtras.rawValue(key) }
+        return LookOptionCatalog.rawValue(key, in: themeLook)
+    }
 
     /// Whether the row differs from the baseline (`LookPreset.baseline`, the old defaults; accent dot,
     /// "Auf Standard zurücksetzen").
     public func isLookOverridden(_ key: String) -> Bool {
-        LookOptionCatalog.rawValue(key, in: themeLook) != LookOptionCatalog.rawValue(key, in: LookPreset.baseline)
+        if LookOptionCatalog.isExtra(key) { return detailExtras.rawValue(key) != LookDetailExtras().rawValue(key) }
+        return LookOptionCatalog.rawValue(key, in: themeLook) != LookOptionCatalog.rawValue(key, in: LookPreset.baseline)
     }
 
     /// Sets one option starting from what the theme shows (`nil` = back to the baseline value, the old default),
@@ -318,6 +351,11 @@ extension Profile {
     /// `themeLook` shows the new value. The stored overrides stay relative to the preset. Unknown key or value:
     /// nothing changes.
     public mutating func setLook(_ key: String, to raw: String?) {
+        if LookOptionCatalog.isExtra(key) {
+            var x = detailExtras
+            if x.set(key, to: raw) { detailExtras = x }
+            return
+        }
         guard let target = raw ?? LookOptionCatalog.rawValue(key, in: LookPreset.baseline),
               let o = LookOptionCatalog.overrides(shownLook.overrides, setting: key, to: target, preset: look.preset)
         else { return }
@@ -330,5 +368,6 @@ extension Profile {
     public mutating func resetLook() {
         let base = LookOverrides.difference(LookPreset.baseline, from: LookPreset.values(look.preset))
         applyImportedLook(Look(preset: look.preset, overrides: base))
+        if detailExtras != LookDetailExtras() { detailExtras = LookDetailExtras() }
     }
 }

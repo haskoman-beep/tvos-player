@@ -69,7 +69,7 @@ private func lookValueKeys() throws -> [String: Set<String>] {
     let later = LookOptionCatalog.isEnabled("corners", in: v)
     #expect(!later.enabled && later.reason == "kommt mit Build 5a")
     #expect(LookOptionCatalog.isEnabled("accent", in: v) == (true, nil))
-    #expect(LookOptionCatalog.isEnabled("sourceList", in: v).reason == "kommt mit Build 5b")
+    #expect(LookOptionCatalog.isEnabled("sourceList", in: v, implemented: []).reason == "kommt mit Build 5b")
     // System reduce motion: still selectable, with a note.
     let m = LookOptionCatalog.isEnabled("motion", in: v, reduceMotion: true)
     #expect(m.enabled && m.reason == "Das System reduziert Bewegung; diese Einstellung wirkt erst, wenn das aus ist.")
