@@ -265,24 +265,17 @@ enum Theme {
         }
     }
 
-    /// Feste Kachelfarben der Kategoriesymbole (§4.6), unabhängig von der Akzentfarbe.
-    /// Das Symbol darauf ist weiß und gefüllt (kein Neon-Glow wie bei umrissenen Akzentsymbolen).
+    /// Kachelfarben der Kategoriesymbole (§4.6). Task 4.5 (D-19, `07` §3.1): the nine colours give way to one
+    /// neutral tile (`bg.raised`, symbol `fg.primary`); only the active category carries the accent mark.
+    /// The cases stay so call sites keep their meaning.
     enum CategoryTint: CaseIterable {
         case profile, addons, sources, home, appearance, playback, audio, picture, system
 
-        var color: Color {
-            switch self {
-            case .profile: .blue
-            case .addons: .purple
-            case .sources: .cyan
-            case .home: .orange
-            case .appearance: .pink
-            case .playback: .green
-            case .audio: .teal
-            case .picture: .indigo
-            case .system: .gray
-            }
-        }
+        /// Marks the neutral tile. `IconTile` draws it from the runtime theme (`color.raised` / `color.primary`);
+        /// other views get today's `bg.raised`.
+        static let neutral = Palette.overlayCard
+
+        var color: Color { Self.neutral }
     }
 
     /// Akzent: nur „aktiv/gewählt“, Hauptknopf und Akzentmarke, nie das einzige Fokuszeichen (A6).
@@ -458,18 +451,24 @@ struct ThemeTileButtonStyle: ButtonStyle {
     }
 }
 
-/// Symbolkachel 48×48 in Kategoriefarbe mit weißem, gefülltem Symbol (32 pt).
+/// Symbolkachel 48×48 mit gefülltem Symbol (32 pt).
+/// Task 4.5 (D-19): `Theme.CategoryTint.neutral` draws the neutral tile from the runtime theme
+/// (`color.raised`, symbol `color.primary`); any other colour keeps the coloured tile with the white symbol.
 struct IconTile: View {
     let symbol: String
     let color: Color
+    @Environment(\.theme) private var theme
+
+    private var isNeutral: Bool { color == Theme.CategoryTint.neutral }
 
     var body: some View {
         Image(systemName: symbol)
             .symbolVariant(.fill)
             .font(.system(size: Theme.Layout.iconSize, weight: .semibold))
-            .foregroundStyle(.white)
+            .foregroundStyle(isNeutral ? theme.color.primary : .white)
             .frame(width: Theme.Layout.iconTile, height: Theme.Layout.iconTile)
-            .background(color, in: RoundedRectangle(cornerRadius: Theme.Radius.badge, style: .continuous))
+            .background(isNeutral ? theme.color.raised : color,
+                        in: RoundedRectangle(cornerRadius: Theme.Radius.badge, style: .continuous))
             .accessibilityHidden(true)
     }
 }
