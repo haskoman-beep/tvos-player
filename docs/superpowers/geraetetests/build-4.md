@@ -72,3 +72,8 @@ User decisions 25.11.: the summary counts against the old default values (unchan
 - Status dots are grey.
 
 ## 7. Observations during the device test
+- **25.11. ~18:0x – phone page: focused button is solid blue, label invisible** („Fertig“ next to „Neuer QR-Code“,
+  accent blau). Likely cause: root tint `theme.color.accent` (#3B82F6, commit 0164c17, Task 4.5 D-14) on plain system
+  buttons that have no `ThemeActionButtonStyle`; the system button pulls the tint into the focused platter and the
+  label. Same risk: ProfileRecoveryView („Erneut versuchen“, „Diese Fassung laden“, „Neu anfangen“), ProfileSettings
+  („Profil anlegen“, „Abbrechen“), possibly StillWatchingPrompt („Beenden“).
