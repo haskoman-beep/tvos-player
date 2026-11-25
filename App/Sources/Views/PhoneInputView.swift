@@ -327,6 +327,9 @@ struct PhoneInputView: View {
                         Button("Neuer QR-Code") { server.newSession() }
                             .accessibilityHint("Die bisherige Adresse und Sitzung gelten danach nicht mehr")
                     }
+                    // Build 4 device test: the system button drew the root tint (look accent) as its focused platter and
+                    // label, so the focused label vanished. Token button like the detail and hero buttons (Welle F-i).
+                    .buttonStyle(ThemeActionButtonStyle())
                 }
             }
             .padding(80)

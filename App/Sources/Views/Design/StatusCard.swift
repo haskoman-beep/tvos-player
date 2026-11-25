@@ -61,6 +61,8 @@ struct StatusCard: View {
                     }
                 }
                 .accessibilityLabel(action.title)
+                // Build 4 device test (phone page): system buttons take the root tint into the focused label.
+                .buttonStyle(ThemeActionButtonStyle())
             }
         }
         .padding(Theme.Space.m)
