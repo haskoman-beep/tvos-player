@@ -45,3 +45,18 @@ Fixes for the three open observations of `build-4.md` §7 (device test 25.11.). 
 **Fallback triggers:** home focus stuck, rows jump repeatedly, player buttons not operable.
 
 ## 5. Observations during the device test
+
+Device test 25.11. evening (user, remote log switched on):
+
+1. **Profile picker („Wer schaut?“): no visual focus feedback.** You cannot tell which profile is selected before
+   confirming. Cause (code): `ProfilePickerView` (`App/Sources/PlayerApp.swift:243`) uses `.buttonStyle(.borderless)`
+   with a text + circle label. On tvOS that style gives no focus highlight for such a label. The circle is also a
+   fixed `.blue`, not the theme accent. Fix: focus-aware style (scale + accent ring, like the other token buttons).
+2. **Home poster row still stutters** while pressing right (symptom 2 not fixed by S1–S4).
+3. **Posters „abgehackt“** (cut off / choppy, to be clarified with the user; see symptom 3 / S5).
+4. **No remote-log lines arrived.** `~/tvos_player/logs` has no file after `player-2026-11-23.log`, although the
+   switch is on. The collector (`playerlog.service`, signed mode since 24.11. 22:04) runs and announces
+   `Player-Log`, but it answers wrong signatures with a silent 401 (`log_message` muted). Candidates: the TV status
+   is „noch kein Empfänger gewählt“ / „kein Schlüssel“, or the TV secret (phone page, key `playerlog`) differs from
+   `~/.config/playerlog/secret`. The app keeps the last 500 lines in memory; once sending works, they flush,
+   provided the app was not restarted.
