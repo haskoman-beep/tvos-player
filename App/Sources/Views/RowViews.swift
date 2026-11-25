@@ -15,6 +15,9 @@ struct HomeRowView: View {
     /// Wave F-j: focus enters (true) or leaves (false) this row (home page: top edge watch, heading scroll).
     var onFocusInside: ((Bool) -> Void)? = nil
     @State private var items: [MetaPreview] = []
+    /// Build 4 follow-up S4 (F-A-5): the cards of `items` with their `ForEach` id (`rowKey`) and rank, built once
+    /// when the items arrive instead of on every body pass. Always set together with `items`.
+    @State private var entries: [RowEntry] = []
     @State private var loaded = false
     /// Welle F-f: letzte Ladung schlug fehl (Statuskachel „erneut versuchen“).
     @State private var failed = false
@@ -63,7 +66,7 @@ struct HomeRowView: View {
             guard !Task.isCancelled else { return }   // abgebrochen (neue Ladung folgt): kein „Keine Einträge“-Flackern
             let placeholder = focusedPlaceholder
             // Task 4.1a (F-A-5): a catalog may list a title twice; one card per (type, id), the first wins.
-            items = RowItems.deduped(r.items); failed = r.failed; loaded = true
+            items = RowItems.deduped(r.items); entries = RowItems.entries(items); failed = r.failed; loaded = true
             // Fokus lag auf einem Platzhalter: an dieselbe Stelle der fertigen Reihe (bzw. auf die Statuskachel).
             // Erst im nächsten Durchlauf: dann gibt es die Karten schon.
             if let placeholder {
@@ -149,6 +152,8 @@ struct HomeRowView: View {
 
     /// Gezeigte Einträge (Top 10: höchstens zehn).
     private var displayed: [MetaPreview] { row.style == .top10 ? Array(items.prefix(10)) : items }
+    /// Cards of `displayed` (same prefix rule), ids already computed.
+    private var displayedEntries: [RowEntry] { row.style == .top10 ? Array(entries.prefix(10)) : entries }
 
     @ViewBuilder private var content: some View {
         switch row.content {
@@ -195,7 +200,8 @@ struct HomeRowView: View {
             case .items:
                 let routes = routeTable   // Task 3.8: once per row pass, not once per card
                 Strip(expands: row.style == .poster, kind: tileKind) {
-                    ForEach(Array(displayed.enumerated()), id: \.element.rowKey) { i, m in
+                    ForEach(displayedEntries) { e in
+                        let m = e.item
                         card(routes[m.id] ?? .detail(m)) {
                             if row.content == .list(.upcoming) {
                                 UpcomingTodayCard(item: m, landscape: row.style == .landscape || row.style == .hero)
@@ -203,7 +209,7 @@ struct HomeRowView: View {
                                 switch row.style {
                                 case .hero: HeroCard(item: m)
                                 case .landscape: LandscapeCard(item: m).equatable()
-                                case .top10: Top10Card(item: m, rank: i + 1).equatable()
+                                case .top10: Top10Card(item: m, rank: e.rank).equatable()
                                 default: PosterCard(item: m).equatable()
                                 }
                             }

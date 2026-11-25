@@ -143,4 +143,19 @@ public enum RowItems {
         var seen = Set<String>()
         return items.filter { seen.insert($0.rowKey).inserted }
     }
+
+    /// Build 4 follow-up S4 (F-A-5): the cards of a row with their `ForEach` id, built once when the items arrive
+    /// (before, every body pass of the row built `rowKey` for each card again). Pass deduplicated items.
+    public static func entries(_ items: [MetaPreview]) -> [RowEntry] {
+        items.enumerated().map { RowEntry(id: $0.element.rowKey, item: $0.element, rank: $0.offset + 1) }
+    }
+}
+
+/// Build 4 follow-up S4 (F-A-5): one card of a home row.
+public struct RowEntry: Identifiable, Sendable, Equatable {
+    /// `item.rowKey`: the `ForEach` id and the strip's scroll anchor id.
+    public let id: String
+    public let item: MetaPreview
+    /// Position in the row, from 1 (Top 10 rank).
+    public let rank: Int
 }

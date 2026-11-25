@@ -92,3 +92,18 @@ import Testing
     #expect(a.rowKey != b.rowKey && a.rowKey == a2.rowKey)
     #expect(RowItems.deduped([]).isEmpty)
 }
+
+// Build 4 follow-up S4 (F-A-5): the row's ForEach ids are built once when the items arrive, not per body pass.
+@Test func rowEntriesCarryRowKeyAndRankInOrder() {
+    let a = MetaPreview(id: "tmdb:1399", type: "movie", name: "Film")
+    let b = MetaPreview(id: "tmdb:1399", type: "series", name: "Serie")
+    let c = MetaPreview(id: "tt1", type: "movie", name: "C")
+    let items = RowItems.deduped([a, b, c, a])
+    let e = RowItems.entries(items)
+    #expect(e.map(\.id) == items.map(\.rowKey))       // same ids as the former `id: \.element.rowKey`
+    #expect(e.map(\.item) == items)
+    #expect(e.map(\.rank) == [1, 2, 3])               // former `i + 1` of `enumerated()`
+    #expect(Set(e.map(\.id)).count == e.count)        // unique after dedupe
+    #expect(Array(e.prefix(2)).map(\.item) == Array(items.prefix(2)))   // Top 10 prefix keeps ranks
+    #expect(RowItems.entries([]).isEmpty)
+}
