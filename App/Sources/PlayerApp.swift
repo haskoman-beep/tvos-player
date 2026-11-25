@@ -89,24 +89,25 @@ struct RootView: View {
                 ProfilePickerView { pickedProfile = true }
                     .onAppear { RemoteLog.startUsable("profilwahl") }   // Task 1.8
             } else {
-                styled(tabs)
-                    .overlay(alignment: .topTrailing) {
-                        let top = model.profile.appearance.navigation == .top
-                        ClockView(followsTabBar: top).padding(.top, 40).padding(.trailing, 80)
-                            .opacity(top ? 1 : 0)
-                    }
+                // Task 5.6: navigation, clock and settings layout read the theme (`theme.chrome`, from the look).
+                styled(tabs(theme.chrome), chrome: theme.chrome)
+                    .overlay(alignment: .topTrailing) { ClockOverlay(overPushedPage: clockOverPushedPage) }
                     // Task 4.5 (D-14): the tint is the look's accent (all eight configurator colours).
                     .tint(theme.color.accent)
                     .onAppear { pickedProfile = true }   // F-B-2: the picker decision is made once
             }
         }
         .environment(\.theme, theme)
+        // Task 5.6: the tab view is rebuilt on a change (see `styled`), so the line is logged out here.
+        .onChange(of: theme.chrome.navigation) { _, n in
+            RemoteLog.info("nav", "Hauptnavigation \(n.rawValue), Inhalt ab \(Int(LookMetrics.contentLeading(n)))")
+        }
         .alert("Fehler", isPresented: Binding(get: { model.lastError != nil }, set: { if !$0 { model.lastError = nil } })) {
             Button("OK") { model.lastError = nil }
         } message: { Text(LogRedact.text(model.lastError ?? "")) }   // Schlüssel nie auf dem Bildschirm
     }
 
-    private var tabs: some View {
+    private func tabs(_ chrome: LookChrome) -> some View {
         TabView(selection: tabSelection) {
             Tab("Start", systemImage: "house", value: AppTab.home) {
                 stack($path, tab: .home) { HomeView() }
@@ -123,7 +124,7 @@ struct RootView: View {
             Tab("Einstellungen", systemImage: "gearshape", value: AppTab.settings) {
                 // Menu-Kette der Einstellungen: Inhalt → aktive Kategorie (CategoryList) → Start-Tab (N2).
                 stack($settingsPath, tab: .settings, rootHandlesMenu: false) {
-                    SettingsView(selected: $settingsCategory) { toStartTab(from: .settings, level: "Kategorienspalte") }
+                    SettingsView(selected: $settingsCategory) { toStartTab(from: .settings, level: $0) }
                         .onAppear { settingsRootVisible = true }
                         .onDisappear { settingsRootVisible = false }
                 }
@@ -139,7 +140,7 @@ struct RootView: View {
         // innerer Handler Vorrang.
         .onExitCommand(perform: tabBarExit)
         // Wave F-m: after every pop (any tab) the guard checks that the top bar still follows the visible page.
-        .modifier(TabBarGuardHook(tab: tab, depth: depth(tab), navigation: model.profile.appearance.navigation))
+        .modifier(TabBarGuardHook(tab: tab, depth: depth(tab), navigation: chrome.navigationStyle))
     }
 
     private var tabBarExit: (() -> Void)? {
@@ -175,6 +176,13 @@ struct RootView: View {
     }
 
     /// Gepushte Seiten im Pfad eines Tabs (ohne NavigationLink-/navigationDestination(item:)-Seiten).
+    /// Task 5.6 (review minor): a page is pushed on the visible tab (a settings subpage counts too). In the sidebar
+    /// the clock then goes, as it does with the top bar, which tvOS hides on pushed pages: grids (genre, person)
+    /// scroll under the top right corner.
+    private var clockOverPushedPage: Bool {
+        depth(tab) > 0 || (tab == .settings && !settingsRootVisible)
+    }
+
     private func depth(_ t: AppTab) -> Int {
         switch t {
         case .home: path.count
@@ -194,8 +202,8 @@ struct RootView: View {
     /// Seitenleiste oder Standard-Leiste oben. SwiftUI hat keinen typgelöschten TabViewStyle, daher bleibt die
     /// Verzweigung: beim Umschalten baut sich die TabView neu auf. Tab-Auswahl, Pfade und Einstellungs-Kategorie
     /// liegen deshalb in RootView und überstehen das.
-    @ViewBuilder private func styled<V: View>(_ v: V) -> some View {
-        if model.profile.appearance.navigation == .sidebar {
+    @ViewBuilder private func styled<V: View>(_ v: V, chrome: LookChrome) -> some View {
+        if chrome.navigation == .seitenleiste {
             v.tabViewStyle(.sidebarAdaptable)
         } else {
             v

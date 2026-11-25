@@ -42,26 +42,63 @@ extension SettingsCategory {
 }
 
 /// Einstellungen des aktiven Profils (jedes Profil ist komplett eigenständig).
-/// Links Kopfkachel „Am Handy einrichten“ und die Kategorien in drei Gruppen plus System (wave S), rechts der Inhalt der fokussierten Kategorie.
-/// Fokus und Menu regelt `CategoryList` (Verhalten aus fix-einstellungen): Menu aus dem Inhalt auf die aktive
-/// Kategorie, aus der Kategorienspalte `leave`. Unterseiten liegen im NavigationStack und schließen sich vorher selbst.
+/// Task 5.6 (D-19): three layouts from the look (`global.settingsLayout`), all with the same entries
+/// (`SettingsLayoutTree`) and the same category pages:
+/// - `spalten` (today): left the header tile „Am Handy einrichten“ and the categories in three groups plus System
+///   (wave S), right the content of the focused category. Focus and Menu: `CategoryList` (fix-einstellungen):
+///   Menu from the content to the active category, from the column `leave`.
+/// - `kacheln`: title and a grid of tiles; a tile opens its category as a page of its own (`SettingsTilesView`).
+/// - `liste`: one centred list, each category under its header (`SettingsListView`).
+/// Subpages live in the NavigationStack and close themselves first.
 struct SettingsView: View {
     @EnvironmentObject var model: AppModel
     @Binding var selected: SettingsCategory
     /// Zurück in der obersten Ebene: verlässt die Einstellungen (RootView wechselt zum Start-Tab, N2).
     /// Ohne Standardwert (fix-einstellungen Minor 1): ein vergessener Aufrufer fiele sonst still in ein No-op.
-    let leave: () -> Void
+    /// Task 5.6: gets the level for the log line (column, tile grid or list).
+    let leave: (String) -> Void
+    @Environment(\.theme) private var theme
+    /// Layout drawn last, and whether the root is on screen: a new layout waits until no subpage is open
+    /// (`SettingsLayoutTree.shown`), else the link of the open page would leave the root and pop it.
+    @State private var latched: LookSettingsLayout?
+    @State private var rootVisible = false
+
+    private var layout: LookSettingsLayout {
+        SettingsLayoutTree.shown(latched: latched, current: theme.chrome.settingsLayout, rootVisible: rootVisible)
+    }
 
     var body: some View {
-        CategoryList(items: SettingsCategory.allCases, selected: $selected,
-                     entry: { CategoryEntry(title: $0.title, symbol: $0.symbol, tint: $0.tint) },
-                     groupLabel: { $0.groupLabel },
-                     onExit: leave,
-                     header: { phoneTile },
-                     content: { content($0) })
+        layoutBody(layout)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .settingsSurface()
             .onChange(of: selected) { _, c in RemoteLog.info("nav", "Einstellungen: Kategorie \(c.title)") }
+            .onAppear {
+                rootVisible = true
+                adopt(theme.chrome.settingsLayout)
+            }
+            .onDisappear { rootVisible = false }
+            .onChange(of: theme.chrome.settingsLayout) { _, l in if rootVisible { adopt(l) } }
+    }
+
+    @ViewBuilder private func layoutBody(_ l: LookSettingsLayout) -> some View {
+        switch l {
+        case .spalten:
+            CategoryList(items: SettingsCategory.allCases, selected: $selected,
+                         entry: { CategoryEntry(title: $0.title, symbol: $0.symbol, tint: $0.tint) },
+                         groupLabel: { $0.groupLabel },
+                         onExit: { leave("Kategorienspalte") },
+                         header: { phoneTile },
+                         content: { content($0) })
+        case .kacheln:
+            SettingsTilesView(selected: $selected, leave: { leave("Kachelraster") }, content: { content($0) })
+        case .liste:
+            SettingsListView(selected: $selected, leave: { leave("Liste") }, header: { phoneTile }, content: { content($0) })
+        }
+    }
+
+    private func adopt(_ l: LookSettingsLayout) {
+        if let latched, latched != l { RemoteLog.info("nav", "Einstellungs-Layout \(latched.rawValue) → \(l.rawValue)") }
+        latched = l
     }
 
     /// Kopfkachel: genau ein Knopf als Wurzel (Vorgabe von `CategoryList`).

@@ -94,8 +94,11 @@ public enum LookOptionCatalog {
         "heroStyle": "„Titelbild oben“ unter Startseite",
     ]
     /// Options whose code is already in this build although appendix A names a later one (`availableFrom` stays the
-    /// appendix value). Task 5.4: the five player options of 5c (trackPanel is a Build 4 option already).
-    static let implementedAhead: Set<String> = ["controlBar", "badges", "timeDisplay", "upNext", "stillWatching"]
+    /// appendix value). Task 5.4: the five player options of 5c (trackPanel is a Build 4 option already); Task 5.6:
+    /// clock and settings layout (navigation is a Build 4 option already).
+    static let implementedAhead: Set<String> = [
+        "controlBar", "badges", "timeDisplay", "upNext", "stillWatching", "clock", "settingsLayout",
+    ]
     /// Integration build 5: every later-build option already drawn (Task 5.3 `implemented` + Task 5.4
     /// `implementedAhead`); the default of `isEnabled(implemented:)`.
     public static let implementedLater: Set<String> = implemented.union(implementedAhead)

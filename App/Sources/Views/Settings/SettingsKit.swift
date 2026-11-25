@@ -13,6 +13,9 @@ struct SettingsPage<Content: View>: View {
     /// Wave S: storage scope under the category title („Gilt für dieses Profil“ / „… Gerät“).
     var scope: SettingsScope? = nil
     let content: Content
+    /// Task 5.6: inside the `liste` layout the page is one section of the shared list: no scroll view of its own
+    /// and no page title (the list has one), the category title is the section header.
+    @Environment(\.settingsEmbedded) private var embedded
 
     init(pageTitle: String? = nil, title: String, summary: String? = nil, scope: SettingsScope? = nil,
          @ViewBuilder content: () -> Content) {
@@ -24,23 +27,31 @@ struct SettingsPage<Content: View>: View {
     }
 
     var body: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: Theme.Space.s) {
-                if let pageTitle {
-                    Text(pageTitle).textRole(.pageTitle).accessibilityAddTraits(.isHeader)
-                }
-                VStack(alignment: .leading, spacing: Theme.Space.xs) {
-                    SettingsHeader(title: title, summary: summary)
-                    if let scope { SettingsScopeLine(scope: scope) }
-                }
-                .padding(.bottom, Theme.Space.xs)
-                content
+        if embedded {
+            page(showsPageTitle: false)
+        } else {
+            ScrollView(.vertical) {
+                page(showsPageTitle: true)
+                    .frame(maxWidth: Theme.Layout.contentMaxWidth, alignment: .leading)
+                    .padding(.vertical, Theme.Space.m)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: Theme.Layout.contentMaxWidth, alignment: .leading)
-            .padding(.vertical, Theme.Space.m)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .scrollClipDisabled()
         }
-        .scrollClipDisabled()
+    }
+
+    private func page(showsPageTitle: Bool) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
+            if showsPageTitle, let pageTitle {
+                Text(pageTitle).textRole(.pageTitle).accessibilityAddTraits(.isHeader)
+            }
+            VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                SettingsHeader(title: title, summary: summary)
+                if let scope { SettingsScopeLine(scope: scope) }
+            }
+            .padding(.bottom, Theme.Space.xs)
+            content
+        }
     }
 }
 
@@ -88,6 +99,8 @@ struct SettingsSubpage<Content: View>: View {
 
     var body: some View {
         SettingsPage(title: title, summary: summary) { content }
+            // Task 5.6: a subpage pushed from the `liste` layout is a page of its own again.
+            .environment(\.settingsEmbedded, false)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .settingsSurface()
             .onAppear { RemoteLog.info("nav", "Einstellungen › \(title)") }

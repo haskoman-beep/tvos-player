@@ -33,6 +33,10 @@ struct ThemeValues: Equatable {
     /// Task 5.3: `detail.badgeStyle` (ThemeBadge reads it; the player falls back `logos` → `gefuellt`).
     var badgeStyle: LookBadgeStyle { detail.badgeStyle }
 
+    /// Task 5.6: main navigation, clock and settings layout (`global.*`). Always the profile's values (like the
+    /// accent); `standard` carries the baseline (today's defaults).
+    var chrome = LookChrome(LookPreset.baseline)
+
     struct Colors: Equatable {
         var base: Color
         var surface: Color
@@ -228,6 +232,7 @@ struct ThemeValues: Equatable {
         t.type = TypeScale(scale: values.global.typeScale, character: values.global.typeCharacter)
         t.focus.border = LookOptionCatalog.effectiveFocusBorder(values)
         t.detail = values.detail
+        t.chrome = LookChrome(values)
         if LookTheme.usesPlanMotion(values, reduceMotion: reduceMotion) {
             let m = LookTheme.motion(values.global.motion, reduceMotion: reduceMotion)
             t.motion = Motion(focus: m.focus, press: m.focus == 0 ? 0 : t.motion.press, fade: m.fade,
