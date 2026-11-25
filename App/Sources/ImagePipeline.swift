@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import ImageIO
 import CoreImage
+import Combine
 import os
 import Network
 import PlayerCore
@@ -448,7 +449,8 @@ private final class CacheCostTracker: NSObject, NSCacheDelegate, @unchecked Send
 }
 
 /// A-B-3: counts "network back" moments (NWPath unsatisfied → satisfied). Visible `RemoteImage`s without a picture
-/// load again when it changes; the pipeline forgets its short-lived failures first.
+/// load again when it changes (they listen to `$generation`, they do not observe this object, so views that show
+/// their picture are not re-rendered); the pipeline forgets its short-lived failures first.
 @MainActor final class NetworkReturn: ObservableObject {
     static let shared = NetworkReturn()
     @Published private(set) var generation = 0
@@ -494,8 +496,10 @@ struct RemoteImage: View {
     /// Wave F-k: called with the address when it cannot be loaded (not on cancel); poster tiles then try the next one.
     var onFailure: (@MainActor (String) -> Void)? = nil
     @Environment(\.displayScale) private var displayScale
-    /// A-B-3: retry trigger when the network comes back.
-    @ObservedObject private var network = NetworkReturn.shared
+    /// A-B-3: bumped when the network comes back while this view has no picture for its address (part of `LoadKey`).
+    /// Build 4 follow-up S2: a local counter instead of observing `NetworkReturn`, so views showing their picture
+    /// neither re-render nor restart their load.
+    @State private var retry = 0
     @State private var image: UIImage?
     @State private var loadedURL: String?
     /// Weichzeichner, mit dem `image` geladen wurde: nach einem Wechsel (Spoilerschutz) nie das alte Bild zeigen.
@@ -517,8 +521,8 @@ struct RemoteImage: View {
         let target: ImageTarget?
         /// Weichzeichner an/aus (z. B. Spoilerschutz nach „gesehen“) lädt die passende Variante.
         let blur: CGFloat
-        /// A-B-3: `NetworkReturn.generation`; a change loads again (a shown picture comes from the memory cache).
-        let network: Int
+        /// A-B-3: `retry`; a change loads again.
+        let retry: Int
     }
 
     var body: some View {
@@ -542,7 +546,12 @@ struct RemoteImage: View {
             if let cap = maxPixels { t.width = min(t.width, cap); t.height = min(t.height, cap) }
             if t != target { target = t }
         }
-        .task(id: LoadKey(url: url, target: fixedTarget ?? target, blur: blur, network: network.generation)) {
+        .onReceive(NetworkReturn.shared.$generation.dropFirst()) { _ in
+            // Only a view still missing the picture for its current address (and blur) tries again.
+            guard url != nil, image == nil || loadedURL != url || loadedBlur != blur else { return }
+            retry += 1
+        }
+        .task(id: LoadKey(url: url, target: fixedTarget ?? target, blur: blur, retry: retry)) {
             guard let s = url, let u = URL(string: s) else {
                 image = nil
                 if let url { onFailure?(url) }
