@@ -151,7 +151,6 @@ private struct ThemeCardBody<Label: View>: View {
 /// While the card is lifted the title moves down by the card's growth (`CardRowGeometry.titleShift`), so the lifted
 /// card never covers it.
 struct ThemeCard<Content: View>: View {
-    let kind: TileKind
     let title: String
     let titleMode: LookCardTitles
     let focused: Bool
@@ -218,28 +217,44 @@ struct CardTitleSlot: Equatable {
 }
 
 /// Task 5.1 (`rowTitle`): heading of a home row. „standard“ keeps today's section role (the hero collapse estimates
-/// the heading from it); „dezent“ 27 pt and „groß“ 44 pt semibold per the plan's table (LookMetrics).
+/// the heading from it); „dezent“ and „groß“ are the plan's type roles `sectionLabel` (27) / `sectionLarge` (44),
+/// times the look's type scale and character (fix round m5). One `Text`, only its font changes with the option.
 struct RowHeading: View {
     let title: String
     let size: LookRowTitle
+    @Environment(\.theme) private var theme
 
     var body: some View {
-        heading.lineLimit(1).accessibilityAddTraits(.isHeader)
+        Text(title).font(RowHeading.font(size, theme.type)).tracking(RowHeading.tracking(size, theme.type))
+            .foregroundStyle(theme.color.primary)
+            .lineLimit(1).accessibilityAddTraits(.isHeader)
     }
 
-    @ViewBuilder private var heading: some View {
-        if size == .standard {
-            Text(title).textRole(.sectionTitle)
-        } else {
-            Text(title).font(.system(size: RowHeading.points(size), weight: .semibold))
-        }
-    }
-
-    static func points(_ size: LookRowTitle) -> CGFloat {
+    /// The plan role of a non-standard size (nil: today's `sectionTitle` role).
+    static func role(_ size: LookRowTitle) -> LookTheme.Role? {
         switch size {
-        case .dezent: 27
-        case .standard: 34
-        case .gross: 44
+        case .dezent: .sectionLabel
+        case .standard: nil
+        case .gross: .sectionLarge
         }
+    }
+
+    static func font(_ size: LookRowTitle, _ type: ThemeValues.TypeScale) -> Font {
+        guard let role = role(size) else { return type.font(.sectionTitle) }
+        let r = LookTheme.type(role, scale: type.scale, character: type.character)
+        return .system(size: r.size, weight: ThemeValues.TypeScale.weight(r.weight))
+    }
+
+    static func tracking(_ size: LookRowTitle, _ type: ThemeValues.TypeScale) -> CGFloat {
+        guard let role = role(size) else { return type.tracking(.sectionTitle) }
+        let r = LookTheme.type(role, scale: type.scale, character: type.character)
+        return r.size * r.tracking
+    }
+
+    /// Line height of the heading (for `CardLayout.tallestHomeRow`; at „standard“ use `HeroCollapse.headingLine`).
+    static func line(_ size: LookRowTitle, _ type: ThemeValues.TypeScale) -> CGFloat {
+        guard let role = role(size) else { return 0 }
+        let r = LookTheme.type(role, scale: type.scale, character: type.character)
+        return UIFont.systemFont(ofSize: r.size).lineHeight.rounded(.up)
     }
 }

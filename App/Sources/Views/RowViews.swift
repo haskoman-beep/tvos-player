@@ -254,7 +254,9 @@ struct HomeRowView: View {
                     ForEach(displayedEntries) { e in
                         let m = e.item
                         let r = routes[m.id] ?? .detail(m)
-                        listCard(r, item: m, titles: titles) { cardContent(e, kind: kind, titled: titles != nil) }
+                        listCard(r, item: m, rank: row.style == .top10 ? e.rank : nil, titles: titles) {
+                            cardContent(e, kind: kind, titled: titles != nil)
+                        }
                     }
                 }
                 // Wave F-k R1: row of these tiles for the visible-tile prefetch (order, log line).
@@ -336,11 +338,7 @@ struct HomeRowView: View {
     /// Kachelform der Reihe; „Heute neu“ im Hero-Stil zeigt Querformat-Karten (UpcomingTodayCard).
     /// Task 5.1: list rows of style poster or landscape follow the card form option (`CardLayout.tileKind`).
     private var tileKind: TileKind {
-        if row.content == .list(.upcoming), row.style == .hero { return .landscape }
-        let style = cardStyle
-        guard !style.legacy, case .list = row.content else { return PosterSize.kind(for: row.style) }
-        return CardLayout.tileKind(style: row.style, row: HomeRowKind(isContinueWatching: row.content == .list(.continueWatching)),
-                                   option: style.shape)
+        CardLayout.tileKind(of: row, home: theme.cards.home, oldCard: cardStyle.legacy)
     }
 
     /// Wave F-k / Task 5.1: the row's cards carry quality badges (posters; since 5.1 also landscape film cards).
@@ -394,6 +392,8 @@ struct HomeRowView: View {
         .modifier(CardButtonStyleModifier())
         .focused($focusedPlaceholder, equals: 0)
         .homeRowMenu(menu)
+        // Task 5.1 fix round (m1): same title room as placeholders and cards, so a failed or empty row keeps its height.
+        .padding(.bottom, titleSlot(tileKind)?.strip ?? 0)
     }
 
     /// Review M2 (S5): focus is still on a placeholder or a card of this row. Not the placeholder alone: the
@@ -495,22 +495,20 @@ struct HomeRowView: View {
     }
 
     /// Task 5.1: a film/series card with its title below (`ThemeCard`) and its VoiceOver label and value.
-    @ViewBuilder private func listCard<L: View>(_ route: Route, item m: MetaPreview, titles: CardTitleSlot?,
-                                                @ViewBuilder label: () -> L) -> some View {
-        if cardStyle.legacy {
-            card(route, label: label)
-        } else {
-            let st = model.progress.cardState(itemID: m.id)
-            let value = CardLayout.accessibilityValue(year: m.releaseInfo, fraction: st?.fraction,
-                                                      watched: st?.watched == true)
-            let link = card(route, label: label).accessibilityLabel(m.name).accessibilityValue(value)
-            if let titles {
-                ThemeCard(kind: tileKind, title: m.name, titleMode: titles.mode, focused: focusedRoute == route,
-                          width: titles.width, shift: titles.shift) { link }
-            } else {
-                link
-            }
-        }
+    /// Fix round (M1): one structure for every option value (titles, „alte Karte“), so the focusable Button keeps its
+    /// identity when an option changes while a card holds the focus; the options only change values. (Glow vs. the
+    /// look's own focus effect stays a button style switch, `CardButtonStyleModifier`: the system card style has no
+    /// value form.)
+    private func listCard<L: View>(_ route: Route, item m: MetaPreview, rank: Int?, titles: CardTitleSlot?,
+                                   @ViewBuilder label: () -> L) -> some View {
+        let st = model.progress.cardState(itemID: m.id)
+        let value = CardLayout.accessibilityValue(year: m.releaseInfo, fraction: st?.fraction,
+                                                  watched: st?.watched == true)
+        // Review m6: Top 10 cards keep their rank in the label.
+        let name = rank.map { "Platz \($0), \(m.name)" } ?? m.name
+        let link = card(route, label: label).accessibilityLabel(name).accessibilityValue(value)
+        return ThemeCard(title: m.name, titleMode: titles?.mode ?? .aus, focused: focusedRoute == route,
+                         width: titles?.width ?? 0, shift: titles?.shift ?? 0) { link }
     }
 
     private func card<L: View>(_ route: Route, @ViewBuilder label: () -> L) -> some View {
@@ -627,15 +625,14 @@ struct Strip<C: View>: View {
     /// Task 5.1: card options of the home rows (set by `HomeRowView`); legacy (Build 4 room) everywhere else.
     @Environment(\.cardStyle) private var cards
     @Environment(\.theme) private var theme
-    /// 5c5-merge: `theme.system.reduceMotion` / `LookTheme.expandsPosters(_:reduceMotion:)` on b5c-5.5.
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         // Points the box at this strip's scroll position (a plain store into the box, observed by nobody).
         let _ = anchorAction.bind($position)
         let a = model.profile.appearance
         let s = a.cardSize.scale
-        // Task 5.1: never under reduce motion (also with „alte Karte“: an accessibility rule, not a look).
-        let expand = a.expandPosters && expands && !reduceMotion
+        // Task 5.1: `CardLayout.expands` (option, never under reduce motion; also with „alte Karte“: an accessibility
+        // rule, not a look). `theme.cards.home.expandPosters` equals `a.expandPosters` (`Profile.themeLook`).
+        let expand = expands && theme.cards.expands
         let room = rowRoom(a, scale: s)
         let pad = room.pad
         let gap = room.gap
@@ -806,9 +803,9 @@ private struct LandscapePicture: View {
             }
             if titleOnPicture {
                 if item.background != nil { ImageScrim() }
-                Text(item.name).font(.headline).lineLimit(2)
+                Text(item.name).textRole(.rowTitleEmphasis).lineLimit(2)
                     .frame(maxWidth: size.width * PosterQualityBadges.leadingContentMaxFraction, alignment: .leading)
-                    .padding(.horizontal, 14).padding(.bottom, 20)
+                    .padding(.horizontal, Theme.Space.s).padding(.bottom, Theme.Space.m)
             }
         }
         .frame(width: size.width, height: size.height)

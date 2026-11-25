@@ -148,8 +148,9 @@ struct ThemeValues: Equatable {
     struct Cards: Equatable {
         var home: LookHome = LookPreset.values(.appleTV).home
         var reduceMotion = false
-        /// Expanding posters is on (`CardLayout.expands`: the option, never under reduce motion).
-        var expands: Bool { home.expandPosters && !reduceMotion }
+        /// Expanding posters is on (`CardLayout.expands`: the option, never under reduce motion). Read by `Strip`.
+        /// 5c5-merge: `LookTheme.expandsPosters(_:reduceMotion:)` (b5c-5.5) is the same rule; keep one of them.
+        var expands: Bool { CardLayout.expands(home, reduceMotion: reduceMotion) }
     }
 
     struct Motion: Equatable {
