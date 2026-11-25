@@ -794,9 +794,17 @@ final class AppModel: ObservableObject {
             // Task 3.6 (A-A-9): entries, answered and failed carry the unique label per installation (`AddonIdentity`).
             let labels = AddonIdentity.labels(profile.addons)
             let label = { (a: InstalledAddon) in labels[a.instanceID] ?? a.manifest.name }
-            let list = all.flatMap { r in playableStreams(r.streams).map { (label(r.addon), $0) } }
+            let labelled = all.map { (addon: label($0.addon), streams: $0.streams) }
+            // Build 4 follow-up S3: filter the playable entries, parse them and compute the badge values off the main
+            // thread (the home page stuttered while sources of visible tiles arrived). The main thread only merges.
+            let prepared = await Task.detached(priority: Task.currentPriority) { PreparedStreams(labelled) }.value
+            // The hop above is a suspension point: a profile switch in between drops the result like the check above.
+            guard searchStillCurrent(owner: owner, epoch: epoch) else {
+                RemoteLog.info("streams", "\(id): Profil gewechselt, Ergebnis der alten Suche verworfen")
+                return []
+            }
             // Welle C-b: Addons ohne Antwort behalten ihre alten Einträge; leer ersetzt keinen Stand.
-            return storeStreams(id: id, fresh: list, answered: Set(all.map { label($0.addon) }), failed: search.failed)
+            return storeStreams(id: id, prepared: prepared, answered: Set(all.map { label($0.addon) }), failed: search.failed)
         }
         let ticket = streamTasks.begin(id, task)
         let list = await task.value
@@ -825,6 +833,8 @@ final class AppModel: ObservableObject {
     var streamPartial: Set<String> = []
     /// Welle C-b: Abrufzeitpunkt je Addon im Stand von `streamCache[id]` (behaltene Einträge laufen nach ihm ab).
     var streamAddonFetchedAt: [String: [String: Date]] = [:]
+    /// Build 4 follow-up S3: rate-limited log line for slow stores of a search result on the main thread.
+    private var streamStoreCost = StreamStoreCost()
     /// Wave F-k R2: cache entries from the visible-tile prefetch (weak tier, evicted first) and running searches
     /// started by it that no page or focus prefetch has joined yet (`StreamCacheTierMarks`).
     private(set) var streamTiers = StreamCacheTierMarks()
@@ -1079,8 +1089,12 @@ extension AppModel {
     /// 120 s als „leer“ merken, ein vorhandener Stand bleibt unverändert. Die Pause nach „alle Addons leer“ hebt schon das
     /// Rohergebnis mit Treffern auf (Task 3.7, `noteSearchOutcome`).
     /// Rückgabe: der abgelegte Stand (leer bei leerem Ergebnis).
-    fileprivate func storeStreams(id: String, fresh: [(addon: String, stream: StreamItem)],
+    /// Build 4 follow-up S3: `prepared` was filtered and parsed off the main thread; the time spent here (merge, badge
+    /// values, notifying the tiles) is logged from 8 ms on (`StreamStoreCost`).
+    fileprivate func storeStreams(id: String, prepared: PreparedStreams,
                                   answered: Set<String>, failed: Set<String>) -> [(addon: String, stream: StreamItem)] {
+        let started = ProcessInfo.processInfo.systemUptime
+        let fresh = prepared.list
         let now = Date()
         streamEmptyUntil = streamEmptyUntil.filter { $0.value > now }
         switch StreamCacheUpdate.apply(fresh: fresh, answered: answered, failed: failed, previous: streamCache[id],
@@ -1109,7 +1123,13 @@ extension AppModel {
             streamPartial = streamPartial.filter { streamCache[$0] != nil }
             if !failed.isEmpty { streamPartial.insert(id) } else { streamPartial.remove(id) }   // Mi1
             // Wave F-k R2 (m2): best values remembered right away, even if this entry is dropped again at once.
-            QualityBadgeCache.shared.streamsStored(id: id, list: list, at: at)
+            // S3: computed off the main thread; only entries kept from the old state are parsed here.
+            QualityBadgeCache.shared.streamsStored(id: id, best: prepared.best(stored: list), at: at, model: self)
+            // TODO(S1): FrameMeter.note("Quellen abgelegt") here once the frame meter exists (controller merges S1).
+            let ended = ProcessInfo.processInfo.systemUptime
+            if let line = streamStoreCost.note(entries: list.count, seconds: ended - started, at: ended) {
+                RemoteLog.info("ruckler", line)
+            }
             return list
         }
     }

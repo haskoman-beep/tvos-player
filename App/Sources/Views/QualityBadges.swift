@@ -111,10 +111,17 @@ final class QualityBadgeCache {
     private init() {}
 
     /// Wave F-k R2 (m2): new list stored – its best values are remembered at once (the weak cache tier may drop the
-    /// list right away, the badge stays).
-    func streamsStored(id: String, list: [(addon: String, stream: StreamItem)], at: Date) {
-        cache[id] = nil
-        if let b = BestQuality.from(RankedStream.rank(list)) { remember(id, b, at: at) } else { remembered[id] = nil }
+    /// list right away, the badge stays). Build 4 follow-up S3: `best` comes computed (`PreparedStreams`, parsed off
+    /// the main thread) and is kept for the new list instead of clearing it, so the tile receiving `stored` parses
+    /// nothing on the main thread.
+    func streamsStored(id: String, best: BestQuality?, at: Date, model: AppModel) {
+        if let b = best {
+            keep(id, b, model: model)
+            remember(id, b, at: at)
+        } else {
+            cache[id] = nil
+            remembered[id] = nil
+        }
         stored.send(id)
     }
 
@@ -135,12 +142,17 @@ final class QualityBadgeCache {
         }
         if let b = cache[id] { return b }
         guard let b = BestQuality.from(RankedStream.rank(list)) else { return nil }
+        keep(id, b, model: model)
+        remember(id, b, at: model.streamCache[id]?.at ?? Date())
+        return b
+    }
+
+    /// Values for the list now in the AppModel cache; bounded like the source cache (entries of lists that left it go).
+    private func keep(_ id: String, _ b: BestQuality, model: AppModel) {
         if cache.count >= 2 * StreamPrefetcher.cacheLimit {
             cache = cache.filter { model.cachedStreams(id: $0.key) != nil }
         }
         cache[id] = b
-        remember(id, b, at: model.streamCache[id]?.at ?? Date())
-        return b
     }
 
     private func remember(_ id: String, _ b: BestQuality, at: Date) {
