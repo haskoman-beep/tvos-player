@@ -3,10 +3,11 @@ import Foundation
 /// Build 4 follow-up S1: frame pacing of the home page from display-link timestamps. `HitchDetector` only reports
 /// the main thread stopping for 250 ms; the stutter of fast focus moves lies at 30–100 ms and shows here.
 /// Rules: focus activity starts a window (`activity`); every frame interval counts, one longer than
-/// `missFactor` × the nominal frame is missed; an interval over `pauseGap` (background, a long hang the hitch
-/// watchdog logs) only resets the baseline. A window closes after `window` seconds with a report; measuring goes on
-/// with the next window only when focus moved within the last `keepAlive` seconds of the closing one. `stop()`
-/// closes a partial window. No allocation per frame (counters only).
+/// `missFactor` × the nominal frame is missed. A window closes after `window` seconds with a report; measuring goes on
+/// with the next window only when focus moved within the last `keepAlive` seconds of the closing one. An interval over
+/// `pauseGap` (background, a long hang the hitch watchdog logs) is not counted and closes the window early at its last
+/// counted frame, so the pause never stretches a line (review M1). `stop()` closes a partial window.
+/// No allocation per frame (counters only).
 public struct FramePacing: Sendable {
     /// One line of the log.
     public struct Report: Sendable, Equatable {
@@ -87,14 +88,21 @@ public struct FramePacing: Sendable {
         }
         lastFrame = timestamp
         let gap = timestamp - last
-        if gap > 0, gap <= Self.pauseGap {
+        if gap > Self.pauseGap { return closeWindow(at: timestamp) }
+        if gap > 0 {
             frames += 1
             lastCounted = timestamp
             if gap > Self.missFactor * self.nominal { missed += 1 }
             if gap > longest { longest = gap }
         }
         guard let start = windowStart, timestamp - start >= window else { return Tick(report: nil, keepRunning: true) }
-        let r = report(end: timestamp, start: start)
+        return closeWindow(at: timestamp)
+    }
+
+    /// Ends the current window at its last counted frame (no report without frames) and starts the next one at
+    /// `timestamp`, or stops when focus did not move within `keepAlive`.
+    private mutating func closeWindow(at timestamp: TimeInterval) -> Tick {
+        let r = frames > 0 ? windowStart.map { report(end: lastCounted, start: $0) } : nil
         resetWindow()
         windowStart = timestamp
         lastCounted = timestamp

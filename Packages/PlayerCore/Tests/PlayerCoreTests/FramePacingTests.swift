@@ -73,15 +73,36 @@ private func feed(_ p: inout FramePacing, from start: TimeInterval, count: Int, 
     #expect(last?.frames == 2 && last?.missed == 1 && last?.longestMs == 27)
 }
 
-@Test func framePacingIgnoresPausesLongerThanASecond() {
+@Test func framePacingPauseLongerThanASecondClosesTheWindow() {
+    // Review M1: a pause (app in the background, a hang the hitch watchdog logs) is not a frame and does not stretch
+    // the window: the window closes at its last counted frame.
     var p = FramePacing(window: 5, keepAlive: 2)
     _ = p.activity(at: 0)
     _ = p.frame(at: 0, nominal: hz60)
     _ = p.frame(at: hz60, nominal: hz60)
-    _ = p.frame(at: hz60 + 1.5, nominal: hz60)          // app in the background or a hang (hitch watchdog logs it)
-    _ = p.frame(at: hz60 * 2 + 1.5, nominal: hz60)
+    let paused = p.frame(at: hz60 + 1.5, nominal: hz60)  // focus moved 1.5 s ago: measuring goes on
+    #expect(paused == FramePacing.Tick(report: FramePacing.Report(frames: 1, missed: 0, longestMs: 16, hz: 64, tenths: 0,
+                                                                  note: nil), keepRunning: true))
+    _ = p.frame(at: hz60 * 2 + 1.5, nominal: hz60)      // new window from the frame after the pause
     let last = p.stop()
-    #expect(last?.frames == 2 && last?.missed == 0 && last?.longestMs == 16)
+    #expect(last == FramePacing.Report(frames: 1, missed: 0, longestMs: 16, hz: 64, tenths: 0, note: nil))
+}
+
+@Test func framePacingLongPauseEndsMeasuringWithoutStretchedWindow() {
+    var p = FramePacing(window: 5, keepAlive: 2)
+    _ = p.activity(at: 0)
+    _ = p.frame(at: 0, nominal: hz60)
+    let r = feed(&p, from: 0, count: 64, step: hz60)    // 1 s
+    let resumed = p.frame(at: r.end + 600, nominal: hz60)   // back after 10 min, no focus move since
+    #expect(resumed.report == FramePacing.Report(frames: 64, missed: 0, longestMs: 16, hz: 64, tenths: 10, note: nil))
+    #expect(!resumed.keepRunning && !p.isRunning)
+    let none = p.stop()
+    #expect(none == nil)
+    // A pause right after the baseline has nothing to report.
+    _ = p.activity(at: 1000)
+    _ = p.frame(at: 1000, nominal: hz60)
+    let early = p.frame(at: 1001.5, nominal: hz60)
+    #expect(early == FramePacing.Tick(report: nil, keepRunning: true))
 }
 
 @Test func framePacingStopFlushesPartialWindowAndKeepsLastNote() {
