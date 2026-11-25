@@ -87,6 +87,7 @@ final class StreamPrefetcher {
         notifyImages()
         // Wave F-o: the main player wins; the focus-video player is released completely.
         FocusVideoPlayer.shared.setMainPlayback(true)
+        FrameMeter.playbackStarted()   // S1: no frame meter under the player
     }
 
     func playerDisappeared(_ token: UUID) {
