@@ -105,12 +105,6 @@ public enum TrackPanelMetrics {
 }
 
 public enum TrackPanelLayout {
-    /// Panelhöhe: ein Drittel des Bildschirms, darunter bleibt das Video sichtbar.
-    public static func panelHeight(screenHeight: Double) -> Double {
-        guard screenHeight.isFinite, screenHeight > 0 else { return 0 }
-        return (screenHeight / 3).rounded(.down)
-    }
-
     // MARK: Spalten
 
     /// Ton-Spalte in Panel-Reihenfolge (Profil-Tonsprachen zuerst). `audioLocked`: Tonwahl bis Play gesperrt
@@ -181,13 +175,6 @@ public enum TrackPanelLayout {
         guard let old, old.column != new.column, new.column != .offset,
               let entry = columns.first(where: { $0.column == new.column })?.entryRow, entry != new.row else { return nil }
         return TrackPanelSpot(new.column, entry)
-    }
-
-    /// Wisch nach oben schließt das Panel nur, wenn der Fokus beim Wischbeginn in der obersten Zeile stand
-    /// (sonst ist es ein Schritt nach oben in der Liste). Ohne Fokus oder in einer leeren Spalte schließt er immer.
-    public static func closesOnSwipeUp(startSpot: TrackPanelSpot?, columns: [TrackPanelColumnModel]) -> Bool {
-        guard let s = startSpot, let c = columns.first(where: { $0.column == s.column }), let top = c.rows.first else { return true }
-        return top.id == s.row
     }
 
     // MARK: Info-Fußzeile

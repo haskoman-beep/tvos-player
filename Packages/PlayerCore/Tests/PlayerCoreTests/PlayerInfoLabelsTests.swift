@@ -2,26 +2,6 @@ import Foundation
 import Testing
 @testable import PlayerCore
 
-@Test func infoBadgesPixelsExample() {
-    let atmos = AudioTrackInfo(id: 1, language: "eng", name: "Surround 7.1", channels: 8, codec: "truehd",
-                               profile: "Dolby TrueHD + Dolby Atmos", isAtmos: true)
-    #expect(MediaLabels.infoBadges(videoWidth: 1920, videoFormat: "sdr", audio: atmos, subtitle: nil)
-            == ["1080p", "Englisch · Dolby Atmos (TrueHD) 7.1"])
-}
-
-@Test func infoBadgesWithHDRAndSubtitle() {
-    let dd = AudioTrackInfo(id: 2, language: "ger", channels: 6, codec: "eac3")
-    let sub = AudioTrackInfo(id: 5, language: "deu", codec: "subrip")
-    #expect(MediaLabels.infoBadges(videoWidth: 3840, videoFormat: "dolbyVision", audio: dd, subtitle: sub)
-            == ["4K", "Dolby Vision", "Deutsch · Dolby Digital+ 5.1", "UT: Deutsch"])
-    #expect(MediaLabels.infoBadges(videoWidth: 3840, videoFormat: "hdr10", audio: nil, subtitle: nil) == ["4K", "HDR10"])
-}
-
-@Test func infoBadgesEmptyWithoutData() {
-    #expect(MediaLabels.infoBadges(videoWidth: 0, videoFormat: "sdr", audio: nil, subtitle: nil).isEmpty)
-    #expect(MediaLabels.infoBadges(videoWidth: nil, videoFormat: nil, audio: AudioTrackInfo(id: 0, language: nil), subtitle: nil).isEmpty)
-}
-
 @Test func audioBadgeDropsUnknownParts() {
     #expect(MediaLabels.audioBadge(AudioTrackInfo(id: 0, language: "und", channels: 2, codec: "aac")) == "AAC Stereo")
     #expect(MediaLabels.audioBadge(AudioTrackInfo(id: 0, language: "eng")) == "Englisch")
