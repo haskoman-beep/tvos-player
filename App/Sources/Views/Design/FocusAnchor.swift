@@ -48,6 +48,9 @@ struct FocusAnchor: View {
                 .font(Theme.TextRole.rowTitleEmphasis.font)
                 .padding(.horizontal, Theme.Space.s)
         }
+        // Build 4 device test (phone page): a system button draws the root tint as focused platter and label
+        // (label invisible). The anchor is often the page's only focus target, so it gets the token button.
+        .buttonStyle(ThemeActionButtonStyle())
         .accessibilityLabel(text)
         .accessibilityHint(hint ?? (action == nil ? kind.hint : ""))
     }
