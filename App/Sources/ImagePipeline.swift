@@ -169,7 +169,8 @@ actor ImagePipeline {
     }
 
     private func clearMemory() {
-        memory.removeAllObjects()
+        // P3 review M1: a deliberate clear (playback, memory warning) is no budget pressure: not counted as released.
+        tracker.clearing { memory.removeAllObjects() }
         animated.removeAllObjects()
         lastKeys.removeAll()
         tracker.reset()
@@ -453,8 +454,17 @@ private final class CacheCostTracker: NSObject, NSCacheDelegate, @unchecked Send
     private var bytes = 0
     /// P3: releases counted for the 30 s cache line (budget pressure: e.g. 4K backdrops pushing posters out).
     private let stats: CacheStats
+    /// P3 review M1: set while `clearMemory` empties the cache (NSCache reports each object as evicted then).
+    private var isClearing = false
 
     init(stats: CacheStats) { self.stats = stats }
+
+    /// Runs `body` (removing all objects) without counting its removals as released.
+    func clearing(_ body: () -> Void) {
+        lock.lock(); isClearing = true; lock.unlock()
+        body()
+        lock.lock(); isClearing = false; lock.unlock()
+    }
 
     var total: Int { lock.lock(); defer { lock.unlock() }; return bytes }
     func add(_ c: Int) { lock.lock(); bytes += c; lock.unlock() }
@@ -463,8 +473,8 @@ private final class CacheCostTracker: NSObject, NSCacheDelegate, @unchecked Send
     func cache(_ cache: NSCache<AnyObject, AnyObject>, willEvictObject obj: Any) {
         guard let img = obj as? UIImage else { return }
         let c = ImagePipeline.cost(img)
-        lock.lock(); bytes = max(0, bytes - c); lock.unlock()
-        stats.evicted(bytes: c)
+        lock.lock(); bytes = max(0, bytes - c); let clearing = isClearing; lock.unlock()
+        if !clearing { stats.evicted(bytes: c) }
     }
 }
 
