@@ -83,3 +83,11 @@ Device test 25.11. evening (user, remote log switched on):
 - **S2 works:** all `bilder: Kachelwechsel … mit Lücke 0`; longest wait for an addon poster 3.7 s.
 - Other: `ruckler: Hauptthread hing 262 ms` once when opening a detail page (streams list, 185 sources);
   `nav: Leiste hing fest` once in Einstellungen (handled by the existing fallback).
+
+### Decisions 25.11. ~21:30 (user)
+- Row cut off → **info area collapses** (Apple TV app style): from the 2nd row on the info area at the top shrinks and
+  the list moves up so a whole row fits; at the top of the page the layout stays as now.
+- A/B „Quellen vorladen“ off: „ruckelt aber nicht mehr so doll“ → the prefetch → badges → row re-render chain is
+  part of the stutter, not all of it. Next: calm that chain (later prefetch start, batched badge updates without
+  row re-render) and measure the render side (backdrop swap, first poster uploads).
+- Profile picker: focus-aware style with accent ring (no decision needed).
