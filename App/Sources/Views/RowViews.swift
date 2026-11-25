@@ -133,6 +133,7 @@ struct HomeRowView: View {
         }
         .onChange(of: focusedRoute) { old, r in
             if r != nil { RowBodyMeter.focusMoved(onHome: focusMemory != nil) }   // S4: `fokus` field of `metric: home.rowBody`
+            if r != nil { StreamPrefetcher.shared.focusMoved() }   // P3: visible-tile prefetch waits for 1 s focus quiet
             // Wave F-p: focus left this row's tile: its rest prefetch (pages without hero) does not start.
             if r == nil, let old { StreamPrefetcher.shared.cancelRest(old) }
             // S5: the hand-over landed: restart the heading snap (home page). Focus on any other tile ends the wait.

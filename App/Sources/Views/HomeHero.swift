@@ -4,7 +4,7 @@ import PlayerCore
 
 // Startseiten-Hero (Spec §2.2, §7a.1/§7a.2): gemeinsame Hintergrund- und Info-Ebene hinter dem ScrollView.
 // Die Info zeigt die aktuelle Folie oder, solange der Fokus in den Reihen liegt, die fokussierte Kachel
-// (nach 350 ms Ruhe). Die Diashow pausiert, solange der Fokus in den Reihen liegt.
+// (nach 350 ms Ruhe; Quellen vorladen erst nach 1 s Ruhe, P3). Die Diashow pausiert, solange der Fokus in den Reihen liegt.
 
 /// Fokus der Startseite. Kacheln melden sich über `set`, die Hero-Knöpfe über `leaveRows`.
 @MainActor @Observable
@@ -20,19 +20,28 @@ final class HomeFocus {
 
     /// Kachel hat den Fokus: Diashow sofort anhalten, Hintergrund erst nach 350 ms Ruhe wechseln.
     /// Ein neuer Fokus bricht die Wartezeit ab; pro Ruhepause höchstens eine Log-Zeile.
-    /// `onRest` läuft nach derselben Ruhezeit (Quellen vorladen, Task 7), nicht bei vorzeitigem Fokuswechsel.
+    /// Build 4 follow-up 2 (P3): `onRest` (Quellen vorladen, Task 7) runs only after `FocusRest.prefetchMilliseconds`
+    /// (1 s) of rest: after the backdrop crossfade (350 ms + 0.6 s), and not for the short stops while browsing (the
+    /// device log showed stops 0.5–0.8 s apart, each starting a search). Also when the backdrop already shows this tile
+    /// (focus came back before its prefetch). A new focus or leaving the rows cancels both steps.
     func set(_ m: MetaPreview, onRest: (() -> Void)? = nil) {
         if !inRows { inRows = true }
         pending?.cancel()
         pending = nil
-        guard m.id != item?.id else { return }
+        let stop = FocusRest.stop(alreadyShown: m.id == item?.id)
+        guard stop.backdropWait != nil || onRest != nil else { return }
         pending = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(350))
+            if let wait = stop.backdropWait {
+                try? await Task.sleep(for: .milliseconds(wait))
+                guard !Task.isCancelled, let self else { return }
+                self.item = m
+                RemoteLog.info("hero", "Fokus-Hintergrund \(m.id)")
+            }
+            guard let onRest else { self?.pending = nil; return }
+            try? await Task.sleep(for: .milliseconds(stop.prefetchWait))
             guard !Task.isCancelled, let self else { return }
-            self.item = m
             self.pending = nil
-            RemoteLog.info("hero", "Fokus-Hintergrund \(m.id)")
-            onRest?()
+            onRest()
         }
     }
 
