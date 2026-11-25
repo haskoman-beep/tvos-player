@@ -215,7 +215,8 @@ struct HomeRowView: View {
                 // Wave F-k: how many tiles know their quality (source cache only), again when a prefetch lands here.
                 .task(id: displayed.map(\.id)) { noteBadges() }
                 .onReceive(QualityBadgeCache.shared.stored) { id in
-                    guard tileKind == .poster, displayed.contains(where: { model.streamCacheKey(for: $0) == id }) else { return }
+                    // S3: cheap per item (`streamCacheKeyMatches`), same answer as comparing `streamCacheKey(for:)`.
+                    guard tileKind == .poster, displayed.contains(where: { model.streamCacheKeyMatches(id, for: $0) }) else { return }
                     noteBadges()
                 }
             }

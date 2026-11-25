@@ -1147,4 +1147,10 @@ extension AppModel {
         PrefetchTarget.streamID(type: m.type, imdb: cachedIMDbID(for: m),
                                 progress: m.type == "series" ? progress.latest(forItem: m.id) : nil)
     }
+
+    /// Build 4 follow-up S3: `streamCacheKey(for: m) == id`, for every tile and row each time a list is stored. Searches
+    /// the progress only when `id` can be this tile's key (`PrefetchTarget.matches`), not once per tile on screen.
+    func streamCacheKeyMatches(_ id: String, for m: MetaPreview) -> Bool {
+        PrefetchTarget.matches(id, type: m.type, imdb: cachedIMDbID(for: m), itemID: m.id, book: progress)
+    }
 }

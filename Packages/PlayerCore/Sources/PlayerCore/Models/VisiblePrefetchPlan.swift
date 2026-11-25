@@ -354,6 +354,22 @@ public enum PrefetchTarget {
             return nil
         }
     }
+
+    /// Build 4 follow-up S3: is `id` this tile's source cache key, i.e. `streamID(type:imdb:progress:)` with the
+    /// latest progress of `itemID`? Same answer, but the progress is searched only when `id` can be that key (S1E1 of
+    /// this series or an entry of this series; `entries` is keyed by entry ID), so a stored list does not scan the
+    /// whole progress book once per tile on screen.
+    public static func matches(_ id: String, type: String, imdb: String?, itemID: String, book: ProgressBook) -> Bool {
+        switch type {
+        case "movie":
+            return imdb == id
+        case "series":
+            guard book.entries[id]?.item.id == itemID || imdb.map({ "\($0):1:1" }) == id else { return false }
+            return streamID(type: type, imdb: imdb, progress: book.latest(forItem: itemID)) == id
+        default:
+            return false
+        }
+    }
 }
 
 /// Wave F-k R1: is a tile on screen? Its frame in screen coordinates (both scroll views already applied) must lie at

@@ -57,7 +57,8 @@ struct PosterQualityBadges: View {
             StreamPrefetcher.shared.tile(item, row: prefetchRow, visible: onScreen && placement != .off, model: model)
         }
         .onReceive(QualityBadgeCache.shared.stored) { id in
-            guard placement != .off, model.streamCacheKey(for: item) == id else { return }
+            // S3: cheap test (no progress search per tile on screen), same answer as `streamCacheKey(for:) == id`.
+            guard placement != .off, model.streamCacheKeyMatches(id, for: item) else { return }
             withAnimation(.easeOut(duration: 0.2)) { best = QualityBadgeCache.shared.best(id: id, model: model) }
         }
         // Wave F-k R1: on screen (≥ half of the card inside the screen, both scroll views applied) → quiet source
