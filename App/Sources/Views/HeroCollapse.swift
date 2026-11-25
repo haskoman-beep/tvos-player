@@ -7,7 +7,7 @@ import PlayerCore
 /// placeholder, status tile) the info moves up and gets more compact (device test 1, user decision: logo about 100
 /// instead of 140, tighter gaps; meta line, ratings and overview stay), and the list top moves up so the page's
 /// tallest row fits between the list's top and its visible bottom (PlayerCore `HeroInfoCollapse`).
-/// The list frame (`HeroListFrame`) and the info (`HeroLayer`) read this one object, so both change in the same
+/// The list frame (`HeroListFrame`) and the info (`HeroLayout`) read this one object, so both change in the same
 /// animated transaction.
 /// Fix round (user decision 25.11., review M2): the collapse is a latch. It does not follow the F-A-12 rest check:
 /// leaving the rows for the tab bar, the sidebar or the button below the rows keeps it collapsed; only the hero
@@ -17,6 +17,8 @@ import PlayerCore
     fileprivate(set) var collapsed = false
     /// Logo (or title) height of the collapsed info, from the current layout.
     fileprivate(set) var compactLogo: CGFloat = HeroMetrics.compactLogoHeight
+    /// Task 5.2: list top of the collapsed state (banner and carousel end their card above it).
+    fileprivate(set) var collapsedTop: CGFloat = HeroMetrics.listTop
     /// The hero buttons (Abspielen/Details) hold the focus; set by `HomeView` from `HeroButtons`. Turning true
     /// expands the info.
     var heroButtonsFocused = false
@@ -37,7 +39,7 @@ import PlayerCore
     }
 }
 
-/// P2: frame of the hero home list. Top: expanded `HeroMetrics.listTop`, collapsed from `HeroInfoCollapse` (tallest
+/// P2: frame of the hero home list. Top: expanded `HomeTopEdge.rowsTop` (Task 5.2; full screen standard 470), collapsed from `HeroInfoCollapse` (tallest
 /// row, measured page top, room below). Bottom: the lift room of wave F-m, unchanged.
 /// The heading snap (`HeadingSnap`) works in list content coordinates (row top against the scroll offset), so it
 /// follows the new list top by itself; its first check (0.4 s) runs after the collapse animation (≤ 0.3 s).
@@ -50,6 +52,9 @@ struct HeroListFrame: ViewModifier {
     let posterStrip: CGFloat
     /// Room below the list (`listBottomRoom`).
     let bottomRoom: CGFloat
+    /// Task 5.2: hero style and info level (list tops and collapsed info per style, PlayerCore `HeroInfoMetrics`).
+    let style: LookHeroStyle
+    let level: LookHeroInfo
     @Environment(\.theme) private var theme
     /// Top of the page in the window (safe area and tab bar; device log: 157).
     @State private var pageTop: CGFloat = 0
@@ -66,6 +71,9 @@ struct HeroListFrame: ViewModifier {
             .onChange(of: layout.compactLogo, initial: true) { _, logo in
                 if collapse.compactLogo != logo { collapse.compactLogo = logo }
             }
+            .onChange(of: layout.collapsedTop, initial: true) { _, top in
+                if collapse.collapsedTop != top { collapse.collapsedTop = top }
+            }
             // Latch: focus into a row collapses, focus on the hero buttons expands; nothing else changes it.
             .onChange(of: focus.inRows) { _, inRows in
                 if inRows { apply(true, layout: layout) }
@@ -81,8 +89,13 @@ struct HeroListFrame: ViewModifier {
                                               headingSpacing: Theme.Space.s, liftScale: Theme.Focus.cardLiftScale,
                                               shadow: Theme.Focus.cardLiftShadow, minimumPadding: Theme.Space.l * cardScale)
         return HeroInfoCollapse.layout(screenHeight: Theme.Screen.bounds.height, pageTop: pageTop,
-                                       bottomRoom: bottomRoom, rowHeight: row, expandedTop: HeroMetrics.listTop,
-                                       info: HeroMetrics.compactInfo)
+                                       bottomRoom: bottomRoom, rowHeight: row, expandedTop: expandedTop,
+                                       info: HeroMetrics.infoMetrics.compactInfo(style, level: level))
+    }
+
+    /// Task 5.2: expanded list top per style and info (full screen standard: `HeroMetrics.listTop`, 470).
+    private var expandedTop: CGFloat {
+        HomeTopEdge.rowsTop(style: style, info: level, metrics: HeroMetrics.infoMetrics)
     }
 
     /// One `nav` line per change: "Info eingeklappt|ausgeklappt: Liste <top>…<bottom>, höchste Reihe <h>" (collapsed:
