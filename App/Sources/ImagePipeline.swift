@@ -630,7 +630,7 @@ struct RemoteImage: View {
             // Speichercache-Treffer (auch nach dem Freigeben beim Zurückkehren): sofort, ohne Überblendung.
             if let hit = ImagePipeline.shared.cachedImage(u, target: target, blur: blurPx) {
                 image = hit; loadedURL = s; loadedBlur = blur; shownURL = s
-                if let swapStart { PosterSwapLog.note(gapMs: swapStart == .gap ? 0 : nil, waitMs: 0) }
+                if let swapStart { PosterSwapLog.note(gapMs: swapStart == .gap ? 0 : nil, waitMs: 0, fades: false) }
                 if firstPoster { PictureArrivalLog.firstPoster.note(hit, fromMemory: true, waitMs: 0, fades: false) }
                 return
             }
@@ -647,7 +647,7 @@ struct RemoteImage: View {
             if let img {
                 shownURL = s
                 let ms = Metric.ms(started.duration(to: ContinuousClock.now))
-                if let swapStart { PosterSwapLog.note(gapMs: swapStart == .gap ? ms : nil, waitMs: ms) }
+                if let swapStart { PosterSwapLog.note(gapMs: swapStart == .gap ? ms : nil, waitMs: ms, fades: true) }
                 if firstPoster { PictureArrivalLog.firstPoster.note(img, fromMemory: false, waitMs: ms, fades: true) }
             }
             if img == nil { onFailure?(s) }
