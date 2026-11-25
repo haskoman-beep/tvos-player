@@ -8,6 +8,7 @@ struct ProfileRecoveryView: View {
     let reason: String
     let candidates: [RecoveryCandidate]
     @State private var selected: String?
+    @Environment(\.theme) private var theme
     @State private var confirmFresh = false
     /// Final review: feedback when „Erneut versuchen“ finds the same unreadable state.
     @State private var retryNote: String?
@@ -32,7 +33,7 @@ struct ProfileRecoveryView: View {
                         Button { selected = c.id } label: {
                             HStack(spacing: Theme.Space.m) {
                                 Image(systemName: selected == c.id ? "checkmark.circle.fill" : "circle")
-                                    .font(.system(size: Theme.Layout.iconSize))
+                                    .font(theme.type.glyph(.symbol))
                                 VStack(alignment: .leading, spacing: Theme.Space.xs) {
                                     Text(c.label).textRoleInRow(.rowTitle)
                                     Text(Self.detail(c)).textRoleInRow(.rowDetail)

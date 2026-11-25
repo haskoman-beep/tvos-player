@@ -9,6 +9,7 @@ struct SyncLoginView: View {
     @State private var code: DeviceCode?
     @State private var status = "Code wird geholt …"
     @State private var done = false
+    @Environment(\.theme) private var theme
 
     var name: String { service == "trakt" ? "Trakt" : "Simkl" }
     var link: String? {
@@ -17,27 +18,28 @@ struct SyncLoginView: View {
     }
 
     var body: some View {
-        VStack(spacing: 40) {
-            Text("Mit \(name) verbinden").font(.largeTitle.bold())
+        VStack(spacing: theme.space.xl) {
+            Text("Mit \(name) verbinden").textRole(.display)
             if let code, let link {
-                HStack(spacing: 80) {
+                HStack(spacing: theme.space.edge) {
                     if let img = qr(link) {
-                        Image(uiImage: img).interpolation(.none).resizable().frame(width: 360, height: 360)
-                            .padding(20).background(.white, in: RoundedRectangle(cornerRadius: 20))
+                        Image(uiImage: img).interpolation(.none).resizable()
+                            .frame(width: Theme.Layout.qrLogin, height: Theme.Layout.qrLogin)
+                            .padding(theme.space.m)
+                            .background(Theme.Palette.qrBackground,
+                                        in: RoundedRectangle(cornerRadius: theme.radius.row, style: .continuous))
+                            .accessibilityLabel("QR-Code zum Anmelden bei \(name)")
                     }
-                    VStack(alignment: .leading, spacing: 24) {
-                        Text("1. QR-Code scannen oder öffnen:").font(.title3)
-                        Text(link).font(.title3.monospaced()).foregroundStyle(.secondary)
-                        Text("2. Diesen Code eingeben:").font(.title3)
-                        Text(code.userCode).font(.system(size: 90, weight: .bold, design: .monospaced))
-                    }
+                    SyncLoginSteps(link: link, userCode: code.userCode)
                 }
             }
-            Text(status).font(.title3).foregroundStyle(done ? .green : .secondary)
+            // Font only: `textRole` would set its own colour nearer the text than this state colour.
+            Text(status).font(theme.type.font(.sectionTitle).weight(.regular))
+                .foregroundStyle(done ? Theme.Tone.ok.textColor : theme.color.secondary)
             // N6 (Welle F-c): QR-Seite ohne andere Fokusziele; „Fertig“ schließt sie (Abfrage endet mit der Seite).
             FocusAnchor()
         }
-        .padding(80)
+        .padding(theme.space.edge)
         .task { await run() }
     }
 
@@ -65,5 +67,25 @@ struct SyncLoginView: View {
             }
             if !done { status = "Code abgelaufen – bitte neu öffnen." }
         } catch { status = "\(name) nicht erreichbar: \(error)" }
+    }
+}
+
+/// The two steps next to the QR code: link and the code to type. Task 5.5: theme fonts; VoiceOver spells the code.
+private struct SyncLoginSteps: View {
+    let link: String
+    let userCode: String
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        // Today's title3 regular: the steps read as instructions, not as headings.
+        let step: Font = theme.type.font(.sectionTitle).weight(.regular)
+        VStack(alignment: .leading, spacing: theme.space.m) {
+            Text("1. QR-Code scannen oder öffnen:").font(step).foregroundStyle(theme.color.primary)
+            Text(link).font(step.monospaced()).foregroundStyle(theme.color.secondary)
+            Text("2. Diesen Code eingeben:").font(step).foregroundStyle(theme.color.primary)
+            Text(userCode).font(theme.type.glyph(.code))
+                .foregroundStyle(theme.color.primary)
+                .accessibilityLabel(userCode.map { String($0) }.joined(separator: " "))
+        }
     }
 }

@@ -17,6 +17,14 @@ struct ThemeValues: Equatable {
     var elevation: Elevation
     var focus: FocusStyle
     var motion: Motion
+    /// Task 5.5 (Q-28): the system accessibility settings the theme was made with. Views that run their own motion
+    /// (carousel, autoplay, expanding posters) or draw `Material` read this instead of the environment again.
+    var system = SystemSettings()
+
+    struct SystemSettings: Equatable {
+        var reduceMotion = false
+        var reduceTransparency = false
+    }
 
     struct Colors: Equatable {
         var base: Color
@@ -58,6 +66,14 @@ struct ThemeValues: Equatable {
             guard !isToday else { return role.font }
             let r = LookTheme.type(Self.tableRole(role), scale: scale, character: character)
             return .system(size: r.size, weight: Self.weight(r.weight))
+        }
+
+        /// Task 5.5 (D-3): fixed-size glyphs (profile letter, pairing code, list symbol), sized by `scale`
+        /// (PlayerCore `LookTheme.glyph`, tested; the preset keeps today's sizes).
+        func glyph(_ g: LookTheme.Glyph) -> Font {
+            let spec = LookTheme.glyph(g, scale: scale)
+            let design: Font.Design = spec.monospaced ? .monospaced : .default
+            return .system(size: spec.size, weight: Self.weight(spec.weight), design: design)
         }
 
         /// Tracking in points (0 for today's styles).
@@ -193,7 +209,15 @@ struct ThemeValues: Equatable {
             // Gradients and the scrim run out in the background tone, never in pure black (07 §3.1).
             t.color.scrim = rgb(bg.base).opacity(0.78)
         }
-        if reduceTransparency { t.color.scrim = t.color.base }
+        if reduceTransparency {
+            // Task 5.5 (Q-28): no see-through surfaces: the scrim covers fully, rows and badges are opaque mixes of
+            // their white share over the surface (PlayerCore `LookTheme.opaqueWhite`, tested).
+            let surface = LookTheme.opaqueSurface(values)
+            t.color.scrim = t.color.base
+            t.color.row = rgb(LookTheme.opaqueWhite(0.10, over: surface))
+            t.color.badgeFill = rgb(LookTheme.opaqueWhite(0.18, over: surface))
+        }
+        t.system = SystemSettings(reduceMotion: reduceMotion, reduceTransparency: reduceTransparency)
         t.type = TypeScale(scale: values.global.typeScale, character: values.global.typeCharacter)
         t.focus.border = LookOptionCatalog.effectiveFocusBorder(values)
         if LookTheme.usesPlanMotion(values, reduceMotion: reduceMotion) {

@@ -11,6 +11,7 @@ struct TorBoxFilesRow: View {
     @State private var playing: TorBoxPlay?
     @State private var resolving: String?
     @ObservedObject private var memory = PlayerMemory.shared
+    @Environment(\.theme) private var theme
 
     /// Liste 5 min im Speicher: Öffnen der Bibliothek fragt TorBox nicht jedes Mal.
     @MainActor enum ListCache {
@@ -29,23 +30,23 @@ struct TorBoxFilesRow: View {
 
     var body: some View {
         if let key {
-            VStack(alignment: .leading, spacing: Theme.Space.s) {
-                Text("Meine TorBox-Dateien").textRole(.sectionTitle).padding(.leading, Theme.Space.edge)
+            VStack(alignment: .leading, spacing: theme.space.s) {
+                Text("Meine TorBox-Dateien").textRole(.sectionTitle).padding(.leading, theme.space.edge)
                 if let files, !files.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
-                        LazyHStack(spacing: Theme.Space.m) {
+                        LazyHStack(spacing: theme.space.m) {
                             ForEach(files.prefix(Self.maxShown)) { f in
                                 let resume = memory.fileResume(profile: model.profile.id, key: Self.progressKey(f))
                                 Button { Task { await play(f, key: key, fromStart: false) } } label: {
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        Text(f.name).font(.headline).lineLimit(2)
-                                        Text([f.folder == f.name ? nil : f.folder, f.sizeLabel].compactMap { $0 }.joined(separator: " · "))
-                                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                    VStack(alignment: .leading, spacing: theme.space.xxs) {
+                                        Text(f.name).textRole(.rowTitleEmphasis).lineLimit(2)
+                                        Text(Self.detail(f)).textRole(.rowDetail).lineLimit(1)
                                         progressLine(f, resume: resume)
                                         if resolving == f.id { ProgressView() }
                                     }
-                                    .frame(width: 480, height: 150, alignment: .topLeading)
-                                    .padding(16)
+                                    .frame(width: Theme.Layout.fileTileWidth, height: Theme.Layout.fileTileHeight,
+                                           alignment: .topLeading)
+                                    .padding(theme.space.m)
                                 }
                                 .buttonStyle(.card)
                                 .contextMenu {
@@ -55,20 +56,21 @@ struct TorBoxFilesRow: View {
                                 }
                             }
                             Button { Task { await load(key: key, fresh: true) } } label: {
-                                VStack(spacing: 8) {
-                                    Image(systemName: "arrow.clockwise")
+                                VStack(spacing: theme.space.xs) {
+                                    Image(systemName: "arrow.clockwise").textRole(.rowTitle).accessibilityHidden(true)
                                     Text(files.count > Self.maxShown ? "Neu laden · \(files.count - Self.maxShown) weitere nicht gezeigt" : "Neu laden")
-                                        .font(.caption).multilineTextAlignment(.center)
+                                        .textRole(.rowDetail).multilineTextAlignment(.center)
                                 }
-                                .frame(width: 240, height: 150).padding(16)
+                                .frame(width: Theme.Layout.fileRefreshWidth, height: Theme.Layout.fileTileHeight)
+                                .padding(theme.space.m)
                             }
                             .buttonStyle(.card)
                         }
-                        .padding(.horizontal, Theme.Space.edge).padding(.vertical, Theme.Space.m)
+                        .padding(.horizontal, theme.space.edge).padding(.vertical, theme.space.m)
                     }
                 } else {
                     Text(files == nil ? (failed ? "TorBox nicht erreichbar." : "Lädt …") : "Keine fertigen Video-Dateien im Konto.")
-                        .quietHintStyle().frame(height: 120).padding(.leading, Theme.Space.edge)
+                        .quietHintStyle().frame(height: Theme.Layout.fileHintHeight).padding(.leading, theme.space.edge)
                 }
             }
             .task(id: key) { await load(key: key, fresh: false) }
@@ -104,18 +106,23 @@ struct TorBoxFilesRow: View {
         }
     }
 
+    /// Folder (when it differs from the name) and size, e.g. „Staffel 1 · 2,1 GB“.
+    static func detail(_ f: TorBoxFile) -> String {
+        [f.folder == f.name ? nil : f.folder, f.sizeLabel].compactMap { $0 }.joined(separator: " · ")
+    }
+
     /// „Fortsetzen ab …“ mit Balken bzw. „Gesehen“.
     @ViewBuilder private func progressLine(_ f: TorBoxFile, resume: Double?) -> some View {
         let k = Self.progressKey(f)
         if let resume {
-            HStack(spacing: 12) {
-                Text("Fortsetzen ab \(timeText(resume))").font(.caption)
+            HStack(spacing: theme.space.s) {
+                Text("Fortsetzen ab \(timeText(resume))").textRole(.rowDetail)
                 if let fr = memory.fileFraction(profile: model.profile.id, key: k) {
-                    ProgressView(value: fr).frame(width: 160)
+                    ProgressView(value: fr).frame(width: Theme.Layout.fileProgressWidth)
                 }
             }
         } else if memory.fileWatched(profile: model.profile.id, key: k) {
-            Label("Gesehen", systemImage: "checkmark").font(.caption).foregroundStyle(.secondary)
+            Label("Gesehen", systemImage: "checkmark").textRole(.rowDetail)
         }
     }
 

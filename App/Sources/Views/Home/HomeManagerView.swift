@@ -17,12 +17,13 @@ struct HomeManagerView: View {
     var openBrowser = false
     @EnvironmentObject var model: AppModel
     @State private var session: HomeRowsSession?
+    @Environment(\.theme) private var theme
 
     var body: some View {
         if let session {
             HomeManagerContent(session: session, focusRow: focusRow, openBrowser: openBrowser)
         } else {
-            Theme.Palette.surface.ignoresSafeArea()
+            theme.color.surface.ignoresSafeArea()
                 .onAppear { session = HomeRowsSession(model: model) }
         }
     }
@@ -34,6 +35,7 @@ private struct HomeManagerContent: View {
     let openBrowser: Bool
     @EnvironmentObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.theme) private var theme
 
     enum BarAction: CaseIterable, Hashable { case top, bottom, move, position, style, hide, delete }
     enum Field: Hashable { case add, row(UUID), action(UUID, BarAction), hidden(UUID) }
@@ -54,23 +56,23 @@ private struct HomeManagerContent: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                VStack(alignment: .leading, spacing: theme.space.xs) {
                     HStack(alignment: .firstTextBaseline) {
                         SettingsHeader(title: "Reihen & Collections",
                                        summary: "Reihenfolge und Stil der Startseite. Neue Reihen erscheinen unten.")
-                        Spacer(minLength: Theme.Space.m)
+                        Spacer(minLength: theme.space.m)
                         Text(summary).textRole(.rowDetail).monospacedDigit().lineLimit(1)
                     }
-                    .padding(.bottom, Theme.Space.m)
+                    .padding(.bottom, theme.space.m)
                     addLine
                     if manager.rows.isEmpty {
                         Text("Deine Startseite ist leer. Füge Reihen aus Addons, Collections oder dem Fusion-Kit hinzu.")
                             .textRole(.rowDetail)
                             .multilineTextAlignment(.leading)
-                            .padding(.vertical, Theme.Space.s)
+                            .padding(.vertical, theme.space.s)
                     }
                     ForEach(manager.rows) { row in
-                        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                        VStack(alignment: .leading, spacing: theme.space.xs) {
                             line(row)
                             if expanded == row.id && moving == nil { actionBar(row) }
                         }
@@ -80,15 +82,16 @@ private struct HomeManagerContent: View {
                     Text(moving != nil ? "▲▼ verschieben · OK ablegen · Menu: alte Stelle"
                                        : "OK auf einer Reihe zeigt die Aktionen. Neue Reihen erscheinen unten.")
                         .textRole(.rowDetail)
-                        .padding(.top, Theme.Space.m)
+                        .padding(.top, theme.space.m)
                 }
                 .frame(maxWidth: Theme.Layout.contentMaxWidth, alignment: .leading)
-                .padding(.horizontal, Theme.Space.edge)
-                .padding(.vertical, Theme.Space.edgeVertical)
+                .padding(.horizontal, theme.space.edge)
+                .padding(.vertical, theme.space.edgeVertical)
             }
             .scrollClipDisabled()
             .onChange(of: manager.rows.map(\.id)) { _, _ in
-                if let m = moving { withAnimation(.easeInOut(duration: 0.2)) { proxy.scrollTo(m, anchor: .center) } }
+                // Task 5.5: theme timing; with "reduce motion" the list jumps (no animation).
+                if let m = moving { withAnimation(theme.motion.focusAnimation) { proxy.scrollTo(m, anchor: .center) } }
             }
         }
         .settingsSurface()
@@ -167,7 +170,7 @@ private struct HomeManagerContent: View {
             if isMoving {
                 set(session.endMove())
             } else {
-                withAnimation(.easeOut(duration: Theme.Focus.duration)) { expanded = expanded == row.id ? nil : row.id }
+                withAnimation(theme.motion.focusAnimation) { expanded = expanded == row.id ? nil : row.id }
                 // Erst im nächsten Durchlauf: dann gibt es die Leiste schon (Abnahme „OK, OK“, Review I3).
                 if expanded == row.id {
                     let id = row.id
@@ -181,8 +184,8 @@ private struct HomeManagerContent: View {
         .buttonStyle(ThemeRowButtonStyle(minHeight: Theme.Layout.categoryRowMinHeight))
         .overlay {
             if isMoving {
-                RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
-                    .stroke(Color.yellow, lineWidth: 6)
+                RoundedRectangle(cornerRadius: theme.radius.row, style: .continuous)
+                    .stroke(Theme.Tone.warn.color, lineWidth: Theme.Layout.accentMarkWidth)
                     .allowsHitTesting(false)
             }
         }
@@ -202,8 +205,8 @@ private struct HomeManagerContent: View {
     /// Drei Zeilen (3 · 2 · 2 Knöpfe, Skizze §2.5), damit keine Beschriftung abgeschnitten wird (Review M10);
     /// die beiden entfernenden Aktionen stehen zusammen in der letzten Zeile.
     private func actionBar(_ row: HomeRow) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Space.xs) {
-            HStack(spacing: Theme.Space.xs) {
+        VStack(alignment: .leading, spacing: theme.space.xs) {
+            HStack(spacing: theme.space.xs) {
                 barButton(row, .top, "Ganz nach oben", "arrow.up.to.line") { set(session.moveToTop(row.id)); expanded = nil }
                 barButton(row, .bottom, "Ganz nach unten", "arrow.down.to.line") { set(session.moveToBottom(row.id)); expanded = nil }
                 barButton(row, .move, "Verschieben", "arrow.up.arrow.down") {
@@ -211,18 +214,18 @@ private struct HomeManagerContent: View {
                     if session.beginMove(row.id) { focus = .row(row.id) }
                 }
             }
-            HStack(spacing: Theme.Space.xs) {
+            HStack(spacing: theme.space.xs) {
                 barButton(row, .position, "An Position …", "number") { positionRow = row }
                 barButton(row, .style, "Stil: \(row.style.displayName)", "rectangle.grid.1x2") {
                     set(session.cycleStyle(row.id)); focus = .action(row.id, .style)
                 }
             }
-            HStack(spacing: Theme.Space.xs) {
+            HStack(spacing: theme.space.xs) {
                 barButton(row, .hide, "Ausblenden …", "eye.slash") { hideCandidate = row }
                 barButton(row, .delete, "Löschen …", "trash") { deleteCandidate = row }
             }
         }
-        .padding(.leading, Theme.Space.l)
+        .padding(.leading, theme.space.l)
         .focusSection()
         .defaultFocus($focus, .action(row.id, .top))
     }
@@ -236,7 +239,7 @@ private struct HomeManagerContent: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
         }
-        .buttonStyle(ThemeRowButtonStyle(minHeight: 64, maxWidth: .infinity))
+        .buttonStyle(ThemeRowButtonStyle(minHeight: Theme.Layout.actionBarRowHeight, maxWidth: .infinity))
         .focused($focus, equals: .action(row.id, a))
     }
 
@@ -245,7 +248,7 @@ private struct HomeManagerContent: View {
         if !hidden.isEmpty {
             SettingsSectionLabel(title: "Ausgeblendet")
             ForEach(hidden) { row in
-                SettingsRow(symbol: "eye.slash", tint: .gray, title: session.title(row),
+                SettingsRow(symbol: "eye.slash", tint: Theme.CategoryTint.home.color, title: session.title(row),
                             detail: session.info(row).detail, accessory: .value("Wieder einblenden"),
                             reserveDetailSpace: false) {
                     set(session.restore(row.id))
@@ -302,27 +305,28 @@ struct ManagedRowLine: View {
     let info: ManagedRowInfo
     var isNew = false
     var moving = false
+    @Environment(\.theme) private var theme
 
     var body: some View {
-        HStack(spacing: Theme.Space.m) {
+        HStack(spacing: theme.space.m) {
             Text("\(position)")
                 .textRoleInRow(.rowDetail)
                 .monospacedDigit()
-                .frame(width: 56, alignment: .trailing)
+                .frame(width: Theme.Layout.positionColumn, alignment: .trailing)
             IconTile(symbol: moving ? "arrow.up.arrow.down" : (info.kind == .list ? "list.bullet" : "square.grid.2x2"),
-                     color: moving ? .yellow : Theme.CategoryTint.home.color)
-            VStack(alignment: .leading, spacing: Theme.Space.xs / 2) {
+                     color: moving ? Theme.Tone.warn.color : Theme.CategoryTint.home.color)
+            VStack(alignment: .leading, spacing: theme.space.xxs) {
                 Text(title).textRoleInRow(.rowTitle).lineLimit(1)
                 Text(DesignText.metaLine([info.detail, info.origin])).textRoleInRow(.rowDetail).lineLimit(1)
             }
-            Spacer(minLength: Theme.Space.m)
+            Spacer(minLength: theme.space.m)
             if isNew {
                 ThemeBadge(kind: .status(.ok, onImage: false), text: "neu")
             }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(DesignText.accessibilityLabel(["Platz \(position)", title, info.detail, info.origin,
-                                                           isNew ? "neu" : nil]))
+                                                           isNew ? "neu" : nil, moving ? "wird verschoben" : nil]))
     }
 }
 
@@ -333,12 +337,13 @@ private struct PositionPicker: View {
     let positions: [Int]
     let done: (Int?) -> Void
     @FocusState private var focused: Int?
+    @Environment(\.theme) private var theme
 
     var body: some View {
         ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            VStack(alignment: .leading, spacing: theme.space.xs) {
                 SettingsHeader(title: "An Position …", summary: "„\(title)“ steht auf Platz \(current).")
-                    .padding(.bottom, Theme.Space.m)
+                    .padding(.bottom, theme.space.m)
                 ForEach(positions, id: \.self) { p in
                     SettingsRow(symbol: p == current ? "checkmark" : "number", tint: Theme.CategoryTint.home.color,
                                 title: "Platz \(p)", accessory: p == current ? .value("aktuell") : .none,
@@ -347,8 +352,8 @@ private struct PositionPicker: View {
                 }
             }
             .frame(maxWidth: Theme.Layout.contentMaxWidth, alignment: .leading)
-            .padding(.horizontal, Theme.Space.edge)
-            .padding(.vertical, Theme.Space.edgeVertical)
+            .padding(.horizontal, theme.space.edge)
+            .padding(.vertical, theme.space.edgeVertical)
         }
         .settingsSurface()
         .defaultFocus($focused, current)
