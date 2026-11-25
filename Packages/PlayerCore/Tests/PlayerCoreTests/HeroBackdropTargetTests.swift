@@ -42,3 +42,14 @@ import Testing
     #expect(ImageURLVariant.candidates(for: url, neededWidth: t.neededSourceWidth)
         == ["https://image.tmdb.org/t/p/original/abc.jpg", url])
 }
+
+@Test func heroBackdropKeepsTheOtherSideWholeForTallerOriginals() {
+    // P3 review 2 (M1): fill covers 1920×1080, so the cap is exact only for 16:9. Pinned as is, not changed.
+    let t = ImageTarget.heroBackdrop
+    // 4:3 original 2880×2160 → 1920 columns kept → 1920×1440.
+    #expect(t.decodeMaxPixels(imageWidth: 2880, imageHeight: 2160) == 1920)
+    // Portrait poster fallback (`background ?? poster`) 2000×3000 → 1920×2880 (≈ 21 MiB; before 2000×3000).
+    #expect(t.decodeMaxPixels(imageWidth: 2000, imageHeight: 3000) == 2880)
+    // 21:9 original 3840×1600 → 1080 rows kept → 2592×1080.
+    #expect(t.decodeMaxPixels(imageWidth: 3840, imageHeight: 1600) == 2592)
+}

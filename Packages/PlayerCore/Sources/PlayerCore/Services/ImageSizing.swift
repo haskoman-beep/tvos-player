@@ -49,10 +49,13 @@ public struct ImageTarget: Hashable, Sendable {
     public var cacheKey: String { "\(width)x\(height)\(fit ? "f" : "c")" }
 
     /// Build 4 follow-up 2, device test 1 (P3, user decision): the home hero backdrop, its slide prefetch and the
-    /// expanded card on the home page (same key, one bitmap) decode at most 1920×1080 px on every TV, not stepped.
+    /// expanded card on the home page (same key, one bitmap) decode to cover 1920×1080 px on every TV, not stepped.
     /// On a 4K TV the full-screen target decoded a 4K original at 3840×2160 (≈ 31.6 MiB per swap: missed frames sat
-    /// near backdrop swaps, and the swaps pushed posters out of the 160 MB budget). Now ≈ 7.9 MiB. The download stays
-    /// the original (no TMDB width between 1280 and original); the detail page backdrop keeps its own size.
+    /// near backdrop swaps, and the swaps pushed posters out of the 160 MB budget). A 16:9 backdrop now decodes at
+    /// 1920×1080 (≈ 7.9 MiB). Fill keeps the other side whole, so the cap is exact only for 16:9: wider originals keep
+    /// 1080 rows (21:9 → 2592×1080), taller ones keep 1920 columns (4:3 → 1920×1440; the `?? poster` fallback,
+    /// 2000×3000 → 1920×2880 ≈ 21 MiB). The download stays the original (no TMDB width between 1280 and original);
+    /// the detail page backdrop keeps its own size.
     public static let heroBackdrop = ImageTarget(width: 1920, height: 1080, fit: false)
 }
 
