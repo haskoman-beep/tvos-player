@@ -76,3 +76,7 @@ import Testing
         == "Reihe Trends nach 1,5 s: Lage unbekannt · keine Liste · Reihe ?")
 }
 
+@Test func handoverLogLine() {
+    #expect(HeadingSnap.handoverLine(title: "Neu", placeholder: 2, card: 2) == "Reihe Neu: Platzhalter 2 → Karte 2")
+    #expect(HeadingSnap.handoverLine(title: "Neu", placeholder: 0, card: nil) == "Reihe Neu: Platzhalter 0 → Statuskachel")
+}

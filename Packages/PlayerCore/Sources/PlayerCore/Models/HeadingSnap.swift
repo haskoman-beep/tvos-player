@@ -128,6 +128,11 @@ public enum HeadingSnap {
         return "Reihe \(title) nach \(seconds(ms)): \(state) · \(text(sample))"
     }
 
+    /// Focus moved from a placeholder of the loading row to the card at the same place (or to the status tile).
+    public static func handoverLine(title: String, placeholder: Int, card: Int?) -> String {
+        "Reihe \(title): Platzhalter \(placeholder) → \(card.map { "Karte \($0)" } ?? "Statuskachel")"
+    }
+
     /// "y 788/max 2460 · Reihe 850…1330 (Abstand +38) · Liste 470…1080 · Inset 24/60 · Safe 60". `y`/`max`: raw UIKit
     /// offset; Reihe: content coordinates; Abstand: row top minus list top edge; Liste: frame in the window.
     static func text(_ s: HeadingSnapSample) -> String {
