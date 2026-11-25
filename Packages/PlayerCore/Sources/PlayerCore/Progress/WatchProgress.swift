@@ -32,11 +32,31 @@ public struct ProgressBook: Codable, Sendable, Equatable {
     public static let finishedAt = 0.92
     public static let minimumSeconds = 60.0
     public var schemaVersion = 1
-    public var entries: [String: WatchProgress] = [:]
+    public var entries: [String: WatchProgress] = [:] {
+        // Build 4 follow-up S4: every change of the entries (also direct writes from outside) drops the
+        // `latest(forItem:)` index; the next lookup builds it once. `oldValue` is not used, so subscript writes stay
+        // in place (SE-0268). A box shared with a copy is never touched: that copy keeps its own, still valid index.
+        didSet {
+            if isKnownUniquelyReferenced(&latestIndex) { latestIndex.reset() } else { latestIndex = LatestIndex() }
+        }
+    }
     /// Zuletzt gespielte Quelle je Film bzw. Serie (Schlüssel: IMDb-ID ohne Staffel/Folge). Optional für alte Dateien.
     public var sources: [String: LastSource]?
+    /// Build 4 follow-up S4: item id → newest entry, built lazily from `entries`. Not stored (see `CodingKeys`) and
+    /// not part of `==`.
+    private var latestIndex = LatestIndex()
+
+    /// The stored format of Build 3: these three keys, in this order; the index stays out.
+    private enum CodingKeys: String, CodingKey { case schemaVersion, entries, sources }
 
     public init() {}
+
+    public static func == (a: ProgressBook, b: ProgressBook) -> Bool {
+        a.schemaVersion == b.schemaVersion && a.entries == b.entries && a.sources == b.sources
+    }
+
+    /// Tests: how often this book's index was built (a lookup without a change in between builds nothing).
+    var latestIndexBuilds: Int { latestIndex.builds }
 
     /// Schlüssel für `sources`: "tt123:1:2" → "tt123".
     public static func sourceKey(_ id: String) -> String { String(id.split(separator: ":").first ?? Substring(id)) }
@@ -167,8 +187,10 @@ public struct ProgressBook: Codable, Sendable, Equatable {
     }
 
     /// Neuester Eintrag einer Serie (für die Staffelauswahl auf der Detailseite).
+    /// Build 4 follow-up S4: answered from the per-item index (three calls per new card on the home page used to
+    /// filter all entries each). Same result as the former scan, ties included (see `LatestIndex.build`).
     public func latest(forItem itemID: String) -> WatchProgress? {
-        entries.values.filter { $0.item.id == itemID }.max { $0.updated < $1.updated }
+        latestIndex.latest(forItem: itemID, in: entries)
     }
 
     public func isWatched(_ id: String) -> Bool { entries[id]?.finished == true }
@@ -217,6 +239,46 @@ public struct ProgressBook: Codable, Sendable, Equatable {
                                           finished: done, nextUp: keepNextUp ? true : nil,
                                           remoteFraction: dur > 0 ? nil : r.fraction)
         }
+    }
+}
+
+/// Build 4 follow-up S4: the `latest(forItem:)` index of one `ProgressBook` value. Built on the first lookup after
+/// a change, from the entries handed in; the book resets or replaces it on every change of its entries, so a built
+/// index always belongs to the entries of the values that share it. Locked, because a book is `Sendable` and
+/// copies may be read from several threads.
+final class LatestIndex: @unchecked Sendable {
+    private let lock = NSLock()
+    private var byItem: [String: WatchProgress]?
+    private var buildCount = 0
+
+    var builds: Int {
+        lock.lock(); defer { lock.unlock() }
+        return buildCount
+    }
+
+    func reset() {
+        lock.lock(); defer { lock.unlock() }
+        byItem = nil
+    }
+
+    func latest(forItem itemID: String, in entries: [String: WatchProgress]) -> WatchProgress? {
+        lock.lock(); defer { lock.unlock() }
+        if let byItem { return byItem[itemID] }
+        let built = Self.build(entries)
+        byItem = built; buildCount += 1
+        return built[itemID]
+    }
+
+    /// The former rule in one pass: per item, the entry with the latest `updated`; on equal dates the first one in
+    /// the dictionary's iteration order stays (like `max(by:)`, which replaces only on a strictly later date).
+    static func build(_ entries: [String: WatchProgress]) -> [String: WatchProgress] {
+        var out: [String: WatchProgress] = [:]
+        out.reserveCapacity(entries.count)
+        for e in entries.values {
+            if let have = out[e.item.id], !(have.updated < e.updated) { continue }
+            out[e.item.id] = e
+        }
+        return out
     }
 }
 
