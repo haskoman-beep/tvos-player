@@ -17,6 +17,8 @@ final class HomeFocus {
     /// Task 4.1a (F-A-12): rows that hold the focus, and the rest check after the last one lost it.
     @ObservationIgnored private var focusedRows: Set<UUID> = []
     @ObservationIgnored private var outside: Task<Void, Never>?
+    /// P2 fix round: the page is covered (detail page, player, other tab); no rest check ends `inRows` meanwhile.
+    @ObservationIgnored private var suspended = false
 
     /// Kachel hat den Fokus: Diashow sofort anhalten, Hintergrund erst nach 350 ms Ruhe wechseln.
     /// Ein neuer Fokus bricht die Wartezeit ab; pro Ruhepause höchstens eine Log-Zeile.
@@ -38,15 +40,37 @@ final class HomeFocus {
 
     /// Task 4.1a (F-A-12): a row gained or lost the focus. When no row holds it for 300 ms (sidebar, top bar, the
     /// button below the rows), the show runs again and the backdrop goes back to the slide.
+    /// P2 fix round: any focus inside a row (card, placeholder, status tile, restore on return) counts as "in the
+    /// rows", so the hero info collapses there too, not only once a loaded card calls `set`.
     func row(_ id: UUID, focused: Bool) {
         if focused {
             focusedRows.insert(id)
             outside?.cancel()
             outside = nil
+            if !inRows { inRows = true }
             return
         }
         focusedRows.remove(id)
-        guard focusedRows.isEmpty, inRows, outside == nil else { return }
+        checkOutside()
+    }
+
+    /// P2 fix round: the home page was covered (`onDisappear`). Rows report losing the focus as they go; the rest
+    /// check waits for `resume`, so the page comes back as it was left (no expand behind the detail page).
+    func suspend() {
+        suspended = true
+        outside?.cancel()
+        outside = nil
+    }
+
+    /// P2 fix round: the home page is visible again; rows that still hold the focus report it on appear and
+    /// cancel the check started here.
+    func resume() {
+        suspended = false
+        checkOutside()
+    }
+
+    private func checkOutside() {
+        guard !suspended, focusedRows.isEmpty, inRows, outside == nil else { return }
         outside = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled, let self else { return }

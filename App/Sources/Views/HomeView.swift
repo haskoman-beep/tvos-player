@@ -77,12 +77,14 @@ struct HomeView: View {
         }
         .onAppear {
             rowFocus.state.covered = false
+            focus.resume()   // P2 fix round: the F-A-12 rest check runs again
             topWatch.start()
             FrameMeter.homeVisible(true)   // S1: frame meter while focus moves on this page
         }
         .onDisappear {
             VisiblePage.covered()   // F-A-1: the manager is outside the path; a late hero jump is dropped too
             rowFocus.state.covered = true
+            focus.suspend()   // P2 fix round: no expand of the hero info behind the detail page
             topWatch.stop()
             FrameMeter.homeVisible(false)
             focusTarget.drop("verworfen, Startseite verlassen")   // review I1
