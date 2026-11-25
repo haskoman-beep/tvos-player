@@ -620,9 +620,9 @@ struct Strip<C: View>: View {
         let _ = anchorAction.bind($position)
         let a = model.profile.appearance
         let s = a.cardSize.scale
-        // Task 5.1: `CardLayout.expands` (option, never under reduce motion; also with „alte Karte“: an accessibility
-        // rule, not a look). `theme.cards.home.expandPosters` equals `a.expandPosters` (`Profile.themeLook`).
-        let expand = expands && theme.cards.expands
+        // Task 5.1: `LookTheme.expandsPosters` (option, never under reduce motion; also with „alte Karte“: an
+        // accessibility rule, not a look). `theme.cards.home.expandPosters` equals `a.expandPosters` (`Profile.themeLook`).
+        let expand = expands && theme.expandsPosters
         let room = rowRoom(a, scale: s)
         let pad = room.pad
         let gap = room.gap

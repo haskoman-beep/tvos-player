@@ -15,6 +15,11 @@ struct ThemeButton: ButtonStyle {
     let role: Role
     var selected = false
 
+    /// Review: a light accent (weiß, champagner) at rest must not look like the focused (white) button, so the
+    /// resting primary is a step quieter; the focus brings full white plus lift and shadow. Also the resting face of
+    /// the up-next „Jetzt abspielen“ label (`PlayerUpNext`).
+    static let primaryRestOpacity: Double = 0.8
+
     init(_ role: Role, selected: Bool = false) {
         self.role = role
         self.selected = selected
@@ -32,14 +37,10 @@ private struct ThemeButtonBody: View {
     @Environment(\.isFocused) private var focused
     @Environment(\.theme) private var theme
 
-    /// Review: a light accent (weiß, champagner) at rest must not look like the focused (white) button, so the
-    /// resting primary is a step quieter; the focus brings full white plus lift and shadow.
-    private static let primaryRestOpacity: Double = 0.8
-
     private var fill: Color {
         if focused { return theme.color.rowFocused }
         switch role {
-        case .primary: return theme.color.accent.opacity(Self.primaryRestOpacity)
+        case .primary: return theme.color.accent.opacity(ThemeButton.primaryRestOpacity)
         case .secondary: return selected ? theme.color.badgeFill : theme.color.row
         }
     }

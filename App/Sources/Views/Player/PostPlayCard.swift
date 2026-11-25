@@ -55,15 +55,15 @@ struct PostPlayCard: View {
                     Button { onKeepWatching() } label: {
                         Label("Abspann weiterschauen", systemImage: "play.fill").frame(minWidth: 380)
                     }
+                    .buttonStyle(ThemeButton(.primary))
                     .focused($focus, equals: .keepWatching)
                     Button { RemoteLog.info("skip", "Karte nach dem Film: Zurück"); onLeave() } label: {
                         Label("Zurück", systemImage: "chevron.backward").frame(minWidth: 380)
                     }
                     .focused($focus, equals: .back)
                 }
-                // Build 4 follow-up: token buttons instead of system buttons (root tint as focused platter and label).
-                // 5.3-merge: ThemeButton(.primary) for „Abspann weiterschauen“.
-                .buttonStyle(ThemeActionButtonStyle())
+                // Task 5.3 (D-10): „Abspann weiterschauen“ is the main button, „Zurück“ secondary.
+                .buttonStyle(ThemeButton(.secondary))
             }
         }
         .padding(OverlayCardMetrics.padding)

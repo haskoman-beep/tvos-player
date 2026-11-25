@@ -21,8 +21,14 @@ extension LookTheme {
     }
 
     /// Posters expand on focus only while the system does not reduce motion (deploy check "kein Aufklappen").
+    /// Integration build 5: the one rule (Task 5.1 had the same as `CardLayout.expands`).
     public static func expandsPosters(_ v: LookValues, reduceMotion: Bool) -> Bool {
-        v.home.expandPosters && !reduceMotion
+        expandsPosters(v.home, reduceMotion: reduceMotion)
+    }
+
+    /// Same rule on the home options alone (the app's `ThemeValues.cards`).
+    public static func expandsPosters(_ home: LookHome, reduceMotion: Bool) -> Bool {
+        home.expandPosters && !reduceMotion
     }
 
     /// Glyphs with a fixed size outside the text roles.

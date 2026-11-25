@@ -121,12 +121,12 @@ private struct StillWatchingPromptView: View {
                 Text("Noch da?").textRole(.sectionTitle)
                 Text("Nächste Folge: \(ask.next.title)").textRole(.rowDetail).lineLimit(2)
                 HStack(spacing: theme.space.m) {
-                    // 5.3-merge: ThemeButton(.primary)
+                    // Task 5.3 (D-10): one main button per screen.
                     Button("Weiterschauen", action: onContinue)
-                        .buttonStyle(ThemeActionButtonStyle())
+                        .buttonStyle(ThemeButton(.primary))
                         .focused($focus, equals: .keepWatching)
                     Button("Beenden", action: onEnd)
-                        .buttonStyle(ThemeActionButtonStyle())
+                        .buttonStyle(ThemeButton(.secondary))
                         .focused($focus, equals: .end)
                 }
                 .font(theme.type.font(.rowTitleEmphasis))

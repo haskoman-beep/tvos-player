@@ -175,11 +175,11 @@ struct ThemeValues: Equatable {
     /// expanding). Read through `CardStyle.resolve` (which also honours the diagnosis switch „alte Karte“).
     struct Cards: Equatable {
         var home: LookHome = LookPreset.values(.appleTV).home
-        var reduceMotion = false
-        /// Expanding posters is on (`CardLayout.expands`: the option, never under reduce motion). Read by `Strip`.
-        /// 5c5-merge: `LookTheme.expandsPosters(_:reduceMotion:)` (b5c-5.5) is the same rule; keep one of them.
-        var expands: Bool { CardLayout.expands(home, reduceMotion: reduceMotion) }
     }
+
+    /// Expanding posters is on (`LookTheme.expandsPosters`: the option, never while the system reduces motion,
+    /// `system.reduceMotion`). Read by `Strip`.
+    var expandsPosters: Bool { LookTheme.expandsPosters(cards.home, reduceMotion: system.reduceMotion) }
 
     struct Motion: Equatable {
         var focus: Double
@@ -247,7 +247,7 @@ struct ThemeValues: Equatable {
         t.detail = values.detail
         t.chrome = LookChrome(values)
         // Task 5.1: cards and rows. Glow keeps the system card (its own radius); otherwise `corners`.
-        t.cards = Cards(home: values.home, reduceMotion: reduceMotion)
+        t.cards = Cards(home: values.home)
         t.radius.card = values.home.focusGlow ? nil : LookMetrics.cornerRadius(values.home.corners)
         if LookTheme.usesPlanMotion(values, reduceMotion: reduceMotion) {
             let m = LookTheme.motion(values.global.motion, reduceMotion: reduceMotion)

@@ -100,14 +100,6 @@ private func home(_ change: (inout LookHome) -> Void = { _ in }) -> LookHome {
     #expect(CardLayout.rowGap(.eng) == 36 && CardLayout.rowGap(.normal) == 48 && CardLayout.rowGap(.luftig) == 64)
 }
 
-@Test func expandPostersOffUnderReduceMotion() {
-    var v = LookPreset.values(.appleTV)
-    v.home.expandPosters = true
-    #expect(CardLayout.expands(v, reduceMotion: false))
-    #expect(!CardLayout.expands(v, reduceMotion: true))
-    v.home.expandPosters = false
-    #expect(!CardLayout.expands(v, reduceMotion: false))
-}
 
 @Test func cardAccessibilityValueNamesYearProgressAndWatched() {
     #expect(CardLayout.accessibilityValue(year: "2024", fraction: 0.42, watched: false) == "2024, 42 % gesehen")
@@ -223,6 +215,6 @@ private func list(_ s: CatalogSource, _ style: RowStyle) -> HomeRow { HomeRow(co
 @Test func expandsFromTheHomeOptions() {
     var h = home()
     h.expandPosters = true
-    #expect(CardLayout.expands(h, reduceMotion: false))
-    #expect(!CardLayout.expands(h, reduceMotion: true))
+    #expect(LookTheme.expandsPosters(h, reduceMotion: false))
+    #expect(!LookTheme.expandsPosters(h, reduceMotion: true))
 }

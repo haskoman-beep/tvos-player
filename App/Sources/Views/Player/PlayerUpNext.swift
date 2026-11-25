@@ -96,7 +96,7 @@ struct PlayerUpNextView: View {
 
     private var buttons: some View {
         HStack(spacing: theme.space.s) {
-            // 5.3-merge: ThemeButton(.primary) for "Jetzt abspielen" (label only: a click on the surface starts).
+            // Label only (a click on the surface starts): the resting face of ThemeButton(.primary) / (.secondary).
             UpNextButtonLabel(text: "Jetzt abspielen", symbol: "play.fill", primary: true)
             UpNextButtonLabel(text: "Abbrechen", symbol: nil, primary: false)
         }
@@ -105,7 +105,8 @@ struct PlayerUpNextView: View {
     }
 }
 
-/// A button face without focus (see `PlayerUpNextView`): primary = white with black text, otherwise `badgeFill`.
+/// A button face without focus (see `PlayerUpNextView`): primary = the resting `ThemeButton(.primary)` (accent,
+/// `onAccent` text), otherwise `badgeFill`.
 private struct UpNextButtonLabel: View {
     let text: String
     let symbol: String?
@@ -118,9 +119,9 @@ private struct UpNextButtonLabel: View {
             Text(text)
         }
         .font(theme.type.font(.rowTitleEmphasis))
-        .foregroundStyle(primary ? theme.color.primaryOnFocus : theme.color.primary)
+        .foregroundStyle(primary ? theme.color.onAccent : theme.color.primary)
         .padding(.horizontal, theme.space.m).padding(.vertical, theme.space.xs)
-        .background(primary ? theme.color.rowFocused : theme.color.badgeFill,
+        .background(primary ? theme.color.accent.opacity(ThemeButton.primaryRestOpacity) : theme.color.badgeFill,
                     in: RoundedRectangle(cornerRadius: theme.radius.row, style: .continuous))
         .lineLimit(1)
         .fixedSize()

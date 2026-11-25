@@ -80,13 +80,6 @@ public enum CardLayout {
     /// Row ↔ row gap of `rowSpacing` (36 / 48 / 64).
     public static func rowGap(_ s: LookRowSpacing) -> CGFloat { LookMetrics.rowSpacing(s).row }
 
-    /// Whether a focused poster expands: the option, never while the system reduces motion.
-    /// 5c5-merge: `LookTheme.expandsPosters(_:reduceMotion:)` (b5c-5.5) is the same rule; keep one of them.
-    public static func expands(_ v: LookValues, reduceMotion: Bool) -> Bool { expands(v.home, reduceMotion: reduceMotion) }
-
-    /// Same rule on the home options alone (the app's `ThemeValues.cards`).
-    public static func expands(_ home: LookHome, reduceMotion: Bool) -> Bool { home.expandPosters && !reduceMotion }
-
     // MARK: Whole home (review I1: hero collapse, list bands)
 
     /// Tile kind of a home row as `HomeRowView` draws it: list rows follow the card form option, collection rows and
