@@ -17,6 +17,12 @@ struct ThemeValues: Equatable {
     var elevation: Elevation
     var focus: FocusStyle
     var motion: Motion
+    /// Task 5.3: the detail page options (`detail.*`, layout, badges, ratings, cast, source list). Always the
+    /// profile's values (like the accent); `standard` carries the baseline (today's defaults).
+    var detail: LookDetail = LookPreset.baseline.detail
+
+    /// Task 5.3: `detail.badgeStyle` (ThemeBadge reads it; the player falls back `logos` → `gefuellt`).
+    var badgeStyle: LookBadgeStyle { detail.badgeStyle }
 
     struct Colors: Equatable {
         var base: Color
@@ -196,6 +202,7 @@ struct ThemeValues: Equatable {
         if reduceTransparency { t.color.scrim = t.color.base }
         t.type = TypeScale(scale: values.global.typeScale, character: values.global.typeCharacter)
         t.focus.border = LookOptionCatalog.effectiveFocusBorder(values)
+        t.detail = values.detail
         if LookTheme.usesPlanMotion(values, reduceMotion: reduceMotion) {
             let m = LookTheme.motion(values.global.motion, reduceMotion: reduceMotion)
             t.motion = Motion(focus: m.focus, press: m.focus == 0 ? 0 : t.motion.press, fade: m.fade,
