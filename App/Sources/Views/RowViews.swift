@@ -80,6 +80,11 @@ struct HomeRowView: View {
                                                                   card: target != nil ? slot : nil))
                 }
                 DispatchQueue.main.async {
+                    // Review M2: the user left the row in the meantime: no hand-over (it would pull focus and page back).
+                    guard rowHoldsFocus else {
+                        if onFocusInside != nil { RemoteLog.info("nav", HeadingSnap.handoverSkippedLine(title: title)) }
+                        return
+                    }
                     if let target { handOver(to: target) } else { focusedPlaceholder = slot }
                 }
             }
@@ -103,6 +108,11 @@ struct HomeRowView: View {
             }
             RemoteLog.info("fokus", "Collection \(title): Platzhalter \(placeholder) → \(target != nil ? "Kachel \(slot)" : "Statuskachel")")
             DispatchQueue.main.async {
+                // Review M2: as for list rows, no hand-over once the user left the row.
+                guard rowHoldsFocus else {
+                    RemoteLog.info("fokus", "Collection \(title): Übergabe entfällt, Fokus nicht mehr in der Reihe")
+                    return
+                }
                 // S5: the heading snap restarts once the tile holds the focus (the F-A-2 line above is the log).
                 if let target { handOver(to: target) } else { focusedPlaceholder = slot }
             }
@@ -291,6 +301,11 @@ struct HomeRowView: View {
         .focused($focusedPlaceholder, equals: 0)
         .homeRowMenu(menu)
     }
+
+    /// Review M2 (S5): focus is still on a placeholder or a card of this row. Not the placeholder alone: the
+    /// placeholders are another `switch` branch, so the loaded row removes them, and the focus engine may already
+    /// have moved the focus to a card of this row (placeholder nil) when the hand-over runs.
+    private var rowHoldsFocus: Bool { focusedRoute != nil || focusedPlaceholder != nil }
 
     /// S5 (Build 4 follow-up): focus goes from a placeholder to the loaded card. The home page's heading snap
     /// restarts once the card holds the focus (`onChange(of: focusedRoute)`), or right away when it already does.

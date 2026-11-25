@@ -79,4 +79,5 @@ import Testing
 @Test func handoverLogLine() {
     #expect(HeadingSnap.handoverLine(title: "Neu", placeholder: 2, card: 2) == "Reihe Neu: Platzhalter 2 → Karte 2")
     #expect(HeadingSnap.handoverLine(title: "Neu", placeholder: 0, card: nil) == "Reihe Neu: Platzhalter 0 → Statuskachel")
+    #expect(HeadingSnap.handoverSkippedLine(title: "Neu") == "Reihe Neu: Übergabe entfällt, Fokus nicht mehr in der Reihe")
 }

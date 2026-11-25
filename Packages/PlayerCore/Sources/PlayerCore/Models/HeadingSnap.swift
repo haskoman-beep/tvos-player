@@ -133,6 +133,11 @@ public enum HeadingSnap {
         "Reihe \(title): Platzhalter \(placeholder) → \(card.map { "Karte \($0)" } ?? "Statuskachel")"
     }
 
+    /// Review M2: the focus left the row before the hand-over ran, so none happens (follows `handoverLine`).
+    public static func handoverSkippedLine(title: String) -> String {
+        "Reihe \(title): Übergabe entfällt, Fokus nicht mehr in der Reihe"
+    }
+
     /// "y 788/max 2460 · Reihe 850…1330 (Abstand +38) · Liste 470…1080 · Inset 24/60 · Safe 60". `y`/`max`: raw UIKit
     /// offset; Reihe: content coordinates; Abstand: row top minus list top edge; Liste: frame in the window.
     static func text(_ s: HeadingSnapSample) -> String {
