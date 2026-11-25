@@ -453,11 +453,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
         .modifier(XRayProbeHook(engine: engine, playing: engine.isPlaying, blocked: leaving || showTracks || scrub.isActive || failureNotice != nil))   // X0: debug face probe on pause (XRayProbeHook.swift)
         .fullScreenCover(isPresented: $showTracks, onDismiss: runSideAfterClose) {
             if sideOpen, let sideExtras { sidePanel(sideExtras) }   // Wave P-b
-            else if trackStyle == .menu {
-                PlayerTrackMenu(engine: engine, profile: profile, audioLocked: restorePending, shownLock: trackLock,
-                                lock: { trackLock }, onAudioSwitch: { beginAudioSwitch($0) }, onRemember: onRemember,
-                                onCoverBottom: { coverBottom = $0 })
-            } else {
+            else {
+                // Task 5.4: one panel for Seite / Unten / Mitte (PlayerTrackPanel.swift).
                 PlayerTrackPanel(engine: engine, profile: profile, style: trackStyle, sourceURL: url, audioLocked: restorePending,
                                  shownLock: trackLock, lock: { trackLock }, onAudioSwitch: { beginAudioSwitch($0) },
                                  onRemember: onRemember, onCoverBottom: { coverBottom = $0 })

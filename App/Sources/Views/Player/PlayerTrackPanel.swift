@@ -108,15 +108,19 @@ struct TrackPicker<E: PlaybackEngine> {
     }
 }
 
-/// Welle F-h2: schmales Panel über dem laufenden Video, höchstens ein Drittel hoch; F-h3: oben oder unten angedockt.
-/// Spalten nebeneinander: Ton · Untertitel · Versatz, darunter Info als eine Fußzeile. ◀/▶ wechselt die Spalte,
-/// ▲/▼ die Zeile, Auswahl wirkt sofort (Häkchen). Menü schließt nur das Panel, die Wiedergabe läuft weiter; ebenso
-/// ein Wisch zum Rand hin aus der Randzeile (oben: nach oben aus der obersten, unten: nach unten aus der untersten).
-/// Eigene Präsentation, damit Fokus und Menü-Taste im Panel bleiben. Breiten und Zeichenbudget: `TrackPanelMetrics`.
+/// Task 5.4 (`player.trackPanel`): Ton & Untertitel over the running video in three layouts (`TrackPanelStyle`
+/// keeps the stored names and the gestures of Build 198):
+/// - Seite (`topBar`, swipe down / ▼): panel from the right, 640 wide, full height; Ton, below it Untertitel and
+///   Versatz. A swipe up from the very top closes it (`TrackPanelLayout.closesOnSwipe`).
+/// - Unten (`bottomBar`, swipe up / ▲): card 80 from the left/right and 60 from the bottom, columns
+///   Ton | Untertitel | Versatz. A swipe down from the lowest row closes it.
+/// - Mitte (`menu`, swipe up / ▲): the picture dimmed 45 %, a card 1000 wide in the centre (top 190) with the
+///   columns Ton | Untertitel (Versatz below Untertitel). Only Menu closes it.
+/// Selection works at once (checkmark). Menu closes only the panel, playback keeps running. Info as one footer line.
+/// Own presentation, so focus and the Menu key stay in the panel. Widths and character budget: `TrackPanelMetrics`.
 struct PlayerTrackPanel<E: PlaybackEngine>: View {
     @ObservedObject var engine: E
     let profile: Profile
-    /// `.topBar` oder `.bottomBar` (`.menu` zeigt `PlayerTrackMenu`).
     var style: TrackPanelStyle = .topBar
     /// Adresse der Quelle (für den Dateinamen in der Info-Zeile).
     var sourceURL: URL? = nil
@@ -130,46 +134,36 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
     var onAudioSwitch: (Int) -> Void = { _ in }
     /// Welle D-a: Nutzerwahl merken (Spur-Gedächtnis je Serie); nil = aus.
     var onRemember: ((TrackMemoryChange) -> Void)? = nil
-    /// F-h3 R1: vom unteren Bildrand bedeckte Höhe (Leiste unten), damit der Player die Untertitel darüber hebt.
+    /// F-h3 R1: vom unteren Bildrand bedeckte Höhe (Unten, Mitte), damit der Player die Untertitel darüber hebt.
     var onCoverBottom: (CGFloat) -> Void = { _ in }
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.theme) private var theme
     @FocusState private var focus: TrackPanelSpot?
     /// Nutzer hat den Fokus bewegt (dann den Startfokus nicht mehr nachziehen).
     @State private var userMoved = false
     /// Einmal je Panel (StateObject); hält keine Closures, also keinen Verweis zurück aufs Panel (R1 I1).
     @StateObject private var swipe = PanelSwipe()
 
-    private var atBottom: Bool { style == .bottomBar }
-
     private var picker: TrackPicker<E> {
         TrackPicker(engine: engine, audioLocked: audioLocked, lock: lock, onAudioSwitch: onAudioSwitch, onRemember: onRemember)
     }
 
     private var columns: [TrackPanelColumnModel] {
-        TrackPanelColumns.make(engine: engine, profile: profile, audioLocked: audioLocked, lock: shownLock)
+        let w = TrackPanelLook.widths(style)
+        return TrackPanelColumns.make(engine: engine, profile: profile, audioLocked: audioLocked, lock: shownLock,
+                                      audioWidth: w.audio, subtitleWidth: w.subtitles)
     }
 
     var body: some View {
-        GeometryReader { geo in
-            // Höhe ⅓ des ganzen Bildschirms; der Inhalt bleibt im Sicherheitsrand, nur der Grund reicht bis zur Kante.
-            let screen = geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom
-            let edgeInset = atBottom ? geo.safeAreaInsets.bottom : geo.safeAreaInsets.top
-            let height = max(0, CGFloat(TrackPanelLayout.panelHeight(screenHeight: Double(screen))) - edgeInset)
-            let r = Theme.Radius.overlayCard
-            panel
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                .frame(height: height, alignment: .top)
-                .clipped()
-                .background {
-                    ZStack { Rectangle().fill(.ultraThinMaterial); Theme.Palette.scrim }
-                        .clipShape(UnevenRoundedRectangle(topLeadingRadius: atBottom ? r : 0, bottomLeadingRadius: atBottom ? 0 : r,
-                                                          bottomTrailingRadius: atBottom ? 0 : r, topTrailingRadius: atBottom ? r : 0,
-                                                          style: .continuous))
-                        .ignoresSafeArea(edges: atBottom ? [.bottom, .horizontal] : [.top, .horizontal])
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: atBottom ? .bottom : .top)
-                .onAppear { if atBottom { onCoverBottom(height + edgeInset) } }
-                .onChange(of: height + edgeInset) { _, h in if atBottom { onCoverBottom(h) } }
+        ZStack {
+            if style == .menu {
+                Color.black.opacity(OverlayCardMetrics.dimTrackCard).ignoresSafeArea().allowsHitTesting(false)
+            }
+            switch style {
+            case .topBar: sidePanel
+            case .bottomBar: bottomCard
+            case .menu: centreCard
+            }
         }
         .environment(\.colorScheme, .dark)
         .defaultFocus($focus, TrackPanelLayout.initialSpot(columns))
@@ -178,6 +172,8 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
             // Erster Fokus beim Öffnen (old == nil) ist kein Nutzerschritt.
             guard let old, let new else { return }
             userMoved = true
+            // Task 5.4: stacked sections (Seite) and the step up from Versatz (Mitte) keep the row the focus engine chose.
+            guard !style.isStacked, old.column != .offset else { return }
             if let target = TrackPanelLayout.redirect(from: old, to: new, columns: columns) { focus = target }
         }
         .onChange(of: swipe.swipe) { _, e in
@@ -190,53 +186,126 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
             let start = TrackPanelLayout.initialSpot(columns)
             if !userMoved, focus != start { focus = start }
         }
-        .onAppear { RemoteLog.info("player", "Panel auf (\(style.title))"); swipe.start() }
+        .onAppear {
+            RemoteLog.info("player", "Panel auf (\(style.title))")
+            swipe.start()
+            onCoverBottom(TrackPanelLook.coveredBottom(style))
+        }
         .onDisappear { swipe.stop(); RemoteLog.info("player", "Panel zu") }
         .onExitCommand { dismiss() }
         .presentationBackground(.clear)
     }
 
-    private var panel: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.xs) {
-            if let l = shownLock, l != .audioSwitching { Text(l.text).font(.caption).foregroundStyle(Theme.Palette.secondary) }
-            HStack(alignment: .top, spacing: CGFloat(TrackPanelMetrics.columnSpacing)) {
-                let cols = columns
-                column(cols[0], width: TrackPanelMetrics.audioColumnWidth, empty: "Keine Tonspuren")
-                column(cols[1], width: TrackPanelMetrics.subtitleColumnWidth, empty: nil)
+    // MARK: Layouts
+
+    private var sidePanel: some View {
+        let cols = columns
+        return ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: theme.space.l) {
+                lockLine
+                section(cols[0], empty: "Keine Tonspuren")
+                section(cols[1], empty: nil)
+                section(cols[2], empty: nil)
+                if showsInfo { infoLine }
+            }
+            .padding(.horizontal, TrackPanelLook.sidePaddingH)
+            .padding(.vertical, TrackPanelLook.sidePaddingV)
+        }
+        .frame(width: TrackPanelLook.sideWidth)
+        .frame(maxHeight: .infinity)
+        .overlayCard(.flush, lifted: false)
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .ignoresSafeArea()
+    }
+
+    private var bottomCard: some View {
+        let cols = columns, w = TrackPanelLook.widths(.bottomBar)
+        return VStack(alignment: .leading, spacing: theme.space.xs) {
+            lockLine
+            HStack(alignment: .top, spacing: TrackPanelLook.columnSpacing) {
+                column(cols[0], width: w.audio, empty: "Keine Tonspuren")
+                column(cols[1], width: w.subtitles, empty: nil)
                 column(cols[2], width: TrackPanelMetrics.offsetColumnWidth, empty: nil)
             }
             .frame(maxHeight: .infinity, alignment: .top)
             // R2 N3: bei Sperrzeile oben fällt die Info-Fußzeile weg, die Liste behält ≈ 3,5 Zeilen.
-            if shownLock == nil || shownLock == .audioSwitching { infoLine }
+            if showsInfo { infoLine }
         }
-        .padding(.top, Theme.Space.s)
-        .padding(.bottom, Theme.Space.s)
+        .padding(OverlayCardMetrics.padding)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(height: TrackPanelLook.bottomHeight, alignment: .top)
+        .overlayCard()
+        .padding(.horizontal, TrackPanelLook.edgeH).padding(.bottom, TrackPanelLook.edgeBottom)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .ignoresSafeArea()
+    }
+
+    private var centreCard: some View {
+        let cols = columns, w = TrackPanelLook.widths(.menu)
+        return VStack(alignment: .leading, spacing: theme.space.xs) {
+            lockLine
+            HStack(alignment: .top, spacing: TrackPanelLook.columnSpacing) {
+                column(cols[0], width: w.audio, empty: "Keine Tonspuren")
+                VStack(alignment: .leading, spacing: theme.space.m) {
+                    column(cols[1], width: w.subtitles, empty: nil)
+                    column(cols[2], width: w.subtitles, empty: nil)
+                        .frame(height: TrackPanelLook.centreOffsetHeight, alignment: .top)
+                }
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+            if showsInfo { infoLine }
+        }
+        .padding(OverlayCardMetrics.padding)
+        .frame(width: TrackPanelLook.centreWidth, height: TrackPanelLook.centreHeight, alignment: .topLeading)
+        .overlayCard()
+        .padding(.top, TrackPanelLook.centreTop)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .ignoresSafeArea()
+    }
+
+    private var showsInfo: Bool { shownLock == nil || shownLock == .audioSwitching }
+
+    @ViewBuilder private var lockLine: some View {
+        if let l = shownLock, l != .audioSwitching { Text(l.text).textRole(.rowDetail) }
     }
 
     // MARK: Spalte
 
+    /// Column side by side (Unten, Mitte): heading, own scroll list.
     private func column(_ c: TrackPanelColumnModel, width: Double, empty: String?) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+        VStack(alignment: .leading, spacing: theme.space.xs) {
             TrackPanelHeading(title: c.title, note: c.note)
-            ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 2) {
-                    if c.rows.isEmpty, let empty {
-                        Text(empty).font(.callout).foregroundStyle(Theme.Palette.secondary)
-                    }
-                    ForEach(c.rows) { r in
-                        Button { choose(TrackPanelSpot(c.column, r.id)) } label: { TrackPanelRowLabel(row: r, mark: c.column != .offset) }
-                            .buttonStyle(TrackPanelRowLabel.style)
-                            .focused($focus, equals: TrackPanelSpot(c.column, r.id))
-                            .disabled(c.isLocked)
-                    }
-                }
-                // Platz fürs Anheben der fokussierten Zeile (TrackPanelMetrics.listInset).
-                .padding(.horizontal, Theme.Space.xs)
-                .padding(.vertical, 4)
-            }
+            ScrollView(.vertical) { rows(c, empty: empty) }
         }
         .frame(width: CGFloat(width), alignment: .leading)
         .focusSection()
+    }
+
+    /// Section of the stacked side panel: heading and rows; the panel scrolls as a whole.
+    private func section(_ c: TrackPanelColumnModel, empty: String?) -> some View {
+        VStack(alignment: .leading, spacing: theme.space.xs) {
+            TrackPanelHeading(title: c.title, note: c.note)
+            rows(c, empty: empty)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .focusSection()
+    }
+
+    private func rows(_ c: TrackPanelColumnModel, empty: String?) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if c.rows.isEmpty, let empty {
+                Text(empty).textRole(.rowDetail)
+            }
+            ForEach(c.rows) { r in
+                Button { choose(TrackPanelSpot(c.column, r.id)) } label: { TrackPanelRowLabel(row: r, mark: c.column != .offset) }
+                    .buttonStyle(TrackPanelRowLabel.style)
+                    .focused($focus, equals: TrackPanelSpot(c.column, r.id))
+                    .disabled(c.isLocked)
+            }
+        }
+        // Platz fürs Anheben der fokussierten Zeile (TrackPanelMetrics.listInset).
+        .padding(.horizontal, Theme.Space.xs)
+        .padding(.vertical, 4)
     }
 
     // MARK: Info (ohne Fokus, eine Zeile)
@@ -248,13 +317,55 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
             return s
         }()
         if let line = TrackPanelLayout.infoLine(TrackPanelLogic.infoRows(snap)) {
-            Text(line).font(.caption).foregroundStyle(Theme.Palette.secondary).lineLimit(1).truncationMode(.middle)
+            Text(line).textRole(.rowDetail).lineLimit(style.isStacked ? 3 : 1).truncationMode(.middle)
                 .padding(.leading, Theme.Space.xs)
         }
     }
 
     private func choose(_ spot: TrackPanelSpot) {
         if picker.pick(spot) == .close { dismiss() }
+    }
+}
+
+/// Task 5.4: sizes of the three track panel layouts on the 1920 × 1080 screen (configurator scene „Player“).
+enum TrackPanelLook {
+    static let sideWidth: CGFloat = 640
+    static let sidePaddingH: CGFloat = 50
+    static let sidePaddingV: CGFloat = 80
+    static let edgeH: CGFloat = 80
+    static let edgeBottom: CGFloat = 60
+    static let columnSpacing: CGFloat = 40
+    /// Card „Unten“: ⅓ of the screen plus the card padding, so the lists keep ≈ 3,5 rows as the old bar.
+    static let bottomHeight: CGFloat = 400
+    static let centreWidth: CGFloat = 1000
+    static let centreTop: CGFloat = 190
+    static let centreHeight: CGFloat = 700
+    /// Versatz under Untertitel in „Mitte“: heading plus about four rows; the rest scrolls.
+    static let centreOffsetHeight: CGFloat = 250
+
+    /// Column widths for the character budget of the rows (`TrackPanelMetrics.lineBudget`).
+    static func widths(_ style: TrackPanelStyle) -> (audio: Double, subtitles: Double) {
+        switch style {
+        case .topBar:
+            let w = Double(sideWidth - 2 * sidePaddingH)
+            return (w, w)
+        case .bottomBar:
+            // 1920 − 2 × 80 − 2 × 36 = 1688: 720 + 640 + 230 + 2 × 40 = 1670.
+            return (720, 640)
+        case .menu:
+            let w = Double(centreWidth - 2 * OverlayCardMetrics.padding - columnSpacing) / 2
+            return (w, w)
+        }
+    }
+
+    /// Height covered from the bottom screen edge (the player lifts the subtitles above it); 0 = none.
+    static func coveredBottom(_ style: TrackPanelStyle) -> CGFloat {
+        switch style {
+        case .topBar: 0
+        case .bottomBar: bottomHeight + edgeBottom
+        // The centre card ends 190 above the bottom edge: the subtitles stay where they are, below it.
+        case .menu: 0
+        }
     }
 }
 
@@ -274,145 +385,6 @@ enum TrackPanelColumns {
     }
 }
 
-/// Welle F-h3: kleines Menü unten rechts. Ebene 1: „Ton ›“, „Untertitel ›“, „Versatz ›“ mit der laufenden Wahl als
-/// zweite Zeile; Ebene 2: die Liste (dieselben Zeilen wie in der Leiste). Menü-Taste: eine Ebene zurück, dann zu.
-/// Navigation: `TrackMenuNav` (PlayerCore).
-struct PlayerTrackMenu<E: PlaybackEngine>: View {
-    @ObservedObject var engine: E
-    let profile: Profile
-    var audioLocked = false
-    var shownLock: TrackLock? = nil
-    var lock: () -> TrackLock? = { nil }
-    var onAudioSwitch: (Int) -> Void = { _ in }
-    var onRemember: ((TrackMemoryChange) -> Void)? = nil
-    /// F-h3 R1 I1: vom unteren Bildrand bedeckte Höhe (Menü samt Rand), damit der Player die Untertitel darüber hebt.
-    var onCoverBottom: (CGFloat) -> Void = { _ in }
-    @Environment(\.dismiss) private var dismiss
-    @State private var nav = TrackMenuNav()
-    @FocusState private var focus: MenuFocus?
-
-    enum MenuFocus: Hashable {
-        case entry(TrackPanelColumn)
-        case row(TrackPanelSpot)
-    }
-
-    private var picker: TrackPicker<E> {
-        TrackPicker(engine: engine, audioLocked: audioLocked, lock: lock, onAudioSwitch: onAudioSwitch, onRemember: onRemember)
-    }
-
-    private var columns: [TrackPanelColumnModel] {
-        // R1 M3: Zeichenbudget aus der echten Zeilenbreite (Menübreite minus Innenrand 2 × Space.s).
-        let w = TrackMenuMetrics.width - 2 * Double(Theme.Space.s)
-        return TrackPanelColumns.make(engine: engine, profile: profile, audioLocked: audioLocked, lock: shownLock,
-                                      audioWidth: w, subtitleWidth: w)
-    }
-
-    private var entries: [TrackMenuEntry] { TrackMenuNav.entries(columns, offset: engine.subtitleOffset) }
-
-    var body: some View {
-        GeometryReader { geo in
-            // Bedeckte Höhe vom unteren Bildrand: ganzer Schirm (samt Sicherheitsrand) minus Oberkante der Karte.
-            let screen = geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom
-            card
-                .onGeometryChange(for: CGFloat.self) { max(0, screen - $0.frame(in: .global).minY) } action: { onCoverBottom($0) }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-        }
-        .environment(\.colorScheme, .dark)
-        .defaultFocus($focus, .entry(nav.rootFocus))
-        .onAppear {
-            nav = TrackMenuNav(entries: entries)
-            RemoteLog.info("player", "Menü auf (Ton & Untertitel)")
-            refocus()
-        }
-        .onDisappear { RemoteLog.info("player", "Menü zu") }
-        .onExitCommand {
-            switch nav.back() {
-            case .toRoot: refocus()
-            case .close: dismiss()
-            }
-        }
-        .presentationBackground(.clear)
-    }
-
-    private var card: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.xs) {
-            if let l = shownLock, l != .audioSwitching { Text(l.text).font(.caption).foregroundStyle(Theme.Palette.secondary) }
-            switch nav.level {
-            case .root: rootLevel
-            case .list(let c): if let col = columns.first(where: { $0.column == c }) { listLevel(col) }
-            }
-        }
-        .padding(Theme.Space.s)
-        .frame(width: CGFloat(TrackMenuMetrics.width), alignment: .leading)
-        .background {
-            ZStack { Rectangle().fill(.ultraThinMaterial); Theme.Palette.scrim }
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.overlayCard, style: .continuous))
-        }
-    }
-
-    private var rootLevel: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            TrackPanelHeading(title: "Ton & Untertitel", note: nil)
-            ForEach(entries) { e in
-                Button { openEntry(e) } label: { TrackMenuEntryLabel(entry: e) }
-                    .buttonStyle(TrackPanelRowLabel.style)
-                    .focused($focus, equals: .entry(e.column))
-                    .disabled(e.isLocked || e.isEmpty)
-            }
-        }
-    }
-
-    private func listLevel(_ c: TrackPanelColumnModel) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Space.xs) {
-            TrackPanelHeading(title: c.title, note: c.note)
-            ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(c.rows) { r in
-                        let spot = TrackPanelSpot(c.column, r.id)
-                        Button { choose(spot) } label: { TrackPanelRowLabel(row: r, mark: c.column != .offset) }
-                            .buttonStyle(TrackPanelRowLabel.style)
-                            .focused($focus, equals: .row(spot))
-                            .disabled(c.isLocked)
-                    }
-                }
-                .padding(.horizontal, Theme.Space.xs)
-                .padding(.vertical, 4)
-            }
-            .frame(maxHeight: CGFloat(TrackMenuMetrics.maxVisibleRows) * CGFloat(TrackMenuMetrics.rowHeight))
-            .focusSection()   // R1 M2
-        }
-    }
-
-    private func openEntry(_ e: TrackMenuEntry) {
-        guard nav.open(e) else { return }
-        RemoteLog.info("player", "Menü: \(e.title)")
-        refocus()
-    }
-
-    private func choose(_ spot: TrackPanelSpot) {
-        switch picker.pick(spot) {
-        case .close: dismiss()
-        case .ignored: break
-        case .done:
-            let before = nav.level
-            nav.picked(spot.column)
-            if nav.level != before { refocus() }
-        }
-    }
-
-    /// Fokus nach einem Ebenenwechsel setzen, sobald die neue Ebene steht.
-    private func refocus() {
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(60))
-            switch nav.level {
-            case .root: focus = .entry(nav.rootFocus)
-            case .list(let c):
-                if let r = columns.first(where: { $0.column == c })?.entryRow { focus = .row(TrackPanelSpot(c, r)) }
-            }
-        }
-    }
-}
-
 /// Überschrift einer Spalte bzw. Menü-Ebene mit gedimmtem Hinweis („lädt…“).
 private struct TrackPanelHeading: View {
     let title: String
@@ -421,35 +393,11 @@ private struct TrackPanelHeading: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: Theme.Space.xs) {
             Text(title).font(.callout.weight(.semibold)).foregroundStyle(Theme.Palette.primary)
-            if let note { Text(note).font(.caption).foregroundStyle(Theme.Palette.secondary).lineLimit(1) }
+            if let note { Text(note).textRole(.rowDetail).lineLimit(1) }
         }
         .padding(.leading, Theme.Space.xs)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
-    }
-}
-
-/// Eintrag der ersten Menü-Ebene: Titel mit „›“, darunter die laufende Wahl.
-private struct TrackMenuEntryLabel: View {
-    let entry: TrackMenuEntry
-    @Environment(\.isFocused) private var focused
-    @Environment(\.isEnabled) private var enabled
-
-    var body: some View {
-        HStack(spacing: CGFloat(TrackPanelMetrics.spacing)) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline, spacing: Theme.Space.xs) {
-                    Text(entry.title).font(.callout.weight(.semibold))
-                    if let note = entry.note { Text(note).font(.caption) }
-                }
-                Text(entry.detail).font(.caption).lineLimit(1).truncationMode(.tail)
-                    .foregroundStyle(focused ? Theme.Palette.secondaryOnFocus : Theme.Palette.secondary)
-            }
-            Spacer(minLength: 0)
-            Image(systemName: "chevron.right").font(.caption.bold())
-        }
-        .foregroundStyle(focused ? Theme.Palette.primaryOnFocus : (enabled ? Theme.Palette.primary : Theme.Palette.secondary))
-        .accessibilityElement(children: .combine)
     }
 }
 
@@ -471,7 +419,7 @@ private struct TrackPanelRowLabel: View {
     var body: some View {
         HStack(spacing: CGFloat(TrackPanelMetrics.spacing)) {
             if mark {
-                Image(systemName: "checkmark").font(.caption.bold()).opacity(row.isActive ? 1 : 0)
+                Image(systemName: "checkmark").font(.callout.bold()).opacity(row.isActive ? 1 : 0)
                     .frame(width: CGFloat(TrackPanelMetrics.markWidth))
             }
             Text(row.line).font(.callout.weight(row.isActive ? .semibold : .regular)).lineLimit(1).truncationMode(.tail)
