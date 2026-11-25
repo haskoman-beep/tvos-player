@@ -27,6 +27,10 @@ struct HomeView: View {
     @State private var focusedRows: Set<UUID> = []
     /// P2 (follow-up 2): collapsing hero info while the focus is in the rows (read by `HeroListFrame` and `HeroLayout`).
     @State private var collapse = HeroCollapse()
+    @Environment(\.theme) private var theme
+    /// Integration build 5 (review b5a1 I1): diagnosis switch „alte Karte“ (Build 4 cards); the list bands and the
+    /// collapsed list top measure the rows as `HomeRowView` draws them.
+    @AppStorage(CardDiagnostics.oldCardKey) private var oldCard = false
 
     var body: some View {
         let layout = model.profile.home
@@ -191,8 +195,8 @@ struct HomeView: View {
     private func heroListFrame(_ rows: [HomeRow], look: LookHome) -> HeroListFrame {
         let a = model.profile.appearance
         let strip = a.titles.posterBadges == .bottom ? PosterQualityBadges.bandHeight : 0
-        return HeroListFrame(focus: focus, collapse: collapse, kinds: rows.map { PosterSize.kind(for: $0.style) },
-                             cardScale: a.cardSize.scale, posterStrip: strip, bottomRoom: listBottomRoom(rows),
+        return HeroListFrame(focus: focus, collapse: collapse, rows: rows, home: theme.cards.home, oldCard: oldCard,
+                             posterStrip: strip, bottomRoom: listBottomRoom(rows),
                              style: look.heroStyle, level: look.heroInfo)
     }
 
@@ -200,8 +204,13 @@ struct HomeView: View {
     private func listEdgeBand(_ rows: [HomeRow]) -> CGFloat {
         let a = model.profile.appearance
         let strip = a.titles.posterBadges == .bottom ? PosterQualityBadges.bandHeight : 0
-        let kinds = rows.map { PosterSize.kind(for: $0.style) }
+        let kinds = tileKinds(rows)
         return Theme.Focus.listEdgeBand(height: FocusHeadroom.tallest(kinds, cardScale: a.cardSize.scale, posterExtra: strip))
+    }
+
+    /// Integration build 5 (review b5a1 I1): tile kinds as the rows draw them (card form option, „alte Karte“).
+    private func tileKinds(_ rows: [HomeRow]) -> [TileKind] {
+        CardLayout.homeTileKinds(rows, home: theme.cards.home, oldCard: oldCard)
     }
 
     /// tvOS bottom safe area (the list ended there before wave F-m).
@@ -211,7 +220,7 @@ struct HomeView: View {
     private func listBottomRoom(_ rows: [HomeRow]) -> CGFloat {
         let a = model.profile.appearance
         let strip = a.titles.posterBadges == .bottom ? PosterQualityBadges.bandHeight : 0
-        let kinds = rows.map { PosterSize.kind(for: $0.style) }
+        let kinds = tileKinds(rows)
         return Theme.Focus.listBottomRoom(height: FocusHeadroom.tallest(kinds, cardScale: a.cardSize.scale, posterExtra: strip))
     }
 

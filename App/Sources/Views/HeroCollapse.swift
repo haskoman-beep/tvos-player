@@ -46,9 +46,12 @@ import PlayerCore
 struct HeroListFrame: ViewModifier {
     let focus: HomeFocus
     let collapse: HeroCollapse
-    /// Tile kinds of the rows, card size factor and quality strip below posters (as `listEdgeBand`).
-    let kinds: [TileKind]
-    let cardScale: CGFloat
+    /// Integration build 5 (review b5a1 I1): the rows with the card options (`theme.cards.home`) and „alte Karte“,
+    /// measured by `CardLayout.tallestHomeRow` (title strip, row title, lift); quality strip below posters as
+    /// `listEdgeBand`.
+    let rows: [HomeRow]
+    let home: LookHome
+    let oldCard: Bool
     let posterStrip: CGFloat
     /// Room below the list (`listBottomRoom`).
     let bottomRoom: CGFloat
@@ -84,10 +87,12 @@ struct HeroListFrame: ViewModifier {
     }
 
     private var currentLayout: HeroInfoCollapse.Layout {
-        let row = HeroInfoCollapse.tallestRow(kinds, cardScale: cardScale, posterExtra: posterStrip,
-                                              heading: HeroCollapse.headingLine(theme.type),
-                                              headingSpacing: Theme.Space.s, liftScale: Theme.Focus.cardLiftScale,
-                                              shadow: Theme.Focus.cardLiftShadow, minimumPadding: Theme.Space.l * cardScale)
+        // „alte Karte“ draws the standard heading (`HomeRowView`), so its estimate is Build 4's.
+        let size: LookRowTitle = oldCard ? .standard : home.rowTitle
+        let heading: CGFloat = size == .standard ? HeroCollapse.headingLine(theme.type) : RowHeading.line(size, theme.type)
+        let row = CardLayout.tallestHomeRow(rows, home: home, oldCard: oldCard, badgeBand: posterStrip,
+                                            heading: heading, headingSpacing: Theme.Space.s,
+                                            titleLine: CardTitleMetrics.line(theme.type))
         return HeroInfoCollapse.layout(screenHeight: Theme.Screen.bounds.height, pageTop: pageTop,
                                        bottomRoom: bottomRoom, rowHeight: row, expandedTop: expandedTop,
                                        info: HeroMetrics.infoMetrics.compactInfo(style, level: level))
