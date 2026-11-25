@@ -14,10 +14,11 @@ struct HomeRowView: View {
     var menu: HomeRowMenu? = nil
     /// Wave F-j: focus enters (true) or leaves (false) this row (home page: top edge watch, heading scroll).
     var onFocusInside: ((Bool) -> Void)? = nil
-    @State private var items: [MetaPreview] = []
-    /// Build 4 follow-up S4 (F-A-5): the cards of `items` with their `ForEach` id (`rowKey`) and rank, built once
-    /// when the items arrive instead of on every body pass. Always set together with `items`.
-    @State private var entries: [RowEntry] = []
+    /// Build 4 follow-up S4 (F-A-5): the loaded items and their cards (`ForEach` id `rowKey`, rank), built once when
+    /// the items arrive instead of on every body pass. One value (S4 review), so ids and items cannot drift apart.
+    @State private var list = RowList()
+    private var items: [MetaPreview] { list.items }
+    private var entries: [RowEntry] { list.entries }
     @State private var loaded = false
     /// Welle F-f: letzte Ladung schlug fehl (Statuskachel „erneut versuchen“).
     @State private var failed = false
@@ -68,7 +69,7 @@ struct HomeRowView: View {
             guard !Task.isCancelled else { return }   // abgebrochen (neue Ladung folgt): kein „Keine Einträge“-Flackern
             let placeholder = focusedPlaceholder
             // Task 4.1a (F-A-5): a catalog may list a title twice; one card per (type, id), the first wins.
-            items = RowItems.deduped(r.items); entries = RowItems.entries(items); failed = r.failed; loaded = true
+            list = RowList(loaded: r.items); failed = r.failed; loaded = true
             // Fokus lag auf einem Platzhalter: an dieselbe Stelle der fertigen Reihe (bzw. auf die Statuskachel).
             // Erst im nächsten Durchlauf: dann gibt es die Karten schon.
             if let placeholder {

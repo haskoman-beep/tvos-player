@@ -159,3 +159,18 @@ public struct RowEntry: Identifiable, Sendable, Equatable {
     /// Position in the row, from 1 (Top 10 rank).
     public let rank: Int
 }
+
+/// S4 review: what a home row shows, as one value: the deduplicated items and their cards, built together, so the
+/// `ForEach` ids can never drift from the items the row's other logic (focus hand-over, routes) works with.
+public struct RowList: Sendable, Equatable {
+    public private(set) var items: [MetaPreview] = []
+    public private(set) var entries: [RowEntry] = []
+
+    public init() {}
+
+    /// A loaded catalog page: one card per (type, id), the first wins (`RowItems.deduped`).
+    public init(loaded: [MetaPreview]) {
+        items = RowItems.deduped(loaded)
+        entries = RowItems.entries(items)
+    }
+}

@@ -107,3 +107,16 @@ import Testing
     #expect(Array(e.prefix(2)).map(\.item) == Array(items.prefix(2)))   // Top 10 prefix keeps ranks
     #expect(RowItems.entries([]).isEmpty)
 }
+
+// S4 review minor 3: a row's items and cards come from one value, so the ForEach ids cannot drift from the items.
+@Test func rowListBuildsItemsAndCardsTogether() {
+    let a = MetaPreview(id: "tmdb:1399", type: "movie", name: "Film")
+    let b = MetaPreview(id: "tmdb:1399", type: "series", name: "Serie")
+    let c = MetaPreview(id: "tt1", type: "movie", name: "C")
+    let list = RowList(loaded: [a, b, a, c, c])
+    #expect(list.items == RowItems.deduped([a, b, a, c, c]))
+    #expect(list.entries == RowItems.entries(list.items))
+    #expect(list.entries.map(\.item) == list.items)
+    let empty = RowList()
+    #expect(empty.items.isEmpty && empty.entries.isEmpty)
+}
