@@ -55,3 +55,19 @@ import Testing
     let line = s.take()
     #expect(line == "Kachelwechsel 1 · mit Lücke 1 · längste Lücke 0 ms · längstes Warten 0 ms")
 }
+
+@Test func posterSwapStartNeedsAnotherShownAddress() {
+    let none1 = PosterSwapStats.start(previous: nil, next: "b", pictureVisible: false)
+    let none2 = PosterSwapStats.start(previous: "a", next: "a", pictureVisible: false)
+    let none3 = PosterSwapStats.start(previous: nil, next: "b", pictureVisible: true)
+    #expect(none1 == nil)
+    #expect(none2 == nil)
+    #expect(none3 == nil)
+}
+
+@Test func posterSwapStartIsGapOnlyWithoutVisiblePicture() {
+    let covered = PosterSwapStats.start(previous: "a", next: "b", pictureVisible: true)
+    let gap = PosterSwapStats.start(previous: "a", next: "b", pictureVisible: false)
+    #expect(covered == .covered)
+    #expect(gap == .gap)
+}

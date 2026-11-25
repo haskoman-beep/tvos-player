@@ -14,6 +14,17 @@ public struct PosterSwapStats: Sendable, Equatable {
 
     public init() {}
 
+    /// How a swap began: the tile kept showing a picture (old one kept or the new one already cached) or it showed
+    /// its placeholder.
+    public enum Start: Sendable, Equatable { case covered, gap }
+
+    /// A load of `next` starts. A swap only when a picture of another address was shown before (`previous`);
+    /// `pictureVisible`: what the view would draw right now has a picture. Nil = no swap.
+    public static func start(previous: String?, next: String, pictureVisible: Bool) -> Start? {
+        guard let previous, previous != next else { return nil }
+        return pictureVisible ? .covered : .gap
+    }
+
     /// One finished swap. `gapMs`: how long the placeholder showed, nil = no gap at all (0 still counts as a gap);
     /// `waitMs`: time until the new picture was there. Returns true for the first swap of a new window (the caller
     /// then takes the line `window` seconds later).

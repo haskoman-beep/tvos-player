@@ -508,6 +508,16 @@ struct RemoteImage: View {
     /// Weichzeichner, mit dem `image` geladen wurde: nach einem Wechsel (Spoilerschutz) nie das alte Bild zeigen.
     @State private var loadedBlur: CGFloat?
     @State private var target: ImageTarget?
+    /// S2: address of the last picture this view showed (swap log: did a swap start without any picture?).
+    @State private var shownURL: String?
+
+    /// What the body draws: the picture of this address and blur, else a memory-cache hit, else (poster tiles) the
+    /// previous picture of the same blur until the new address has one.
+    private var visible: UIImage? {
+        let exact = loadedURL == url && loadedBlur == blur ? image : nil
+        let kept = keepsPreviousWhileLoading && url != nil && loadedBlur == blur ? image : nil
+        return exact ?? syncHit ?? kept
+    }
 
     private var syncHit: UIImage? {
         guard let s = url, let u = URL(string: s) else { return nil }
@@ -532,10 +542,8 @@ struct RemoteImage: View {
         // Welle F-g: eine neu angelegte Zelle (LazyHStack) hat leeren @State; ihr erster Frame nimmt das Bild synchron
         // aus dem Speichercache statt grau zu zeichnen (die .task läuft erst nach dem ersten Frame).
         // Nur ein Bild derselben Adresse und desselben Weichzeichners zeigen (kein Spoiler nach Blur-Wechsel).
-        let exact = loadedURL == url && loadedBlur == blur ? image : nil
-        // S2: a poster tile keeps its previous picture (same blur only) until the new address has one.
-        let kept = keepsPreviousWhileLoading && url != nil && loadedBlur == blur ? image : nil
-        let shown = exact ?? syncHit ?? kept
+        // S2: a poster tile keeps its previous picture (same blur only) until the new address has one (`visible`).
+        let shown = visible
         ZStack {
             if let shown {
                 Image(uiImage: shown).resizable().aspectRatio(contentMode: fit ? .fit : .fill)
@@ -565,12 +573,13 @@ struct RemoteImage: View {
             }
             guard let target = fixedTarget ?? target else { return }   // Größe noch unbekannt: nicht winzig dekodieren
             let blurPx = Int((blur * displayScale).rounded())
-            // S2: a poster tile replacing the picture it shows with one from another address (counted for the log).
-            let swap = keepsPreviousWhileLoading && image != nil && loadedURL != nil && loadedURL != s
+            // S2: a poster tile moving on from a picture of another address; a gap when it draws no picture now.
+            let swapStart = keepsPreviousWhileLoading
+                ? PosterSwapStats.start(previous: shownURL, next: s, pictureVisible: visible != nil) : nil
             // Speichercache-Treffer (auch nach dem Freigeben beim Zurückkehren): sofort, ohne Überblendung.
             if let hit = ImagePipeline.shared.cachedImage(u, target: target, blur: blurPx) {
-                image = hit; loadedURL = s; loadedBlur = blur
-                if swap { PosterSwapLog.note(gapMs: nil, waitMs: 0) }
+                image = hit; loadedURL = s; loadedBlur = blur; shownURL = s
+                if let swapStart { PosterSwapLog.note(gapMs: swapStart == .gap ? 0 : nil, waitMs: 0) }
                 return
             }
             let keep = keepsPreviousWhileLoading && loadedBlur == blur
@@ -583,9 +592,12 @@ struct RemoteImage: View {
             } else {
                 withAnimation(.easeOut(duration: 0.2)) { image = img; loadedURL = s; loadedBlur = blur }
             }
-            if swap, img != nil {
-                let ms = Metric.ms(started.duration(to: ContinuousClock.now))
-                PosterSwapLog.note(gapMs: keep ? nil : ms, waitMs: ms)
+            if img != nil {
+                shownURL = s
+                if let swapStart {
+                    let ms = Metric.ms(started.duration(to: ContinuousClock.now))
+                    PosterSwapLog.note(gapMs: swapStart == .gap ? ms : nil, waitMs: ms)
+                }
             }
             if img == nil { onFailure?(s) }
         }
@@ -594,6 +606,7 @@ struct RemoteImage: View {
             self.image = nil
             loadedURL = nil
             loadedBlur = nil
+            shownURL = nil
         }
     }
 }
