@@ -8,6 +8,8 @@ struct SystemMaintenanceRows: View {
     @EnvironmentObject var model: AppModel
     @AppStorage(MainThreadWatchdog.settingKey) private var hitchLog = true
     @AppStorage(XRayProbe.settingKey) private var xrayProbe = false
+    /// Task 5.1: Build 4 cards on the home page (one build, for telling focus problems of the new cards apart).
+    @AppStorage(CardDiagnostics.oldCardKey) private var oldCard = false
     @State private var confirmClear = false
     @State private var cleared = false
     /// Review F-a M4: RemoteLog ist kein ObservableObject; die Seite fragt den Zustand alle 2 s neu ab.
@@ -26,6 +28,10 @@ struct SystemMaintenanceRows: View {
                 SettingsToggleRow(symbol: "person.crop.rectangle", tint: tint, title: "Gesichter bei Pause prüfen (Test)",
                                   detail: "Entwicklung: Bei jeder Pause sucht das Gerät Gesichter im Standbild und schreibt Zeiten und Größen ins Ereignis-Log (xray). Nichts wird angezeigt oder gespeichert.",
                                   reserveDetailSpace: false, isOn: $xrayProbe)
+                SettingsToggleRow(symbol: "rectangle.on.rectangle", tint: tint, title: "Alte Karte (Test)",
+                                  detail: "Startseite: Karten wie in Build 4 (Form aus dem Reihenstil, System-Fokus, keine Titel darunter). Zum Vergleich bei Fokusproblemen.",
+                                  reserveDetailSpace: false, isOn: $oldCard)
+                    .onChange(of: oldCard) { _, on in RemoteLog.info("home", "Diagnose alte Karte \(on ? "an" : "aus")") }
                 SettingsLinkRow(symbol: "antenna.radiowaves.left.and.right", tint: tint, title: "Fern-Log",
                                 detail: "Ereignis-Log an ein Log-Programm im Heimnetz senden (gewählter Empfänger, mit Schlüssel). Standardmäßig aus.",
                                 value: RemoteLogPage.statusValue(logStatus)) {

@@ -41,6 +41,9 @@ struct HomeRowView: View {
     @ObservedObject private var upcomingRevision = UpcomingRevision.shared
     /// Welle F-g: Kit-Ladefehler und laufende Ladungen (Statuskachel der Kit-Collections).
     @ObservedObject private var kit = FusionKitStore.shared
+    /// Task 5.1: card and row options (`ThemeValues.cards`) and the diagnosis switch „alte Karte“.
+    @Environment(\.theme) private var theme
+    @AppStorage(CardDiagnostics.oldCardKey) private var oldCard = false
 
     /// The row's load key: a change starts a new load. Split out of `body` (CI: "unable to type-check this
     /// expression in reasonable time"); same value as before.
@@ -62,13 +65,19 @@ struct HomeRowView: View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
             if row.style != .hero {
                 // P2 fix round (review M1): one line, the collapsed hero list fits a row with a one-line heading.
-                Text(title).textRole(.sectionTitle).lineLimit(1).padding(.leading, Theme.Space.edge)
-                    .accessibilityAddTraits(.isHeader)
+                RowHeading(title: title, size: cardStyle.legacy ? .standard : cardStyle.rowTitle)
+                    .padding(.leading, Theme.Space.edge)
             }
             content
                 .focusSection()
                 .defaultFocus($focusedRoute, rememberedRoute, priority: .userInitiated)
         }
+        // Task 5.1: row ↔ row gap of `rowSpacing` on the home page (its list keeps `Theme.Space.xl` between rows;
+        // 5a-merge: better as the home list's spacing in HomeView). Below the cards' lift room, nothing visible.
+        .padding(.bottom, rowGapDelta)
+        // Task 5.1: the strip and its cards draw these options (default outside: legacy).
+        .environment(\.cardStyle, cardStyle)
+        .onChange(of: cardStyle, initial: true) { _, s in if focusMemory != nil { CardStyleLog.note(s) } }
         .task(id: loadKey) {
             guard case .list(let s) = row.content else { return }
             // Welle F-f: geteilte Ladung (AppModel+HomeRows), läuft beim Wegscrollen weiter.
@@ -239,20 +248,14 @@ struct HomeRowView: View {
                 Strip(kind: tileKind) { statusTile(phase.statusText(empty: emptyText) ?? emptyText, retry: phase == .failed) }
             case .items:
                 let routes = routeTable   // Task 3.8: once per row pass, not once per card
-                Strip(expands: row.style == .poster, kind: tileKind) {
+                let kind = tileKind
+                let titles = titleSlot(kind)
+                Strip(expands: rowExpands(kind), kind: kind) {
                     ForEach(displayedEntries) { e in
                         let m = e.item
-                        card(routes[m.id] ?? .detail(m)) {
-                            if row.content == .list(.upcoming) {
-                                UpcomingTodayCard(item: m, landscape: row.style == .landscape || row.style == .hero)
-                            } else {
-                                switch row.style {
-                                case .hero: HeroCard(item: m)
-                                case .landscape: LandscapeCard(item: m).equatable()
-                                case .top10: Top10Card(item: m, rank: e.rank).equatable()
-                                default: PosterCard(item: m).equatable()
-                                }
-                            }
+                        let r = routes[m.id] ?? .detail(m)
+                        listCard(r, item: m, rank: row.style == .top10 ? e.rank : nil, titles: titles) {
+                            cardContent(e, kind: kind, titled: titles != nil)
                         }
                     }
                 }
@@ -263,11 +266,56 @@ struct HomeRowView: View {
                 .onReceive(QualityBadgeCache.shared.stored) { ids in
                     // S3: cheap per item (`streamCacheKeyMatches`), same answer as comparing `streamCacheKey(for:)`.
                     // Log only: no state of the row changes here (P3 check), so the row body does not run again.
-                    guard tileKind == .poster, batchTouchesRow(ids) else { return }
+                    guard cardsCarryBadges, batchTouchesRow(ids) else { return }
                     noteBadges()
                 }
             }
         }
+    }
+
+    /// Task 5.1: the card of one entry. The form comes from `tileKind` (card form option), not from the row style
+    /// alone; Top 10 and hero rows keep their own cards.
+    @ViewBuilder private func cardContent(_ e: RowEntry, kind: TileKind, titled: Bool) -> some View {
+        let m = e.item
+        if row.content == .list(.upcoming) {
+            UpcomingTodayCard(item: m, landscape: kind == .landscape, titleOnPicture: !titled)
+        } else {
+            switch row.style {
+            case .hero: HeroCard(item: m)
+            case .top10: Top10Card(item: m, rank: e.rank).equatable()
+            default:
+                if kind == .landscape { LandscapeCard(item: m).equatable() } else { PosterCard(item: m).equatable() }
+            }
+        }
+    }
+
+    /// Task 5.1: the card options in effect for this row: the look on the home page (both layouts), Build 4 cards
+    /// with the diagnosis switch „alte Karte“ and on the other pages that reuse this row (library, collection, list).
+    private var cardStyle: CardStyle { CardStyle.resolve(theme, oldCard: oldCard || focusMemory == nil) }
+
+    /// Task 5.1: extra bottom room so rows stand `rowSpacing` apart (home page only, none with „alte Karte“).
+    private var rowGapDelta: CGFloat {
+        let style = cardStyle
+        guard !style.legacy, focusMemory != nil else { return 0 }
+        return CardLayout.rowGap(style.rowSpacing) - Theme.Space.xl
+    }
+
+    /// Task 5.1: geometry of this row's cards (title strip, title shift), nil when the row shows no titles below.
+    private func titleSlot(_ kind: TileKind) -> CardTitleSlot? {
+        let style = cardStyle
+        guard !style.legacy, style.titles != .aus, CardLayout.showsTitleStrip(style: row.style) else { return nil }
+        let band = kind == .poster && model.profile.appearance.titles.posterBadges == .bottom ? PosterQualityBadges.bandHeight : 0
+        let g = CardLayout.row(kind: kind, home: theme.cards.home, badgeBand: band,
+                               titleLine: CardTitleMetrics.line(theme.type))
+        guard g.titleStrip > 0 else { return nil }
+        let width: CGFloat = Theme.Tile.width(kind, model.profile.appearance.cardSize.scale)
+        return CardTitleSlot(mode: style.titles, width: width, shift: g.titleShift, strip: g.titleStrip)
+    }
+
+    /// Task 5.1: poster rows expand (Build 4: style „Poster“; now also landscape rows recut to posters).
+    private func rowExpands(_ kind: TileKind) -> Bool {
+        if cardStyle.legacy { return row.style == .poster }
+        return (row.style == .poster || row.style == .landscape) && kind == .poster
     }
 
     /// P3: one of the batched cache IDs belongs to a tile of this row.
@@ -278,7 +326,7 @@ struct HomeRowView: View {
     /// Wave F-k: log line „Plaketten: <row> n/m mit Qualität“ for poster rows (only these carry quality badges);
     /// logged only when the count changes and has rested 2 s (prefetch results arrive one by one).
     private func noteBadges() {
-        guard tileKind == .poster, !displayed.isEmpty else { return }
+        guard cardsCarryBadges, !displayed.isEmpty else { return }
         let m = model, items = displayed, name = title
         CollectionRowLog.noteLater(row: "badges|\(row.id.uuidString)") {
             let a = m.profile.appearance
@@ -288,22 +336,42 @@ struct HomeRowView: View {
     }
 
     /// Kachelform der Reihe; „Heute neu“ im Hero-Stil zeigt Querformat-Karten (UpcomingTodayCard).
+    /// Task 5.1: list rows of style poster or landscape follow the card form option (`CardLayout.tileKind`).
     private var tileKind: TileKind {
-        if row.content == .list(.upcoming), row.style == .hero { return .landscape }
-        return PosterSize.kind(for: row.style)
+        CardLayout.tileKind(of: row, home: theme.cards.home, oldCard: cardStyle.legacy)
+    }
+
+    /// Wave F-k / Task 5.1: the row's cards carry quality badges (posters; since 5.1 also landscape film cards).
+    private var cardsCarryBadges: Bool {
+        let kind = tileKind
+        if kind == .poster { return true }
+        return kind == .landscape && !cardStyle.legacy && row.content != .list(.upcoming)
+            && CardLayout.showsTitleStrip(style: row.style)
+    }
+
+    /// Row style matching the shown tile form (placeholder count).
+    private var placeholderStyle: RowStyle {
+        guard row.style == .poster || row.style == .landscape else { return row.style }
+        return tileKind == .landscape ? .landscape : .poster
     }
 
     /// Welle F-f: ladende Reihe, fokussierbare Platzhalter in Endgröße (Höhe springt beim Eintreffen nicht).
     /// Das Kontextmenü gilt auch hier (eine hängende Reihe lässt sich ausblenden oder löschen).
     private var placeholders: some View {
-        let n = PosterSize.placeholderCount(for: model.profile.appearance.cardSize, style: row.style)
-        return Strip(expands: row.style == .poster, kind: tileKind) {
+        let n = PosterSize.placeholderCount(for: model.profile.appearance.cardSize, style: placeholderStyle)
+        let kind = tileKind
+        // Task 5.1: same title room as the loaded cards, so the row does not grow when they arrive.
+        let strip = titleSlot(kind)?.strip ?? 0
+        return Strip(expands: rowExpands(kind), kind: kind) {
             ForEach(0..<n, id: \.self) { i in
-                Button {} label: { TilePlaceholder(kind: tileKind, rank: row.style == .top10 ? i + 1 : nil) }
-                    .buttonStyle(.card)
-                    .focused($focusedPlaceholder, equals: i)
-                    .homeRowMenu(menu)
-                    .accessibilityLabel("\(title), lädt")
+                VStack(spacing: 0) {
+                    Button {} label: { TilePlaceholder(kind: kind, rank: row.style == .top10 ? i + 1 : nil) }
+                        .modifier(CardButtonStyleModifier())
+                        .focused($focusedPlaceholder, equals: i)
+                        .homeRowMenu(menu)
+                        .accessibilityLabel("\(title), lädt")
+                    if strip > 0 { Color.clear.frame(height: strip).accessibilityHidden(true) }
+                }
             }
         }
     }
@@ -321,9 +389,11 @@ struct HomeRowView: View {
         } label: {
             TileStatus(kind: tileKind, text: text, symbol: canRetry ? "arrow.clockwise" : nil)
         }
-        .buttonStyle(.card)
+        .modifier(CardButtonStyleModifier())
         .focused($focusedPlaceholder, equals: 0)
         .homeRowMenu(menu)
+        // Task 5.1 fix round (m1): same title room as placeholders and cards, so a failed or empty row keeps its height.
+        .padding(.bottom, titleSlot(tileKind)?.strip ?? 0)
     }
 
     /// Review M2 (S5): focus is still on a placeholder or a card of this row. Not the placeholder alone: the
@@ -424,6 +494,23 @@ struct HomeRowView: View {
                                     season: e.season, episode: e.episode, resumeLastSource: true))
     }
 
+    /// Task 5.1: a film/series card with its title below (`ThemeCard`) and its VoiceOver label and value.
+    /// Fix round (M1): one structure for every option value (titles, „alte Karte“), so the focusable Button keeps its
+    /// identity when an option changes while a card holds the focus; the options only change values. (Glow vs. the
+    /// look's own focus effect stays a button style switch, `CardButtonStyleModifier`: the system card style has no
+    /// value form.)
+    private func listCard<L: View>(_ route: Route, item m: MetaPreview, rank: Int?, titles: CardTitleSlot?,
+                                   @ViewBuilder label: () -> L) -> some View {
+        let st = model.progress.cardState(itemID: m.id)
+        let value = CardLayout.accessibilityValue(year: m.releaseInfo, fraction: st?.fraction,
+                                                  watched: st?.watched == true)
+        // Review m6: Top 10 cards keep their rank in the label.
+        let name = rank.map { "Platz \($0), \(m.name)" } ?? m.name
+        let link = card(route, label: label).accessibilityLabel(name).accessibilityValue(value)
+        return ThemeCard(title: m.name, titleMode: titles?.mode ?? .aus, focused: focusedRoute == route,
+                         width: titles?.width ?? 0, shift: titles?.shift ?? 0) { link }
+    }
+
     private func card<L: View>(_ route: Route, @ViewBuilder label: () -> L) -> some View {
         NavigationLinkish(route: route, onActivate: onActivate, label: label())
             .focused($focusedRoute, equals: route)
@@ -503,7 +590,8 @@ struct NavigationLinkish<L: View>: View {
 
     var body: some View {
         Button { if let r = onActivate(route) { navigate(r) } } label: { label }
-            .buttonStyle(.card)
+            // Task 5.1: system card (glow, legacy and every page outside the home rows) or the look's focus effect.
+            .modifier(CardButtonStyleModifier())
     }
 }
 
@@ -534,17 +622,20 @@ struct Strip<C: View>: View {
     /// Build 4 follow-up S4: the anchor action handed to the cards. One box per strip, so every body pass puts the
     /// same value into the environment (a fresh closure per pass made every card's environment differ).
     @State private var anchorAction = CardAnchorAction()
+    /// Task 5.1: card options of the home rows (set by `HomeRowView`); legacy (Build 4 room) everywhere else.
+    @Environment(\.cardStyle) private var cards
+    @Environment(\.theme) private var theme
     var body: some View {
         // Points the box at this strip's scroll position (a plain store into the box, observed by nobody).
         let _ = anchorAction.bind($position)
         let a = model.profile.appearance
         let s = a.cardSize.scale
-        let expand = a.expandPosters && expands
-        // Wave F-k: room above and below for the system card lift + shadow (`Theme.Focus.cardRowPadding`), at least
-        // the former 32·s; the quality strip below a poster is part of the lifted card.
-        let band = kind == .poster && a.titles.posterBadges == .bottom ? PosterQualityBadges.bandHeight : 0
-        let pad = Theme.Focus.cardRowPadding(height: FocusHeadroom.tallest([kind], cardScale: s, posterExtra: band),
-                                             minimum: Theme.Space.l * s)
+        // Task 5.1: `CardLayout.expands` (option, never under reduce motion; also with „alte Karte“: an accessibility
+        // rule, not a look). `theme.cards.home.expandPosters` equals `a.expandPosters` (`Profile.themeLook`).
+        let expand = expands && theme.cards.expands
+        let room = rowRoom(a, scale: s)
+        let pad = room.pad
+        let gap = room.gap
         // Wave F-p: an expanding poster moves to the leading edge with one programmatic scroll, only when it expands
         // after its 350 ms rest. Before, `.scrollPosition(id:anchor:)` held a two-way `String?` binding that stayed on
         // the last expanded card; the row re-renders on every focus move, and the bound position competed with the
@@ -555,8 +646,6 @@ struct Strip<C: View>: View {
         // Without the anchor the focus engine would not follow the card's growth (up to 640·s wide) to the right.
         // The lifted card (×1.15) must not cover its neighbour; landscape and collection tiles were too tight (23.11.).
         // Hero rows keep their spacing (one wide card per screen).
-        let gap = kind == .hero ? Theme.Space.m * s
-            : Theme.Focus.tileSpacing(width: PosterSize.tileSize(kind, scale: s).width, minimum: Theme.Space.m * s)
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(spacing: gap) { content }
                 .scrollTargetLayout()
@@ -576,6 +665,23 @@ struct Strip<C: View>: View {
         // Ohne eigene Animation: läuft in der Transaktion des Aufklappens mit, damit nur eine Bewegung entsteht.
         .environment(\.anchorFocusedCard, anchorAction)
     }
+
+    /// Lift room above/below the cards and the card ↔ card gap. Legacy (Build 4, every non-home strip): the system
+    /// card lift (`Theme.Focus.cardRowPadding`, at least 32·s; the quality strip below a poster is part of the lifted
+    /// card) and `Theme.Focus.tileSpacing`. Task 5.1 home rows: `CardLayout.row` (the look's focus effect and
+    /// `rowSpacing`; with glow the same lift as Build 4, gap at least the look's card gap).
+    private func rowRoom(_ a: Appearance, scale s: CGFloat) -> (pad: CGFloat, gap: CGFloat) {
+        let band = kind == .poster && a.titles.posterBadges == .bottom ? PosterQualityBadges.bandHeight : 0
+        if cards.legacy {
+            let pad = Theme.Focus.cardRowPadding(height: FocusHeadroom.tallest([kind], cardScale: s, posterExtra: band),
+                                                 minimum: Theme.Space.l * s)
+            let gap: CGFloat = kind == .hero ? Theme.Space.m * s
+                : Theme.Focus.tileSpacing(width: PosterSize.tileSize(kind, scale: s).width, minimum: Theme.Space.m * s)
+            return (pad, gap)
+        }
+        let g = CardLayout.row(kind: kind, home: theme.cards.home, badgeBand: band, titleLine: 0, showsTitles: false)
+        return (g.padding, g.cardGap)
+    }
 }
 
 
@@ -587,6 +693,8 @@ struct PosterCard: View {
     @Environment(\.anchorFocusedCard) private var anchor
     /// S4 review: set on the home page only (both layouts); gates the card counter of the row metric.
     @Environment(\.homeRowFocusMemory) private var homeMemory
+    /// Task 5.1: rest and transition of the expand (Build 4: 350 ms / 0.25 s; look: 500 ms / `motion.expand`).
+    @Environment(\.cardStyle) private var cards
     /// Fokus + 350 ms Ruhe → Querformat mit Hintergrund und Logo.
     @State private var expanded = false
 
@@ -608,17 +716,18 @@ struct PosterCard: View {
         }
         .overlay { PosterQualityBadges(item: item, scale: scale) }
         .task(id: focused && expandable) {
+            let animation: Animation? = cards.expandDuration > 0 ? .easeInOut(duration: cards.expandDuration) : nil
             guard focused && expandable else {
-                if expanded { withAnimation(.easeInOut(duration: 0.25)) { expanded = false } }
+                if expanded { withAnimation(animation) { expanded = false } }
                 return
             }
             // Schnelles Durchscrollen bricht hier ab: kein Aufklappen, keine Bildanforderung.
-            try? await Task.sleep(for: .milliseconds(350))
+            try? await Task.sleep(for: .milliseconds(Int((cards.expandRest * 1000).rounded())))
             guard !Task.isCancelled else { return }
             // Verankern nur zusammen mit dem Aufklappen: schnelles Durchscrollen löst kein Programm-Scrollen aus.
             // Task 4.1a (C1): the anchor id must equal the row's `ForEach` id (`rowKey`, type|id since F-A-5).
             FrameMeter.event(.expand)   // P3: counted in the next `ruckler` line
-            withAnimation(.easeInOut(duration: 0.25)) { expanded = true; anchor(item.rowKey) }
+            withAnimation(animation) { expanded = true; anchor(item.rowKey) }
         }
     }
 }
@@ -636,7 +745,7 @@ private struct ExpandedPoster: View {
                 // P3 device test 1: the hero's 1920×1080 target (`ImageTarget.heroBackdrop`), so it stays one bitmap.
                 RemoteImage(url: item.background ?? item.poster, fixedTarget: heroShared ? .heroBackdrop : nil)
                     .frame(width: g.size.width, height: g.size.height).clipped()
-                LinearGradient(colors: [.black.opacity(0.75), .clear], startPoint: .bottom, endPoint: .center)
+                ImageScrim()   // Task 5.1 (D-8): one scrim under text on pictures
                 Group {
                     // Breite begrenzt (rechts bleibt Platz für Bild und Plaketten oben rechts).
                     let maxW = g.size.width * PosterQualityBadges.leadingContentMaxFraction
@@ -657,14 +766,49 @@ private struct ExpandedPoster: View {
 struct LandscapeCard: View {
     let item: MetaPreview
     @Environment(\.cardScale) private var scale
+    /// Task 5.1: the look's cards (title below instead of on the picture, quality badges, scene picture or poster).
+    @Environment(\.cardStyle) private var cards
     var body: some View {
         let size = Theme.Tile.size(.landscape, scale)
-        RemoteImage(url: item.background ?? item.poster, maxPixels: 900)
-            .frame(width: size.width, height: size.height).clipped()
-            .overlay(alignment: .bottomLeading) {
-                Text(item.name).font(.headline).shadow(radius: 6).padding(.horizontal, 14).padding(.bottom, 24)
+        if cards.legacy {
+            RemoteImage(url: item.background ?? item.poster, maxPixels: 900)
+                .frame(width: size.width, height: size.height).clipped()
+                .overlay(alignment: .bottomLeading) {
+                    Text(item.name).font(.headline).shadow(radius: 6).padding(.horizontal, 14).padding(.bottom, 24)
+                }
+                .overlay { CardStateOverlay(itemID: item.id) }
+        } else {
+            LandscapePicture(item: item, size: size, titleOnPicture: cards.titles == .aus)
+                .overlay { CardStateOverlay(itemID: item.id) }
+                .overlay { PosterQualityBadges(item: item, scale: scale, landscape: true) }
+        }
+    }
+}
+
+/// Task 5.1 (D-6): picture of a landscape card: the scene picture; without one the poster, cut to the card under a
+/// scrim (the „querformat“ default recuts every poster row, and many catalogs carry no background).
+/// With `cardTitles` „aus“ the title sits on the picture over `ImageScrim`.
+private struct LandscapePicture: View {
+    let item: MetaPreview
+    let size: CGSize
+    let titleOnPicture: Bool
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            if let bg = item.background {
+                RemoteImage(url: bg, maxPixels: 900).frame(width: size.width, height: size.height).clipped()
+            } else {
+                TilePosterImage(item: item, showsTitle: false).frame(width: size.width, height: size.height).clipped()
+                ImageScrim()
             }
-            .overlay { CardStateOverlay(itemID: item.id) }
+            if titleOnPicture {
+                if item.background != nil { ImageScrim() }
+                Text(item.name).textRole(.rowTitleEmphasis).lineLimit(2)
+                    .frame(maxWidth: size.width * PosterQualityBadges.leadingContentMaxFraction, alignment: .leading)
+                    .padding(.horizontal, Theme.Space.s).padding(.bottom, Theme.Space.m)
+            }
+        }
+        .frame(width: size.width, height: size.height)
     }
 }
 
@@ -829,27 +973,14 @@ struct CardStateOverlay: View {
     var body: some View {
         if let st = model.progress.cardState(itemID: itemID) {
             ZStack {
-                if st.watched {
-                    Image(systemName: "checkmark.circle.fill").font(.title3)
-                        .symbolRenderingMode(.palette).foregroundStyle(.black, .white)
-                        .shadow(radius: 4).padding(10)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                }
+                // Task 5.1 (D-23): shared marks of every card (same look as before).
+                if st.watched { WatchedMark() }
                 let top = DesignText.metaLine([st.episode, st.remainingSeconds.map { "noch \(max(1, Int($0 / 60))) min" }])
                 if !top.isEmpty && !hidesTopLabel {
                     ThemeBadge(kind: .status(nil, onImage: true), text: top).padding(Theme.Space.xs)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
-                if let f = st.fraction, f > 0 {
-                    GeometryReader { g in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(.white.opacity(0.3))
-                            Capsule().fill(.white).frame(width: g.size.width * min(1, f))
-                        }
-                    }
-                    .frame(height: 6).padding(.horizontal, 10).padding(.bottom, 10)
-                    .frame(maxHeight: .infinity, alignment: .bottom)
-                }
+                if let f = st.fraction, f > 0 { ThemeProgressBar(fraction: f) }
             }
             .allowsHitTesting(false)
         }

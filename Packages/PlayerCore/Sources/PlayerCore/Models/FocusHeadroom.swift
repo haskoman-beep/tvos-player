@@ -53,3 +53,46 @@ public enum FocusHeadroom {
         }
     }
 }
+
+// MARK: Task 5.1: room for the look's focus effect
+
+extension FocusHeadroom {
+    /// Lift of the system card style (`.buttonStyle(.card)`, used with `focusGlow`). tvOS does not publish the factor;
+    /// device photos (build 187) showed about 12 % including the tilt, rounded up (wave F-k). Same values as the app's
+    /// `Theme.Focus.cardLiftScale` / `cardLiftShadow`.
+    public static let systemCardScale: CGFloat = 1.15
+    public static let systemCardShadow: CGFloat = 12
+    /// Sideways clearance of a lifted card to its neighbour (wave F-k, 23.11.).
+    public static let sideClearance: CGFloat = 8
+
+    /// How a focused card grows: `scale` around its centre, `reach` points beyond the scaled edge above and below
+    /// (shadow, border), `side` points beyond it to the left and right (border plus clearance; a soft shadow may
+    /// overlap the neighbour's gap, as on Apple TV).
+    public struct CardLift: Hashable, Sendable {
+        public var scale: CGFloat
+        public var reach: CGFloat
+        public var side: CGFloat
+
+        public init(scale: CGFloat, reach: CGFloat, side: CGFloat) {
+            self.scale = scale; self.reach = reach; self.side = side
+        }
+    }
+
+    /// The lift of the look's focus options (`LookMetrics`). Glow: the system card style, the three other values do
+    /// not apply. Otherwise scale `focusScale`; border 4 pt at 4 pt distance (white when the look would show no focus
+    /// sign, `LookOptionCatalog.effectiveFocusBorder`); the visible part of the shadow is its offset plus half its
+    /// blur radius (on the dark background the outer half of the blur cannot be seen).
+    public static func lift(_ home: LookHome) -> CardLift {
+        guard !home.focusGlow else { return CardLift(scale: systemCardScale, reach: systemCardShadow, side: sideClearance) }
+        let border: CGFloat = effectiveBorder(home) == .keiner ? 0 : LookMetrics.focusBorderWidth + LookMetrics.focusBorderGap
+        let shadow: CGFloat = LookMetrics.focusShadow(home.focusShadow).map { $0.y + $0.radius / 2 } ?? 0
+        return CardLift(scale: LookMetrics.focusScale(home.focusScale), reach: border + shadow, side: sideClearance + border)
+    }
+
+    /// `LookOptionCatalog.effectiveFocusBorder` for the home part of a look.
+    public static func effectiveBorder(_ home: LookHome) -> LookFocusBorder {
+        let noSign = home.focusScale == .keine && home.focusBorder == .keiner && home.focusShadow == .keiner
+            && !home.focusGlow
+        return noSign ? .weiss : home.focusBorder
+    }
+}

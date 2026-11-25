@@ -87,19 +87,23 @@ private struct CalendarHint: View {
 /// Querformat-Kachel: Standbild der Folge (sonst Serienhintergrund bzw. Poster), Serie und „S2 F5 · Titel“.
 struct CalendarTile: View {
     let episode: UpcomingEpisode
+    /// Task 5.1: card size from `Strip` (the strip's lift room and gap are measured from it; was a fixed 440 × 248).
+    @Environment(\.cardScale) private var scale
 
     var body: some View {
+        let size = Theme.Tile.size(.landscape, scale)
         ZStack(alignment: .bottomLeading) {
             RemoteImage(url: episode.still ?? episode.background ?? episode.poster, maxPixels: 900)
-                .frame(width: 440, height: 248).clipped()
-            LinearGradient(colors: [.black.opacity(0.85), .clear], startPoint: .bottom, endPoint: .center)
+                .frame(width: size.width, height: size.height).clipped()
+            ImageScrim(strength: .strong)   // Task 5.1 (D-8): two text lines
             VStack(alignment: .leading, spacing: Theme.Space.xs / 2) {
                 Text(episode.seriesName).textRole(.rowTitleEmphasis).lineLimit(1)
                 Text(episode.label).textRole(.rowDetail).lineLimit(1)
             }
             .shadow(radius: 6).padding(.horizontal, Theme.Space.s).padding(.bottom, Theme.Space.s)
         }
-        .frame(width: 440, height: 248)
+        .frame(width: size.width, height: size.height)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -107,17 +111,25 @@ struct CalendarTile: View {
 struct UpcomingTodayCard: View {
     let item: MetaPreview
     var landscape = false
+    /// Task 5.1: series name on the picture (off when the home row shows the title below the card).
+    var titleOnPicture = true
     /// Kartengröße aus der Darstellung (von `Strip` gesetzt, sonst 1); nur Querformat, Hochformat skaliert `PosterCard` selbst.
     @Environment(\.cardScale) private var scale
 
     var body: some View {
         Group {
             if landscape {
+                let size = Theme.Tile.size(.landscape, scale)
                 RemoteImage(url: item.background ?? item.poster, maxPixels: 900)
-                    .frame(width: 440 * scale, height: 248 * scale).clipped()
+                    .frame(width: size.width, height: size.height).clipped()
                     .overlay(alignment: .bottomLeading) {
-                        Text(item.name).textRole(.rowTitleEmphasis).shadow(radius: 6)
-                            .padding(.horizontal, Theme.Space.s).padding(.bottom, Theme.Space.m)
+                        if titleOnPicture {
+                            ZStack(alignment: .bottomLeading) {
+                                ImageScrim()   // Task 5.1 (D-8)
+                                Text(item.name).textRole(.rowTitleEmphasis).shadow(radius: 6)
+                                    .padding(.horizontal, Theme.Space.s).padding(.bottom, Theme.Space.m)
+                            }
+                        }
                     }
             } else {
                 // Hochformat wie alle Poster-Reihen: Kartengröße, Aufklappen, Scroll-Anker.
