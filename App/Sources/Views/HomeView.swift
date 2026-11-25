@@ -50,6 +50,7 @@ struct HomeView: View {
                         LazyVStack(alignment: .leading, spacing: Theme.Space.xl) { rowList(rows, hero: false) }
                             .padding(.top, max(0, 40 - room))
                             .padding(.bottom, 40)
+                            .coordinateSpace(.named(HomeTopEdgeWatch.contentSpace))   // S5: row frames
                             .id(HomeTopEdgeWatch.topID)
                             // Wave F-m R2: the tab bar guard binds the bar to this list, not to a tall row.
                             .background(alignment: .topLeading) { PageScrollViewProbe() }
@@ -133,6 +134,7 @@ struct HomeView: View {
                     }
                     .padding(.top, 24)
                     .padding(.bottom, 60)
+                    .coordinateSpace(.named(HomeTopEdgeWatch.contentSpace))   // S5: row frames
                     .id(HomeTopEdgeWatch.topID)
                     .background(alignment: .topLeading) { PageScrollViewProbe() }
                 }
@@ -189,36 +191,48 @@ struct HomeView: View {
     private func showHeading(of row: HomeRow) {
         guard let scroll = topWatch.scrollToRow else { return }
         let id = row.id
-        headingRow = id
+        // S5: a hand-over inside the row (placeholder → card) calls this again: the checks restart, no second line.
+        let restart = headingRow == id
+        if !restart { headingRow = id }
         DispatchQueue.main.async {
             withAnimation(.easeOut(duration: 0.25)) { scroll(id) }
         }
-        RemoteLog.info("nav", "Reihe fokussiert, Überschrift nach oben: \(model.homeRowTitle(row.content))")
+        let title = model.homeRowTitle(row.content)
+        if !restart { RemoteLog.info("nav", "Reihe fokussiert, Überschrift nach oben: \(title)") }
         // Build 3 device test: the row stopped too low (heading visible, posters cut at the bottom); the system's
-        // focus scroll finished after ours. Once that animation is over, snap again while focus is still in the row.
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(Self.headingResnapMs))
-            guard headingRow == id else { return }
-            let before = Self.listScrollState()
-            withAnimation(.easeOut(duration: 0.2)) { scroll(id) }
-            try? await Task.sleep(for: .milliseconds(250))
-            RemoteLog.info("nav", "Überschrift nachgerastet: vorher \(before), nachher \(Self.listScrollState())")
+        // focus scroll finished after ours. S5 (Build 4 follow-up): one blind re-snap at 400 ms was not enough on
+        // first entry (hand-overs, slow first decodes). While focus stays in the row it is checked at 0.4, 0.9 and
+        // 1.5 s and snapped again only when its top is off the list's top edge (`HeadingSnap`).
+        let watch = topWatch
+        watch.headingChecks?.cancel()
+        watch.headingChecks = Task { @MainActor in
+            let start = ContinuousClock.now
+            let checks = HeadingSnap.checksMs
+            for (i, at) in checks.enumerated() {
+                try? await Task.sleep(until: start + Duration.milliseconds(at), clock: ContinuousClock())
+                guard !Task.isCancelled, headingRow == id else { return }
+                let before = watch.headingSample(row: id)
+                let decision = HeadingSnap.decide(row: before.row, scroll: before.scroll)
+                guard HeadingSnap.shouldSnap(decision, check: i) else {
+                    if i == checks.count - 1 {
+                        RemoteLog.info("nav", HeadingSnap.checkLine(title: title, ms: at, decision: decision, sample: before))
+                    }
+                    continue
+                }
+                withAnimation(.easeOut(duration: 0.2)) { scroll(id) }
+                try? await Task.sleep(for: .milliseconds(HeadingSnap.afterSnapMs))
+                guard !Task.isCancelled else { return }
+                RemoteLog.info("nav", HeadingSnap.snapLine(title: title, ms: at, before: before,
+                                                           after: watch.headingSample(row: id)))
+            }
         }
-    }
-
-    /// Time until the system's focus scroll has settled (its animation runs about 0.3 s).
-    private static let headingResnapMs = 400
-
-    /// Log text of the home list's scroll view: offset, the largest offset (content end) and the visible height.
-    private static func listScrollState() -> String {
-        guard let sv = TabBarGuard.shared.knownScrollView else { return "keine Liste" }
-        let maxY = sv.contentSize.height + sv.adjustedContentInset.bottom - sv.bounds.height
-        return "y \(Int(sv.contentOffset.y))/max \(Int(maxY)), Höhe \(Int(sv.bounds.height))"
     }
 
     @ViewBuilder private func rowList(_ rows: [HomeRow], hero: Bool) -> some View {
         let layout = model.profile.home
         let firstRow = rows.first?.id
+        let space = HomeTopEdgeWatch.contentSpace
+        let watch = topWatch
         ForEach(rows) { row in
             HomeRowView(row: row, onActivate: { $0 }, focusTarget: focusTarget, menu: HomeRowMenu(
                 canMoveUp: (layout.index(of: row.id) ?? 0) > 0,
@@ -234,6 +248,9 @@ struct HomeView: View {
                     if inside, hero || row.id != firstRow { showHeading(of: row) }
                     if !inside, headingRow == row.id { headingRow = nil }
                 })
+            // S5: the row's frame in the list content (the scroll target of `scrollToRow`); changes only with the
+            // layout, not per scroll frame, and is stored without a re-render.
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(space)) } action: { watch.setRowFrame(row.id, $0) }
         }
         if layout.rows.isEmpty {
             VStack(alignment: .leading, spacing: Theme.Space.m) {
@@ -313,8 +330,13 @@ private struct TopEdgeScroll: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .onScrollGeometryChange(for: Double.self, of: { Double($0.contentOffset.y + $0.contentInsets.top) }) { _, v in
-                watch.setOffset(v)
+            // S5: offset from the very top plus the largest offset (heading check); the bar logic reads the offset.
+            .onScrollGeometryChange(for: HomeListScroll.self, of: { g in
+                HomeListScroll(contentOffsetY: Double(g.contentOffset.y), contentHeight: Double(g.contentSize.height),
+                               insetTop: Double(g.contentInsets.top), insetBottom: Double(g.contentInsets.bottom),
+                               viewportHeight: Double(g.containerSize.height))
+            }) { _, v in
+                watch.setScroll(v)
             }
             .onAppear {
                 watch.scrollToTop = { proxy.scrollTo(HomeTopEdgeWatch.topID, anchor: .top) }
