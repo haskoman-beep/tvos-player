@@ -61,6 +61,9 @@ public enum LookOptionCatalog {
     static let reduceMotionReason = "Das System reduziert Bewegung; diese Einstellung wirkt erst, wenn das aus ist."
     static let noFocusSignHint = "Ohne Fokus-Zeichen setzt die App einen weißen Rahmen."
     static let glowControlledKeys: Set<String> = ["corners", "focusScale", "focusBorder", "focusShadow"]
+    /// Options whose code is already in this build although appendix A names a later one (`availableFrom` stays the
+    /// appendix value). Task 5.6: clock and settings layout (navigation is a Build 4 option already).
+    static let implementedAhead: Set<String> = ["clock", "settingsLayout"]
 
     /// Whether the row `key` can be changed in `build`, and the note shown under it. An option of a later build is
     /// off with "kommt mit Build …"; with glow on, tvOS draws the card (`.buttonStyle(.card)`), so shape, scale,
@@ -68,7 +71,9 @@ public enum LookOptionCatalog {
     public static func isEnabled(_ key: String, in values: LookValues, build: LookBuild = .current,
                                  reduceMotion: Bool = false) -> (enabled: Bool, reason: String?) {
         guard let e = entry(key) else { return (false, nil) }
-        if e.availableFrom > build { return (false, "kommt mit Build \(e.availableFrom.title)") }
+        if e.availableFrom > build, !implementedAhead.contains(key) {
+            return (false, "kommt mit Build \(e.availableFrom.title)")
+        }
         if glowControlledKeys.contains(key), values.home.focusGlow { return (false, glowReason) }
         if reduceMotion, key == "motion" || key == "expandPosters" { return (true, reduceMotionReason) }
         return (true, nil)
