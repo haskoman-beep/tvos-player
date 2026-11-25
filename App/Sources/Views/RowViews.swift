@@ -136,6 +136,7 @@ struct HomeRowView: View {
             guard let r, focusMemory?.state.covered != true else { return }   // verdeckte Startseite: nichts merken
             focusMemory?.state.record(row: row.id.uuidString, item: r.heroPreview.id)
             MainThreadWatchdog.note("Fokus \(r.heroPreview.id)")
+            if focusMemory != nil { FrameMeter.focusMoved() }   // S1: home rows only (the meter checks the page too)
             if let homeFocus {
                 homeFocus.set(r.heroPreview) { StreamPrefetcher.shared.request(r, model: model) }
             } else {

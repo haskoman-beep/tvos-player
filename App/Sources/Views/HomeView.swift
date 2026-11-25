@@ -76,11 +76,13 @@ struct HomeView: View {
         .onAppear {
             rowFocus.state.covered = false
             topWatch.start()
+            FrameMeter.homeVisible(true)   // S1: frame meter while focus moves on this page
         }
         .onDisappear {
             VisiblePage.covered()   // F-A-1: the manager is outside the path; a late hero jump is dropped too
             rowFocus.state.covered = true
             topWatch.stop()
+            FrameMeter.homeVisible(false)
             focusTarget.drop("verworfen, Startseite verlassen")   // review I1
         }
         // Task 4.1a (F-A-4, A-B-6): the catalog stamp of the source is part of the key, so the slides follow a
