@@ -165,7 +165,7 @@ private func lookValueKeys() throws -> [String: Set<String>] {
     p.setLook("corners", to: "eckig")
     p.appearance.expandPosters.toggle()
     let rows = p.lookRows
-    #expect(rows.raw.count == LookOptionCatalog.all.count)
+    #expect(rows.raw.count == LookOptionCatalog.rows.count)
     for e in LookOptionCatalog.all {
         #expect(rows.raw[e.key] == p.lookRawValue(e.key), "\(e.key)")
         #expect(rows.isOverridden(e.key) == p.isLookOverridden(e.key), "\(e.key)")
@@ -187,4 +187,25 @@ private func lookValueKeys() throws -> [String: Set<String>] {
         == "kommt mit Build 5a · bis dahin: „Titelbild oben“ unter Startseite")
     #expect(LookOptionCatalog.isEnabled("heroStyle", in: v, build: .b5a) == (true, nil))
     #expect(LookOptionCatalog.isEnabled("layout", in: v, implemented: []).reason == "kommt mit Build 5b")
+}
+
+// Integration build 5 (b5b review W5): the settings body reads every row from `lookRows`, so the two detail extras
+// (`episodes`, `titleArt`) must be in it with their value and accent dot.
+
+@Test func lookRowsCarryTheDetailExtras() {
+    var p = Profile(name: "X")
+    #expect(p.lookRows.raw["episodes"] == "reihe")
+    #expect(p.lookRows.raw["titleArt"] == "logo")
+    #expect(!p.lookRows.isOverridden("episodes"))
+    p.setLook("episodes", to: "liste")
+    p.setLook("accent", to: "rot")
+    let rows = p.lookRows
+    #expect(rows.raw.count == LookOptionCatalog.rows.count)
+    for e in LookOptionCatalog.rows {
+        #expect(rows.raw[e.key] == p.lookRawValue(e.key), "\(e.key)")
+        #expect(rows.isOverridden(e.key) == p.isLookOverridden(e.key), "\(e.key)")
+    }
+    #expect(rows.isOverridden("episodes"))
+    #expect(!rows.isOverridden("titleArt"))
+    #expect(rows.overriddenCount == 2)
 }

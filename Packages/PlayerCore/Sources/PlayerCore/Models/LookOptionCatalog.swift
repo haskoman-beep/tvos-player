@@ -379,7 +379,7 @@ extension Profile {
     }
 
     /// Review M2: every row's value and accent dot from one `themeLook` and one encode.
-    public var lookRows: LookRowValues { LookRowValues(themeLook) }
+    public var lookRows: LookRowValues { LookRowValues(themeLook, extras: detailExtras) }
 
     /// Sets one option starting from what the theme shows (`nil` = back to the baseline value, the old default),
     /// and writes the old fields it maps to through `applyImportedLook` (old fields first, look last), so
@@ -410,14 +410,30 @@ extension Profile {
 /// Review M2 (Task 4.5): the values of all rows of Einstellungen › Aussehen at once, so a settings body encodes the
 /// look once instead of twice per row.
 public struct LookRowValues: Sendable, Equatable {
-    /// Raw value per catalog key (`LookOptionCatalog.rawValue`).
+    /// Raw value per row key (`LookOptionCatalog.rawValue`, plus the detail extras from `LookDetailExtras`).
     public let raw: [String: String]
 
-    public init(_ values: LookValues) { raw = LookOptionCatalog.rawValues(values) }
+    /// Integration build 5 (b5b review W5): the rows include `LookOptionCatalog.extras` (`episodes`, `titleArt`),
+    /// which live in `Profile.detailExtras`, not in `LookValues`.
+    public init(_ values: LookValues, extras: LookDetailExtras = LookDetailExtras()) {
+        var r = LookOptionCatalog.rawValues(values)
+        for e in LookOptionCatalog.extras { r[e.key] = extras.rawValue(e.key) }
+        raw = r
+    }
 
-    /// Whether `key` differs from the baseline (accent dot), as `Profile.isLookOverridden`.
-    public func isOverridden(_ key: String) -> Bool { raw[key] != LookOptionCatalog.baselineRawValues[key] }
+    /// Whether `key` differs from the baseline (accent dot), as `Profile.isLookOverridden`; an extra against the
+    /// `LookDetailExtras()` defaults.
+    public func isOverridden(_ key: String) -> Bool {
+        if LookOptionCatalog.isExtra(key) { return raw[key] != LookRowValues.extrasBaseline[key] }
+        return raw[key] != LookOptionCatalog.baselineRawValues[key]
+    }
 
-    /// Number of rows that differ.
-    public var overriddenCount: Int { LookOptionCatalog.all.filter { isOverridden($0.key) }.count }
+    /// Number of rows that differ (configurator options and extras).
+    public var overriddenCount: Int { LookOptionCatalog.rows.filter { isOverridden($0.key) }.count }
+
+    static let extrasBaseline: [String: String] = {
+        var r: [String: String] = [:]
+        for e in LookOptionCatalog.extras { r[e.key] = LookDetailExtras().rawValue(e.key) }
+        return r
+    }()
 }

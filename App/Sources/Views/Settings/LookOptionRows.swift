@@ -39,9 +39,7 @@ struct LookOptionRows: View {
     }
 
     /// Number of options that differ (accent dots), for the log line.
-    static func overriddenCount(_ p: Profile) -> Int {
-        p.lookRows.overriddenCount + LookOptionCatalog.extras.filter { p.isLookOverridden($0.key) }.count
-    }
+    static func overriddenCount(_ p: Profile) -> Int { p.lookRows.overriddenCount }
 
     /// Fern-Log: „aussehen: Mein Look · <n> Abweichungen“ after every change.
     static func logLook(_ p: Profile) {
@@ -84,7 +82,7 @@ struct LookOptionRows: View {
     var body: some View {
         // Review M2: `themeLook` and one encode per body (`Profile.lookRows`), not two encodes per row.
         let values = model.profile.themeLook
-        let rows = LookRowValues(values)
+        let rows = LookRowValues(values, extras: model.profile.detailExtras)
         ForEach(Self.areas) { section in
             VStack(alignment: .leading, spacing: Theme.Space.s) {
                 Text(section.title)
