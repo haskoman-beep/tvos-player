@@ -313,6 +313,9 @@ struct SkipSegmentButton<E: PlaybackEngine>: View {
                     }
                     .font(.headline)
                 }
+                // Build 4 follow-up: a system button draws the root tint as focused platter and label (label
+                // unreadable, same bug as the phone page), so the skip button gets the token button.
+                .buttonStyle(ThemeActionButtonStyle())
                 .focused($focused)
                 .padding(.trailing, 80).padding(.bottom, 300)
                 .transition(.opacity)

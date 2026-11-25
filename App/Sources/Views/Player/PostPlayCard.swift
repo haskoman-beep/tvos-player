@@ -61,6 +61,8 @@ struct PostPlayCard: View {
                     }
                     .focused($focus, equals: .back)
                 }
+                // Build 4 follow-up: token buttons instead of system buttons (root tint as focused platter and label).
+                .buttonStyle(ThemeActionButtonStyle())
             }
         }
         .padding(36)
