@@ -501,7 +501,9 @@ struct HeroButtons: View {
 
 extension ImageTarget {
     /// Vollbild-Hintergrund (1920×1080 Punkte × Bildschirmfaktor; auf 4K also 3840 px breit), Welle C-b #16.
-    /// Not used by the home hero since device test 1 (P3): it decodes at `ImageTarget.heroBackdrop` (1920×1080 px).
+    /// No caller on this branch since device test 1 (P3): the home hero, its slide prefetch and the expanded card use
+    /// `ImageTarget.heroBackdrop` (1920×1080 px). Kept only so concurrent branches that still call it keep compiling;
+    /// remove once they are merged. A new caller would split the hero's cache entry again.
     static func fullScreen(scale: CGFloat) -> ImageTarget {
         ImageTarget(points: 1920, 1080, scale: Double(scale), fit: false) ?? ImageTarget(width: 1920, height: 1280, fit: false)
     }
