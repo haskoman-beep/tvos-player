@@ -171,6 +171,7 @@ struct Badge: View {
     let text: String
     init(_ text: String, _ color: Color) { self.text = text }
     /// Task 5.3: only the player uses it, so it draws with the player's fallback (`logos` → `gefuellt`).
+    // 5c-merge: redundant once PlayerScreen sets `.badgesInPlayer()` at its root (TorBoxFilesRow's player lacks it).
     var body: some View { ThemeBadge(kind: .tech(.sources), text: text).badgesInPlayer() }
 }
 
@@ -193,9 +194,12 @@ extension View {
     }
 }
 
+/// `#111111`, the lettering of `logos` badges (file scope: generic types cannot hold static stored properties).
+private let techBadgeLogoInk = Color(white: Double(0x11) / 255.0)
+
 /// Task 5.3: one tech badge in the style of `detail.badgeStyle` (configurator `.bd`):
 /// - `umriss`: 2 pt edge white 60 %, text white 90 %.
-/// - `gefuellt`: surface white 20 % (on the focused row black 10 %), white text.
+/// - `gefuellt`: surface `badgeFill` (on the focused row the focus tint), white text.
 /// - `text`: no surface, white 75 %, weight 600 (semibold).
 /// - `logos`: white surface, text `#111111`, radius 5, italic heavy lettering set by the app (no brand images).
 /// On a picture (poster) `ThemeBadge` passes `gefuellt`, drawn with today's dark backing (`badgeOnImage`).
@@ -205,18 +209,16 @@ private struct TechBadgeBody<Label: View>: View {
     let surface: ThemeBadge.Surface
     let wordmark: Bool
     @ViewBuilder let label: () -> Label
-
-    /// `#111111`.
-    private static let logoInk = Color(white: Double(0x11) / 255.0)
+    @Environment(\.theme) private var theme
 
     private var onFocus: Bool { surface == .focusedRow }
 
     private var foreground: Color {
         switch style {
-        case .logos: return Self.logoInk
-        case .umriss: return onFocus ? Theme.Palette.primaryOnFocus : Theme.Palette.primary.opacity(0.9)
-        case .text: return onFocus ? Theme.Palette.primaryOnFocus.opacity(0.7) : Theme.Palette.primary.opacity(0.75)
-        case .gefuellt: return onFocus ? Theme.Palette.primaryOnFocus : Theme.Palette.primary
+        case .logos: return techBadgeLogoInk
+        case .umriss: return onFocus ? theme.color.primaryOnFocus : theme.color.primary.opacity(0.9)
+        case .text: return onFocus ? theme.color.primaryOnFocus.opacity(0.7) : theme.color.primary.opacity(0.75)
+        case .gefuellt: return onFocus ? theme.color.primaryOnFocus : theme.color.primary
         }
     }
 
@@ -224,20 +226,25 @@ private struct TechBadgeBody<Label: View>: View {
         if surface == .image { return Theme.Palette.badgeOnImage }
         if style == .logos { return .white }
         switch style {
-        case .gefuellt: return onFocus ? Theme.Palette.badgeFillOnFocus : Color.white.opacity(0.2)
+        // Review: the runtime token `badgeFill` instead of a literal (plan white 20 %, token white 18 %).
+        case .gefuellt: return onFocus ? Theme.Palette.badgeFillOnFocus : theme.color.badgeFill
         default: return .clear
         }
     }
 
+    /// `umriss`: its edge. `logos` on the focused (white) row: a dark edge keeps the white badge's shape visible.
     private var edge: Color {
-        guard style == .umriss else { return .clear }
-        return onFocus ? Color.black.opacity(0.5) : Color.white.opacity(0.6)
+        switch style {
+        case .umriss: return onFocus ? Color.black.opacity(0.5) : theme.color.primary.opacity(0.6)
+        case .logos: return onFocus && surface != .image ? Color.black.opacity(0.5) : .clear
+        default: return .clear
+        }
     }
 
-    private var radius: CGFloat { style == .logos ? 5 : Theme.Radius.badge }
+    private var radius: CGFloat { style == .logos ? 5 : theme.radius.badge }
 
     /// `text` has no surface, so no inner spacing either (except on a picture, where the backing stays).
-    private var padding: CGFloat { style == .text && surface != .image ? 0 : Theme.Space.s }
+    private var padding: CGFloat { style == .text && surface != .image ? 0 : theme.space.s }
 
     private var weight: Font.Weight? {
         if wordmark || style == .logos { return .heavy }
@@ -254,7 +261,7 @@ private struct TechBadgeBody<Label: View>: View {
             .padding(.horizontal, padding)
             .frame(height: size.height)
             .background(fill, in: shape)
-            .overlay { shape.strokeBorder(edge, lineWidth: 2) }
+            .overlay { shape.strokeBorder(edge, lineWidth: style == .logos ? 1 : 2) }
     }
 }
 
