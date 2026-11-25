@@ -11,17 +11,17 @@ import PlayerCore
 enum FrameMeter {
     private static var pacing = FramePacing()
     private static var link: CADisplayLink?
-    private static var homeVisible = false
+    private static var isHomeVisible = false
 
     /// Home page appeared / disappeared (`HomeView`). Leaving ends the window with its line.
     static func homeVisible(_ visible: Bool) {
-        homeVisible = visible
+        isHomeVisible = visible
         if !visible { stop() }
     }
 
     /// Focus moved to another card of a home row. Starts the display link when it is not running.
     static func focusMoved() {
-        guard homeVisible, !StreamPrefetcher.shared.playerActive, MainThreadWatchdog.isEnabled else { return }
+        guard isHomeVisible, !StreamPrefetcher.shared.playerActive, MainThreadWatchdog.isEnabled else { return }
         guard pacing.activity(at: CACurrentMediaTime()) else { return }
         start()
     }
