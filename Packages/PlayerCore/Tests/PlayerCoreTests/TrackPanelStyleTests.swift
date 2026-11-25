@@ -50,7 +50,7 @@ private func step(_ style: TrackPanelStyle, _ g: TrackPanelGesture, upNext: Bool
     #expect(TrackPanelEntry.IgnoreReason.otherGesture.logText == "Geste gehört nicht zum Stil")
     #expect(TrackPanelGesture.clickUp.logText == "▲ Klick" && TrackPanelGesture.swipeUp.isSwipe && !TrackPanelGesture.clickUp.isSwipe)
     #expect(!TrackPanelStyle.topBar.coversBottom && TrackPanelStyle.bottomBar.coversBottom && TrackPanelStyle.menu.coversBottom)
-    #expect(TrackPanelStyle.allCases.map(\.title) == ["Leiste oben", "Leiste unten", "Kleines Menü"])
+    #expect(TrackPanelStyle.allCases.map(\.title) == ["Seite", "Unten", "Mitte"])   // Task 5.4
 }
 
 // MARK: Schließen per Wisch
