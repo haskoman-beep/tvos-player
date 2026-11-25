@@ -1,0 +1,47 @@
+# Device test Build 4 follow-up (branch `b4-nacharbeit`)
+
+Fixes for the three open observations of `build-4.md` §7 (device test 25.11.). Based on `verbesserungen-build-4`
+(85a76c8). Way back: Build 4 (50e9ff4, CI 45654859194).
+
+## 1. Before testing
+- [ ] **Turn on the remote log** (Einstellungen → System → Fern-Log → „Ereignis-Log senden“). The Build 4 test had no
+      log since 23.11.; without it the new measuring lines below are lost.
+- [ ] „Ruckler protokollieren“ (Einstellungen → System → Diagnose) is on (default on).
+
+## 2. What changed
+
+| # | Symptom (build-4.md §7) | Fix | Commits |
+|---|---|---|---|
+| 1 | Blue buttons on the phone page, label invisible | Token button (`ThemeActionButtonStyle`) instead of system buttons: phone page, new profile, status cards, focus anchor (10 pages), skip button, post-play card | 6147f22, c559bfe, 208a1c6 |
+| 2 | Fast right presses stutter while posters load | S1 frame meter; S2 tiles keep the TMDB poster until the addon poster is there, network return reloads only missing pictures, decode prepared off main; S3 stream results parsed off main, badge values kept; S4 progress index, stable card anchor, row ids once | b4n-s1 … s4 |
+| 3 | Row too low / posters cut at the bottom until selected once | S5: heading snap checks at 0.4 / 0.9 / 1.5 s and re-snaps only when the row is off by > 2 pt; restarts after the placeholder → card hand-over | b4n-s5 |
+
+## 3. Checklist
+- [ ] Phone page („Fertig“, „Neuer QR-Code“): focused button readable in every accent colour.
+- [ ] New profile („Profil anlegen“, „Abbrechen“), a status card with a button, a loading/QR page with „Fertig“.
+- [ ] Player: skip intro/credits button and the card after a film („Abspann weiterschauen“, „Zurück“) readable.
+- [ ] Home, fresh start: press right quickly through a poster row while posters load → no visible stutter, no
+      empty tile flashing between TMDB and addon poster.
+- [ ] Home, fresh start: move down into the first poster rows → each row sits fully visible, nothing cut at the
+      bottom, without opening a tile first.
+- [ ] Wi-Fi off and on → missing pictures fill in, visible ones do not flash.
+
+## 4. Expected remote-log lines
+- `ruckler: Startseite 5,0 s: <n> Bilder (60 Hz) · <k> verpasst · ≈<d> Bilder fehlen · längstes <x> ms · zuletzt: …`
+  at most every 5 s while focus moves in a home poster row (only there). „0 verpasst“ while it visibly stutters
+  points to the render side, not the main thread.
+- `ruckler: Quellen abgelegt: <n> Einträge, Hauptthread <x> ms` only at ≥ 8 ms, at most every 10 s (later
+  `Nachtrag · dazu k weitere`).
+- `bilder: Kachelwechsel <n> · mit Lücke <g> · längste Lücke <x> ms · längstes Warten <y> ms` per 10 s; `mit Lücke`
+  should be 0.
+- `metric: home.rowBody <n> · karten <k> · fokus <m>` per 5 s while focus moves (home page only).
+- `nav:` heading lines (vorher / nach Rasten / nach 1,5 s) with offset, row and list frame, safe area. If a row is
+  cut off while the line says the row is at the top edge (Abstand 0), the cause is the layout (list top = safe area
+  + 470), not the scroll – that is then a layout decision.
+- `nav: Reihe <title>: Platzhalter → Karte`; `Übergabe entfällt` right after it without a remote press means the
+  focus guard is too strict.
+- `streams: <id>: Plakettenwerte neu, n behaltene Quellen abgelaufen` rarely.
+
+**Fallback triggers:** home focus stuck, rows jump repeatedly, player buttons not operable.
+
+## 5. Observations during the device test
