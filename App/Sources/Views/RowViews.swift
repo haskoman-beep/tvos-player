@@ -575,14 +575,14 @@ struct PosterCard: View {
 /// deshalb wird das Bild auch erst dann angefordert.
 private struct ExpandedPoster: View {
     let item: MetaPreview
-    @Environment(\.displayScale) private var displayScale
     @Environment(\.heroBackdropShared) private var heroShared
     var body: some View {
         GeometryReader { g in
             ZStack(alignment: .bottomLeading) {
                 // Mit Hero: gleiche Variante wie der Vollbild-Hintergrund (gleiche Adresse), ein Download, ein Bitmap.
                 // Ohne Hero: nach gezeichneter Größe.
-                RemoteImage(url: item.background ?? item.poster, fixedTarget: heroShared ? .fullScreen(scale: displayScale) : nil)
+                // P3 device test 1: the hero's 1920×1080 target (`ImageTarget.heroBackdrop`), so it stays one bitmap.
+                RemoteImage(url: item.background ?? item.poster, fixedTarget: heroShared ? .heroBackdrop : nil)
                     .frame(width: g.size.width, height: g.size.height).clipped()
                 LinearGradient(colors: [.black.opacity(0.75), .clear], startPoint: .bottom, endPoint: .center)
                 Group {
