@@ -95,7 +95,26 @@ private let results: [(addon: String, streams: [StreamItem])] = [
     #expect(c.note(entries: 10, seconds: 0.010, at: 100) != nil)
     #expect(c.note(entries: 11, seconds: 0.030, at: 103) == nil)
     #expect(c.note(entries: 12, seconds: 0.020, at: 109.9) == nil)
-    #expect(c.note(entries: 5, seconds: 0.001, at: 111) == nil)   // fast: neither line nor count
+    #expect(c.note(entries: 5, seconds: 0.001, at: 109.95) == nil)   // fast, inside the interval: neither line nor count
     #expect(c.note(entries: 13, seconds: 0.009, at: 111) == "Quellen abgelegt: 13 Einträge, Hauptthread 9 ms · dazu 2 weitere (bis 30 ms)")
     #expect(c.note(entries: 14, seconds: 0.015, at: 122) == "Quellen abgelegt: 14 Einträge, Hauptthread 15 ms")
+}
+
+/// S3 review (Minor 2): a burst of slow stores followed only by fast ones is not lost: the first store after the
+/// interval, fast or slow, brings the counted ones out.
+@Test func countedSlowStoresAreFlushedByALaterFastStore() {
+    var c = StreamStoreCost(minInterval: 10)
+    #expect(c.note(entries: 10, seconds: 0.010, at: 100) != nil)
+    #expect(c.note(entries: 11, seconds: 0.030, at: 103) == nil)
+    #expect(c.note(entries: 12, seconds: 0.020, at: 105) == nil)
+    #expect(c.note(entries: 5, seconds: 0.001, at: 108) == nil)   // fast, inside the interval
+    #expect(c.note(entries: 5, seconds: 0.001, at: 110.5) == "Quellen abgelegt: Nachtrag · dazu 2 weitere (bis 30 ms)")
+    #expect(c.note(entries: 5, seconds: 0.001, at: 125) == nil)   // nothing counted any more
+    // The flush counts as a line: the next slow store inside its interval is counted again.
+    var d = StreamStoreCost(minInterval: 10)
+    _ = d.note(entries: 10, seconds: 0.010, at: 100)
+    _ = d.note(entries: 11, seconds: 0.012, at: 101)
+    #expect(d.note(entries: 5, seconds: 0, at: 115) == "Quellen abgelegt: Nachtrag · dazu 1 weitere (bis 12 ms)")
+    #expect(d.note(entries: 12, seconds: 0.020, at: 120) == nil)
+    #expect(d.note(entries: 13, seconds: 0.009, at: 126) == "Quellen abgelegt: 13 Einträge, Hauptthread 9 ms · dazu 1 weitere (bis 20 ms)")
 }
