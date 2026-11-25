@@ -17,6 +17,8 @@ final class HomeFocus {
     /// Task 4.1a (F-A-12): rows that hold the focus, and the rest check after the last one lost it.
     @ObservationIgnored private var focusedRows: Set<UUID> = []
     @ObservationIgnored private var outside: Task<Void, Never>?
+    /// P2 fix round: the page is covered (detail page, player, other tab); no rest check ends `inRows` meanwhile.
+    @ObservationIgnored private var suspended = false
 
     /// Kachel hat den Fokus: Diashow sofort anhalten, Hintergrund erst nach 350 ms Ruhe wechseln.
     /// Ein neuer Fokus bricht die Wartezeit ab; pro Ruhepause höchstens eine Log-Zeile.
@@ -38,15 +40,37 @@ final class HomeFocus {
 
     /// Task 4.1a (F-A-12): a row gained or lost the focus. When no row holds it for 300 ms (sidebar, top bar, the
     /// button below the rows), the show runs again and the backdrop goes back to the slide.
+    /// P2 fix round: any focus inside a row (card, placeholder, status tile, restore on return) counts as "in the
+    /// rows", so the hero info collapses there too, not only once a loaded card calls `set`.
     func row(_ id: UUID, focused: Bool) {
         if focused {
             focusedRows.insert(id)
             outside?.cancel()
             outside = nil
+            if !inRows { inRows = true }
             return
         }
         focusedRows.remove(id)
-        guard focusedRows.isEmpty, inRows, outside == nil else { return }
+        checkOutside()
+    }
+
+    /// P2 fix round: the home page was covered (`onDisappear`). Rows report losing the focus as they go; the rest
+    /// check waits for `resume`, so the page comes back as it was left (no expand behind the detail page).
+    func suspend() {
+        suspended = true
+        outside?.cancel()
+        outside = nil
+    }
+
+    /// P2 fix round: the home page is visible again; rows that still hold the focus report it on appear and
+    /// cancel the check started here.
+    func resume() {
+        suspended = false
+        checkOutside()
+    }
+
+    private func checkOutside() {
+        guard !suspended, focusedRows.isEmpty, inRows, outside == nil else { return }
         outside = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled, let self else { return }
@@ -105,6 +129,15 @@ enum HeroMetrics {
     /// Abstand des ScrollView (Knopfzeile + Reihen) von oben; darüber steht die Info-Ebene.
     static let listTop: CGFloat = 470
     static let logoHeight: CGFloat = 140
+    /// Height of the meta line ("2018 · 1 h 37 min · FSK 0").
+    static let metaLineHeight: CGFloat = 30
+    /// P2 (follow-up 2): smallest logo (or title) of the collapsed info; with less room the floor of the collapsed
+    /// list top wins and the tallest row no longer fits whole (logged as "passt nicht").
+    static let compactLogoMin: CGFloat = 80
+    /// P2: the collapsed info as `HeroLayer` places it: top inset, logo, gap, meta line (PlayerCore `HeroInfoCollapse`).
+    static let compactInfo = HeroInfoCollapse.CompactInfo(topInset: Theme.Space.s, logoMax: logoHeight,
+                                                          logoMin: compactLogoMin, spacing: Theme.Space.m,
+                                                          metaLine: metaLineHeight)
 }
 
 extension Route {
@@ -126,6 +159,8 @@ struct HeroLayer: View {
     @Environment(HomeFocus.self) private var focus
     @Environment(\.displayScale) private var displayScale
     let slides: HeroSlides
+    /// P2 (follow-up 2): collapsed info while the focus is in the rows.
+    let collapse: HeroCollapse
 
     private var shown: MetaPreview? {
         focus.inRows ? (focus.item ?? slides.current) : slides.current
@@ -135,7 +170,7 @@ struct HeroLayer: View {
         ZStack(alignment: .topLeading) {
             HeroBackdrop(url: shown.flatMap { $0.background ?? $0.poster })
             if let shown {
-                HeroInfo(item: shown)
+                HeroInfo(item: shown, compactLogo: collapse.collapsed ? collapse.compactLogo : nil)
                     .padding(.leading, Theme.Space.edge).padding(.top, Theme.Space.s)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else if let text = slides.phase.statusText(empty: HeroSlides.emptyText) {
@@ -238,10 +273,13 @@ struct HeroDetails {
 struct HeroInfo: View {
     @EnvironmentObject var model: AppModel
     let item: MetaPreview
+    /// P2 (follow-up 2): collapsed info (logo or title of this height + meta line); nil = full info.
+    var compactLogo: CGFloat? = nil
     @State private var details: HeroDetails?
     @State private var detailsID: String?
 
     private var current: HeroDetails? { detailsID == item.id ? details : nil }
+    private var logoHeight: CGFloat { compactLogo ?? HeroMetrics.logoHeight }
 
     var body: some View {
         let d = current
@@ -249,20 +287,23 @@ struct HeroInfo: View {
             Group {
                 if let logo = d?.logo ?? item.logo {
                     RemoteImage(url: logo, maxPixels: 1200, fit: true)
-                        .frame(maxWidth: 640, maxHeight: HeroMetrics.logoHeight, alignment: .bottomLeading)
+                        .frame(maxWidth: 640, maxHeight: logoHeight, alignment: .bottomLeading)
                 } else if d != nil || !item.id.hasPrefix("tt") && !item.id.hasPrefix("tmdb:") {
                     Text(item.name).textRole(.display).lineLimit(2).minimumScaleFactor(0.6)
                         .frame(maxWidth: Theme.Layout.contentMaxWidth, alignment: .bottomLeading)
                 }
             }
-            .frame(height: HeroMetrics.logoHeight, alignment: .bottomLeading)
+            .frame(height: logoHeight, alignment: .bottomLeading)
             // Meta ist Text, keine Plakette (§4.5): „2018 · 1 h 37 min · FSK 0“.
             MetaLine(parts: [item.releaseInfo, d?.runtime, d?.certification])
-                .frame(height: 30, alignment: .leading)
-            InfoBadges(ratings: d.map { model.ratingBadges(imdbRating: $0.imdbRating, mdblist: $0.ratings) } ?? [], tech: [])
-                .frame(height: InfoBadges.height, alignment: .leading)
-            Text(d?.overview ?? item.description ?? "").font(.callout).lineLimit(2)
-                .frame(maxWidth: Theme.Layout.contentMaxWidth, alignment: .leading)
+                .frame(height: HeroMetrics.metaLineHeight, alignment: .leading)
+            // P2: the collapsed info drops ratings and overview (the list moves up into their room).
+            if compactLogo == nil {
+                InfoBadges(ratings: d.map { model.ratingBadges(imdbRating: $0.imdbRating, mdblist: $0.ratings) } ?? [], tech: [])
+                    .frame(height: InfoBadges.height, alignment: .leading)
+                Text(d?.overview ?? item.description ?? "").font(.callout).lineLimit(2)
+                    .frame(maxWidth: Theme.Layout.contentMaxWidth, alignment: .leading)
+            }
         }
         .shadow(color: .black.opacity(0.6), radius: 8)
         .animation(.easeInOut(duration: 0.3), value: item.id)

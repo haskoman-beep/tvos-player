@@ -25,6 +25,8 @@ struct HomeView: View {
     @State private var focusTarget = HomeFocusTarget()
     /// Task 4.1a (F-A-11): rows holding the focus (launch claim of the page without hero).
     @State private var focusedRows: Set<UUID> = []
+    /// P2 (follow-up 2): collapsing hero info while the focus is in the rows (read by `HeroListFrame` and `HeroLayer`).
+    @State private var collapse = HeroCollapse()
 
     var body: some View {
         let layout = model.profile.home
@@ -75,12 +77,14 @@ struct HomeView: View {
         }
         .onAppear {
             rowFocus.state.covered = false
+            focus.resume()   // P2 fix round: the F-A-12 rest check runs again
             topWatch.start()
             FrameMeter.homeVisible(true)   // S1: frame meter while focus moves on this page
         }
         .onDisappear {
             VisiblePage.covered()   // F-A-1: the manager is outside the path; a late hero jump is dropped too
             rowFocus.state.covered = true
+            focus.suspend()   // P2 fix round: no expand of the hero info behind the detail page
             topWatch.stop()
             FrameMeter.homeVisible(false)
             focusTarget.drop("verworfen, Startseite verlassen")   // review I1
@@ -128,10 +132,14 @@ struct HomeView: View {
     private func heroHome(_ rows: [HomeRow]) -> some View {
         ScrollViewReader { proxy in
             ZStack(alignment: .topLeading) {
-                HeroLayer(slides: slides)
+                HeroLayer(slides: slides, collapse: collapse)
                 ScrollView(.vertical) {
                     LazyVStack(alignment: .leading, spacing: Theme.Space.xl) {
-                        HeroButtons(slides: slides, onFocusChange: { topWatch.report(.heroButtons, $0) })
+                        HeroButtons(slides: slides, onFocusChange: { f in
+                            topWatch.report(.heroButtons, f)
+                            // P2 fix round: only the hero buttons expand the collapsed info (`HeroCollapse`).
+                            if collapse.heroButtonsFocused != f { collapse.heroButtonsFocused = f }
+                        })
                         rowList(rows, hero: true)
                     }
                     .padding(.top, 24)
@@ -157,14 +165,20 @@ struct HomeView: View {
                     // Wave F-m: the mask reaches into the room below the list too (lifted card stays opaque).
                     .padding(.bottom, -listBottomRoom(rows))
                 }
-                .padding(.top, HeroMetrics.listTop)
-                // Wave F-m: build 198 photo: the list reached the screen edge, focus scrolling stopped the card's frame
-                // there and its lift was cut. The list now ends above the edge by that lift and draws into the room.
-                .padding(.bottom, listBottomRoom(rows))
-                .ignoresSafeArea(edges: .bottom)
+                // P2 (follow-up 2): list top (collapsing info) and the wave F-m room below the list.
+                .modifier(heroListFrame(rows))
             }
         }
         .environment(focus)
+    }
+
+    /// P2 (follow-up 2): frame of the hero list; the collapsed top fits the tallest row (`HeroInfoCollapse`).
+    private func heroListFrame(_ rows: [HomeRow]) -> HeroListFrame {
+        let a = model.profile.appearance
+        let strip = a.titles.posterBadges == .bottom ? PosterQualityBadges.bandHeight : 0
+        return HeroListFrame(focus: focus, collapse: collapse, kinds: rows.map { PosterSize.kind(for: $0.style) },
+                             cardScale: a.cardSize.scale, posterStrip: strip, bottomRoom: listBottomRoom(rows),
+                             edgeBand: listEdgeBand(rows))
     }
 
     /// Wave F-k: band above the hero list for the lift of its tallest tile (card size, quality strip below posters).
