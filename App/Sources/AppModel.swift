@@ -1124,7 +1124,8 @@ extension AppModel {
             if !failed.isEmpty { streamPartial.insert(id) } else { streamPartial.remove(id) }   // Mi1
             // Wave F-k R2 (m2): best values remembered right away, even if this entry is dropped again at once.
             // S3: computed off the main thread; only entries kept from the old state are parsed here.
-            QualityBadgeCache.shared.streamsStored(id: id, best: prepared.best(stored: list), at: at, model: self)
+            QualityBadgeCache.shared.streamsStored(id: id, best: prepared.best(stored: list), entries: list.count,
+                                                   at: at, model: self)
             // TODO(S1): FrameMeter.note("Quellen abgelegt") here once the frame meter exists (controller merges S1).
             let ended = ProcessInfo.processInfo.systemUptime
             if let line = streamStoreCost.note(entries: list.count, seconds: ended - started, at: ended) {

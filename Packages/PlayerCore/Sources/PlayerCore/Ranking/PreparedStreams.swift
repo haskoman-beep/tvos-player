@@ -31,3 +31,20 @@ public struct PreparedStreams: Sendable {
         return BestQuality.from(traits + stored[list.count...].map { StreamTraits.parse($0.stream) })
     }
 }
+
+/// S3 review (Minor 1): badge values kept for a stored source list, with the number of entries they were computed
+/// from. Reading the list later drops kept entries of an addon without answer once their own fetch is `usableFor`
+/// old (`StreamListMerge.usable`); with fewer usable entries the values may stem from sources the list no longer
+/// offers (DV, Atmos of an expired entry) and lapse, so the caller computes them again from what is left. Reading
+/// only ever removes entries, so an equal count means the same entries.
+public struct CachedBest: Equatable, Sendable {
+    public let best: BestQuality
+    public let entries: Int
+
+    public init(best: BestQuality, entries: Int) {
+        self.best = best
+        self.entries = entries
+    }
+
+    public func isCurrent(usableEntries: Int) -> Bool { usableEntries == entries }
+}
