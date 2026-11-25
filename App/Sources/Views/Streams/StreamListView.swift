@@ -5,6 +5,8 @@ import PlayerCore
 /// Quellenliste aller Addons (Reihenfolge von AIOStreams), mit Plaketten.
 struct StreamListView: View {
     @EnvironmentObject var model: AppModel
+    /// Task 5.3: `detail.sourceList` for the log line (the rows read it themselves).
+    @Environment(\.theme) private var theme
     let request: PlayRequest
     /// Bei Autoplay die gerade laufende Folge.
     @State private var current: PlayRequest?
@@ -157,6 +159,8 @@ struct StreamListView: View {
         .onChange(of: streams.isEmpty) { _, empty in
             guard !empty, !firstRowLogged else { return }
             firstRowLogged = true
+            // Task 5.3: the source list style in effect (once per list).
+            RemoteLog.info("quellen", "Darstellung \(theme.detail.sourceList.rawValue)")
             RemoteLog.metric(.streamsFirstRow, ms: Metric.ms(listOpened.duration(to: ContinuousClock.now)),
                              fields: ["quellen": "\(streams.count)", "teilstand": loading ? "ja" : "nein"])
         }
@@ -275,7 +279,8 @@ struct StreamListView: View {
                                                                              onSourceVerdict: { [id = (current ?? request).id] in PlaybackStability.shared.apply($0, stream: s, title: id) },
                                                                              releaseName: s.behaviorHints?.filename,
                                                                              sideLinks: sidePanelLinks(for: s),
-                                                                             startOverride: sideStart?.id == s.id ? sideStart?.at : nil).environmentObject(model) }   // Wave P-b
+                                                                             startOverride: sideStart?.id == s.id ? sideStart?.at : nil).environmentObject(model)
+                                                                     .badgesInPlayer() }   // Wave P-b; Task 5.3: badges in the player
         }
         .modifier(StillWatchingAlert(state: $autoNext, note: $nextNote) { startNext($0.next, after: $0.stream, auto: false) })
     }
