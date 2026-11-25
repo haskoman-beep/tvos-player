@@ -288,38 +288,38 @@ struct PhoneInputView: View {
     @StateObject private var server = PhoneServer()
     @FocusState private var doneFocused: Bool
     @State private var backupCode = ""
+    @Environment(\.theme) private var theme
 
     private var link: String? { server.address.map { PhoneSection.url($0, section: section) } }
 
     var body: some View {
         ZStack {
-            HStack(spacing: 80) {
+            HStack(spacing: theme.space.edge) {
                 if let a = link, let img = qr(a) {
-                    Image(uiImage: img).interpolation(.none).resizable().frame(width: 480, height: 480)
-                        .padding(24).background(.white, in: RoundedRectangle(cornerRadius: 24))
+                    Image(uiImage: img).interpolation(.none).resizable()
+                        .frame(width: Theme.Layout.qrPhone, height: Theme.Layout.qrPhone)
+                        .padding(theme.space.m)
+                        .background(Theme.Palette.qrBackground,
+                                    in: RoundedRectangle(cornerRadius: theme.radius.panel, style: .continuous))
+                        .accessibilityLabel("QR-Code für die Handy-Seite")
                 }
-                VStack(alignment: .leading, spacing: 24) {
-                    Text("Am Handy eingeben").font(.title2.bold())
+                VStack(alignment: .leading, spacing: theme.space.m) {
+                    Text("Am Handy eingeben").textRole(.pageTitle)
                     Text("QR-Code mit der iPhone-Kamera scannen. Auf der Seite Addon-URLs, Schlüssel, Nuvio-Export oder TMDB-Links einfügen und senden. Unter „Startseite ordnen“ Reihen per Finger verschieben und ausblenden. Dort kannst du auch alle Profile sichern.")
-                        .frame(maxWidth: 900, alignment: .leading).fixedSize(horizontal: false, vertical: true)
-                    if let a = server.shownAddress { Text(a).font(.caption.monospaced()).foregroundStyle(.secondary) }
+                        .textRole(.rowTitle)
+                        .frame(maxWidth: Theme.Layout.phoneTextWidth, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                    if let a = server.shownAddress {
+                        Text(a).font(theme.type.font(.rowDetail).monospaced()).foregroundStyle(theme.color.secondary)
+                    }
                     if server.connected {
                         Text("Handy verbunden. Der QR-Code gilt nur einmal; für ein anderes Gerät „Neuer QR-Code“ wählen.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .textRole(.rowDetail).fixedSize(horizontal: false, vertical: true)
                     }
-                    if let code = server.exportCode {
-                        // Label and code on separate lines; the code must never be truncated (a cut-off code makes the backup useless).
-                        Text("Code der Sicherung:").font(.headline)
-                        Text(BackupCrypto.groupedCode(code) ?? code).font(.title3.monospaced().bold())
-                            .lineLimit(1).fixedSize(horizontal: true, vertical: false)
-                        Text("Jetzt notieren: Ohne diesen Code lässt sich die Datei nicht wiederherstellen. Er wird nirgends gespeichert.")
-                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    }
-                    if let f = server.failure { Text(f).foregroundStyle(.red) }
-                    if let n = model.notice { Text("✓ " + n).foregroundStyle(.green) }
+                    if let code = server.exportCode { PhoneExportCode(code: code) }
+                    PhoneStatusLines(failure: server.failure, notice: model.notice)
                     Text("Das Handy muss im selben WLAN sein. Die Seite ist nur erreichbar, solange diese Ansicht offen ist; nach 30 Minuten braucht es einen neuen QR-Code. Sichern, Wiederherstellen, Addons und Schlüssel bestätigst du hier am Fernseher.")
-                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: Theme.Space.l) {
+                        .textRole(.rowDetail).fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: theme.space.l) {
                         // Sichtbarer Fokusanker (A4/N6): ohne ihn hat die Seite nichts Fokussierbares.
                         Button("Fertig") { dismiss() }
                             .focused($doneFocused)
@@ -332,7 +332,7 @@ struct PhoneInputView: View {
                     .buttonStyle(ThemeActionButtonStyle())
                 }
             }
-            .padding(80)
+            .padding(theme.space.edge)
             .disabled(server.confirmation != nil)
             // Task 1.4: the confirmation card lies over the QR code; focus starts on „Ablehnen“.
             if let c = server.confirmation {
@@ -359,6 +359,43 @@ struct PhoneInputView: View {
 
 }
 
+/// Code of a sealed backup. Label and code on separate lines; the code must never be truncated (a cut-off code makes
+/// the backup useless).
+private struct PhoneExportCode: View {
+    let code: String
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        let grouped = BackupCrypto.groupedCode(code) ?? code
+        Text("Code der Sicherung:").textRole(.rowTitleEmphasis)
+        Text(grouped).font(theme.type.font(.sectionTitle).monospaced().bold())
+            .foregroundStyle(theme.color.primary)
+            .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+            .accessibilityLabel(grouped.map { String($0) }.joined(separator: " "))
+        Text("Jetzt notieren: Ohne diesen Code lässt sich die Datei nicht wiederherstellen. Er wird nirgends gespeichert.")
+            .textRole(.rowDetail).fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// Server error and the last notice. Task 5.5: state colours from `Theme.Tone` with their symbol (colour is never the
+/// only sign, A5).
+private struct PhoneStatusLines: View {
+    let failure: String?
+    let notice: String?
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        if let failure {
+            Label(failure, systemImage: Theme.Tone.error.symbol)
+                .font(theme.type.font(.rowTitle)).foregroundStyle(Theme.Tone.error.textColor)
+        }
+        if let notice {
+            Label(notice, systemImage: Theme.Tone.ok.symbol)
+                .font(theme.type.font(.rowTitle)).foregroundStyle(Theme.Tone.ok.textColor)
+        }
+    }
+}
+
 /// Task 1.4: „Erlauben“ / „Ablehnen“ for a request from the phone. Same layout as `SettingsConfirmationView`;
 /// the cautious answer comes first and gets the focus, Menu answers „Ablehnen“. The request lapses after 60 s, with a
 /// sealed backup after 5 minutes (`PhoneConfirmGate.lifetime(for:)`), then the card disappears. `problem`: the typed
@@ -371,20 +408,22 @@ private struct PhoneConfirmationCard: View {
 
     private enum Choice: Hashable { case deny, code, allow }
     @FocusState private var focus: Choice?
+    @Environment(\.theme) private var theme
 
     private var codeMissing: Bool { confirmation.needsCode && BackupCrypto.normalizedCode(code) == nil }
 
     var body: some View {
         ZStack {
-            Theme.Palette.scrim.ignoresSafeArea()
-            VStack(alignment: .leading, spacing: Theme.Space.m) {
+            // Task 5.5: scrim and card from the runtime theme (opaque under "reduce transparency").
+            theme.color.scrim.ignoresSafeArea()
+            VStack(alignment: .leading, spacing: theme.space.m) {
                 Text("Anfrage vom Handy").textRole(.sectionTitle)
                 ForEach(Array(confirmation.summary.enumerated()), id: \.offset) { _, line in
                     Text(line).textRole(.rowDetail)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Text(confirmation.lapseText).textRole(.rowDetail)
-                VStack(spacing: Theme.Space.s) {
+                VStack(spacing: theme.space.s) {
                     Button { answer(false) } label: {
                         SettingsRowLabel(symbol: "xmark", tint: Theme.CategoryTint.system.color, title: "Ablehnen",
                                          reserveDetailSpace: false)
@@ -397,7 +436,8 @@ private struct PhoneConfirmationCard: View {
                             .autocorrectionDisabled()
                             .focused($focus, equals: .code)
                         if let problem {
-                            Text(problem).textRole(.rowDetail).foregroundStyle(.red)
+                            Label(problem, systemImage: Theme.Tone.error.symbol)
+                                .font(theme.type.font(.rowDetail)).foregroundStyle(Theme.Tone.error.textColor)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -409,11 +449,11 @@ private struct PhoneConfirmationCard: View {
                     .focused($focus, equals: .allow)
                     .disabled(codeMissing)
                 }
-                .padding(.top, Theme.Space.s)
+                .padding(.top, theme.space.s)
             }
-            .padding(Theme.Space.l)
+            .padding(theme.space.l)
             .frame(maxWidth: Theme.Layout.confirmationWidth)
-            .background(Theme.Palette.overlayCard, in: RoundedRectangle(cornerRadius: Theme.Radius.overlayCard))
+            .background(theme.color.overlayCard, in: RoundedRectangle(cornerRadius: theme.radius.panel))
             .focusSection()
         }
         .defaultFocus($focus, .deny)

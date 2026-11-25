@@ -242,14 +242,17 @@ struct RouteView: View {
 
 struct ProfilePickerView: View {
     @EnvironmentObject var model: AppModel
+    @Environment(\.theme) private var theme
     let done: () -> Void
     var body: some View {
-        VStack(spacing: 60) {
-            Text("Wer schaut?").font(.largeTitle.bold())
-            HStack(spacing: 50) {
+        VStack(spacing: theme.space.xxl) {
+            Text("Wer schaut?").textRole(.display)
+            HStack(spacing: theme.space.xl) {
                 let profiles = model.stored.profiles
                 ForEach(Array(profiles.enumerated()), id: \.element.id) { i, p in
-                    let color = ThemeValues.make(p.themeLook, reduceMotion: false, reduceTransparency: false).color
+                    // Each profile shows its own accent; the system settings come from the root theme.
+                    let color = ThemeValues.make(p.themeLook, reduceMotion: theme.system.reduceMotion,
+                                                 reduceTransparency: theme.system.reduceTransparency).color
                     Button {
                         model.switchProfile(p.id); done()
                     } label: {
@@ -259,6 +262,8 @@ struct ProfilePickerView: View {
                     .buttonStyle(ProfilePickerButtonStyle(ring: color.accent, onFocus: {
                         RemoteLog.info("fokus", "Profilwahl: Fokus auf Profil \(i + 1) von \(profiles.count)")
                     }))
+                    .accessibilityLabel(p.name)
+                    .accessibilityHint("Profil \(i + 1) von \(profiles.count). Auswählen öffnet dieses Profil.")
                 }
             }
         }
@@ -270,14 +275,16 @@ private struct ProfilePickerLabel: View {
     let name: String
     let accent: Color
     let onAccent: Color
+    @Environment(\.theme) private var theme
 
     var body: some View {
-        VStack(spacing: Theme.Space.m) {
-            Text(String(name.prefix(1))).font(.system(size: 90, weight: .bold))
+        VStack(spacing: theme.space.m) {
+            Text(String(name.prefix(1))).font(theme.type.glyph(.monogram))
                 .foregroundStyle(onAccent)
-                .frame(width: ProfilePickerButtonStyle.circle, height: ProfilePickerButtonStyle.circle)
+                .frame(width: Theme.Layout.profileCircle, height: Theme.Layout.profileCircle)
                 .background(accent.gradient, in: Circle())
-            Text(name).font(.title3)
+            // Font only (no `textRole`): the button style dims the name at rest through the foreground.
+            Text(name).font(theme.type.font(.sectionTitle).weight(.regular))
         }
     }
 }
@@ -285,11 +292,9 @@ private struct ProfilePickerLabel: View {
 /// Build 4 follow-up 2: focus-aware style of the profile picker: focused, the circle grows and gets an accent ring
 /// with a gap, the name turns primary and the whole label lifts with the focus shadow; at rest no ring, name dimmed.
 private struct ProfilePickerButtonStyle: ButtonStyle {
-    static let circle: CGFloat = 220
-    static let ringGap: CGFloat = 10
-    static let ringWidth: CGFloat = 6
     /// Outer size of the ring (circle + gap + stroke on both sides).
-    static let ringSize: CGFloat = circle + 2 * (ringGap + ringWidth)
+    static let ringSize: CGFloat = Theme.Layout.profileCircle
+        + 2 * (Theme.Layout.profileRingGap + Theme.Layout.profileRingWidth)
     let ring: Color
     let onFocus: () -> Void
 
@@ -310,13 +315,13 @@ private struct ProfilePickerButtonStyle: ButtonStyle {
                 .foregroundStyle(focused ? theme.color.primary : theme.color.secondary)
                 .overlay(alignment: .top) {
                     Circle()
-                        .strokeBorder(ring, lineWidth: ProfilePickerButtonStyle.ringWidth)
+                        .strokeBorder(ring, lineWidth: Theme.Layout.profileRingWidth)
                         .frame(width: ProfilePickerButtonStyle.ringSize, height: ProfilePickerButtonStyle.ringSize)
                         // The ring is centred on the circle (top of the label), not on the whole label.
-                        .offset(y: -(ProfilePickerButtonStyle.ringSize - ProfilePickerButtonStyle.circle) / 2)
+                        .offset(y: -(ProfilePickerButtonStyle.ringSize - Theme.Layout.profileCircle) / 2)
                         .opacity(focused ? 1 : 0)
                 }
-                .scaleEffect(configuration.isPressed ? theme.focus.pressedScale : (focused ? 1.1 : 1))
+                .scaleEffect(configuration.isPressed ? theme.focus.pressedScale : (focused ? Theme.Layout.profileFocusScale : 1))
                 .shadow(color: .black.opacity(focused ? shadow.opacity : 0),
                         radius: focused ? shadow.radius : 0, y: focused ? shadow.y : 0)
                 .animation(theme.motion.focusAnimation, value: focused)
