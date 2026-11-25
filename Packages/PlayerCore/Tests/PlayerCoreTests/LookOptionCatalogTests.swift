@@ -143,3 +143,15 @@ private func lookValueKeys() throws -> [String: Set<String>] {
     #expect(p.appearance.accent == .blue)
     #expect(p.appearance.heroEnabled)
 }
+
+// Task 4.5 review M5: a later-build row whose concept still has an active old row points to it.
+
+@Test func laterBuildRowsPointToTheActiveOldRow() {
+    let v = LookPreset.values(.appleTV)
+    #expect(LookOptionCatalog.isEnabled("badgeStyle", in: v).reason
+        == "kommt mit Build 5b · bis dahin: „Plaketten-Stil“ unten")
+    #expect(LookOptionCatalog.isEnabled("heroStyle", in: v).reason
+        == "kommt mit Build 5a · bis dahin: „Titelbild oben“ unter Startseite")
+    #expect(LookOptionCatalog.isEnabled("heroStyle", in: v, build: .b5a) == (true, nil))
+    #expect(LookOptionCatalog.isEnabled("layout", in: v).reason == "kommt mit Build 5b")
+}

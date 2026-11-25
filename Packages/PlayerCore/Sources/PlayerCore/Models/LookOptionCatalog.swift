@@ -61,6 +61,11 @@ public enum LookOptionCatalog {
     static let reduceMotionReason = "Das System reduziert Bewegung; diese Einstellung wirkt erst, wenn das aus ist."
     static let noFocusSignHint = "Ohne Fokus-Zeichen setzt die App einen weißen Rahmen."
     static let glowControlledKeys: Set<String> = ["corners", "focusScale", "focusBorder", "focusShadow"]
+    /// Review M5: later-build options whose concept still has an active old row; the reason points there.
+    static let standInRows: [String: String] = [
+        "badgeStyle": "„Plaketten-Stil“ unten",
+        "heroStyle": "„Titelbild oben“ unter Startseite",
+    ]
 
     /// Whether the row `key` can be changed in `build`, and the note shown under it. An option of a later build is
     /// off with "kommt mit Build …"; with glow on, tvOS draws the card (`.buttonStyle(.card)`), so shape, scale,
@@ -68,7 +73,10 @@ public enum LookOptionCatalog {
     public static func isEnabled(_ key: String, in values: LookValues, build: LookBuild = .current,
                                  reduceMotion: Bool = false) -> (enabled: Bool, reason: String?) {
         guard let e = entry(key) else { return (false, nil) }
-        if e.availableFrom > build { return (false, "kommt mit Build \(e.availableFrom.title)") }
+        if e.availableFrom > build {
+            let later = "kommt mit Build \(e.availableFrom.title)"
+            return (false, standInRows[key].map { later + " · bis dahin: " + $0 } ?? later)
+        }
         if glowControlledKeys.contains(key), values.home.focusGlow { return (false, glowReason) }
         if reduceMotion, key == "motion" || key == "expandPosters" { return (true, reduceMotionReason) }
         return (true, nil)
