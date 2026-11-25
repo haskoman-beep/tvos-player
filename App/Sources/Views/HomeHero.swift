@@ -258,12 +258,11 @@ struct HeroBackdrop: View {
             PictureArrivalLog.backdrop.note(img, fromMemory: inMemory, waitMs: waited, fades: true)
             withAnimation(.easeInOut(duration: 0.6)) { shown = Shown(url: s, image: img) }
         }
-        // Verdeckt (Detailseite, Wiedergabe): Vollbild-Bitmap nicht außerhalb des Cache-Budgets halten.
-        // Beim Wiederkommen startet `.task(id:)` neu und holt es aus dem Speicher- oder Plattencache.
-        .onDisappear {
-            guard let img = shown?.image, ImagePipeline.cost(img) >= RemoteImage.releaseBytes else { return }
-            shown = nil
-        }
+        // Covered (detail page, playback): do not pin the backdrop bitmap outside the cache budget. P3 review 2 (M2):
+        // since device test 1 it is ≈ 7.9 MiB, below `RemoteImage.releaseBytes`, so it is released without a size
+        // check. On return `.task(id:)` runs again and takes it from the memory cache (`aus Speicher` in the
+        // `bilder: Hintergrund` line) or the URLCache.
+        .onDisappear { shown = nil }
     }
 }
 
