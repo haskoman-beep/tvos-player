@@ -31,6 +31,15 @@ import PlayerCore
     /// Set by the scroll view (ScrollViewReader): scrolls a home row (heading included) to the list's top edge.
     @ObservationIgnored var scrollToRow: ((UUID) -> Void)?
 
+    /// S5 (Build 4 follow-up): coordinate space of the list content; row frames in it only change with the layout.
+    static let contentSpace = "home.list.content"
+    /// S5: vertical scroll state of the list and the rows' frames in `contentSpace` (written per change, never
+    /// observed: the heading checks read them, nothing re-renders).
+    @ObservationIgnored private(set) var listScroll: HomeListScroll?
+    @ObservationIgnored private var rowSpans: [UUID: HomeRowSpan] = [:]
+    /// S5: the running heading checks of the focused row (a new row or a hand-over replaces them).
+    @ObservationIgnored var headingChecks: Task<Void, Never>?
+
     private static var now: Double { ProcessInfo.processInfo.systemUptime }
 
     func configure(edge: HomeTopEdge, navigation: NavigationStyle) {
@@ -47,6 +56,39 @@ import PlayerCore
     func setOffset(_ value: Double) {
         offset = value
         updateRequest()
+    }
+
+    /// S5: scroll geometry of the list (offset from the very top and the largest offset).
+    func setScroll(_ value: HomeListScroll) {
+        listScroll = value
+        if offset != value.offset { setOffset(value.offset) }
+    }
+
+    /// S5: a row's frame in `contentSpace` changed (row built by the lazy list, or its height changed).
+    func setRowFrame(_ id: UUID, _ frame: CGRect) {
+        rowSpans[id] = HomeRowSpan(minY: Double(frame.minY), maxY: Double(frame.maxY))
+    }
+
+    /// S5: row frame, list scroll state and the list's UIKit view for the heading check and its log line.
+    func headingSample(row id: UUID) -> HeadingSnapSample {
+        HeadingSnapSample(row: rowSpans[id], scroll: listScroll, list: Self.listView())
+    }
+
+    /// S5: the home list's scroll view as UIKit sees it (read only): raw offset and its end, frame in the window,
+    /// adjusted insets, and the safe area top of the page's view controller (cause 2 of the brief: differs it
+    /// between launch and the return from a detail page?).
+    private static func listView() -> HeadingSnapSample.ListView? {
+        guard let sv = TabBarGuard.shared.knownScrollView, sv.window != nil else { return nil }
+        let frame = sv.convert(sv.bounds, to: nil)
+        var responder: UIResponder? = sv
+        while let r = responder, !(r is UIViewController) { responder = r.next }
+        let safeTop = (responder as? UIViewController)?.view.safeAreaInsets.top ?? sv.safeAreaInsets.top
+        return HeadingSnapSample.ListView(
+            offsetY: Double(sv.contentOffset.y),
+            maxOffsetY: Double(sv.contentSize.height + sv.adjustedContentInset.bottom - sv.bounds.height),
+            frameMinY: Double(frame.minY), frameMaxY: Double(frame.maxY),
+            insetTop: Double(sv.adjustedContentInset.top), insetBottom: Double(sv.adjustedContentInset.bottom),
+            safeTop: Double(safeTop))
     }
 
     // MARK: Focus state
@@ -115,6 +157,8 @@ import PlayerCore
         observers = []
         settle?.cancel()
         settle = nil
+        headingChecks?.cancel()
+        headingChecks = nil
     }
 
     private func focusEvent(_ note: Notification, failed: Bool) {

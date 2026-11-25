@@ -22,6 +22,9 @@ struct HomeRowView: View {
     @State private var retry = 0
     /// Welle F-f: fokussierter Platzhalter bzw. Statuskachel (0); nach dem Laden geht der Fokus an dieselbe Stelle.
     @FocusState private var focusedPlaceholder: Int?
+    /// S5 (Build 4 follow-up): card the focus is handed to after the load; once it holds the focus, the home page's
+    /// heading snap restarts (the row-level focus flag stays true through the hand-over, so nothing else reruns it).
+    @State private var handoverTarget: Route?
     /// Startseite mit Hero: fokussierte Kachel meldet sich (nil außerhalb der Startseite).
     @Environment(HomeFocus.self) private var homeFocus: HomeFocus?
     @FocusState private var focusedRoute: Route?
@@ -71,12 +74,26 @@ struct HomeRowView: View {
                 var found: Route?
                 if case .items = p { found = route(for: displayed[p.focusAfterLoad(placeholder: placeholder)]) }
                 let target = found, slot = p.focusAfterLoad(placeholder: placeholder)
+                // S5: home page only (pairs with the heading check lines); collections log their F-A-2 line below.
+                if onFocusInside != nil {
+                    RemoteLog.info("nav", HeadingSnap.handoverLine(title: title, placeholder: placeholder,
+                                                                  card: target != nil ? slot : nil))
+                }
                 DispatchQueue.main.async {
-                    if let target { focusedRoute = target } else { focusedPlaceholder = slot }
+                    // Review M2: the user left the row in the meantime: no hand-over (it would pull focus and page back).
+                    guard rowHoldsFocus else {
+                        if onFocusInside != nil { RemoteLog.info("nav", HeadingSnap.handoverSkippedLine(title: title)) }
+                        return
+                    }
+                    if let target { handOver(to: target) } else { focusedPlaceholder = slot }
                 }
             }
         }
-        .onChange(of: focusedRoute != nil || focusedPlaceholder != nil) { _, f in onFocusInside?(f) }
+        // Review M1: focus left the row: a pending hand-over ends here (no stale restart on a later visit).
+        .onChange(of: focusedRoute != nil || focusedPlaceholder != nil) { _, f in
+            if !f, handoverTarget != nil { handoverTarget = nil }
+            onFocusInside?(f)
+        }
         .onAppear { if focusedRoute != nil || focusedPlaceholder != nil { onFocusInside?(true) } }
         // Task 4.1a (F-A-2): collection rows hand over like list rows: a focused placeholder (or status tile) goes to
         // the tile at the same place when the kit file arrives, else to the status tile.
@@ -91,19 +108,31 @@ struct HomeRowView: View {
             }
             RemoteLog.info("fokus", "Collection \(title): Platzhalter \(placeholder) → \(target != nil ? "Kachel \(slot)" : "Statuskachel")")
             DispatchQueue.main.async {
-                if let target { focusedRoute = target } else { focusedPlaceholder = slot }
+                // Review M2: as for list rows, no hand-over once the user left the row.
+                guard rowHoldsFocus else {
+                    RemoteLog.info("fokus", "Collection \(title): Übergabe entfällt, Fokus nicht mehr in der Reihe")
+                    return
+                }
+                // S5: the heading snap restarts once the tile holds the focus (the F-A-2 line above is the log).
+                if let target { handOver(to: target) } else { focusedPlaceholder = slot }
             }
         }
         // Task 4.1a (F-A-3): `initial` also claims a target when the lazy list builds this row after the scroll.
         .onChange(of: focusTarget?.serial, initial: true) { _, _ in claimFocusTarget() }
         .onDisappear {
             onFocusInside?(false)
+            if handoverTarget != nil { handoverTarget = nil }   // Review M1
             // Wave F-p R1: page left with focus in this row within the 350 ms rest: no stale request.
             if let r = focusedRoute { StreamPrefetcher.shared.cancelRest(r) }
         }
         .onChange(of: focusedRoute) { old, r in
             // Wave F-p: focus left this row's tile: its rest prefetch (pages without hero) does not start.
             if r == nil, let old { StreamPrefetcher.shared.cancelRest(old) }
+            // S5: the hand-over landed: restart the heading snap (home page). Focus on any other tile ends the wait.
+            if let r, let h = handoverTarget {
+                handoverTarget = nil
+                if r == h { onFocusInside?(true) }
+            }
             guard let r, focusMemory?.state.covered != true else { return }   // verdeckte Startseite: nichts merken
             focusMemory?.state.record(row: row.id.uuidString, item: r.heroPreview.id)
             MainThreadWatchdog.note("Fokus \(r.heroPreview.id)")
@@ -271,6 +300,19 @@ struct HomeRowView: View {
         .buttonStyle(.card)
         .focused($focusedPlaceholder, equals: 0)
         .homeRowMenu(menu)
+    }
+
+    /// Review M2 (S5): focus is still on a placeholder or a card of this row. Not the placeholder alone: the
+    /// placeholders are another `switch` branch, so the loaded row removes them, and the focus engine may already
+    /// have moved the focus to a card of this row (placeholder nil) when the hand-over runs.
+    private var rowHoldsFocus: Bool { focusedRoute != nil || focusedPlaceholder != nil }
+
+    /// S5 (Build 4 follow-up): focus goes from a placeholder to the loaded card. The home page's heading snap
+    /// restarts once the card holds the focus (`onChange(of: focusedRoute)`), or right away when it already does.
+    private func handOver(to target: Route) {
+        if focusedRoute == target { onFocusInside?(true); return }
+        handoverTarget = target
+        focusedRoute = target
     }
 
     /// Task 4.1a (F-A-3): this row is the home page's focus target: remembered tile, else the first tile, else
