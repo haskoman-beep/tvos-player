@@ -278,11 +278,17 @@ struct PlayerControls<E: PlaybackEngine>: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             Color.black.ignoresSafeArea()
+            if upNextFullScreen { PlayerUpNextView.backdrop(upNextInfo).transition(.opacity) }   // Task 5.4
             engine.surface().ignoresSafeArea()
+                // Task 5.4 (`upNext = vollbild`): the video shrinks to 420 × 236 at the top left over the still.
+                .scaleEffect(upNextFullScreen ? PlayerUpNextFullScreen.videoScale : 1, anchor: .topLeading)
+                .offset(x: upNextFullScreen ? PlayerUpNextFullScreen.videoInset : 0,
+                        y: upNextFullScreen ? PlayerUpNextFullScreen.videoInset : 0)
                 .modifier(PlayerSurfaceAccessibility(title: heading?.title ?? title, value: surfaceAccessibilityValue,
                                                      toggle: { guard !leaving else { return }; onUserInput(); togglePlay() },
                                                      seek: { guard !leaving else { return }; onUserInput(); queueSeek($0); poke() }))
             engine.subtitleLayer(controlsInset: subtitleInset).environment(\.subtitleStyle, profile.subtitleStyle)
+                .opacity(upNextFullScreen ? 0 : 1)
             PlayerLoadingSteps(engine: engine)
             PlayerNetworkBanner(text: stab.networkNotice)
             if let e = loadError ?? engine.errorText {
@@ -296,11 +302,11 @@ struct PlayerControls<E: PlaybackEngine>: View {
                 }
             }
             // F-h3: Leiste unten bzw. Menü decken den unteren Rand; dann keine Steuerleiste darunter.
-            if showOverlay && !panelCoversBottom && !pauseCard.isVisible {
+            if showOverlay && !panelCoversBottom && !pauseCard.isVisible && !upNextFullScreen {
                 // Höhe der Steuerleiste (Titel, Folge, Plaketten, Zeitleiste, Hinweis) → controlsInset der Untertitel.
                 overlay.transition(.opacity)
             }
-            if let n = upNext, let t = nextTitle { upNextCard(n, t).transition(.move(edge: .trailing).combined(with: .opacity)) }
+            if let n = upNext, nextTitle != nil { upNextCard(n) }
             SkipSegmentButton(controller: skip, engine: engine, lookup: skipLookup,
                               onBeforeSkip: {
                                   guard !leaving else { return false }   // geordneter Ausstieg: kein Sprung auf die stoppende Engine
@@ -643,7 +649,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             else if engine.isPlaying, !showTracks { if n <= 1 { startNext() } else { upNext = n - 1 } }
         } else if now >= cardAt, rem > 0, engine.isPlaying, !upNextCancelled, !showTracks {
             let fromCredits = cardAt < engine.duration - 20 ? " · ab Abspann \(Int(cardAt))s" : ""
-            RemoteLog.info("player", "Up-next: \(nextTitle ?? "")\(fromCredits)")
+            RemoteLog.info("player", "Up-next: \(nextTitle ?? "")\(fromCredits) · Stil \(profile.themeLook.player.upNext.rawValue)")
             withAnimation { upNext = 10 }
         }
     }
@@ -657,17 +663,15 @@ struct PlayerControls<E: PlaybackEngine>: View {
         leave { onEnded(true) }
     }
 
-    private func upNextCard(_ n: Int, _ title: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Nächste Folge in \(n) s").font(.headline)
-            Text(title).font(.callout).foregroundStyle(.secondary).lineLimit(1)
-            Text("Klick: jetzt · Wischen: abbrechen").font(.caption).foregroundStyle(.secondary)
-        }
-        .padding(28).frame(width: 560, alignment: .leading)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
-        .padding(60)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+    /// Task 5.4: up-next in the layout of `player.upNext` (PlayerUpNext.swift).
+    private func upNextCard(_ n: Int) -> some View {
+        let style = profile.themeLook.player.upNext
+        return PlayerUpNextView(style: style, seconds: n, info: upNextInfo)
+            .transition(style == .karte ? .move(edge: .trailing).combined(with: .opacity) : .opacity)
     }
+
+    /// Task 5.4: up-next fills the screen (`vollbild`): the video shrinks, the control bar and subtitles step aside.
+    private var upNextFullScreen: Bool { upNext != nil && nextTitle != nil && profile.themeLook.player.upNext == .vollbild }
 
     /// Task 5.4: control bar in the layout of `player.controlBar` (PlayerControlBar.swift).
     private var overlay: some View {
