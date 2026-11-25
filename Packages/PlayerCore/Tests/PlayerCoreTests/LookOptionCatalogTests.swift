@@ -90,8 +90,8 @@ private func lookValueKeys() throws -> [String: Set<String>] {
 @Test func summaryCountsOverrides() {
     // Task 4.5-base: the count is against the baseline (old defaults), so start from its overrides.
     var o = LookOverrides.difference(LookPreset.baseline, from: LookPreset.values(.appleTV))
-    #expect(SettingsSummary.look(Look(overrides: o)) == "Mein Look · Apple TV")
-    #expect(SettingsSummary.lookValue(Look(overrides: o)) == "Apple TV")
+    #expect(SettingsSummary.look(Look(overrides: o)) == "Mein Look · Standard")
+    #expect(SettingsSummary.lookValue(Look(overrides: o)) == "Standard")
     o.global.accent = .rot; o.home.corners = .eckig; o.player.upNext = .leiste
     #expect(SettingsSummary.look(Look(overrides: o)) == "Mein Look · angepasst · 3")
     #expect(SettingsSummary.lookValue(Look(overrides: o)) == "angepasst · 3")
@@ -122,7 +122,7 @@ private func lookValueKeys() throws -> [String: Set<String>] {
 
 @Test func summaryCountsOldFieldChanges() {
     var p = Profile(name: "T")
-    #expect(SettingsSummary.lookValue(p) == "Apple TV")
+    #expect(SettingsSummary.lookValue(p) == "Standard")
     p.appearance.accent = .green
     #expect(p.themeLook.global.accent == .salbei)
     #expect(SettingsSummary.lookValue(p) == "angepasst · 1")
@@ -138,8 +138,8 @@ private func lookValueKeys() throws -> [String: Set<String>] {
     p.setLook("background", to: "tinte")
     p.resetLook()
     #expect(p.themeLook == LookPreset.baseline)   // Task 4.5-base: back to the old defaults
-    #expect(SettingsSummary.lookValue(p) == "Apple TV")
-    #expect(SettingsSummary.look(p) == "Mein Look · Apple TV")
+    #expect(SettingsSummary.lookValue(p) == "Standard")
+    #expect(SettingsSummary.look(p) == "Mein Look · Standard")
     #expect(p.appearance.accent == .blue)
     #expect(p.appearance.heroEnabled)
 }

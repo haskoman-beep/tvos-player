@@ -12,7 +12,7 @@ public enum LookPreset {
     /// Task 4.5-base (user decision 25.11.): the values an untouched profile shows, and what "changed" and "back to
     /// the default" mean on the settings page. The old default values are the baseline: "Mein Look" (`.appleTV`)
     /// plus the keys the old fields (`Appearance()`, `PlayerComfortSettings()`) set, exactly what
-    /// `Look.migrated` resolves to for them. So a new profile, or a Build 3 profile nobody edited, shows "Apple TV"
+    /// `Look.migrated` resolves to for them. So a new profile, or a Build 3 profile nobody edited, shows "Standard"
     /// (no deviation), and only real changes by the user count. The stored format does not change: `look.overrides`
     /// stays relative to `.appleTV`, and a configurator import still writes its exact values.
     public static let baseline: LookValues =

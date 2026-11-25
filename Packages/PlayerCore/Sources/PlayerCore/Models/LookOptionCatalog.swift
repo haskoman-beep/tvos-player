@@ -125,7 +125,7 @@ public enum LookOptionCatalog {
     }
 
     /// Whether `key` differs from the baseline (`LookPreset.baseline`, the old defaults; the row carries the
-    /// accent dot and offers "Auf Apple TV zurücksetzen"). `overrides` are stored ones, relative to `preset`.
+    /// accent dot and offers "Auf Standard zurücksetzen"). `overrides` are stored ones, relative to `preset`.
     /// Task 4.5-base: an override that only restates the baseline (e.g. navigation seitenleiste) is no change.
     /// It reads the stored overrides only, not the old fields that `Profile.themeLook` lets win. For a profile's
     /// rows use `Profile.isLookOverridden(_:)`.
@@ -277,15 +277,16 @@ public enum LookOptionCatalog {
 }
 
 extension SettingsSummary {
-    /// Task 4.5: value of the "Mein Look" row: „Apple TV“ or „angepasst · 3“. Task 4.5-base (user decision 25.11.):
+    /// Task 4.5: value of the "Mein Look" row: „Standard“ or „angepasst · 3“ (user decision 25.11.: „Standard“,
+    /// not „Apple TV“, because count 0 means the old defaults, not the Apple TV preset). Task 4.5-base:
     /// counts the keys that differ from the baseline (`LookPreset.baseline`, the old defaults), not the stored
-    /// overrides, so an untouched profile shows „Apple TV“ and an imported Apple TV export counts its differences.
+    /// overrides, so an untouched profile shows „Standard“ and an imported Apple TV export counts its differences.
     public static func lookValue(_ look: Look) -> String {
         let n = LookPreset.baselineDeviationCount(look)
-        return n == 0 ? "Apple TV" : "angepasst · \(n)"
+        return n == 0 ? "Standard" : "angepasst · \(n)"
     }
 
-    /// Task 4.5: „Mein Look · Apple TV“ / „Mein Look · angepasst · 3“.
+    /// Task 4.5: „Mein Look · Standard“ / „Mein Look · angepasst · 3“.
     public static func look(_ look: Look) -> String {
         DesignText.metaLine([look.preset.title, lookValue(look)])
     }
@@ -307,7 +308,7 @@ extension Profile {
     public func lookRawValue(_ key: String) -> String? { LookOptionCatalog.rawValue(key, in: themeLook) }
 
     /// Whether the row differs from the baseline (`LookPreset.baseline`, the old defaults; accent dot,
-    /// "Auf Apple TV zurücksetzen").
+    /// "Auf Standard zurücksetzen").
     public func isLookOverridden(_ key: String) -> Bool {
         LookOptionCatalog.rawValue(key, in: themeLook) != LookOptionCatalog.rawValue(key, in: LookPreset.baseline)
     }
@@ -323,9 +324,9 @@ extension Profile {
         applyImportedLook(Look(preset: look.preset, overrides: o))
     }
 
-    /// "Alles auf Apple TV zurücksetzen" (Task 4.5-base): back to the baseline, the old defaults. The old fields
+    /// "Alles auf Standard zurücksetzen" (Task 4.5-base): back to the baseline, the old defaults. The old fields
     /// return to their `Appearance()` / `PlayerComfortSettings()` values, and the look is again the one they
-    /// migrate to (so it is not written and the summary says „Apple TV“).
+    /// migrate to (so it is not written and the summary says „Standard“).
     public mutating func resetLook() {
         let base = LookOverrides.difference(LookPreset.baseline, from: LookPreset.values(look.preset))
         applyImportedLook(Look(preset: look.preset, overrides: base))
