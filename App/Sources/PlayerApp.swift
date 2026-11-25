@@ -247,19 +247,81 @@ struct ProfilePickerView: View {
         VStack(spacing: 60) {
             Text("Wer schaut?").font(.largeTitle.bold())
             HStack(spacing: 50) {
-                ForEach(model.stored.profiles) { p in
+                let profiles = model.stored.profiles
+                ForEach(Array(profiles.enumerated()), id: \.element.id) { i, p in
+                    let color = ThemeValues.make(p.themeLook, reduceMotion: false, reduceTransparency: false).color
                     Button {
                         model.switchProfile(p.id); done()
                     } label: {
-                        VStack {
-                            Text(String(p.name.prefix(1))).font(.system(size: 90, weight: .bold))
-                                .frame(width: 220, height: 220).background(.blue.gradient, in: Circle())
-                            Text(p.name).font(.title3)
-                        }
+                        ProfilePickerLabel(name: p.name, accent: color.accent, onAccent: color.onAccent)
                     }
-                    .buttonStyle(.borderless)
+                    // Build 4 follow-up 2: `.borderless` gave this label no focus sign on tvOS (device test 25.11.).
+                    .buttonStyle(ProfilePickerButtonStyle(ring: color.accent, onFocus: {
+                        RemoteLog.info("fokus", "Profilwahl: Fokus auf Profil \(i + 1) von \(profiles.count)")
+                    }))
                 }
             }
+        }
+    }
+}
+
+/// Circle in the profile's own accent (letter in `onAccent`) and the name below.
+private struct ProfilePickerLabel: View {
+    let name: String
+    let accent: Color
+    let onAccent: Color
+
+    var body: some View {
+        VStack(spacing: Theme.Space.m) {
+            Text(String(name.prefix(1))).font(.system(size: 90, weight: .bold))
+                .foregroundStyle(onAccent)
+                .frame(width: ProfilePickerButtonStyle.circle, height: ProfilePickerButtonStyle.circle)
+                .background(accent.gradient, in: Circle())
+            Text(name).font(.title3)
+        }
+    }
+}
+
+/// Build 4 follow-up 2: focus-aware style of the profile picker: focused, the circle grows and gets an accent ring
+/// with a gap, the name turns primary and the whole label lifts with the focus shadow; at rest no ring, name dimmed.
+private struct ProfilePickerButtonStyle: ButtonStyle {
+    static let circle: CGFloat = 220
+    static let ringGap: CGFloat = 10
+    static let ringWidth: CGFloat = 6
+    /// Outer size of the ring (circle + gap + stroke on both sides).
+    static let ringSize: CGFloat = circle + 2 * (ringGap + ringWidth)
+    let ring: Color
+    let onFocus: () -> Void
+
+    func makeBody(configuration: Configuration) -> some View {
+        PickerBody(configuration: configuration, ring: ring, onFocus: onFocus)
+    }
+
+    private struct PickerBody: View {
+        let configuration: Configuration
+        let ring: Color
+        let onFocus: () -> Void
+        @Environment(\.isFocused) private var focused
+        @Environment(\.theme) private var theme
+
+        var body: some View {
+            let shadow = theme.elevation.focus
+            configuration.label
+                .foregroundStyle(focused ? theme.color.primary : theme.color.secondary)
+                .overlay(alignment: .top) {
+                    Circle()
+                        .strokeBorder(ring, lineWidth: ProfilePickerButtonStyle.ringWidth)
+                        .frame(width: ProfilePickerButtonStyle.ringSize, height: ProfilePickerButtonStyle.ringSize)
+                        // The ring is centred on the circle (top of the label), not on the whole label.
+                        .offset(y: -(ProfilePickerButtonStyle.ringSize - ProfilePickerButtonStyle.circle) / 2)
+                        .opacity(focused ? 1 : 0)
+                }
+                .scaleEffect(configuration.isPressed ? theme.focus.pressedScale : (focused ? 1.1 : 1))
+                .shadow(color: .black.opacity(focused ? shadow.opacity : 0),
+                        radius: focused ? shadow.radius : 0, y: focused ? shadow.y : 0)
+                .animation(theme.motion.focusAnimation, value: focused)
+                .animation(theme.motion.pressAnimation, value: configuration.isPressed)
+                .onChange(of: focused) { _, f in if f { onFocus() } }
         }
     }
 }
