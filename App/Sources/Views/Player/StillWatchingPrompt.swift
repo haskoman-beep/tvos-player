@@ -40,7 +40,7 @@ struct StillWatchingAlert: ViewModifier {
     @Binding var state: AutoNextState
     @Binding var note: String?
     let onContinue: (StillWatchingAsk) -> Void
-    @EnvironmentObject private var model: AppModel
+    @EnvironmentObject var model: AppModel
     @Environment(\.theme) private var theme
 
     func body(content: Content) -> some View {
