@@ -25,12 +25,15 @@ struct TilePosterImage: View {
         let addon = addonOn ? (current.map(\.url) ?? model.cachedTilePoster(for: item)) : nil
         let gone = failed.item == item.id ? failed.urls : []
         let url = TilePosterChoice.current(addon: addon, poster: item.poster, failed: gone)
-        RemoteImage(url: url, onFailure: { s in
+        // S2: the TMDB poster stays until the addon poster has arrived (no placeholder in between); `.id`: a kept
+        // picture always belongs to this item.
+        RemoteImage(url: url, keepsPreviousWhileLoading: true, onFailure: { s in
             var urls = gone
             urls.insert(s)
             failed = Failed(item: item.id, urls: urls)
             TilePosterLog.note(url: s, next: TilePosterChoice.fallbackText(addon: addon, poster: item.poster, failed: urls))
         })
+        .id(item.id)
         // Wave F-k R1: base layer; the placeholder is 92 % transparent, the loaded picture covers the title.
         .background(alignment: .bottomLeading) {
             if showsTitle { Text(item.name).font(.caption).padding(10) }
@@ -46,6 +49,21 @@ struct TilePosterImage: View {
     private struct TaskKey: Hashable { var id: String; var on: Bool; var profile: UUID; var addon: String? }
     private struct Loaded { var key: TaskKey; var url: String? }
     private struct Failed { var item: String? = nil; var urls: Set<String> = [] }
+}
+
+/// Build 4 follow-up S2: tile picture swaps (TMDB poster → addon poster), one `bilder` line per 10 s with activity:
+/// how many, how many showed the placeholder in between (should be 0), longest gap, longest wait for the new picture.
+@MainActor
+enum PosterSwapLog {
+    private static var stats = PosterSwapStats()
+
+    static func note(gapMs: Int?, waitMs: Int) {
+        guard stats.record(gapMs: gapMs, waitMs: waitMs) else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(PosterSwapStats.window))
+            if let line = stats.take() { RemoteLog.info("bilder", line) }
+        }
+    }
 }
 
 /// Wave F-k: tile pictures that did not load, at most 5 lines per launch (host only, never the path: addon addresses

@@ -493,6 +493,9 @@ struct RemoteImage: View {
     var fixedTarget: ImageTarget? = nil
     /// Welle F-l: eigene Fläche, solange kein Bild da ist (Paket-Kachel: Farbverlauf), statt der grauen.
     var placeholder: AnyView? = nil
+    /// Build 4 follow-up S2: while a new address loads, keep showing the previous picture instead of the placeholder
+    /// (only one loaded with the same blur: spoiler rule). Only poster tiles use it (TMDB poster → addon poster).
+    var keepsPreviousWhileLoading = false
     /// Wave F-k: called with the address when it cannot be loaded (not on cancel); poster tiles then try the next one.
     var onFailure: (@MainActor (String) -> Void)? = nil
     @Environment(\.displayScale) private var displayScale
@@ -529,7 +532,10 @@ struct RemoteImage: View {
         // Welle F-g: eine neu angelegte Zelle (LazyHStack) hat leeren @State; ihr erster Frame nimmt das Bild synchron
         // aus dem Speichercache statt grau zu zeichnen (die .task läuft erst nach dem ersten Frame).
         // Nur ein Bild derselben Adresse und desselben Weichzeichners zeigen (kein Spoiler nach Blur-Wechsel).
-        let shown = (loadedURL == url && loadedBlur == blur ? image : nil) ?? syncHit
+        let exact = loadedURL == url && loadedBlur == blur ? image : nil
+        // S2: a poster tile keeps its previous picture (same blur only) until the new address has one.
+        let kept = keepsPreviousWhileLoading && url != nil && loadedBlur == blur ? image : nil
+        let shown = exact ?? syncHit ?? kept
         ZStack {
             if let shown {
                 Image(uiImage: shown).resizable().aspectRatio(contentMode: fit ? .fit : .fill)
@@ -559,15 +565,28 @@ struct RemoteImage: View {
             }
             guard let target = fixedTarget ?? target else { return }   // Größe noch unbekannt: nicht winzig dekodieren
             let blurPx = Int((blur * displayScale).rounded())
+            // S2: a poster tile replacing the picture it shows with one from another address (counted for the log).
+            let swap = keepsPreviousWhileLoading && image != nil && loadedURL != nil && loadedURL != s
             // Speichercache-Treffer (auch nach dem Freigeben beim Zurückkehren): sofort, ohne Überblendung.
             if let hit = ImagePipeline.shared.cachedImage(u, target: target, blur: blurPx) {
                 image = hit; loadedURL = s; loadedBlur = blur
+                if swap { PosterSwapLog.note(gapMs: nil, waitMs: 0) }
                 return
             }
-            if loadedURL != s || loadedBlur != blur { image = nil }
+            let keep = keepsPreviousWhileLoading && loadedBlur == blur
+            if (loadedURL != s || loadedBlur != blur) && !keep { image = nil }
+            let started = ContinuousClock.now
             let img = await ImagePipeline.shared.image(u, target: target, blur: blurPx)
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.2)) { image = img; loadedURL = s; loadedBlur = blur }
+            if img == nil && keep && image != nil {
+                // S2: keep the previous picture; `onFailure` moves the tile on to its next address.
+            } else {
+                withAnimation(.easeOut(duration: 0.2)) { image = img; loadedURL = s; loadedBlur = blur }
+            }
+            if swap, img != nil {
+                let ms = Metric.ms(started.duration(to: ContinuousClock.now))
+                PosterSwapLog.note(gapMs: keep ? nil : ms, waitMs: ms)
+            }
             if img == nil { onFailure?(s) }
         }
         .onDisappear {
