@@ -22,13 +22,13 @@ struct EpisodeLabelData {
 struct EpisodeCardLabel: View {
     let data: EpisodeLabelData
     @Environment(\.isFocused) private var focused
+    @Environment(\.theme) private var theme
 
     static let width: CGFloat = 400
     static let height: CGFloat = 225
-    private static let radius: CGFloat = 12
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+        VStack(alignment: .leading, spacing: theme.space.xs) {
             still
             Text(data.heading).textRoleInRow(.rowTitleEmphasis).lineLimit(1)
             Text(data.overview ?? " ")
@@ -47,17 +47,17 @@ struct EpisodeCardLabel: View {
             .spoilerMark(data.spoiler)
             .overlay(alignment: .topTrailing) { watchedMark }
             .overlay(alignment: .bottom) { progressBar }
-            .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: theme.radius.row, style: .continuous))
     }
 
     @ViewBuilder private var watchedMark: some View {
         if data.watched {
             Image(systemName: "checkmark.circle.fill")
-                .font(.title3)
+                .font(theme.type.font(.sectionTitle))
                 .foregroundStyle(Theme.Tone.ok.color)
-                .padding(Theme.Space.xs)
+                .padding(theme.space.xs)
                 .background(Circle().fill(Theme.Palette.badgeOnImage))
-                .padding(Theme.Space.xs)
+                .padding(theme.space.xs)
                 .accessibilityLabel("Gesehen")
         }
     }
@@ -65,9 +65,9 @@ struct EpisodeCardLabel: View {
     @ViewBuilder private var progressBar: some View {
         if let p = data.progress {
             ProgressView(value: p)
-                .tint(Theme.Palette.primary)
-                .padding(.horizontal, Theme.Space.s)
-                .padding(.bottom, Theme.Space.xs)
+                .tint(theme.color.primary)
+                .padding(.horizontal, theme.space.s)
+                .padding(.bottom, theme.space.xs)
         }
     }
 }

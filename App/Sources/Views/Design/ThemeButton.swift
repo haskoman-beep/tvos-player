@@ -32,10 +32,14 @@ private struct ThemeButtonBody: View {
     @Environment(\.isFocused) private var focused
     @Environment(\.theme) private var theme
 
+    /// Review: a light accent (weiß, champagner) at rest must not look like the focused (white) button, so the
+    /// resting primary is a step quieter; the focus brings full white plus lift and shadow.
+    private static let primaryRestOpacity: Double = 0.8
+
     private var fill: Color {
         if focused { return theme.color.rowFocused }
         switch role {
-        case .primary: return theme.color.accent
+        case .primary: return theme.color.accent.opacity(Self.primaryRestOpacity)
         case .secondary: return selected ? theme.color.badgeFill : theme.color.row
         }
     }
@@ -71,6 +75,7 @@ private struct ThemeButtonBody: View {
 struct ThemeButtonLabel: View {
     let title: String
     var symbol: String? = nil
+    @Environment(\.theme) private var theme
 
     init(_ title: String, symbol: String? = nil) {
         self.title = title
@@ -78,7 +83,7 @@ struct ThemeButtonLabel: View {
     }
 
     var body: some View {
-        HStack(spacing: Theme.Space.xs) {
+        HStack(spacing: theme.space.xs) {
             if let symbol { Image(systemName: symbol).accessibilityHidden(true) }
             Text(title).lineLimit(1)
         }

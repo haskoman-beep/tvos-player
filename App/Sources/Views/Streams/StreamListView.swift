@@ -280,6 +280,8 @@ struct StreamListView: View {
                                                                              releaseName: s.behaviorHints?.filename,
                                                                              sideLinks: sidePanelLinks(for: s),
                                                                              startOverride: sideStart?.id == s.id ? sideStart?.at : nil).environmentObject(model)
+                                                                     // 5c-merge: move `.badgesInPlayer()` to the root of
+                                                                     // PlayerScreen (covers TorBoxFilesRow too), then drop it here.
                                                                      .badgesInPlayer() }   // Wave P-b; Task 5.3: badges in the player
         }
         .modifier(StillWatchingAlert(state: $autoNext, note: $nextNote) { startNext($0.next, after: $0.stream, auto: false) })

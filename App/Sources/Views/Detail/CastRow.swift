@@ -53,18 +53,18 @@ struct CastRow: View {
 private struct CastPortrait: View {
     let member: CastMember
     let circle: Bool
+    @Environment(\.theme) private var theme
 
     private static let circleSide: CGFloat = 150
     private static let cardWidth: CGFloat = 170
     private static let cardHeight: CGFloat = 220
-    private static let cardRadius: CGFloat = 12
 
     var body: some View {
-        VStack(spacing: Theme.Space.xs) {
+        VStack(spacing: theme.space.xs) {
             picture
             Text(member.name).textRoleInRow(.rowDetail).lineLimit(1)
             if !circle, let role = member.role {
-                Text(role).font(.caption2).opacity(0.7).lineLimit(1)
+                Text(role).font(theme.type.font(.badge)).foregroundStyle(theme.color.secondary).lineLimit(1)
             }
         }
         .frame(width: circle ? Self.circleSide : Self.cardWidth)
@@ -79,12 +79,12 @@ private struct CastPortrait: View {
         } else {
             RemoteImage(url: member.photo, maxPixels: 460)
                 .frame(width: Self.cardWidth, height: Self.cardHeight)
-                .clipShape(RoundedRectangle(cornerRadius: Self.cardRadius, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: theme.radius.row, style: .continuous))
                 .overlay { initial }
         }
     }
 
     @ViewBuilder private var initial: some View {
-        if member.photo == nil { Text(String(member.name.prefix(1))).font(.title) }
+        if member.photo == nil { Text(String(member.name.prefix(1))).font(theme.type.font(.sectionTitle)) }
     }
 }

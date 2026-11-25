@@ -65,12 +65,13 @@ struct StreamRowParts {
 /// Size badges and the addon name, right-aligned (kompakt and today's row).
 private struct StreamRowTrailing: View {
     let parts: StreamRowParts
+    @Environment(\.theme) private var theme
 
     var body: some View {
         if !parts.badges.isEmpty || parts.addon != nil {
-            VStack(alignment: .trailing, spacing: Theme.Space.xs) {
+            VStack(alignment: .trailing, spacing: theme.space.xs) {
                 if !parts.badges.isEmpty {
-                    HStack(spacing: Theme.Space.xs) {
+                    HStack(spacing: theme.space.xs) {
                         ForEach(parts.badges) { ThemeBadge($0, size: .sources, surface: parts.surface) }
                     }
                 }
@@ -84,10 +85,11 @@ private struct StreamRowTrailing: View {
 /// The full addon text plus the file name it does not carry (Wave Q), wrapping.
 private struct StreamRowBody: View {
     let text: StreamRowText
+    @Environment(\.theme) private var theme
 
     var body: some View {
         // Keine Zeilengrenze: StreamRowText kürzt selbst (Cache-Zeilen zuerst); die Zeile wächst mit dem Text.
-        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+        VStack(alignment: .leading, spacing: theme.space.xs) {
             Text(text.body).textRoleInRow(.rowDetail)
                 .fixedSize(horizontal: false, vertical: true)
             if let file = text.fileName {
@@ -102,9 +104,10 @@ private struct StreamRowBody: View {
 /// `kompakt`: one line.
 private struct StreamRowCompact: View {
     let parts: StreamRowParts
+    @Environment(\.theme) private var theme
 
     var body: some View {
-        HStack(alignment: .center, spacing: Theme.Space.m) {
+        HStack(alignment: .center, spacing: theme.space.m) {
             if !parts.text.name.isEmpty {
                 Text(parts.text.name.replacingOccurrences(of: "\n", with: " "))
                     .textRoleInRow(.rowTitleEmphasis)
@@ -124,10 +127,11 @@ private struct StreamRowCompact: View {
 /// `ausfuehrlich`: head line plus the full text.
 private struct StreamRowDetailed: View {
     let parts: StreamRowParts
+    @Environment(\.theme) private var theme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.xs) {
-            HStack(alignment: .firstTextBaseline, spacing: Theme.Space.m) {
+        VStack(alignment: .leading, spacing: theme.space.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: theme.space.m) {
                 Text(parts.headLine).textRoleInRow(.rowTitleEmphasis)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -141,10 +145,11 @@ private struct StreamRowDetailed: View {
 /// `karten`: head, badge row and text apart.
 private struct StreamRowCard: View {
     let parts: StreamRowParts
+    @Environment(\.theme) private var theme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s) {
-            HStack(alignment: .firstTextBaseline, spacing: Theme.Space.m) {
+        VStack(alignment: .leading, spacing: theme.space.s) {
+            HStack(alignment: .firstTextBaseline, spacing: theme.space.m) {
                 Text(parts.text.name).textRoleInRow(.rowTitleEmphasis)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -153,12 +158,12 @@ private struct StreamRowCard: View {
             badgeRow
             StreamRowBody(text: parts.text)
         }
-        .padding(.vertical, Theme.Space.xs)
+        .padding(.vertical, theme.space.xs)
     }
 
     @ViewBuilder private var badgeRow: some View {
         if parts.cache != nil || parts.addon != nil {
-            HStack(spacing: Theme.Space.xs) {
+            HStack(spacing: theme.space.xs) {
                 if let cache = parts.cache { ThemeBadge(cache, size: .sources, surface: parts.surface) }
                 if let addon = parts.addon { Text(addon).textRoleInRow(.rowDetail).lineLimit(1) }
             }

@@ -30,6 +30,7 @@ enum RatingColors {
 struct RatingRow: View {
     let ratings: [RatingBadge]
     let style: LookRatingStyle
+    @Environment(\.theme) private var theme
 
     var body: some View {
         switch style {
@@ -40,7 +41,7 @@ struct RatingRow: View {
     }
 
     private var symbols: some View {
-        HStack(spacing: Theme.Space.m) {
+        HStack(spacing: theme.space.m) {
             ForEach(ratings) { ThemeBadge(rating: $0, brandColor: RatingColors.brand($0.source)) }
         }
     }
@@ -57,7 +58,7 @@ struct RatingRow: View {
     }
 
     private var tiles: some View {
-        HStack(spacing: Theme.Space.xs) {
+        HStack(spacing: theme.space.xs) {
             ForEach(ratings) { RatingTile(rating: $0) }
         }
     }
@@ -69,13 +70,12 @@ private struct RatingTile: View {
     @Environment(\.theme) private var theme
 
     private static let minWidth: CGFloat = 110
-    private static let radius: CGFloat = 12
 
     var body: some View {
         VStack(alignment: .leading, spacing: theme.space.xxs) {
             Text(DetailLook.ratingName(rating))
                 .font(theme.type.font(.badge))
-                .foregroundStyle(Color.white.opacity(0.6))
+                .foregroundStyle(theme.color.secondary)
             Text(rating.displayValue)
                 .font(theme.type.font(.rowTitleEmphasis))
                 .foregroundStyle(theme.color.primary)
@@ -86,7 +86,7 @@ private struct RatingTile: View {
         .padding(.vertical, 10)
         .padding(.horizontal, 16)
         .frame(minWidth: Self.minWidth, alignment: .leading)
-        .background(Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
+        .background(theme.color.row, in: RoundedRectangle(cornerRadius: theme.radius.row, style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(DesignText.accessibilityLabel([rating.spokenSource,
                                                            rating.displayValue.replacingOccurrences(of: "\u{00A0}", with: " ")]))
