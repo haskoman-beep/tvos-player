@@ -135,7 +135,11 @@ struct HomeView: View {
                 HeroLayer(slides: slides, collapse: collapse)
                 ScrollView(.vertical) {
                     LazyVStack(alignment: .leading, spacing: Theme.Space.xl) {
-                        HeroButtons(slides: slides, onFocusChange: { topWatch.report(.heroButtons, $0) })
+                        HeroButtons(slides: slides, onFocusChange: { f in
+                            topWatch.report(.heroButtons, f)
+                            // P2 fix round: only the hero buttons expand the collapsed info (`HeroCollapse`).
+                            if collapse.heroButtonsFocused != f { collapse.heroButtonsFocused = f }
+                        })
                         rowList(rows, hero: true)
                     }
                     .padding(.top, 24)
@@ -275,12 +279,8 @@ struct HomeView: View {
             .padding(.leading, Theme.Space.edge)
         } else {
             // Keine Akzentfarbe (RootView .tint) auf der Startseite; Welle F-i: Token-Knopf wie Abspielen/Details.
-            // P2: below the rows the hero info stays collapsed (`HeroCollapse.belowRows`).
             FocusReportingButton(title: "Reihen & Collections", action: { manager = ManagerTarget() },
-                                 onFocus: { f in
-                                     topWatch.report(.actionButton, f)
-                                     if hero, collapse.belowRows != f { collapse.belowRows = f }
-                                 }, focusTarget: focusTarget)
+                                 onFocus: { topWatch.report(.actionButton, $0) }, focusTarget: focusTarget)
                 .padding(.top, 20)
                 .padding(.leading, Theme.Space.edge)
         }

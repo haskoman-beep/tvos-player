@@ -2,23 +2,27 @@ import SwiftUI
 import UIKit
 import PlayerCore
 
-/// P2 (Build 4 follow-up 2): collapsing hero info, Apple TV app style. With the focus on the hero buttons (or at the
-/// page top) the layout is as before. While the focus is in the rows (`HomeFocus.inRows`) the info shows only the
-/// logo (or title) and the meta line, and the list top moves up so the page's tallest row fits between the list's
-/// top and its visible bottom (PlayerCore `HeroInfoCollapse`). The list frame (`HeroListFrame`) and the info
-/// (`HeroLayer`) read this one object, so both change in the same animated transaction.
+/// P2 (Build 4 follow-up 2): collapsing hero info, Apple TV app style. With the focus on the hero buttons (the top
+/// edge of the page) the layout is as before. Once the focus enters a row (`HomeFocus.inRows` turns true: card,
+/// placeholder, status tile) the info shows only the logo (or title) and the meta line, and the list top moves up so
+/// the page's tallest row fits between the list's top and its visible bottom (PlayerCore `HeroInfoCollapse`).
+/// The list frame (`HeroListFrame`) and the info (`HeroLayer`) read this one object, so both change in the same
+/// animated transaction.
+/// Fix round (user decision 25.11., review M2): the collapse is a latch. It does not follow the F-A-12 rest check:
+/// leaving the rows for the tab bar, the sidebar or the button below the rows keeps it collapsed; only the hero
+/// buttons expand it. Slideshow and backdrop keep following `inRows` as before.
 @MainActor @Observable final class HeroCollapse {
     /// Applied state (changed with the theme's expand animation by `HeroListFrame`).
     fileprivate(set) var collapsed = false
     /// Logo (or title) height of the collapsed info, from the current layout.
     fileprivate(set) var compactLogo: CGFloat = HeroMetrics.logoHeight
-    /// The button below the rows ("Reihen & Collections") holds the focus. F-A-12 ends `inRows` there after 300 ms;
-    /// expanding then would shrink the list from the top and push the focused button below its bottom, so the info
-    /// stays collapsed while the focus is there (it is not at the page top either).
-    var belowRows = false
+    /// The hero buttons (Abspielen/Details) hold the focus; set by `HomeView` from `HeroButtons`. Turning true
+    /// expands the info.
+    var heroButtonsFocused = false
 
     /// Height of one heading line of the home rows (`Theme.TextRole.sectionTitle` in the theme's type), from the
     /// UIKit metrics of the same font: today's style is `title3`, the plan's type scale a system font of its size.
+    /// The heading is one line (`lineLimit(1)` in `HomeRowView`).
     static func headingLine(_ type: ThemeValues.TypeScale) -> CGFloat {
         let font: UIFont
         if type.isToday {
@@ -52,7 +56,6 @@ struct HeroListFrame: ViewModifier {
 
     func body(content: Content) -> some View {
         let layout = currentLayout
-        let wanted = focus.inRows || collapse.belowRows
         content
             .padding(.top, layout.top(collapsed: collapse.collapsed))
             // Wave F-m: build 198 photo: the list reached the screen edge, focus scrolling stopped the card's frame
@@ -63,7 +66,13 @@ struct HeroListFrame: ViewModifier {
             .onChange(of: layout.compactLogo, initial: true) { _, logo in
                 if collapse.compactLogo != logo { collapse.compactLogo = logo }
             }
-            .onChange(of: wanted, initial: true) { _, c in apply(c, layout: layout) }
+            // Latch: focus into a row collapses, focus on the hero buttons expands; nothing else changes it.
+            .onChange(of: focus.inRows) { _, inRows in
+                if inRows { apply(true, layout: layout) }
+            }
+            .onChange(of: collapse.heroButtonsFocused) { _, onButtons in
+                if onButtons { apply(false, layout: layout) }
+            }
     }
 
     private var currentLayout: HeroInfoCollapse.Layout {
