@@ -4,8 +4,8 @@ import PlayerCore
 /// Kategorie „Aussehen“ (§2.2). Task 4.5: on top „Mein Look“ (`LookHeaderRow`), below all configurator options in
 /// four areas (`LookOptionRows`). The old rows for Navigation, Akzentfarbe, Postergröße and Poster aufklappen are
 /// gone: the catalog rows `navigation`, `accent`, `cardSize` and `expandPosters` replace them fully and write the
-/// old fields through `Profile.setLook`. What the catalog does not have stays below: Sprache der App, poster
-/// images, ratings and badges („Titelbild oben“ stays under Startseite; badge style stays until `badgeStyle`
+/// old fields through `Profile.setLook`. Sprache der App stays the first row under „Mein Look“. What the catalog
+/// does not have otherwise stays below the areas: poster images, ratings and badges („Titelbild oben“ stays under Startseite; badge style stays until `badgeStyle`
 /// takes effect in Build 5b).
 struct AppearanceSettings: View {
     @EnvironmentObject var model: AppModel
@@ -17,13 +17,12 @@ struct AppearanceSettings: View {
         let a = model.profile.appearance
         CategoryPage(.appearance, summary: SettingsSummary.look(model.profile)) {
             LookHeaderRow()
+            // Review I2: Sprache der App stays the first content row (since wave S), right under „Mein Look“.
+            SettingsChoiceRow(symbol: "globe", tint: tint, title: "Sprache der App",
+                              detail: "Sprache von Titeln, Beschreibungen und Katalogen.",
+                              options: AppLanguage.allCases, selection: model.binding(\.language),
+                              alwaysList: true, label: SettingsSummary.languageName)
             LookOptionRows()
-            SettingsSection("Sprache") {
-                SettingsChoiceRow(symbol: "globe", tint: tint, title: "Sprache der App",
-                                  detail: "Sprache von Titeln, Beschreibungen und Katalogen.",
-                                  options: AppLanguage.allCases, selection: model.binding(\.language),
-                                  alwaysList: true, label: SettingsSummary.languageName)
-            }
             SettingsSection("Poster und Bilder") {
                 PosterQualitySettingRow()
                 MetadataAddonImagesSettingRow()
