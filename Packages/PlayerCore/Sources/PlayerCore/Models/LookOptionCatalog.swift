@@ -349,20 +349,25 @@ extension SettingsSummary {
     /// not „Apple TV“, because count 0 means the old defaults, not the Apple TV preset). Task 4.5-base:
     /// counts the keys that differ from the baseline (`LookPreset.baseline`, the old defaults), not the stored
     /// overrides, so an untouched profile shows „Standard“ and an imported Apple TV export counts its differences.
-    public static func lookValue(_ look: Look) -> String {
-        let n = LookPreset.baselineDeviationCount(look)
-        return n == 0 ? "Standard" : "angepasst · \(n)"
-    }
+    public static func lookValue(_ look: Look) -> String { lookValue(count: LookPreset.baselineDeviationCount(look)) }
+
+    static func lookValue(count n: Int) -> String { n == 0 ? "Standard" : "angepasst · \(n)" }
 
     /// Task 4.5: „Mein Look · Standard“ / „Mein Look · angepasst · 3“.
     public static func look(_ look: Look) -> String {
         DesignText.metaLine([look.preset.title, lookValue(look)])
     }
     /// Fix round 1 (I2): the row value from what the theme shows (`themeLook`), so a change in the old settings
-    /// counts too.
-    public static func lookValue(_ p: Profile) -> String { lookValue(p.shownLook) }
+    /// counts too. Integration build 5: plus the detail extras that differ (`episodes`, `titleArt`, in
+    /// `Profile.detailExtras`), so n matches the rows' accent dots.
+    public static func lookValue(_ p: Profile) -> String { lookValue(count: lookDeviationCount(p)) }
 
-    public static func look(_ p: Profile) -> String { look(p.shownLook) }
+    public static func look(_ p: Profile) -> String { DesignText.metaLine([p.look.preset.title, lookValue(p)]) }
+
+    static func lookDeviationCount(_ p: Profile) -> Int {
+        let extras = LookOptionCatalog.extras.filter { p.isLookOverridden($0.key) }.count
+        return LookPreset.baselineDeviationCount(p.shownLook) + extras
+    }
 }
 
 extension Profile {

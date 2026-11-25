@@ -221,6 +221,21 @@ private func lookValueKeys() throws -> [String: Set<String>] {
     #expect(rows.overriddenCount == 2)
 }
 
+// Integration build 5 (b5b review W5 follow-up): „Mein Look · angepasst · n“ counts the detail extras too, the same
+// n as the rows' accent dots (`LookRowValues.overriddenCount`, logged by `LookOptionRows.logLook`).
+@Test func lookSummaryCountsTheDetailExtras() {
+    var p = Profile(name: "X")
+    #expect(SettingsSummary.lookValue(p) == "Standard")
+    p.setLook("episodes", to: "liste")
+    #expect(SettingsSummary.lookValue(p) == "angepasst · 1")
+    #expect(SettingsSummary.look(p) == "Mein Look · angepasst · 1")
+    p.setLook("accent", to: "rot")
+    #expect(SettingsSummary.lookValue(p) == "angepasst · 2")
+    #expect(p.lookRows.overriddenCount == 2)
+    p.resetLook()
+    #expect(SettingsSummary.lookValue(p) == "Standard")
+}
+
 // Integration build 5: one set of later-build options already drawn (5.1, 5.2, 5.3, 5.4, 5.6), the default of
 // `isEnabled`; the build itself stays Build 4.
 
