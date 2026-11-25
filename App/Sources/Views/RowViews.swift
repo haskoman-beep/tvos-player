@@ -84,7 +84,11 @@ struct HomeRowView: View {
                 }
             }
         }
-        .onChange(of: focusedRoute != nil || focusedPlaceholder != nil) { _, f in onFocusInside?(f) }
+        // Review M1: focus left the row: a pending hand-over ends here (no stale restart on a later visit).
+        .onChange(of: focusedRoute != nil || focusedPlaceholder != nil) { _, f in
+            if !f, handoverTarget != nil { handoverTarget = nil }
+            onFocusInside?(f)
+        }
         .onAppear { if focusedRoute != nil || focusedPlaceholder != nil { onFocusInside?(true) } }
         // Task 4.1a (F-A-2): collection rows hand over like list rows: a focused placeholder (or status tile) goes to
         // the tile at the same place when the kit file arrives, else to the status tile.
@@ -107,6 +111,7 @@ struct HomeRowView: View {
         .onChange(of: focusTarget?.serial, initial: true) { _, _ in claimFocusTarget() }
         .onDisappear {
             onFocusInside?(false)
+            if handoverTarget != nil { handoverTarget = nil }   // Review M1
             // Wave F-p R1: page left with focus in this row within the 350 ms rest: no stale request.
             if let r = focusedRoute { StreamPrefetcher.shared.cancelRest(r) }
         }
