@@ -12,6 +12,9 @@ struct PosterQualityBadges: View {
     @EnvironmentObject var model: AppModel
     let item: MetaPreview
     var scale: CGFloat = 1
+    /// Task 5.1: on a landscape card (no band below): always at the top trailing corner, never on the picture's
+    /// bottom edge (where the title and scrim sit).
+    var landscape = false
     @State private var best: BestQuality?
     /// Wave F-k R1: row of this tile for the visible-tile prefetch; whether the card is on screen.
     @Environment(\.prefetchRow) private var prefetchRow
@@ -35,7 +38,7 @@ struct PosterQualityBadges: View {
         let settings = model.profile.appearance.badges
         let placement = model.profile.appearance.titles.posterBadges
         let list = best.map { QualityBadges.poster($0, settings: settings, placement: placement) } ?? []
-        let bottom = placement == .bottom
+        let bottom = placement == .bottom && !landscape
         ZStack(alignment: bottom ? .bottomLeading : .topTrailing) {
             Color.clear
             if !list.isEmpty {

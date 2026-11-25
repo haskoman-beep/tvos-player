@@ -17,6 +17,8 @@ struct ThemeValues: Equatable {
     var elevation: Elevation
     var focus: FocusStyle
     var motion: Motion
+    /// Task 5.1: the card and row options of the home page (`LookHome`) and the system's reduce motion.
+    var cards: Cards = Cards()
 
     struct Colors: Equatable {
         var base: Color
@@ -141,6 +143,15 @@ struct ThemeValues: Equatable {
         var border: LookFocusBorder
     }
 
+    /// Task 5.1: what `Strip`, `ThemeCard` and the home rows draw (shape, size, titles, gaps, focus effect,
+    /// expanding). Read through `CardStyle.resolve` (which also honours the diagnosis switch „alte Karte“).
+    struct Cards: Equatable {
+        var home: LookHome = LookPreset.values(.appleTV).home
+        var reduceMotion = false
+        /// Expanding posters is on (`CardLayout.expands`: the option, never under reduce motion).
+        var expands: Bool { home.expandPosters && !reduceMotion }
+    }
+
     struct Motion: Equatable {
         var focus: Double
         var press: Double
@@ -196,6 +207,9 @@ struct ThemeValues: Equatable {
         if reduceTransparency { t.color.scrim = t.color.base }
         t.type = TypeScale(scale: values.global.typeScale, character: values.global.typeCharacter)
         t.focus.border = LookOptionCatalog.effectiveFocusBorder(values)
+        // Task 5.1: cards and rows. Glow keeps the system card (its own radius); otherwise `corners`.
+        t.cards = Cards(home: values.home, reduceMotion: reduceMotion)
+        t.radius.card = values.home.focusGlow ? nil : LookMetrics.cornerRadius(values.home.corners)
         if LookTheme.usesPlanMotion(values, reduceMotion: reduceMotion) {
             let m = LookTheme.motion(values.global.motion, reduceMotion: reduceMotion)
             t.motion = Motion(focus: m.focus, press: m.focus == 0 ? 0 : t.motion.press, fade: m.fade,
