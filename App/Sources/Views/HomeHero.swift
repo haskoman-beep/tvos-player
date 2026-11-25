@@ -208,12 +208,18 @@ struct HeroBackdrop: View {
             }
             if shown?.url == s { return }
             let target = ImageTarget.fullScreen(scale: displayScale)
+            let started = ContinuousClock.now
             // Speichercache-Treffer nach dem Freigeben (Rückkehr): sofort, ohne Überblendung.
             if shown == nil, let hit = ImagePipeline.shared.cachedImage(u, target: target) {
                 shown = Shown(url: s, image: hit)
+                PictureArrivalLog.backdrop.note(hit, fromMemory: true, waitMs: 0, fades: false)   // P3
                 return
             }
+            // P3: from memory or loaded (disk/network + decode), and how long until the crossfade starts.
+            let inMemory = ImagePipeline.shared.cachedImage(u, target: target, count: false) != nil
             guard let img = await ImagePipeline.shared.image(u, target: target), !Task.isCancelled else { return }
+            let waited = Metric.ms(started.duration(to: ContinuousClock.now))
+            PictureArrivalLog.backdrop.note(img, fromMemory: inMemory, waitMs: waited, fades: true)
             withAnimation(.easeInOut(duration: 0.6)) { shown = Shown(url: s, image: img) }
         }
         // Verdeckt (Detailseite, Wiedergabe): Vollbild-Bitmap nicht außerhalb des Cache-Budgets halten.

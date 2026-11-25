@@ -564,6 +564,7 @@ struct PosterCard: View {
             guard !Task.isCancelled else { return }
             // Verankern nur zusammen mit dem Aufklappen: schnelles Durchscrollen löst kein Programm-Scrollen aus.
             // Task 4.1a (C1): the anchor id must equal the row's `ForEach` id (`rowKey`, type|id since F-A-5).
+            FrameMeter.event(.expand)   // P3: counted in the next `ruckler` line
             withAnimation(.easeInOut(duration: 0.25)) { expanded = true; anchor(item.rowKey) }
         }
     }

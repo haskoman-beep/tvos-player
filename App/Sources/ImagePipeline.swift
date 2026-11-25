@@ -581,10 +581,13 @@ struct RemoteImage: View {
             // S2: a poster tile moving on from a picture of another address; a gap when it draws no picture now.
             let swapStart = keepsPreviousWhileLoading
                 ? PosterSwapStats.start(previous: shownURL, next: s, pictureVisible: visible != nil) : nil
+            // P3: the first picture this poster tile shows (`PictureArrivalLog.firstPoster`; swaps go to PosterSwapLog).
+            let firstPoster = keepsPreviousWhileLoading && shownURL == nil
             // Speichercache-Treffer (auch nach dem Freigeben beim Zurückkehren): sofort, ohne Überblendung.
             if let hit = ImagePipeline.shared.cachedImage(u, target: target, blur: blurPx) {
                 image = hit; loadedURL = s; loadedBlur = blur; shownURL = s
                 if let swapStart { PosterSwapLog.note(gapMs: swapStart == .gap ? 0 : nil, waitMs: 0) }
+                if firstPoster { PictureArrivalLog.firstPoster.note(hit, fromMemory: true, waitMs: 0, fades: false) }
                 return
             }
             let keep = keepsPreviousWhileLoading && loadedBlur == blur
@@ -597,12 +600,11 @@ struct RemoteImage: View {
             } else {
                 withAnimation(.easeOut(duration: 0.2)) { image = img; loadedURL = s; loadedBlur = blur }
             }
-            if img != nil {
+            if let img {
                 shownURL = s
-                if let swapStart {
-                    let ms = Metric.ms(started.duration(to: ContinuousClock.now))
-                    PosterSwapLog.note(gapMs: swapStart == .gap ? ms : nil, waitMs: ms)
-                }
+                let ms = Metric.ms(started.duration(to: ContinuousClock.now))
+                if let swapStart { PosterSwapLog.note(gapMs: swapStart == .gap ? ms : nil, waitMs: ms) }
+                if firstPoster { PictureArrivalLog.firstPoster.note(img, fromMemory: false, waitMs: ms, fades: true) }
             }
             if img == nil { onFailure?(s) }
         }

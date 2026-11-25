@@ -67,6 +67,37 @@ enum PosterSwapLog {
     }
 }
 
+/// Build 4 follow-up 2 (P3): pictures that went on screen, one `bilder` line per 10 s with activity
+/// (`PictureArrivalStats`): backdrop swaps (`HeroBackdrop`) and the first picture of a poster tile (`RemoteImage`).
+/// Each one also counts as a frame-meter event (the `ruckler` line names it when missed frames lie near it).
+@MainActor
+final class PictureArrivalLog {
+    static let backdrop = PictureArrivalLog(title: "Hintergrund", event: .backdrop)
+    static let firstPoster = PictureArrivalLog(title: "Erste Poster", event: .poster)
+
+    private var stats: PictureArrivalStats
+    private let event: FramePacing.Event
+
+    private init(title: String, event: FramePacing.Event) {
+        stats = PictureArrivalStats(title: title)
+        self.event = event
+    }
+
+    /// `img` goes on screen now; `fades`: with a fade-in (0.6 s backdrop crossfade, 0.2 s poster fade).
+    func note(_ img: UIImage, fromMemory: Bool, waitMs: Int, fades: Bool) {
+        FrameMeter.event(event)
+        let w = img.cgImage?.width ?? 0
+        let h = img.cgImage?.height ?? 0
+        let opened = stats.record(fromMemory: fromMemory, waitMs: waitMs, pixelWidth: w, pixelHeight: h,
+                                  bytes: ImagePipeline.cost(img), fades: fades)
+        guard opened else { return }
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(PictureArrivalStats.window))
+            if let line = self?.stats.take() { RemoteLog.info("bilder", line) }
+        }
+    }
+}
+
 /// Wave F-k: tile pictures that did not load, at most 5 lines per launch (host only, never the path: addon addresses
 /// can carry configuration).
 @MainActor
