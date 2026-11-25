@@ -84,8 +84,9 @@ struct HomeView: View {
             focus.followsBackdrop = k.follows
             RemoteLog.info("hero", k.line)
         }
-        .onChange(of: "\(edge.rawValue)|\(appearance.navigation.rawValue)", initial: true) {
-            topWatch.configure(edge: edge, navigation: appearance.navigation)
+        // Integration build 5 (review b5a2 R5): the navigation of the look (Task 5.6), as the tab view draws it.
+        .onChange(of: "\(edge.rawValue)|\(theme.chrome.navigation.rawValue)", initial: true) {
+            topWatch.configure(edge: edge, navigation: theme.chrome.navigationStyle)
         }
         .onAppear {
             rowFocus.state.covered = false

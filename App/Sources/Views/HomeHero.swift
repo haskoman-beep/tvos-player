@@ -316,6 +316,7 @@ struct HeroButtons: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.navigate) private var navigate
     @Environment(HomeFocus.self) private var focus
+    @Environment(\.theme) private var theme
     let slides: HeroSlides
     /// Wave F-j: the button row gains (true) or loses (false) focus; it is the top edge of the home page.
     var onFocusChange: ((Bool) -> Void)? = nil
@@ -428,7 +429,8 @@ struct HeroButtons: View {
         guard carousel, slides.items.count > 1, let move = Self.move(direction) else { return }
         guard fieldMoved.duration(to: ContinuousClock.now) > .milliseconds(150) else { return }
         let button: HeroCarousel.Button? = field.map { $0 == .play ? .first : .last }
-        let sidebar: Bool = model.profile.appearance.navigation == .sidebar
+        // Integration build 5 (review b5a2 R5): the navigation of the look (Task 5.6), as the tab view draws it.
+        let sidebar: Bool = theme.chrome.navigation == .seitenleiste
         guard let forward = HeroCarousel.step(for: move, at: button, sidebar: sidebar) else { return }
         slides.step(forward: forward)
         let title = slides.current?.name ?? "?"
