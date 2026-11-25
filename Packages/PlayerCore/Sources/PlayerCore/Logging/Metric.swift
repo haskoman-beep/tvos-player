@@ -25,6 +25,9 @@ public enum Metric: String, CaseIterable, Sendable, Hashable {
     case playerAudioReload = "player.audioReload"
     /// Merging the remote progress (Trakt/Simkl) into the local book.
     case syncMerged = "sync.merged"
+    /// Build 4 follow-up S4: not a duration but a count: body passes of the home rows in one 5 s window with focus
+    /// movement (`BodyPassCounter`); field `fokus`: focus moves onto row tiles in that window.
+    case homeRowBody = "home.rowBody"
 
     /// Log category of all measuring points.
     public static let category = "metric"
