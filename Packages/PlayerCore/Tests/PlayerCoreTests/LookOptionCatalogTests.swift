@@ -192,9 +192,11 @@ private func lookValueKeys() throws -> [String: Set<String>] {
     #expect(LookOptionCatalog.isEnabled("badgeStyle", in: v, implemented: []).reason
         == "kommt mit Build 5b · bis dahin: „Plaketten-Stil“ unten")
     #expect(LookOptionCatalog.isEnabled("badgeStyle", in: v) == (true, nil))
-    #expect(LookOptionCatalog.isEnabled("heroStyle", in: v).reason
+    // Task 5.2 draws heroStyle too: active by default, the stand-in note only without that code.
+    #expect(LookOptionCatalog.isEnabled("heroStyle", in: v, implemented: []).reason
         == "kommt mit Build 5a · bis dahin: „Titelbild oben“ unter Startseite")
-    #expect(LookOptionCatalog.isEnabled("heroStyle", in: v, build: .b5a) == (true, nil))
+    #expect(LookOptionCatalog.isEnabled("heroStyle", in: v) == (true, nil))
+    #expect(LookOptionCatalog.isEnabled("heroStyle", in: v, build: .b5a, implemented: []) == (true, nil))
     #expect(LookOptionCatalog.isEnabled("layout", in: v, implemented: []).reason == "kommt mit Build 5b")
 }
 
@@ -217,4 +219,24 @@ private func lookValueKeys() throws -> [String: Set<String>] {
     #expect(rows.isOverridden("episodes"))
     #expect(!rows.isOverridden("titleArt"))
     #expect(rows.overriddenCount == 2)
+}
+
+// Integration build 5: one set of later-build options already drawn (5.1, 5.2, 5.3, 5.4, 5.6), the default of
+// `isEnabled`; the build itself stays Build 4.
+
+@Test func oneSetHoldsEveryLaterOptionDrawnInBuild5() {
+    #expect(LookBuild.current == .b4)
+    let drawn: Set<String> = [
+        "cardShape", "corners", "rowSpacing", "rowTitle", "cardTitles", "focusScale", "focusBorder", "focusShadow",
+        "focusGlow", "heroStyle", "heroInfo", "heroTitle", "backdropFollowsFocus",
+        "layout", "descriptionLines", "cast", "badgeStyle", "ratingStyle", "sourceList", "episodes", "titleArt",
+        "controlBar", "badges", "timeDisplay", "upNext", "stillWatching", "clock", "settingsLayout",
+    ]
+    #expect(LookOptionCatalog.implemented == drawn)
+    let v = LookPreset.values(.appleTV)
+    for e in LookOptionCatalog.rows where e.availableFrom > LookBuild.current {
+        let shown = LookOptionCatalog.isEnabled(e.key, in: v)
+        let later = shown.reason?.hasPrefix("kommt mit Build") ?? false
+        #expect(later == !drawn.contains(e.key), "\(e.key)")
+    }
 }

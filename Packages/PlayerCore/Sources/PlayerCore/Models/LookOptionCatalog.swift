@@ -77,11 +77,21 @@ public enum LookOptionCatalog {
     /// Task 5.3: options of a later build that this code already draws; their rows are active although
     /// `LookBuild.current` stays `.b4` (the 5a/5c rows stay dimmed until their builds land).
     /// Task 5.1: the card and row options of 5a (cardSize and expandPosters are Build 4 options); Task 5.2: the hero
-    /// options of 5a.
+    /// options of 5a; Task 5.4: the five player options of 5c (trackPanel is a Build 4 option already); Task 5.6:
+    /// clock and settings layout (navigation is a Build 4 option already). `availableFrom` keeps the appendix value.
+    /// Integration build 5: the one set of drawn later options, the default of `isEnabled(implemented:)`.
     public static let implemented: Set<String> = [
+        // 5.3 detail
         "layout", "descriptionLines", "cast", "badgeStyle", "ratingStyle", "sourceList", "episodes", "titleArt",
+        // 5.1 cards and rows
         "cardShape", "corners", "rowSpacing", "rowTitle", "cardTitles", "focusScale", "focusBorder", "focusShadow",
-        "focusGlow", "heroStyle", "heroInfo", "heroTitle", "backdropFollowsFocus",
+        "focusGlow",
+        // 5.2 hero
+        "heroStyle", "heroInfo", "heroTitle", "backdropFollowsFocus",
+        // 5.4 player
+        "controlBar", "badges", "timeDisplay", "upNext", "stillWatching",
+        // 5.6 clock and settings
+        "clock", "settingsLayout",
     ]
 
     public static func entry(_ key: String) -> LookOptionEntry? { rows.first { $0.key == key } }
@@ -97,24 +107,14 @@ public enum LookOptionCatalog {
         "badgeStyle": "„Plaketten-Stil“ unten",
         "heroStyle": "„Titelbild oben“ unter Startseite",
     ]
-    /// Options whose code is already in this build although appendix A names a later one (`availableFrom` stays the
-    /// appendix value). Task 5.4: the five player options of 5c (trackPanel is a Build 4 option already); Task 5.6:
-    /// clock and settings layout (navigation is a Build 4 option already).
-    static let implementedAhead: Set<String> = [
-        "controlBar", "badges", "timeDisplay", "upNext", "stillWatching", "clock", "settingsLayout",
-    ]
-    /// Integration build 5: every later-build option already drawn (Task 5.3 `implemented` + Task 5.4
-    /// `implementedAhead`); the default of `isEnabled(implemented:)`.
-    public static let implementedLater: Set<String> = implemented.union(implementedAhead)
 
     /// Whether the row `key` can be changed in `build`, and the note shown under it. An option of a later build is
     /// off with "kommt mit Build …"; with glow on, tvOS draws the card (`.buttonStyle(.card)`), so shape, scale,
     /// border and shadow are off. With system "reduce motion" the motion rows stay selectable but carry a note.
-    /// Task 5.3: `implemented` lists the later-build options already drawn (default `implementedLater`, the 5.3 and
-    /// 5.4 options).
+    /// Task 5.3: `implemented` lists the later-build options already drawn (default: all of them).
     public static func isEnabled(_ key: String, in values: LookValues, build: LookBuild = .current,
                                  reduceMotion: Bool = false,
-                                 implemented: Set<String> = implementedLater) -> (enabled: Bool, reason: String?) {
+                                 implemented: Set<String> = implemented) -> (enabled: Bool, reason: String?) {
         guard let e = entry(key) else { return (false, nil) }
         if e.availableFrom > build, !implemented.contains(key) {
             let later = "kommt mit Build \(e.availableFrom.title)"
