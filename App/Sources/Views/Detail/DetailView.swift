@@ -6,6 +6,8 @@ import PlayerCore
 struct DetailView: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.navigate) private var navigate
+    /// Task 5.3: the detail options (`theme.detail`: layout, description, cast, badges, ratings).
+    @Environment(\.theme) private var theme
     let item: MetaPreview
     @State private var imdb: String?
     @State private var meta: MetaDetail?
@@ -66,61 +68,15 @@ struct DetailView: View {
     private var isSeries: Bool { ContentKind.isEpisodic(type: item.type, hasVideos: (meta?.videos?.count ?? 0) > 1) }
 
     var body: some View {
+        let spec = layoutSpec
         ZStack(alignment: .topLeading) {
-            RemoteImage(url: meta?.background ?? item.background).ignoresSafeArea().overlay(Color.black.opacity(0.55))
+            DetailBackdrop(url: meta?.background ?? item.background, shades: spec.shades)
             ScrollViewReader { proxy in
                 ScrollView(.vertical) {
                     VStack(alignment: .leading, spacing: Theme.Space.l) {
-                        if let logo = meta?.logo {
-                            RemoteImage(url: logo, maxPixels: 1400, fit: true).frame(maxWidth: 700, maxHeight: 200, alignment: .leading)
-                        } else {
-                            Text(item.name).textRole(.display).accessibilityAddTraits(.isHeader)
-                        }
-                        // Wave F-n: the title's poster left of the info block, exactly as tall as it (PlayerCore `DetailPage`).
-                        HStack(alignment: .top, spacing: CGFloat(DetailPage.posterGap)) {
-                            if let size = DetailPage.posterSize(blockHeight: Double(infoHeight), bottomInset: overview.isEmpty ? 0 : Double(FocusHighlightMetrics.verticalPadding)) {
-                                DetailPoster(item: posterItem)
-                                    .frame(width: CGFloat(size.width), height: CGFloat(size.height))
-                                    .transition(.opacity)
-                                    .onAppear { markLoad(.poster) }
-                            }
-                            infoBlock
-                                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
-                                    guard DetailPage.shouldUpdate(measured: Double(h), stored: Double(infoHeight)) else { return }
-                                    // Review M2: animated, so the poster fades in and resizes smoothly.
-                                    withAnimation(.easeOut(duration: 0.2)) { infoHeight = h }
-                                }
-                        }
-
-                        if loading {
-                            // N6: ohne Beschreibung sonst nichts fokussierbar (unsichtbares Ziel, danach Abspielen).
-                            ProgressView().quietFocusTarget(overview.isEmpty)
-                        } else if let imdb {
-                            if isSeries {
-                                if let k = extra?.trailerYouTube { trailerButton(k).buttonStyle(ThemeActionButtonStyle()) }
-                                episodes(imdb)
-                            } else {
-                                let resume = model.progress.resumePosition(for: imdb)
-                                HStack(spacing: Theme.Space.l) {
-                                    bestChoiceCard(imdb, resume: resume)
-                                    Button(resume.map { "▶ Fortsetzen ab \(timeText($0))" } ?? "▶ Abspielen") {
-                                        markOpenedPlayback()
-                                        navigate(.streams(model.moviePlayRequest(item, imdb: imdb, meta: meta, resumeLastSource: resume != nil)))
-                                    }
-                                    .focused($focus, equals: .play)
-                                    if let k = extra?.trailerYouTube { trailerButton(k) }
-                                }
-                                // Welle F-i: Token-Farben statt Systemknopf (der zog wieder Blau ins Label).
-                                .buttonStyle(ThemeActionButtonStyle())
-                            }
-                            if let trailerNote { Text(trailerNote).textRole(.rowDetail) }
-                            if let x = extra { DetailExtras(info: x, isSeries: isSeries) }
-                        } else {
-                            Text("Keine IMDb-ID gefunden – Streams nicht abrufbar.").textRole(.rowDetail)
-                            if overview.isEmpty { FocusAnchor(kind: .back) }   // N6
-                        }
+                        head(spec)
+                        lower(spec)
                     }
-                    .padding(.horizontal, Theme.Space.edge)
                     .padding(.vertical, Theme.Space.edgeVertical)
                 }
                 .onChange(of: scrollRequest) {
@@ -216,6 +172,7 @@ struct DetailView: View {
             season = playbackFocusTarget().season ?? imdb.flatMap { model.progress.latest(forItem: $0)?.season } ?? seasons.first ?? 1
             loading = false
             loaded = true
+            logLook()
             // Während des Ladens war die Beschreibung das einzige fokussierbare Element: Fokus auf die Hauptaktion holen.
             try? await Task.sleep(for: .milliseconds(50))
             guard !Task.isCancelled else { return }
@@ -252,7 +209,10 @@ struct DetailView: View {
             if let s = target.season, s != season { season = s }
             await applyFocus(target, reason: "nach dem Player")
         }
-        .onChange(of: season) { Task { await translateSeason() } }
+        .onChange(of: season) {
+            scrollRowToStart()
+            Task { await translateSeason() }
+        }
         // Welle G-a (§3.2): Karte kommt kurz nach dem Eintritt (Quellen liefen noch): Fokus wandert mit, solange er
         // noch auf „Abspielen“ steht und der Eintritt höchstens 2 s her ist.
         .onChange(of: choice != nil) { _, has in
@@ -289,6 +249,7 @@ struct DetailView: View {
                          },
                          isTrailer: true, remoteHLS: t.stream.isHLS)
                 .environmentObject(model)
+                .badgesInPlayer()
         }
     }
 
@@ -379,22 +340,41 @@ struct DetailView: View {
     private var overview: String { meta?.description ?? item.description ?? extra?.overview ?? "" }
 
     /// Meta line, badges, tagline and description (wave F-n: measured for the poster to its left).
-    @ViewBuilder private var infoBlock: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.l) {
+    /// Task 5.3: width, alignment and description lines from `detail.layout` / `detail.descriptionLines`, the
+    /// ratings in `detail.ratingStyle`.
+    @ViewBuilder private func infoBlock(_ spec: DetailLayoutSpec) -> some View {
+        let width = CGFloat(spec.infoWidth)
+        let centred = spec.alignment == .center
+        VStack(alignment: centred ? .center : .leading, spacing: Theme.Space.l) {
             // Welle E-a: FSK steht in der Textzeile („2018 · 97 min · FSK 0 · Genre“), nicht als Plakette.
             MetaLine(parts: [meta?.releaseInfo ?? item.releaseInfo, meta?.runtime, certification ?? ratings?.certification,
                              meta?.genres?.prefix(3).joined(separator: ", ")])
-            InfoBadges(ratings: model.ratingBadges(imdbRating: meta?.imdbRating, mdblist: ratings), tech: techBadges)
+            DetailBadges(ratings: model.ratingBadges(imdbRating: meta?.imdbRating, mdblist: ratings), tech: techBadges,
+                         ratingStyle: DetailLook.ratingStyle(theme.detail.ratingStyle, layout: spec.variant),
+                         centred: centred)
             // Review M3: same width cap as the description, so the poster does not change its line breaks.
-            if let t = extra?.tagline { Text(t).italic().textRole(.rowDetail).frame(maxWidth: Theme.Layout.contentMaxWidth, alignment: .leading) }
-            if !overview.isEmpty {
-                // Kurz halten; Klick zeigt den ganzen Text.
-                Button { showFullText = true } label: { FocusHighlight { Text(overview).font(.callout).foregroundStyle(.white).lineLimit(3).multilineTextAlignment(.leading) } }
-                    .buttonStyle(.plain)
-                    .focused($focus, equals: .overview)
-                    .frame(maxWidth: Theme.Layout.contentMaxWidth, alignment: .leading)
+            if let t = extra?.tagline {
+                Text(t).italic().textRole(.rowDetail)
+                    .multilineTextAlignment(centred ? .center : .leading)
+                    .frame(maxWidth: width, alignment: centred ? .center : .leading)
+            }
+            if !overview.isEmpty { overviewButton(spec) }
+        }
+    }
+
+    /// Short description; a press opens the whole text (`FullTextSheet`).
+    private func overviewButton(_ spec: DetailLayoutSpec) -> some View {
+        let centred = spec.alignment == .center
+        let lines = DetailLook.descriptionLineLimit(theme.detail.descriptionLines, layout: spec.variant)
+        return Button { showFullText = true } label: {
+            FocusHighlight {
+                Text(overview).font(.callout).foregroundStyle(.white).lineLimit(lines)
+                    .multilineTextAlignment(centred ? .center : .leading)
             }
         }
+        .buttonStyle(.plain)
+        .focused($focus, equals: .overview)
+        .frame(maxWidth: CGFloat(spec.infoWidth), alignment: centred ? .center : .leading)
     }
 
     /// Wave F-n: the page's item with the meta poster as fallback when the catalogue entry has none (the tile
@@ -485,11 +465,12 @@ struct DetailView: View {
                 navigate(.streams(r))
             } label: {
                 VStack(alignment: .leading, spacing: Theme.Space.xs) {
-                    Text("▶ " + BestChoice.title(c.reason, resumeText: resume.map(timeText))).textRoleInRow(.rowTitleEmphasis)
+                    ThemeButtonLabel(BestChoice.title(c.reason, resumeText: resume.map(timeText)), symbol: "play.fill")
                     Text(detail).textRoleInRow(.rowDetail).lineLimit(1)
                 }
                 .frame(maxWidth: 620, alignment: .leading)
             }
+            .buttonStyle(ThemeButton(.secondary))
             .focused($focus, equals: .best)
         } else if choiceChecked {
             Button(BestChoice.noSourceText) {
@@ -497,15 +478,20 @@ struct DetailView: View {
                 RemoteLog.info("play", "Beste Wahl: keine Quelle → Quellenliste")
                 navigate(.streams(model.moviePlayRequest(item, imdb: imdb, meta: meta, resumeLastSource: false)))
             }
+            .buttonStyle(ThemeButton(.secondary))
         }
     }
 
+    /// Task 5.3: a secondary button with the SF Symbol `film` (no Unicode sign).
     private func trailerButton(_ key: String) -> some View {
-        Button(trailerLoading ? "Trailer wird geladen …" : "🎬 Trailer") {
+        Button {
             // Doppeldruck: laufende Auflösung behalten, sonst ginge der Abbruch-Griff verloren.
             guard !trailerLoading else { return }
             trailerTask = Task { await playTrailer(key) }
+        } label: {
+            ThemeButtonLabel(trailerLoading ? "Trailer wird geladen …" : "Trailer", symbol: "film")
         }
+        .buttonStyle(ThemeButton(.secondary))
     }
 
     /// Trailer im eigenen Player: zuerst trailerio.cc (direkte Datei in Profilsprache), sonst YouTube-Adresse über Innertube;
@@ -560,67 +546,243 @@ struct DetailView: View {
         Array(Set((meta?.videos ?? []).compactMap(\.season).filter { $0 > 0 })).sorted()
     }
 
+    /// The episodes of season `s` in order.
+    private func seasonEpisodes(_ s: Int) -> [MetaVideo] {
+        (meta?.videos ?? []).filter { $0.season == s }.sorted { ($0.episode ?? 0) < ($1.episode ?? 0) }
+    }
+
+    private var episodesAsRow: Bool { model.profile.detailExtras.episodes == .reihe }
+
     @ViewBuilder private func episodes(_ imdb: String) -> some View {
         if seasons.isEmpty {
             Text("Keine Folgen gefunden.").textRole(.rowDetail)
             if overview.isEmpty && extra?.trailerYouTube == nil { FocusAnchor(kind: .back) }   // N6
         } else {
-            // Fokus-Anheben (tileScale) plus Schatten (Radius + Versatz ≈ 25 pt) passt in Space.l; nichts wird abgeschnitten.
-            ScrollView(.horizontal) {
-                HStack(spacing: Theme.Space.m) {
-                    ForEach(seasons, id: \.self) { s in
-                        Button { season = s } label: {
-                            HStack(spacing: Theme.Space.xs) {
-                                // Gewählte Staffel: Haken, erbt die Vordergrundfarbe und bleibt so auch im Fokus sichtbar.
-                                if s == season { Image(systemName: "checkmark") }
-                                Text("Staffel \(s)")
-                            }
-                        }
-                        .buttonStyle(ThemeActionButtonStyle(selected: s == season))
-                        .accessibilityAddTraits(s == season ? .isSelected : [])
-                    }
-                }
-                .padding(.vertical, Theme.Space.l)
-            }
-            .scrollClipDisabled()
-            let eps = (meta?.videos ?? []).filter { $0.season == season }.sorted { ($0.episode ?? 0) < ($1.episode ?? 0) }
-            LazyVStack(alignment: .leading, spacing: Theme.Space.m) {
-                ForEach(eps) { v in
-                    let isFirst = v.id == eps.first?.id
-                    Button {
-                        let e = v.episode ?? 0
-                        markOpenedPlayback()
-                        navigate(.streams(PlayRequest(type: "series", id: "\(imdb):\(season):\(e)", title: "\(item.name) S\(season)E\(e)",
-                                                      item: progressItem(imdb), season: season, episode: e,
-                                                      episodes: EpisodeRef.list(from: meta?.videos ?? [],
-                                                                                includeSpecials: EpisodeRef.includesSpecials(playingSeason: season)))))
-                    } label: {
-                        HStack(spacing: Theme.Space.m) {
-                            let spoiler = model.profile.sources.blurUnwatchedStills && !model.progress.isWatched("\(imdb):\(season):\(v.episode ?? 0)")
-                            RemoteImage(url: v.thumbnail, maxPixels: 560, blur: spoiler ? SpoilerStill.blurRadius : 0)
-                                .frame(width: 280, height: 158).clipped()
-                                .spoilerMark(spoiler)
-                            // Welle F-i: Farben aus den Tokens (`textRoleInRow`, Zeilenstil), kein Systemknopf mit Akzentfarbe.
-                            VStack(alignment: .leading, spacing: Theme.Space.xs) {
-                                HStack {
-                                    Text("\(v.episode ?? 0). \(v.name ?? v.title ?? "Folge")").textRoleInRow(.rowTitleEmphasis)
-                                    let key = "\(imdb):\(season):\(v.episode ?? 0)"
-                                    if model.progress.isWatched(key) { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.Tone.ok.color) }
-                                    else if let p = model.progress.entries[key], p.position >= 60 {
-                                        ProgressView(value: p.fraction).frame(width: 120)
-                                    }
-                                }
-                                if let o = v.overview { Text(o).textRoleInRow(.rowDetail).lineLimit(2).multilineTextAlignment(.leading) }
-                            }
-                            Spacer()
-                        }
-                    }
-                    .buttonStyle(ThemeRowButtonStyle(maxWidth: .infinity))
-                    .focused($focus, equals: isFirst ? .play : .episode(v.id))
-                    .id(v.id)
-                }
+            seasonBar
+            let eps = seasonEpisodes(season)
+            if episodesAsRow {
+                episodeRow(eps, imdb: imdb)
+            } else {
+                episodeList(eps, imdb: imdb)
             }
         }
+    }
+
+    private var seasonBar: some View {
+        // Fokus-Anheben (tileScale) plus Schatten (Radius + Versatz ≈ 25 pt) passt in Space.l; nichts wird abgeschnitten.
+        ScrollView(.horizontal) {
+            HStack(spacing: Theme.Space.m) {
+                ForEach(seasons, id: \.self) { s in
+                    Button { season = s } label: {
+                        // Gewählte Staffel: Haken, erbt die Vordergrundfarbe und bleibt so auch im Fokus sichtbar.
+                        ThemeButtonLabel("Staffel \(s)", symbol: s == season ? "checkmark" : nil)
+                    }
+                    .buttonStyle(ThemeButton(.secondary, selected: s == season))
+                    .accessibilityAddTraits(s == season ? .isSelected : [])
+                }
+            }
+            .padding(.vertical, Theme.Space.l)
+        }
+        .scrollClipDisabled()
+    }
+
+    /// Task 5.3 (`episodes = liste`): today's list.
+    private func episodeList(_ eps: [MetaVideo], imdb: String) -> some View {
+        LazyVStack(alignment: .leading, spacing: Theme.Space.m) {
+            ForEach(eps) { v in
+                episodeButton(v, imdb: imdb, isFirst: v.id == eps.first?.id) { EpisodeListLabel(data: $0) }
+            }
+        }
+        .buttonStyle(ThemeRowButtonStyle(maxWidth: .infinity))
+    }
+
+    /// Task 5.3 (`episodes = reihe`, default): a horizontal row of 16:9 cards; entry and a season change scroll it
+    /// to the first unwatched episode (`DetailLook.episodeRowStart`).
+    private func episodeRow(_ eps: [MetaVideo], imdb: String) -> some View {
+        ScrollView(.horizontal) {
+            LazyHStack(alignment: .top, spacing: Theme.Space.l) {
+                ForEach(eps) { v in
+                    episodeButton(v, imdb: imdb, isFirst: v.id == eps.first?.id) { EpisodeCardLabel(data: $0) }
+                }
+            }
+            .padding(.vertical, Theme.Focus.tileRowPadding)
+        }
+        .scrollClipDisabled()
+        .buttonStyle(ThemeTileButtonStyle())
+    }
+
+    /// One episode: opens its source list; the first episode of a season carries `.play` (entry focus).
+    private func episodeButton<L: View>(_ v: MetaVideo, imdb: String, isFirst: Bool,
+                                        @ViewBuilder label: @escaping (EpisodeLabelData) -> L) -> some View {
+        Button { openEpisode(v, imdb: imdb) } label: { label(episodeData(v, imdb: imdb)) }
+            .focused($focus, equals: isFirst ? .play : .episode(v.id))
+            .id(v.id)
+    }
+
+    private func openEpisode(_ v: MetaVideo, imdb: String) {
+        let e = v.episode ?? 0
+        markOpenedPlayback()
+        let list = EpisodeRef.list(from: meta?.videos ?? [], includeSpecials: EpisodeRef.includesSpecials(playingSeason: season))
+        navigate(.streams(PlayRequest(type: "series", id: "\(imdb):\(season):\(e)", title: "\(item.name) S\(season)E\(e)",
+                                      item: progressItem(imdb), season: season, episode: e, episodes: list)))
+    }
+
+    private func episodeData(_ v: MetaVideo, imdb: String) -> EpisodeLabelData {
+        let key = "\(imdb):\(season):\(v.episode ?? 0)"
+        let watched = model.progress.isWatched(key)
+        let entry = model.progress.entries[key]
+        let started = !watched && (entry?.position ?? 0) >= 60
+        return EpisodeLabelData(number: v.episode ?? 0, title: v.name ?? v.title ?? "Folge", overview: v.overview,
+                                thumbnail: v.thumbnail, watched: watched, progress: started ? entry?.fraction : nil,
+                                spoiler: model.profile.sources.blurUnwatchedStills && !watched)
+    }
+
+    /// Task 5.3: on a season change the row scrolls to the season's first unwatched episode (the focus stays on
+    /// the season button; entry and return set their own target through `applyFocus`).
+    private func scrollRowToStart() {
+        guard isSeries, episodesAsRow, let imdb else { return }
+        let s = season
+        let eps = seasonEpisodes(s)
+        let refs = eps.compactMap { v in v.episode.map { EpisodeRef(season: s, episode: $0) } }
+        guard let start = DetailLook.episodeRowStart(refs, isWatched: { model.progress.isWatched("\(imdb):\($0.season):\($0.episode)") }),
+              let v = eps.first(where: { $0.episode == start.episode }) else { return }
+        scrollTarget = v.id
+        scrollRequest += 1
+        RemoteLog.info("detail", "Folgenreihe Staffel \(s): Start bei Folge \(start.episode)")
+    }
+
+    // MARK: Task 5.3 layout
+
+    /// The measures of `detail.layout` (PlayerCore `DetailLook.layout`).
+    private var layoutSpec: DetailLayoutSpec {
+        DetailLook.layout(theme.detail.layout, contentLeading: Double(contentLeading))
+    }
+
+    private var contentLeading: CGFloat { LookMetrics.contentLeading(model.profile.themeLook.global.navigation) }
+
+    /// What the head shows: title logo or text, and whether the poster stands next to the info block.
+    private var titleArt: DetailTitleArt { DetailLook.titleArt(model.profile.detailExtras.titleArt, logo: meta?.logo) }
+
+    /// Kino: the head fills the first screen and its info sits at the bottom (movies). A series keeps room for the
+    /// season bar so the episodes (entry focus) peek in below.
+    private var kinoHeadHeight: CGFloat {
+        let screen: CGFloat = 1080
+        let rest: CGFloat = isSeries ? 420 : 0
+        return screen - Theme.Space.edgeVertical - CGFloat(layoutSpec.bottomInset) - rest
+    }
+
+    /// Title, poster with info block, and the main actions.
+    @ViewBuilder private func head(_ spec: DetailLayoutSpec) -> some View {
+        let centred = spec.alignment == .center
+        let art = titleArt
+        VStack(alignment: centred ? .center : .leading, spacing: Theme.Space.l) {
+            titleView(art, spec: spec)
+            // Wave F-n: the title's poster left of the info block, exactly as tall as it (PlayerCore `DetailPage`).
+            HStack(alignment: .top, spacing: CGFloat(DetailPage.posterGap)) {
+                if art.showsPoster, let size = DetailPage.posterSize(blockHeight: Double(infoHeight), bottomInset: overview.isEmpty ? 0 : Double(FocusHighlightMetrics.verticalPadding)) {
+                    DetailPoster(item: posterItem)
+                        .frame(width: CGFloat(size.width), height: CGFloat(size.height))
+                        .transition(.opacity)
+                        .onAppear { markLoad(.poster) }
+                }
+                infoBlock(spec)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
+                        guard DetailPage.shouldUpdate(measured: Double(h), stored: Double(infoHeight)) else { return }
+                        // Review M2: animated, so the poster fades in and resizes smoothly.
+                        withAnimation(.easeOut(duration: 0.2)) { infoHeight = h }
+                    }
+            }
+            actions
+        }
+        .frame(maxWidth: .infinity, minHeight: headMinHeight(spec), alignment: headAlignment(spec))
+        .padding(.leading, CGFloat(spec.leadingInset))
+        .padding(.trailing, CGFloat(spec.trailingInset))
+    }
+
+    private func headMinHeight(_ spec: DetailLayoutSpec) -> CGFloat? {
+        spec.anchorsBottom ? kinoHeadHeight : nil
+    }
+
+    private func headAlignment(_ spec: DetailLayoutSpec) -> Alignment {
+        if spec.alignment == .center { return spec.anchorsBottom ? .bottom : .top }
+        return spec.anchorsBottom ? .bottomLeading : .topLeading
+    }
+
+    @ViewBuilder private func titleView(_ art: DetailTitleArt, spec: DetailLayoutSpec) -> some View {
+        let centred = spec.alignment == .center
+        if let logo = art.logo {
+            // Without the poster the logo takes its room (`titleArt = logo`).
+            let height: CGFloat = art.showsPoster ? 200 : 260
+            RemoteImage(url: logo, maxPixels: 1400, fit: true)
+                .frame(maxWidth: min(CGFloat(700), CGFloat(spec.infoWidth)), maxHeight: height,
+                       alignment: centred ? .center : .leading)
+                .accessibilityLabel(item.name)
+        } else {
+            Text(item.name).textRole(.display).accessibilityAddTraits(.isHeader)
+                .multilineTextAlignment(centred ? .center : .leading)
+        }
+    }
+
+    /// Loading placeholder, the movie buttons or the series trailer button.
+    @ViewBuilder private var actions: some View {
+        if loading {
+            // N6: ohne Beschreibung sonst nichts fokussierbar (unsichtbares Ziel, danach Abspielen).
+            ProgressView().quietFocusTarget(overview.isEmpty)
+        } else if let imdb {
+            if isSeries {
+                if let k = extra?.trailerYouTube { trailerButton(k) }
+            } else {
+                movieButtons(imdb)
+            }
+        } else {
+            Text("Keine IMDb-ID gefunden – Streams nicht abrufbar.").textRole(.rowDetail)
+            if overview.isEmpty { FocusAnchor(kind: .back) }   // N6
+        }
+    }
+
+    /// Task 5.3: „Abspielen“ is the one primary button (accent), the others secondary; SF Symbols, no Unicode.
+    private func movieButtons(_ imdb: String) -> some View {
+        let resume = model.progress.resumePosition(for: imdb)
+        let title = resume.map { "Fortsetzen ab \(timeText($0))" } ?? "Abspielen"
+        return HStack(spacing: Theme.Space.l) {
+            bestChoiceCard(imdb, resume: resume)
+            Button {
+                markOpenedPlayback()
+                navigate(.streams(model.moviePlayRequest(item, imdb: imdb, meta: meta, resumeLastSource: resume != nil)))
+            } label: {
+                ThemeButtonLabel(title, symbol: "play.fill")
+            }
+            .buttonStyle(ThemeButton(.primary))
+            .focused($focus, equals: .play)
+            if let k = extra?.trailerYouTube { trailerButton(k) }
+        }
+    }
+
+    /// Episodes, trailer note and the TMDB extras below the head, on a backing in the background tone so text
+    /// stays readable over any picture.
+    @ViewBuilder private func lower(_ spec: DetailLayoutSpec) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.l) {
+            if !loading, let imdb, isSeries { episodes(imdb) }
+            if let trailerNote { Text(trailerNote).textRole(.rowDetail) }
+            if !loading, imdb != nil, let x = extra {
+                DetailExtras(info: x, isSeries: isSeries, castWidth: spec.castWidth.map { CGFloat($0) })
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, contentLeading)
+        .padding(.trailing, Theme.Space.edge)
+        .background(alignment: .top) { DetailLowerBacking() }
+    }
+
+    /// Task 5.3: one line per page with the detail options in effect (device check of the variants).
+    private func logLook() {
+        let d = theme.detail
+        let x = model.profile.detailExtras
+        let logo = meta?.logo == nil ? "ohne Logo" : "mit Logo"
+        let line = "Look: \(d.layout.rawValue) · Text \(d.descriptionLines.rawValue) Zeilen · Besetzung \(d.cast.rawValue)"
+            + " · Plaketten \(d.badgeStyle.rawValue) · Bewertungen \(d.ratingStyle.rawValue)"
+            + " · Folgen \(x.episodes.rawValue) · Titel \(x.titleArt.rawValue) (\(logo))"
+        RemoteLog.info("detail", line)
     }
 }
 
