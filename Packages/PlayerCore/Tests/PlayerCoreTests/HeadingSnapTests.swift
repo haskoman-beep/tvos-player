@@ -64,16 +64,36 @@ import Testing
     var after = before
     after.scroll = HomeListScroll(offset: 850, maxOffset: 2484)
     after.list?.offsetY = 826
+    // P2 (follow-up 2): `unten` = room between the row's bottom and the list's visible bottom (frame − bottom inset).
     #expect(HeadingSnap.snapLine(title: "Trends", ms: 900, before: before, after: after)
-        == "Reihe Trends nach 0,9 s nachgerastet: vorher y 788/max 2460 · Reihe 850…1330 (Abstand +38) · Liste 470…1080"
-        + " · Inset 24/60 · Safe 60 · nach Rasten y 826/max 2460 · Reihe 850…1330 (Abstand 0) · Liste 470…1080"
-        + " · Inset 24/60 · Safe 60")
+        == "Reihe Trends nach 0,9 s nachgerastet: vorher y 788/max 2460 · Reihe 850…1330 (Abstand +38, unten +8)"
+        + " · Liste 470…1080 · Inset 24/60 · Safe 60 · nach Rasten y 826/max 2460 · Reihe 850…1330 (Abstand 0, unten +46)"
+        + " · Liste 470…1080 · Inset 24/60 · Safe 60")
     #expect(HeadingSnap.checkLine(title: "Trends", ms: 1500, decision: .inPlace, sample: after)
-        == "Reihe Trends nach 1,5 s: an der Oberkante · y 826/max 2460 · Reihe 850…1330 (Abstand 0) · Liste 470…1080"
-        + " · Inset 24/60 · Safe 60")
+        == "Reihe Trends nach 1,5 s: an der Oberkante · y 826/max 2460 · Reihe 850…1330 (Abstand 0, unten +46)"
+        + " · Liste 470…1080 · Inset 24/60 · Safe 60")
+    // Without the list view the bottom is unknown: only the distance.
+    let noList = HeadingSnapSample(row: HomeRowSpan(minY: 850, maxY: 1330), scroll: HomeListScroll(offset: 850, maxOffset: 2484),
+                                   list: nil)
+    #expect(HeadingSnap.checkLine(title: "Trends", ms: 1500, decision: .inPlace, sample: noList)
+        == "Reihe Trends nach 1,5 s: an der Oberkante · keine Liste · Reihe 850…1330 (Abstand 0)")
     let unknown = HeadingSnapSample(row: nil, scroll: nil, list: nil)
     #expect(HeadingSnap.checkLine(title: "Trends", ms: 1500, decision: .unknown, sample: unknown)
         == "Reihe Trends nach 1,5 s: Lage unbekannt · keine Liste · Reihe ?")
+}
+
+@Test func rowBottomAgainstTheListBottomMatchesTheDeviceLog() {
+    // Device log 25.11.: heading at the top edge, but the 580-pt row ends 171 pt below the list's visible bottom.
+    let list = HeadingSnapSample.ListView(offsetY: 1284, maxOffsetY: 4918, frameMinY: 627, frameMaxY: 1080,
+                                          insetTop: 0, insetBottom: 45, safeTop: 157)
+    let cut = HeadingSnapSample(row: HomeRowSpan(minY: 1283, maxY: 1863), scroll: HomeListScroll(offset: 1284, maxOffset: 4918),
+                                list: list)
+    #expect(HeadingSnap.bottomRoom(cut) == -171)
+    // Collapsed info (list from 455): the same row fits.
+    var fits = cut
+    fits.list?.frameMinY = 455
+    #expect(HeadingSnap.bottomRoom(fits) == 1)
+    #expect(HeadingSnap.bottomRoom(HeadingSnapSample(row: cut.row, scroll: cut.scroll, list: nil)) == nil)
 }
 
 @Test func handoverLogLine() {

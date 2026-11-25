@@ -138,13 +138,24 @@ public enum HeadingSnap {
         "Reihe \(title): Übergabe entfällt, Fokus nicht mehr in der Reihe"
     }
 
-    /// "y 788/max 2460 · Reihe 850…1330 (Abstand +38) · Liste 470…1080 · Inset 24/60 · Safe 60". `y`/`max`: raw UIKit
-    /// offset; Reihe: content coordinates; Abstand: row top minus list top edge; Liste: frame in the window.
+    /// P2 (follow-up 2): room between the row's bottom and the list's visible bottom (frame bottom minus bottom
+    /// inset), in points; negative: the row's bottom is cut by that much. nil without row, scroll state or list view.
+    /// Window y of a content y: list frame top + top inset + (y − offset).
+    public static func bottomRoom(_ s: HeadingSnapSample) -> Double? {
+        guard let r = s.row, let scroll = s.scroll, let l = s.list else { return nil }
+        let rowBottom = l.frameMinY + l.insetTop + (r.maxY - scroll.offset)
+        return (l.frameMaxY - l.insetBottom) - rowBottom
+    }
+
+    /// "y 788/max 2460 · Reihe 850…1330 (Abstand +38, unten +8) · Liste 470…1080 · Inset 24/60 · Safe 60". `y`/`max`:
+    /// raw UIKit offset; Reihe: content coordinates; Abstand: row top minus list top edge; unten: `bottomRoom`;
+    /// Liste: frame in the window.
     static func text(_ s: HeadingSnapSample) -> String {
         var parts: [String] = []
         if let l = s.list { parts.append("y \(pt(l.offsetY))/max \(pt(l.maxOffsetY))") } else { parts.append("keine Liste") }
         if let r = s.row {
-            let gap = s.scroll.map { " (Abstand \(signed(r.minY - $0.offset)))" } ?? ""
+            let bottom = bottomRoom(s).map { ", unten \(signed($0))" } ?? ""
+            let gap = s.scroll.map { " (Abstand \(signed(r.minY - $0.offset))\(bottom))" } ?? ""
             parts.append("Reihe \(pt(r.minY))…\(pt(r.maxY))\(gap)")
         } else {
             parts.append("Reihe ?")
