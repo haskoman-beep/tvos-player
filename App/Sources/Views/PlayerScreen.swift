@@ -196,6 +196,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
     @StateObject private var skip = SkipSegmentController()
     /// Fokus der Spielerfläche; geht zurück, sobald der Überspringen-Knopf verschwindet.
     @FocusState private var surfaceFocused: Bool
+    @Environment(\.theme) private var theme
     /// Jeder Tastendruck („Noch da?“-Zähler).
     var onUserInput: () -> Void = {}
     /// Welle C-a: Urteil über die Quelle (PlayerStability.swift); Lade-Wächter, Netz-Warten, Startzeiten.
@@ -278,15 +279,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             Color.black.ignoresSafeArea()
-            if upNextFullScreen { PlayerUpNextView.backdrop(upNextInfo).transition(.opacity) }   // Task 5.4
-            engine.surface().ignoresSafeArea()
-                // Task 5.4 (`upNext = vollbild`): the video shrinks to 420 × 236 at the top left over the still.
-                .scaleEffect(upNextFullScreen ? PlayerUpNextFullScreen.videoScale : 1, anchor: .topLeading)
-                .offset(x: upNextFullScreen ? PlayerUpNextFullScreen.videoInset : 0,
-                        y: upNextFullScreen ? PlayerUpNextFullScreen.videoInset : 0)
-                .modifier(PlayerSurfaceAccessibility(title: heading?.title ?? title, value: surfaceAccessibilityValue,
-                                                     toggle: { guard !leaving else { return }; onUserInput(); togglePlay() },
-                                                     seek: { guard !leaving else { return }; onUserInput(); queueSeek($0); poke() }))
+            videoLayer   // Task 5.4: own property (type-checker load of this body)
             engine.subtitleLayer(controlsInset: subtitleInset).environment(\.subtitleStyle, profile.subtitleStyle)
                 .opacity(upNextFullScreen ? 0 : 1)
             PlayerLoadingSteps(engine: engine)
@@ -295,7 +288,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
                 // Auch auf dem Bildschirm ohne Schlüssel/volle Adressen (Fotos, Bildschirmfotos).
                 // Task 5.4: an overlay card; the state colour only on the symbol (A5: never colour alone).
                 OverlayCard {
-                    HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
+                    HStack(alignment: .firstTextBaseline, spacing: theme.space.s) {
                         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.Tone.error.color)
                         Text("Fehler: \(LogRedact.text(e))").textRole(.rowTitle)
                     }
@@ -665,6 +658,29 @@ struct PlayerControls<E: PlaybackEngine>: View {
         let style = profile.themeLook.player.upNext
         return PlayerUpNextView(style: style, seconds: n, info: upNextInfo)
             .transition(style == .karte ? .move(edge: .trailing).combined(with: .opacity) : .opacity)
+    }
+
+    /// Task 5.4: the picture, with the `vollbild` backdrop and shrink and the VoiceOver surface.
+    @ViewBuilder private var videoLayer: some View {
+        if upNextFullScreen { PlayerUpNextView.backdrop(upNextInfo).transition(.opacity) }
+        // `upNext = vollbild`: the video shrinks to 420 × 236 at the top left over the still.
+        let scale: CGFloat = upNextFullScreen ? PlayerUpNextFullScreen.videoScale : 1
+        let inset: CGFloat = upNextFullScreen ? PlayerUpNextFullScreen.videoInset : 0
+        engine.surface().ignoresSafeArea()
+            .scaleEffect(scale, anchor: .topLeading)
+            .offset(x: inset, y: inset)
+            .modifier(PlayerSurfaceAccessibility(title: heading?.title ?? title, value: surfaceAccessibilityValue,
+                                                 toggle: surfaceToggle, seek: surfaceSeek))
+    }
+
+    private func surfaceToggle() {
+        guard !leaving else { return }
+        onUserInput(); togglePlay()
+    }
+
+    private func surfaceSeek(_ by: Double) {
+        guard !leaving else { return }
+        onUserInput(); queueSeek(by); poke()
     }
 
     /// Task 5.4: up-next fills the screen (`vollbild`): the video shrinks, the control bar and subtitles step aside.

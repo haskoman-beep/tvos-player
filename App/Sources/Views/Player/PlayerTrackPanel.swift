@@ -172,8 +172,9 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
             // Erster Fokus beim Öffnen (old == nil) ist kein Nutzerschritt.
             guard let old, let new else { return }
             userMoved = true
-            // Task 5.4: stacked sections (Seite) and the step up from Versatz (Mitte) keep the row the focus engine chose.
-            guard !style.isStacked, old.column != .offset else { return }
+            // Task 5.4: stacked sections (Seite) and the step up from Versatz in Mitte keep the row the focus engine
+            // chose; Unten keeps the redirect onto the active row (Build 198).
+            guard !style.isStacked, !(style == .menu && old.column == .offset) else { return }
             if let target = TrackPanelLayout.redirect(from: old, to: new, columns: columns) { focus = target }
         }
         .onChange(of: swipe.swipe) { _, e in
@@ -304,7 +305,7 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
             }
         }
         // Platz fürs Anheben der fokussierten Zeile (TrackPanelMetrics.listInset).
-        .padding(.horizontal, Theme.Space.xs)
+        .padding(.horizontal, theme.space.xs)
         .padding(.vertical, 4)
     }
 
@@ -318,7 +319,7 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
         }()
         if let line = TrackPanelLayout.infoLine(TrackPanelLogic.infoRows(snap)) {
             Text(line).textRole(.rowDetail).lineLimit(style.isStacked ? 3 : 1).truncationMode(.middle)
-                .padding(.leading, Theme.Space.xs)
+                .padding(.leading, theme.space.xs)
         }
     }
 
@@ -389,13 +390,14 @@ enum TrackPanelColumns {
 private struct TrackPanelHeading: View {
     let title: String
     let note: String?
+    @Environment(\.theme) private var theme
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: Theme.Space.xs) {
-            Text(title).font(.callout.weight(.semibold)).foregroundStyle(Theme.Palette.primary)
+        HStack(alignment: .firstTextBaseline, spacing: theme.space.xs) {
+            Text(title).font(.callout.weight(.semibold)).foregroundStyle(theme.color.primary)
             if let note { Text(note).textRole(.rowDetail).lineLimit(1) }
         }
-        .padding(.leading, Theme.Space.xs)
+        .padding(.leading, theme.space.xs)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
     }
@@ -409,6 +411,7 @@ private struct TrackPanelRowLabel: View {
     let mark: Bool
     @Environment(\.isFocused) private var focused
     @Environment(\.isEnabled) private var enabled
+    @Environment(\.theme) private var theme
 
     /// Zeilenstil für Leiste und Menü (Weiß auf dunkel, fokussiert Schwarz auf Weiß).
     static var style: ThemeRowButtonStyle {
@@ -428,7 +431,7 @@ private struct TrackPanelRowLabel: View {
             }
             Spacer(minLength: 0)
         }
-        .foregroundStyle(focused ? Theme.Palette.primaryOnFocus : (enabled ? Theme.Palette.primary : Theme.Palette.secondary))
+        .foregroundStyle(focused ? theme.color.primaryOnFocus : (enabled ? theme.color.primary : theme.color.secondary))
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(row.isActive ? .isSelected : [])
     }

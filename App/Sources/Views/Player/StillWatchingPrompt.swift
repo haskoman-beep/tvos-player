@@ -42,10 +42,20 @@ struct StillWatchingAlert: ViewModifier {
     let onContinue: (StillWatchingAsk) -> Void
     @EnvironmentObject var model: AppModel
     @Environment(\.theme) private var theme
+    /// „Weiterschauen“ answered: started only once the cover is gone (onDismiss), so the player's cover on the same
+    /// view does not arrive while this one is still tearing down.
+    @State private var pendingContinue: StillWatchingAsk?
 
     func body(content: Content) -> some View {
         content
-            .fullScreenCover(isPresented: Binding(get: { state.ask != nil }, set: { if !$0 { state.ask = nil } })) {
+            .fullScreenCover(isPresented: Binding(get: { state.ask != nil }, set: { shown in
+                // Closed by the system (Menu before onExitCommand): same as „Beenden“ (hint and log line).
+                if !shown, let ask = state.ask { answerEnd(ask) }
+            }), onDismiss: {
+                guard let ask = pendingContinue else { return }
+                pendingContinue = nil
+                onContinue(ask)
+            }) {
                 if let ask = state.ask {
                     StillWatchingPromptView(style: model.profile.themeLook.player.stillWatching, ask: ask,
                                             onContinue: { answerContinue(ask) }, onEnd: { answerEnd(ask) })
@@ -68,7 +78,7 @@ struct StillWatchingAlert: ViewModifier {
         state.ask = nil
         state.counter.userInput()
         RemoteLog.info("player", "Noch da?: Weiterschauen")
-        onContinue(ask)
+        pendingContinue = ask   // runs in onDismiss of the cover
     }
 
     private func answerEnd(_ ask: StillWatchingAsk) {

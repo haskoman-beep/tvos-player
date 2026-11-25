@@ -557,7 +557,8 @@ struct PlayerTimeline: View {
                 }
                 Capsule().fill(.white).frame(width: max(0, shown * w))
                     .opacity(scrubTarget == nil ? 1 : 0.85)
-                ForEach(chapters.filter { $0 > 0 && $0 < 1 }, id: \.self) { c in
+                // Index ids: two chapters may start at the same fraction.
+                ForEach(Array(chapters.filter { $0 > 0 && $0 < 1 }.enumerated()), id: \.offset) { _, c in
                     Rectangle().fill(.black.opacity(0.55)).frame(width: 3, height: 10).offset(x: CGFloat(c) * w - 1.5)
                 }
                 if scrubTarget != nil {
