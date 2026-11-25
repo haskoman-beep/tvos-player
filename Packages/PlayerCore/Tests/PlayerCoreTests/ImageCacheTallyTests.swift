@@ -6,6 +6,8 @@ import Testing
 // Each miss gets a class: a new address, the address in another size (target mismatch), the same key decoded before
 // and dropped since (memory budget), or a load already running for it. Loads are split into disk and network
 // (URLSession metrics), decodes timed, NSCache releases counted.
+// Fix round (review M2/M3): `.localCache` covers the URLCache memory part and its disk part, so it reads "lokal";
+// the decode time is measured inside the decode, the time until it is done (with the wait for a thread) beside it.
 
 @Test func imageCacheMissClasses() {
     #expect(ImageCacheTally.classify(key: "u#300x450c", lastKey: nil, joined: false) == .new)
@@ -24,13 +26,14 @@ import Testing
     t.miss(.evicted)
     t.miss(.joined); t.miss(.joined)
     for _ in 0..<6 { t.fetched() }
-    t.loaded(fromDisk: true); t.loaded(fromDisk: true); t.loaded(fromDisk: false)
-    t.decoded(ms: 12); t.decoded(ms: 85); t.decoded(ms: 30)
+    t.loaded(local: true); t.loaded(local: true); t.loaded(local: false)
+    t.decoded(ms: 12, untilDoneMs: 14); t.decoded(ms: 85, untilDoneMs: 90); t.decoded(ms: 30, untilDoneMs: 120)
     t.evicted(bytes: 33_177_600); t.evicted(bytes: 960_000)
     #expect(!t.isEmpty)
     #expect(t.misses == 9)
     #expect(t.text() == "Cache Treffer 3 / Fehlgriffe 9 (neu 5 · andere Größe 1 · verdrängt 1 · läuft schon 2)"
-            + " · Ladungen 6 (Platte 2 · Netz 1) · dekodiert 3, längstes 85 ms · freigegeben 2 (32,6 MB)")
+            + " · Ladungen 6 (lokal 2 · Netz 1) · dekodiert 3, längstes 85 ms (bis fertig 120 ms)"
+            + " · freigegeben 2 (32,6 MB)")
 }
 
 @Test func imageCacheTallyLineStaysShortWithoutDetails() {

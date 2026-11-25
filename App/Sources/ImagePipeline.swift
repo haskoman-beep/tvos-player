@@ -50,7 +50,7 @@ actor ImagePipeline {
     private var animInFlight: [String: AnimLoad] = [:]
     /// Letzter Speicherschlüssel je Adresse (+ Weichzeichner): synchroner Treffer, bevor die Zielgröße bekannt ist.
     private let lastKeys = LockedKeys()
-    /// Treffer/Fehlgriffe des Speichercaches, alle 30 s als Summe geloggt (P3: mit Art der Fehlgriffe, Platte/Netz,
+    /// Treffer/Fehlgriffe des Speichercaches, alle 30 s als Summe geloggt (P3: mit Art der Fehlgriffe, lokal/Netz,
     /// Dekodierzeit und Freigaben, `ImageCacheTally`).
     let stats: CacheStats
 
@@ -350,10 +350,15 @@ actor ImagePipeline {
                 continue
             }
             await acquire()
-            let decodeStart = ContinuousClock.now
-            let img = await Task.detached(priority: .utility) { Self.downsample(data, target: target, blur: blur) }.value
+            let requested = ContinuousClock.now
+            // P3 (review M3): the decode itself is timed inside the detached task; until done includes the thread wait.
+            let (img, decodeMs) = await Task.detached(priority: .utility) { () -> (UIImage?, Int) in
+                let begin = ContinuousClock.now
+                let decoded = Self.downsample(data, target: target, blur: blur)
+                return (decoded, Metric.ms(begin.duration(to: ContinuousClock.now)))
+            }.value
             release()
-            stats.decoded(ms: Metric.ms(decodeStart.duration(to: ContinuousClock.now)))   // P3
+            stats.decoded(ms: decodeMs, untilDoneMs: Metric.ms(requested.duration(to: ContinuousClock.now)))
             if let img { return (img, nil) }
             failure = ImageFailure.combine(failure, .transient)   // undecodable: short memory only
         }
@@ -478,7 +483,8 @@ private final class CacheCostTracker: NSObject, NSCacheDelegate, @unchecked Send
     }
 }
 
-/// Build 4 follow-up 2 (P3): per finished picture download whether it came from the URLCache (disk) or the network.
+/// Build 4 follow-up 2 (P3): per finished picture download whether it came from the URLCache (`.localCache`: its memory
+/// or its disk part, the metrics do not tell them apart; logged as "lokal") or the network.
 /// Called by URLSession on its own queue; `CacheStats` locks.
 private final class ImageLoadMetrics: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     private let stats: CacheStats
@@ -487,7 +493,7 @@ private final class ImageLoadMetrics: NSObject, URLSessionTaskDelegate, @uncheck
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
         guard let kind = metrics.transactionMetrics.last?.resourceFetchType else { return }
-        if kind == .localCache { stats.loaded(fromDisk: true) } else if kind == .networkLoad { stats.loaded(fromDisk: false) }
+        if kind == .localCache { stats.loaded(local: true) } else if kind == .networkLoad { stats.loaded(local: false) }
     }
 }
 
@@ -737,7 +743,7 @@ final class LockedKeys: @unchecked Sendable {
 }
 
 /// Welle F-g: Treffer/Fehlgriffe des Bild-Speichercaches, höchstens alle 30 s eine Logzeile (nur wenn etwas passiert ist).
-/// Build 4 follow-up 2 (P3): the line also gives the miss classes, downloads from disk/network, decode time and
+/// Build 4 follow-up 2 (P3): the line also gives the miss classes, downloads local (URLCache) / network, decode time and
 /// releases (`ImageCacheTally`); written on a hit or miss as before.
 final class CacheStats: @unchecked Sendable {
     private let lock = NSLock()
@@ -746,8 +752,8 @@ final class CacheStats: @unchecked Sendable {
     func hit() { record { $0.hit() } }
     func miss(_ kind: ImageCacheTally.Miss) { record { $0.miss(kind) } }
     func fetched() { update { $0.fetched() } }
-    func loaded(fromDisk: Bool) { update { $0.loaded(fromDisk: fromDisk) } }
-    func decoded(ms: Int) { update { $0.decoded(ms: ms) } }
+    func loaded(local: Bool) { update { $0.loaded(local: local) } }
+    func decoded(ms: Int, untilDoneMs: Int) { update { $0.decoded(ms: ms, untilDoneMs: untilDoneMs) } }
     func evicted(bytes: Int) { update { $0.evicted(bytes: bytes) } }
 
     private func update(_ change: (inout ImageCacheTally) -> Void) {
