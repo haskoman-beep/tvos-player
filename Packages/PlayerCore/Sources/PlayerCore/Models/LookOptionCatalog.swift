@@ -55,6 +55,13 @@ public enum LookOptionCatalog {
 
     public static func entry(_ key: String) -> LookOptionEntry? { all.first { $0.key == key } }
 
+    /// Options of a later build that this code already draws; their rows are active although `LookBuild.current`
+    /// stays `.b4`. Task 5.1: the card and row options of 5a (cardSize and expandPosters are Build 4 options).
+    public static let implemented: Set<String> = [
+        "cardShape", "corners", "rowSpacing", "rowTitle", "cardTitles", "focusScale", "focusBorder", "focusShadow",
+        "focusGlow",
+    ]
+
     // MARK: Dependencies
 
     static let glowReason = "Bei Glanz bestimmt tvOS Form, Größe und Schatten der Karte."
@@ -65,10 +72,13 @@ public enum LookOptionCatalog {
     /// Whether the row `key` can be changed in `build`, and the note shown under it. An option of a later build is
     /// off with "kommt mit Build …"; with glow on, tvOS draws the card (`.buttonStyle(.card)`), so shape, scale,
     /// border and shadow are off. With system "reduce motion" the motion rows stay selectable but carry a note.
+    /// Task 5.1: `implemented` lists the later-build options this code already draws (same shape as Task 5.3's
+    /// set on b5b-5.3; the merge unites the sets).
     public static func isEnabled(_ key: String, in values: LookValues, build: LookBuild = .current,
-                                 reduceMotion: Bool = false) -> (enabled: Bool, reason: String?) {
+                                 reduceMotion: Bool = false,
+                                 implemented: Set<String> = implemented) -> (enabled: Bool, reason: String?) {
         guard let e = entry(key) else { return (false, nil) }
-        if e.availableFrom > build { return (false, "kommt mit Build \(e.availableFrom.title)") }
+        if e.availableFrom > build, !implemented.contains(key) { return (false, "kommt mit Build \(e.availableFrom.title)") }
         if glowControlledKeys.contains(key), values.home.focusGlow { return (false, glowReason) }
         if reduceMotion, key == "motion" || key == "expandPosters" { return (true, reduceMotionReason) }
         return (true, nil)

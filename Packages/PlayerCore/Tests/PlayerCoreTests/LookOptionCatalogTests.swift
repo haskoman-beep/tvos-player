@@ -66,8 +66,14 @@ private func lookValueKeys() throws -> [String: Set<String>] {
     v.home.focusGlow = false
     #expect(LookOptionCatalog.isEnabled("corners", in: v, build: .b5a).enabled)
     // In Build 4 the later options are visible but off.
-    let later = LookOptionCatalog.isEnabled("corners", in: v)
+    let later = LookOptionCatalog.isEnabled("corners", in: v, implemented: [])
     #expect(!later.enabled && later.reason == "kommt mit Build 5a")
+    // Task 5.1: the card and row options are drawn already, so their rows are active in this build.
+    for key in ["cardShape", "corners", "rowSpacing", "rowTitle", "cardTitles", "focusScale", "focusBorder",
+                "focusShadow", "focusGlow"] {
+        #expect(LookOptionCatalog.isEnabled(key, in: v).enabled, "\(key)")
+    }
+    #expect(!LookOptionCatalog.isEnabled("heroStyle", in: v).enabled)
     #expect(LookOptionCatalog.isEnabled("accent", in: v) == (true, nil))
     #expect(LookOptionCatalog.isEnabled("sourceList", in: v).reason == "kommt mit Build 5b")
     // System reduce motion: still selectable, with a note.
