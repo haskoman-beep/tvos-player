@@ -1472,7 +1472,7 @@ struct DetailExtras: View {
                 .task(id: info.recommendations.map(\.id)) { noteSimilarBadges() }
                 .onReceive(QualityBadgeCache.shared.stored) { id in
                     // Wave F-k R2 (m5): only when one of these titles got its sources.
-                    guard info.recommendations.contains(where: { model.streamCacheKey(for: $0) == id }) else { return }
+                    guard info.recommendations.contains(where: { model.streamCacheKeyMatches(id, for: $0) }) else { return }
                     noteSimilarBadges()
                 }
             }

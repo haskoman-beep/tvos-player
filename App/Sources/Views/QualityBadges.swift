@@ -57,7 +57,8 @@ struct PosterQualityBadges: View {
             StreamPrefetcher.shared.tile(item, row: prefetchRow, visible: onScreen && placement != .off, model: model)
         }
         .onReceive(QualityBadgeCache.shared.stored) { id in
-            guard placement != .off, model.streamCacheKey(for: item) == id else { return }
+            // S3: cheap test (no progress search per tile on screen), same answer as `streamCacheKey(for:) == id`.
+            guard placement != .off, model.streamCacheKeyMatches(id, for: item) else { return }
             withAnimation(.easeOut(duration: 0.2)) { best = QualityBadgeCache.shared.best(id: id, model: model) }
         }
         // Wave F-k R1: on screen (≥ half of the card inside the screen, both scroll views applied) → quiet source
@@ -101,7 +102,8 @@ final class QualityBadgeCache {
     static let shared = QualityBadgeCache()
     /// Sendet die Cache-ID, sobald neue Quellen im AppModel-Cache liegen.
     let stored = PassthroughSubject<String, Never>()
-    private var cache: [String: BestQuality] = [:]
+    /// S3 review (Minor 1): values with the number of entries they were computed from (`CachedBest`).
+    private var cache: [String: CachedBest] = [:]
 
     /// Wave F-k R1: best values after the source list left the AppModel cache (it holds 40 titles, more tiles can be
     /// on screen), for the source cache lifetime; tiny, so a badge does not vanish while its title is not fetched again.
@@ -111,10 +113,17 @@ final class QualityBadgeCache {
     private init() {}
 
     /// Wave F-k R2 (m2): new list stored – its best values are remembered at once (the weak cache tier may drop the
-    /// list right away, the badge stays).
-    func streamsStored(id: String, list: [(addon: String, stream: StreamItem)], at: Date) {
-        cache[id] = nil
-        if let b = BestQuality.from(RankedStream.rank(list)) { remember(id, b, at: at) } else { remembered[id] = nil }
+    /// list right away, the badge stays). Build 4 follow-up S3: `best` comes computed (`PreparedStreams`, parsed off
+    /// the main thread) and is kept for the new list instead of clearing it, so the tile receiving `stored` parses
+    /// nothing on the main thread. `entries`: length of the stored list the values belong to.
+    func streamsStored(id: String, best: BestQuality?, entries: Int, at: Date, model: AppModel) {
+        if let b = best {
+            keep(id, CachedBest(best: b, entries: entries), model: model)
+            remember(id, b, at: at)
+        } else {
+            cache[id] = nil
+            remembered[id] = nil
+        }
         stored.send(id)
     }
 
@@ -133,14 +142,24 @@ final class QualityBadgeCache {
             guard let r = remembered[id], RevalidationPolicy.streams.isUsable(storedAt: r.at) else { return nil }
             return r.best
         }
-        if let b = cache[id] { return b }
+        if let c = cache[id] {
+            if c.isCurrent(usableEntries: list.count) { return c.best }
+            // S3 review (Minor 1): kept entries of an addon without answer expired on read; their DV/Atmos must not
+            // stay on the tile. Computed again from what the list still offers (rare: once per lapse).
+            RemoteLog.info("streams", "\(id): Plakettenwerte neu, \(c.entries - list.count) behaltene Quellen abgelaufen")
+        }
         guard let b = BestQuality.from(RankedStream.rank(list)) else { return nil }
+        keep(id, CachedBest(best: b, entries: list.count), model: model)
+        remember(id, b, at: model.streamCache[id]?.at ?? Date())
+        return b
+    }
+
+    /// Values for the list now in the AppModel cache; bounded like the source cache (entries of lists that left it go).
+    private func keep(_ id: String, _ c: CachedBest, model: AppModel) {
         if cache.count >= 2 * StreamPrefetcher.cacheLimit {
             cache = cache.filter { model.cachedStreams(id: $0.key) != nil }
         }
-        cache[id] = b
-        remember(id, b, at: model.streamCache[id]?.at ?? Date())
-        return b
+        cache[id] = c
     }
 
     private func remember(_ id: String, _ b: BestQuality, at: Date) {
