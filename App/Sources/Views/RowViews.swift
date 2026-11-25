@@ -484,6 +484,8 @@ struct PosterCard: View {
     @State private var expanded = false
 
     var body: some View {
+        // S4 review: `karten` field of `metric: home.rowBody` (shows whether `.equatable()` skips unchanged cards).
+        let _ = RowBodyMeter.cardPass()
         let w = Theme.Tile.width(.poster, scale), h = Theme.Tile.height(.poster, scale)
         // Welle E-a: Plaketten nie unten auf dem Bild; bei „Unten“ sitzen sie im Streifen darunter (PosterBadgeBand).
         VStack(spacing: 0) {

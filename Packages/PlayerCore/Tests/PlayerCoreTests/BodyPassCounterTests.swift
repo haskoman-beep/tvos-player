@@ -35,6 +35,26 @@ import Testing
     #expect(opened == [true])
 }
 
+// S4 review minor 1: card body passes (PosterCard) in the same window, so the line shows the stable-anchor gain.
+@Test func bodyPassCounterCountsCardPassesInTheSameWindow() {
+    var c = BodyPassCounter()
+    var opened: [Bool] = []
+    opened.append(c.cardPass())
+    opened.append(c.cardPass())
+    opened.append(c.pass())
+    opened.append(c.focusMoved())
+    opened.append(c.cardPass())
+    #expect(opened == [true, false, false, false, false])   // a card pass may open the window too
+    let w = c.close()
+    #expect(w?.passes == 1 && w?.cards == 3 && w?.focusMoves == 1)
+    // Card passes without a focus move: no line, counters start from zero again.
+    opened = [c.cardPass()]
+    #expect(opened == [true])
+    #expect(c.close() == nil)
+    _ = c.focusMoved()
+    #expect(c.close()?.cards == 0)
+}
+
 @Test func homeRowBodyMetricLine() {
     #expect(Metric.line(.homeRowBody, ms: 240, fields: ["fokus": "18"]) == "home.rowBody 240 · fokus 18")
 }
