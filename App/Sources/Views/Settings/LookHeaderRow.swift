@@ -1,7 +1,7 @@
 import SwiftUI
 import PlayerCore
 
-/// Task 4.5: top row of Einstellungen › Aussehen. „Mein Look“ with „Apple TV“ or „angepasst · n“
+/// Task 4.5: top row of Einstellungen › Aussehen. „Mein Look“ with „Standard“ or „angepasst · n“
 /// (`SettingsSummary.lookValue`). There is no preset choice; OK asks first and then resets every option
 /// (`Profile.resetLook`, which also writes the old fields).
 struct LookHeaderRow: View {
@@ -9,7 +9,7 @@ struct LookHeaderRow: View {
     @State private var confirming = false
 
     static let title = "Mein Look"
-    static let resetTitle = "Alles auf Apple TV zurücksetzen"
+    static let resetTitle = "Alles auf Standard zurücksetzen"
 
     var body: some View {
         SettingsRow(symbol: "paintpalette", tint: SettingsCategory.appearance.tint, title: Self.title,
@@ -17,8 +17,8 @@ struct LookHeaderRow: View {
                     detailAlwaysVisible: true, reserveDetailSpace: false) {
             confirming = true
         }
-        .settingsConfirmation("Alles auf Apple TV zurücksetzen?", isPresented: $confirming,
-                              message: "Alle Optionen von „Mein Look“ bekommen wieder ihren Grundwert.",
+        .settingsConfirmation("Alles auf Standard zurücksetzen?", isPresented: $confirming,
+                              message: "Alle Optionen von „Mein Look“ bekommen wieder ihren Standard-Wert.",
                               verb: "Zurücksetzen", symbol: "arrow.counterclockwise") {
             model.update { $0.resetLook() }
             LookOptionRows.logLook(model.profile)

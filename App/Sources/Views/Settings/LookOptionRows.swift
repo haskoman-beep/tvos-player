@@ -4,7 +4,7 @@ import PlayerCore
 /// Task 4.5 (D-14, D-19, D-28): every option of `LookOptionCatalog.all` as a row, in four areas like the
 /// configurator (Startseite & Hero, Detailseite, Player, Navigation & Einstellungen) with the group headers of
 /// appendix A. A row shows the current value; OK opens the list of all values. A row that differs carries the
-/// accent dot, and its long-press menu offers „Auf Apple TV zurücksetzen“. Rows that cannot change yet stay
+/// accent dot, and its long-press menu offers „Auf Standard zurücksetzen“. Rows that cannot change yet stay
 /// focusable but dimmed and show the reason (`LookOptionCatalog.isEnabled`).
 ///
 /// All writes go through `Profile.setLook` / `resetLook`, so the old fields follow and the theme changes at once.
@@ -135,9 +135,9 @@ private struct LookOptionRow: View {
         .settingsUnavailable(!enabled)
         .contextMenu {
             if overridden {
-                Button("Auf Apple TV zurücksetzen") {
+                Button("Auf Standard zurücksetzen") {
                     model.update { $0.setLook(entry.key, to: nil) }
-                    RemoteLog.info("einstellung", "\(entry.label): auf Apple TV zurückgesetzt")
+                    RemoteLog.info("einstellung", "\(entry.label): auf Standard zurückgesetzt")
                     LookOptionRows.logLook(model.profile)
                 }
             }
