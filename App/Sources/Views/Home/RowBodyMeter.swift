@@ -2,21 +2,24 @@ import Foundation
 import PlayerCore
 
 /// Build 4 follow-up S4: one line `metric: home.rowBody <n> · karten <k> · fokus <m>` per 5 s window in which focus
-/// moved between row tiles: n = body passes of `HomeRowView` (all rows together), k = body passes of `PosterCard`
+/// moved between home row tiles (home page only): n = body passes of `HomeRowView` (all rows together), k = body passes of `PosterCard`
 /// (the cards the stable anchor action lets `.equatable()` skip), m = focus moves onto a row tile.
 /// Silent while nothing moves. Counting is integer adds; a window costs one sleeping task and one log line.
 @MainActor
 enum RowBodyMeter {
     private static var counter = BodyPassCounter()
 
+    // S4 review: `onHome` = the view sits on the home page (`homeRowFocusMemory` set in both layouts; `HomeFocus`
+    // exists only with the hero). Folder pages, Library and detail pages use the same views and are not counted.
+
     /// `HomeRowView.body`.
-    static func pass() { if counter.pass() { closeLater() } }
+    static func pass(onHome: Bool) { if onHome, counter.pass() { closeLater() } }
 
     /// `PosterCard.body`.
-    static func cardPass() { if counter.cardPass() { closeLater() } }
+    static func cardPass(onHome: Bool) { if onHome, counter.cardPass() { closeLater() } }
 
     /// Focus landed on a tile of a row.
-    static func focusMoved() { if counter.focusMoved() { closeLater() } }
+    static func focusMoved(onHome: Bool) { if onHome, counter.focusMoved() { closeLater() } }
 
     private static func closeLater() {
         Task { @MainActor in

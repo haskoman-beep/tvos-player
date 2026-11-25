@@ -51,7 +51,7 @@ struct HomeRowView: View {
 
     var body: some View {
         // Build 4 follow-up S4: `metric: home.rowBody` counts these passes (two integer adds, a log line per 5 s).
-        let _ = RowBodyMeter.pass()
+        let _ = RowBodyMeter.pass(onHome: focusMemory != nil)
         VStack(alignment: .leading, spacing: Theme.Space.s) {
             if row.style != .hero {
                 Text(title).textRole(.sectionTitle).padding(.leading, Theme.Space.edge)
@@ -107,7 +107,7 @@ struct HomeRowView: View {
             if let r = focusedRoute { StreamPrefetcher.shared.cancelRest(r) }
         }
         .onChange(of: focusedRoute) { old, r in
-            if r != nil { RowBodyMeter.focusMoved() }   // S4: `fokus` field of `metric: home.rowBody`
+            if r != nil { RowBodyMeter.focusMoved(onHome: focusMemory != nil) }   // S4: `fokus` field of `metric: home.rowBody`
             // Wave F-p: focus left this row's tile: its rest prefetch (pages without hero) does not start.
             if r == nil, let old { StreamPrefetcher.shared.cancelRest(old) }
             guard let r, focusMemory?.state.covered != true else { return }   // verdeckte Startseite: nichts merken
@@ -480,12 +480,14 @@ struct PosterCard: View {
     @Environment(\.cardScale) private var scale
     @Environment(\.expandPosters) private var expandable
     @Environment(\.anchorFocusedCard) private var anchor
+    /// S4 review: set on the home page only (both layouts); gates the card counter of the row metric.
+    @Environment(\.homeRowFocusMemory) private var homeMemory
     /// Fokus + 350 ms Ruhe → Querformat mit Hintergrund und Logo.
     @State private var expanded = false
 
     var body: some View {
         // S4 review: `karten` field of `metric: home.rowBody` (shows whether `.equatable()` skips unchanged cards).
-        let _ = RowBodyMeter.cardPass()
+        let _ = RowBodyMeter.cardPass(onHome: homeMemory != nil)
         let w = Theme.Tile.width(.poster, scale), h = Theme.Tile.height(.poster, scale)
         // Welle E-a: Plaketten nie unten auf dem Bild; bei „Unten“ sitzen sie im Streifen darunter (PosterBadgeBand).
         VStack(spacing: 0) {
