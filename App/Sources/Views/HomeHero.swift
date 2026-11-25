@@ -24,6 +24,8 @@ final class HomeFocus {
     /// (1 s) of rest: after the backdrop crossfade (350 ms + 0.6 s), and not for the short stops while browsing (the
     /// device log showed stops 0.5–0.8 s apart, each starting a search). Also when the backdrop already shows this tile
     /// (focus came back before its prefetch). A new focus or leaving the rows cancels both steps.
+    /// Intended (P3 review M4): every return to the shown tile requests again after 1 s, so `keepStream` also promotes
+    /// an entry that was prefetched already; harmless, do not skip the shown tile here.
     func set(_ m: MetaPreview, onRest: (() -> Void)? = nil) {
         if !inRows { inRows = true }
         pending?.cancel()
