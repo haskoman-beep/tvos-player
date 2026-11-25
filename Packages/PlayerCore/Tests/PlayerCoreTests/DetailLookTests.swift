@@ -174,3 +174,38 @@ import Testing
     // Without the implemented set the build rule still says when an option comes.
     #expect(LookOptionCatalog.isEnabled("sourceList", in: v, implemented: []).reason == "kommt mit Build 5b")
 }
+
+// Review fix round (W1, W4): the title slot while the meta loads and after a failed logo.
+@Test func titleArtHoldsThePosterUntilTheMetaIsKnown() {
+    // titleArt = logo, meta not there yet: neither poster nor logo; the slot is kept so nothing jumps later.
+    let pending = DetailLook.titleArt(.logo, logo: nil, metaKnown: false, logoFailed: false)
+    #expect(pending == DetailTitleArt(logo: nil, showsPoster: false, reservesLogoSlot: true))
+    // Meta came with a logo: the logo fills the kept slot, the poster never showed.
+    #expect(DetailLook.titleArt(.logo, logo: "https://example.invalid/l.png", metaKnown: true, logoFailed: false)
+            == DetailTitleArt(logo: "https://example.invalid/l.png", showsPoster: false, reservesLogoSlot: true))
+    // Meta without a logo: poster and text title (today's page).
+    #expect(DetailLook.titleArt(.logo, logo: nil, metaKnown: true, logoFailed: false)
+            == DetailTitleArt(logo: nil, showsPoster: true))
+    // Poster style never waits.
+    #expect(DetailLook.titleArt(.poster, logo: nil, metaKnown: false, logoFailed: false)
+            == DetailTitleArt(logo: nil, showsPoster: true))
+}
+
+@Test func failedLogoBringsBackPosterAndTextTitle() {
+    let url = "https://example.invalid/l.png"
+    #expect(DetailLook.titleArt(.logo, logo: url, metaKnown: true, logoFailed: true)
+            == DetailTitleArt(logo: nil, showsPoster: true))
+    #expect(DetailLook.titleArt(.poster, logo: url, metaKnown: true, logoFailed: true)
+            == DetailTitleArt(logo: nil, showsPoster: true))
+}
+
+// Review fix round (W3): the kino head from the measured scroll area, not a 1080 constant.
+@Test func kinoHeadHeightUsesTheMeasuredArea() {
+    // Movie: area minus the top padding and the bottom inset of the info.
+    #expect(DetailLook.kinoHeadHeight(area: 960, topPadding: 60, bottomInset: 70, series: false) == 830)
+    // Series: 420 pt stay for the season bar and the episodes.
+    #expect(DetailLook.kinoHeadHeight(area: 960, topPadding: 60, bottomInset: 70, series: true) == 410)
+    // Not measured yet (0) or too small: no minimum height.
+    #expect(DetailLook.kinoHeadHeight(area: 0, topPadding: 60, bottomInset: 70, series: false) == nil)
+    #expect(DetailLook.kinoHeadHeight(area: 500, topPadding: 60, bottomInset: 70, series: true) == nil)
+}

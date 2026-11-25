@@ -171,6 +171,33 @@ public enum DetailLook {
         case .poster: return DetailTitleArt(logo: logo, showsPoster: true)
         }
     }
+
+    /// Review W1/W4: `titleArt` while the page loads. `metaKnown`: the meta arrived (or loading ended without it);
+    /// `logoFailed`: the logo address could not be loaded.
+    /// - `logo`, meta not known: neither poster nor logo, the logo's slot is kept (`reservesLogoSlot`), so the poster
+    ///   never shows only to vanish when the logo comes.
+    /// - `logo` with a logo: the logo in its slot. Without one, or failed: poster and text title (today's page).
+    /// - `poster`: never waits; a failed logo gives the text title.
+    public static func titleArt(_ choice: LookTitleArt, logo: String?, metaKnown: Bool, logoFailed: Bool) -> DetailTitleArt {
+        let usable = logoFailed ? nil : logo
+        switch choice {
+        case .logo:
+            if !metaKnown { return DetailTitleArt(logo: nil, showsPoster: false, reservesLogoSlot: true) }
+            var art = titleArt(.logo, logo: usable)
+            art.reservesLogoSlot = art.logo != nil
+            return art
+        case .poster:
+            return titleArt(.poster, logo: usable)
+        }
+    }
+
+    /// Review W3: minimum height of the kino head, from the measured scroll area (`area`, inside the safe area)
+    /// minus the top padding and the info's bottom inset; a series leaves 420 pt for the season bar and the first
+    /// episodes. nil while not measured or when less than 200 pt would remain.
+    public static func kinoHeadHeight(area: Double, topPadding: Double, bottomInset: Double, series: Bool) -> Double? {
+        let h = area - topPadding - bottomInset - (series ? 420 : 0)
+        return area > 0 && h >= 200 ? h : nil
+    }
 }
 
 /// What the head of the detail page shows: the title logo (else the title as text) and whether the poster stands
@@ -179,5 +206,11 @@ public enum DetailLook {
 public struct DetailTitleArt: Sendable, Hashable {
     public var logo: String?
     public var showsPoster: Bool
-    public init(logo: String?, showsPoster: Bool) { self.logo = logo; self.showsPoster = showsPoster }
+    /// Review W4: the title keeps the logo's height (logo shown, or the meta still loading), so nothing moves.
+    public var reservesLogoSlot: Bool
+    public init(logo: String?, showsPoster: Bool, reservesLogoSlot: Bool = false) {
+        self.logo = logo
+        self.showsPoster = showsPoster
+        self.reservesLogoSlot = reservesLogoSlot
+    }
 }
