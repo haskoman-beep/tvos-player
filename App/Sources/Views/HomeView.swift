@@ -210,11 +210,19 @@ struct HomeView: View {
         // S5: a hand-over inside the row (placeholder → card) calls this again: the checks restart, no second line.
         let restart = headingRow == id
         if !restart { headingRow = id }
-        DispatchQueue.main.async {
-            withAnimation(.easeOut(duration: 0.25)) { scroll(id) }
+        // Device test 1 (Build 4 follow-up 2): no scroll (and no animation) while the row's top already sits at the
+        // list's top edge (`HeadingSnap` tolerance, 2 pt), e.g. focus back in the row it just left.
+        let now = topWatch.headingSample(row: id)
+        let inPlace = HeadingSnap.decide(row: now.row, scroll: now.scroll) == .inPlace
+        if !inPlace {
+            DispatchQueue.main.async {
+                withAnimation(.easeOut(duration: 0.25)) { scroll(id) }
+            }
         }
         let title = model.homeRowTitle(row.content)
-        if !restart { RemoteLog.info("nav", "Reihe fokussiert, Überschrift nach oben: \(title)") }
+        if !restart {
+            RemoteLog.info("nav", "Reihe fokussiert, Überschrift nach oben: \(title)\(inPlace ? " (steht schon oben)" : "")")
+        }
         // Build 3 device test: the row stopped too low (heading visible, posters cut at the bottom); the system's
         // focus scroll finished after ours. S5 (Build 4 follow-up): one blind re-snap at 400 ms was not enough on
         // first entry (hand-overs, slow first decodes). While focus stays in the row it is checked at 0.4, 0.9 and
