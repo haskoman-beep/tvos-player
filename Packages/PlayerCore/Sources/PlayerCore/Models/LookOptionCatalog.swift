@@ -76,11 +76,12 @@ public enum LookOptionCatalog {
 
     /// Task 5.3: options of a later build that this code already draws; their rows are active although
     /// `LookBuild.current` stays `.b4` (the 5a/5c rows stay dimmed until their builds land).
-    /// Task 5.1: the card and row options of 5a (cardSize and expandPosters are Build 4 options).
+    /// Task 5.1: the card and row options of 5a (cardSize and expandPosters are Build 4 options); Task 5.2: the hero
+    /// options of 5a.
     public static let implemented: Set<String> = [
         "layout", "descriptionLines", "cast", "badgeStyle", "ratingStyle", "sourceList", "episodes", "titleArt",
         "cardShape", "corners", "rowSpacing", "rowTitle", "cardTitles", "focusScale", "focusBorder", "focusShadow",
-        "focusGlow",
+        "focusGlow", "heroStyle", "heroInfo", "heroTitle", "backdropFollowsFocus",
     ]
 
     public static func entry(_ key: String) -> LookOptionEntry? { rows.first { $0.key == key } }

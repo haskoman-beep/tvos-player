@@ -25,7 +25,7 @@ struct HomeView: View {
     @State private var focusTarget = HomeFocusTarget()
     /// Task 4.1a (F-A-11): rows holding the focus (launch claim of the page without hero).
     @State private var focusedRows: Set<UUID> = []
-    /// P2 (follow-up 2): collapsing hero info while the focus is in the rows (read by `HeroListFrame` and `HeroLayer`).
+    /// P2 (follow-up 2): collapsing hero info while the focus is in the rows (read by `HeroListFrame` and `HeroLayout`).
     @State private var collapse = HeroCollapse()
 
     var body: some View {
@@ -35,11 +35,14 @@ struct HomeView: View {
         let rows = layout.rowsBelowHero(appearance)
         // Task 4.1a (F-A-4): a failed or empty hero source keeps the hero layout (status in the hero frame); switching
         // the whole layout rebuilt every row and lost the focus.
-        let showsHero = hero != nil
-        let edge = HomeTopEdge.topmost(hasHero: showsHero, rowCount: rows.count, layoutEmpty: layout.rows.isEmpty)
+        // Task 5.2: hero style, info and title from the look (`aus` = no hero source, `Profile.themeLook`).
+        let look = model.profile.themeLook.home
+        let showsHero = HomeTopEdge.showsHero(look.heroStyle, hasHeroSource: hero != nil)
+        let edge = HomeTopEdge.topmost(heroStyle: look.heroStyle, hasHeroSource: hero != nil, rowCount: rows.count,
+                                       layoutEmpty: layout.rows.isEmpty)
         Group {
             if showsHero {
-                heroHome(rows)
+                heroHome(rows, look: look)
             } else {
                 ScrollViewReader { proxy in
                     // Wave F-m: focus scrolling stops a card's frame at the list's edges, the lift reaches past them.
@@ -72,6 +75,11 @@ struct HomeView: View {
         // Task 1.8: start page without hero (none configured or no slides): usable as soon as it shows; with a hero
         // the button row reports `start.usable` (`LaunchFocus`).
         .onChange(of: showsHero, initial: true) { _, hero in if !hero { RemoteLog.startUsable("ohneHero") } }
+        // Task 5.2: the hero variant in use (once per change) and whether the backdrop follows the focus.
+        .onChange(of: HeroStyleKey(look), initial: true) { _, k in
+            focus.followsBackdrop = k.follows
+            RemoteLog.info("hero", k.line)
+        }
         .onChange(of: "\(edge.rawValue)|\(appearance.navigation.rawValue)", initial: true) {
             topWatch.configure(edge: edge, navigation: appearance.navigation)
         }
@@ -129,20 +137,20 @@ struct HomeView: View {
     }
 
     /// Hintergrund- und Info-Ebene hinter dem ScrollView; der Hero ist kein eigener Scroll-Abschnitt.
-    private func heroHome(_ rows: [HomeRow]) -> some View {
+    private func heroHome(_ rows: [HomeRow], look: LookHome) -> some View {
         ScrollViewReader { proxy in
             ZStack(alignment: .topLeading) {
-                HeroLayer(slides: slides, collapse: collapse)
+                // Task 5.2: one variant per `heroStyle`; the list on top is the same for all of them.
+                HeroLayout(style: look.heroStyle, level: look.heroInfo, title: look.heroTitle,
+                           followsFocus: look.backdropFollowsFocus, slides: slides, collapse: collapse)
                 ScrollView(.vertical) {
                     LazyVStack(alignment: .leading, spacing: Theme.Space.xl) {
-                        HeroButtons(slides: slides, onFocusChange: { f in
-                            topWatch.report(.heroButtons, f)
-                            // P2 fix round: only the hero buttons expand the collapsed info (`HeroCollapse`).
-                            if collapse.heroButtonsFocused != f { collapse.heroButtonsFocused = f }
-                        })
+                        HeroButtons(slides: slides, onFocusChange: { heroButtonsFocus($0) },
+                                    leading: HeroMetrics.buttonLeading(look.heroStyle),
+                                    carousel: look.heroStyle == .karussell)
                         rowList(rows, hero: true)
                     }
-                    .padding(.top, 24)
+                    .padding(.top, HeroMetrics.listPadding)
                     .padding(.bottom, 60)
                     .coordinateSpace(.named(HomeTopEdgeWatch.contentSpace))   // S5: row frames
                     .id(HomeTopEdgeWatch.topID)
@@ -166,18 +174,26 @@ struct HomeView: View {
                     .padding(.bottom, -listBottomRoom(rows))
                 }
                 // P2 (follow-up 2): list top (collapsing info) and the wave F-m room below the list.
-                .modifier(heroListFrame(rows))
+                .modifier(heroListFrame(rows, look: look))
             }
         }
         .environment(focus)
     }
 
+    /// Wave F-j: the hero button row is the top edge. P2 fix round: only the hero buttons expand the collapsed info
+    /// (`HeroCollapse`).
+    private func heroButtonsFocus(_ f: Bool) {
+        topWatch.report(.heroButtons, f)
+        if collapse.heroButtonsFocused != f { collapse.heroButtonsFocused = f }
+    }
+
     /// P2 (follow-up 2): frame of the hero list; the collapsed top fits the tallest row (`HeroInfoCollapse`).
-    private func heroListFrame(_ rows: [HomeRow]) -> HeroListFrame {
+    private func heroListFrame(_ rows: [HomeRow], look: LookHome) -> HeroListFrame {
         let a = model.profile.appearance
         let strip = a.titles.posterBadges == .bottom ? PosterQualityBadges.bandHeight : 0
         return HeroListFrame(focus: focus, collapse: collapse, kinds: rows.map { PosterSize.kind(for: $0.style) },
-                             cardScale: a.cardSize.scale, posterStrip: strip, bottomRoom: listBottomRoom(rows))
+                             cardScale: a.cardSize.scale, posterStrip: strip, bottomRoom: listBottomRoom(rows),
+                             style: look.heroStyle, level: look.heroInfo)
     }
 
     /// Wave F-k: band above the hero list for the lift of its tallest tile (card size, quality strip below posters).
@@ -443,4 +459,21 @@ private struct ManagerTarget: Identifiable, Hashable {
     let id = UUID()
     var row: UUID? = nil
     var openBrowser = false
+}
+
+/// Task 5.2: what of the look changes the hero (style, info, title, backdrop after focus); one `hero: Stil` line per
+/// change.
+private struct HeroStyleKey: Equatable {
+    let style: LookHeroStyle
+    let info: LookHeroInfo
+    let title: LookHeroTitle
+    let follows: Bool
+
+    init(_ h: LookHome) {
+        style = h.heroStyle; info = h.heroInfo; title = h.heroTitle; follows = h.backdropFollowsFocus
+    }
+
+    var line: String {
+        "Stil \(style.rawValue), Info \(info.rawValue), Titel \(title.rawValue), Hintergrund folgt Fokus \(follows ? "an" : "aus")"
+    }
 }

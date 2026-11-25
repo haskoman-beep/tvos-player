@@ -73,7 +73,10 @@ private func lookValueKeys() throws -> [String: Set<String>] {
                 "focusShadow", "focusGlow"] {
         #expect(LookOptionCatalog.isEnabled(key, in: v).enabled, "\(key)")
     }
-    #expect(!LookOptionCatalog.isEnabled("heroStyle", in: v).enabled)
+    // Task 5.2: the hero options are drawn already, so their rows are active in this build.
+    for key in ["heroStyle", "heroInfo", "heroTitle", "backdropFollowsFocus"] {
+        #expect(LookOptionCatalog.isEnabled(key, in: v) == (true, nil), "\(key)")
+    }
     #expect(LookOptionCatalog.isEnabled("accent", in: v) == (true, nil))
     #expect(LookOptionCatalog.isEnabled("sourceList", in: v, implemented: []).reason == "kommt mit Build 5b")
     // System reduce motion: still selectable, with a note.
