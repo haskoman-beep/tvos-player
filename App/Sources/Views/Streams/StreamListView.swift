@@ -279,10 +279,7 @@ struct StreamListView: View {
                                                                              onSourceVerdict: { [id = (current ?? request).id] in PlaybackStability.shared.apply($0, stream: s, title: id) },
                                                                              releaseName: s.behaviorHints?.filename,
                                                                              sideLinks: sidePanelLinks(for: s),
-                                                                             startOverride: sideStart?.id == s.id ? sideStart?.at : nil).environmentObject(model)
-                                                                     // 5c-merge: move `.badgesInPlayer()` to the root of
-                                                                     // PlayerScreen (covers TorBoxFilesRow too), then drop it here.
-                                                                     .badgesInPlayer() }   // Wave P-b; Task 5.3: badges in the player
+                                                                             startOverride: sideStart?.id == s.id ? sideStart?.at : nil).environmentObject(model) }   // Wave P-b
         }
         .modifier(StillWatchingAlert(state: $autoNext, note: $nextNote) { startNext($0.next, after: $0.stream, auto: false) })
     }

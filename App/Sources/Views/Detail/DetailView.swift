@@ -267,8 +267,6 @@ struct DetailView: View {
                          },
                          isTrailer: true, remoteHLS: t.stream.isHLS)
                 .environmentObject(model)
-                // 5c-merge: once PlayerScreen sets `.badgesInPlayer()` at its root, drop this call.
-                .badgesInPlayer()
         }
     }
 

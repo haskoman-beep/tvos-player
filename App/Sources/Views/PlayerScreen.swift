@@ -123,6 +123,9 @@ struct PlayerScreen: View {
             session = model.scopes.current   // Task 3.1: before the backend, so the controls see it from the start
             do { let b = try AetherBackend(); NowPlayingBridge.stage(b, request: request, skipSeconds: model.profile.player.remoteSkipSeconds); backend = b } catch { initError = "Player-Start fehlgeschlagen: \(error)"; RemoteLog.error("player", initError ?? "") }
         }
+        // Task 5.3: every badge in the player (control bar, track panel cover, side panel) draws `logos` as
+        // `gefuellt`; set once here, so all three ways in (stream list, trailer, TorBox files) get it.
+        .badgesInPlayer()
     }
 
     /// Task 3.5 (W-B-2): end of this player for the prefetcher, the side extras and the scrobble (once per appearance).

@@ -170,9 +170,9 @@ extension ThemeBadge {
 struct Badge: View {
     let text: String
     init(_ text: String, _ color: Color) { self.text = text }
-    /// Task 5.3: only the player uses it, so it draws with the player's fallback (`logos` → `gefuellt`).
-    // 5c-merge: redundant once PlayerScreen sets `.badgesInPlayer()` at its root (TorBoxFilesRow's player lacks it).
-    var body: some View { ThemeBadge(kind: .tech(.sources), text: text).badgesInPlayer() }
+    /// Task 5.3: only the player uses it; the player's fallback (`logos` → `gefuellt`) comes from `PlayerScreen`'s
+    /// root (`.badgesInPlayer()`).
+    var body: some View { ThemeBadge(kind: .tech(.sources), text: text) }
 }
 
 /// Task 5.3: marks a subtree as the player, so `ThemeBadge` draws `logos` as `gefuellt` (plan Task 5.3).
