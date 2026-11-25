@@ -302,6 +302,7 @@ solide. Offene Punkte:
 | Vier Ruhe-Timer enden gleichzeitig | 350 ms: Hintergrund, Aufklappen, Vorladen, Fokus-Video | Lastspitze genau zu Beginn der Aufklapp-Animation | staffeln: 350 ms Hintergrund, 500 ms Aufklappen, 700 ms Vorladen | `hitch: <ms>` mit Anlass |
 | 70 Views beobachten das ganze `AppModel` | `ObservableObject`: jede `@Published`-Änderung wertet alle aufgebauten Karten neu aus | Ruck bei jedem Fortschritts-Speichern und jeder Katalog-Erneuerung | `@Observable` (feldgenau), siehe ADR-2 | `hitch`-Zähler je Minute vor/nach dem Umbau |
 | Kontextmenü je Karte | Menü-Inhalt wird beim Aufbau gebildet, nicht beim langen Druck | klein, summiert sich | Inhalt erst beim Öffnen bilden | – |
+| Neuaufbau von Reihen und Karten je Fokusschritt (Build 4 Nacharbeit S4) | neue Anker-Closure je Reihen-Durchlauf hebelte `.equatable()` der Karten aus; `latest(forItem:)` filterte je Karte alle Fortschrittseinträge; `ForEach`-IDs je Durchlauf neu | Ruckler beim schnellen Rechts-Drücken (Gerätetest 25.11.) | stabile Anker-Aktion, Index je Titel, IDs beim Laden | `metric: home.rowBody <n> · karten <k> · fokus <m>`: **Zählwerte, keine ms** – Body-Durchläufe der Reihen (n) und Poster-Karten (k) je 5-s-Fenster mit Fokusbewegung (m), nur Startseite |
 
 ## 7. Soll-Architektur
 
