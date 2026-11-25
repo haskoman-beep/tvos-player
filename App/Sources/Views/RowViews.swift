@@ -32,6 +32,20 @@ struct HomeRowView: View {
     /// Welle F-g: Kit-Ladefehler und laufende Ladungen (Statuskachel der Kit-Collections).
     @ObservedObject private var kit = FusionKitStore.shared
 
+    /// The row's load key: a change starts a new load. Split out of `body` (CI: "unable to type-check this
+    /// expression in reasonable time"); same value as before.
+    private var loadKey: String {
+        var key: String = row.content.key
+        if row.content == .list(.continueWatching) {
+            let newest: Double = model.progress.continueWatching().first?.updated.timeIntervalSince1970 ?? 0
+            key += "\(model.progress.entries.count)-\(newest)"
+        }
+        key += model.catalogStamp(row.content)
+        if row.content == .list(.upcoming) { key += "|r\(upcomingRevision.value)" }
+        key += "|t\(retry)"
+        return key
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
             if row.style != .hero {
@@ -42,8 +56,7 @@ struct HomeRowView: View {
                 .focusSection()
                 .defaultFocus($focusedRoute, rememberedRoute, priority: .userInitiated)
         }
-        .task(id: row.content.key + (row.content == .list(.continueWatching) ? "\(model.progress.entries.count)-\(model.progress.continueWatching().first?.updated.timeIntervalSince1970 ?? 0)" : "") + model.catalogStamp(row.content)
-               + (row.content == .list(.upcoming) ? "|r\(upcomingRevision.value)" : "") + "|t\(retry)") {
+        .task(id: loadKey) {
             guard case .list(let s) = row.content else { return }
             // Welle F-f: geteilte Ladung (AppModel+HomeRows), läuft beim Wegscrollen weiter.
             let r = await model.homeRowItems(s)
