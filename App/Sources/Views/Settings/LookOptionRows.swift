@@ -65,12 +65,17 @@ struct LookOptionRows: View {
     }
 
     /// Colour field of a value: the accent, or the background tone (`LookTheme`). `nil` for other options.
-    static func swatch(_ key: String, _ raw: String) -> Color? {
-        switch key {
-        case "accent": LookAccent(rawValue: raw).map { ThemeValues.rgb(LookTheme.accent($0).accent) }
-        case "background": LookBackground(rawValue: raw).map { ThemeValues.rgb(LookTheme.background($0).base) }
-        default: nil
+    /// Review M1: a background shows its page tone (`surface`) with a raised card (`raised`) on it; the four `base`
+    /// tones are all near black and could not be told apart on a TV.
+    static func swatch(_ key: String, _ raw: String) -> LookSwatchColors? {
+        if key == "accent", let accent = LookAccent(rawValue: raw) {
+            return LookSwatchColors(fill: ThemeValues.rgb(LookTheme.accent(accent).accent))
         }
+        if key == "background", let tone = LookBackground(rawValue: raw) {
+            let bg = LookTheme.background(tone)
+            return LookSwatchColors(fill: ThemeValues.rgb(bg.surface), card: ThemeValues.rgb(bg.raised))
+        }
+        return nil
     }
 
     var body: some View {
@@ -193,9 +198,9 @@ private struct LookChoiceLabel: View {
     let selected: Bool
 
     var body: some View {
-        if let color = LookOptionRows.swatch(entry.key, choice.raw) {
+        if let colors = LookOptionRows.swatch(entry.key, choice.raw) {
             HStack(alignment: .center, spacing: Theme.Space.m) {
-                LookSwatch(color: color)
+                LookSwatch(colors: colors)
                 Text(choice.label).textRoleInRow(.rowTitle).lineLimit(1)
                 Spacer(minLength: Theme.Space.m)
                 if selected {
@@ -210,19 +215,35 @@ private struct LookChoiceLabel: View {
     }
 }
 
+/// Colours of one swatch: the field, and for a background tone the raised card drawn on it.
+struct LookSwatchColors {
+    let fill: Color
+    var card: Color? = nil
+}
+
 /// Colour field in the size of an icon tile, with a grey edge so black on a dark row and white on the focused
-/// (white) row both stay visible.
+/// (white) row both stay visible. A background tone carries a small raised card in its lower half (review M1).
 private struct LookSwatch: View {
-    let color: Color
+    let colors: LookSwatchColors
 
     var body: some View {
+        let tile: CGFloat = Theme.Layout.iconTile
+        let inset: CGFloat = tile * 0.18
         RoundedRectangle(cornerRadius: Theme.Radius.badge, style: .continuous)
-            .fill(color)
+            .fill(colors.fill)
+            .overlay(alignment: .bottom) {
+                if let card = colors.card {
+                    RoundedRectangle(cornerRadius: inset / 2, style: .continuous)
+                        .fill(card)
+                        .frame(height: tile * 0.42)
+                        .padding(inset)
+                }
+            }
             .overlay {
                 RoundedRectangle(cornerRadius: Theme.Radius.badge, style: .continuous)
                     .strokeBorder(Color(white: 0.5).opacity(0.6), lineWidth: 2)
             }
-            .frame(width: Theme.Layout.iconTile, height: Theme.Layout.iconTile)
+            .frame(width: tile, height: tile)
             .accessibilityHidden(true)
     }
 }
