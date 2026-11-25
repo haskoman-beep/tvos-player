@@ -8,6 +8,9 @@ struct DetailExtras: View {
     @EnvironmentObject var model: AppModel
     let info: LocalizedMeta
     let isSeries: Bool
+    /// Task 5.3: width of the cast row (layout „zentriert“: 860), nil = the page width.
+    var castWidth: CGFloat? = nil
+    @Environment(\.theme) private var theme
 
     /// Wave F-k: vertical room of „Ähnliche Titel“ (`.card` lift of a 360 pt poster + quality strip below).
     private var similarPadding: CGFloat {
@@ -30,29 +33,11 @@ struct DetailExtras: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.l) {
-            if !info.cast.isEmpty {
+            // Task 5.3: `detail.cast` (circles, cards, one text line or off; `CastRow`).
+            if !info.cast.isEmpty, theme.detail.cast != .aus {
                 Text("Besetzung").textRole(.sectionTitle).accessibilityAddTraits(.isHeader)
-                ScrollView(.horizontal) {
-                    // Welle F-i: eigener Kachelstil (Anheben 1,06 ≈ 8 pt je Seite) statt `.card`; Abstand ≥ Wachsen,
-                    // Rand oben/unten `Focus.tileRowPadding`, damit Kachel und Schatten nicht in „Ähnliche Titel“ ragen.
-                    LazyHStack(spacing: Theme.Space.l) {
-                        ForEach(info.cast) { c in
-                            Button { navigate(.person(id: c.id, name: c.name)) } label: {
-                                VStack(spacing: 10) {
-                                    RemoteImage(url: c.photo, maxPixels: 370)
-                                        .frame(width: 180, height: 180).clipShape(Circle())
-                                        .overlay { if c.photo == nil { Text(String(c.name.prefix(1))).font(.title) } }
-                                    Text(c.name).font(.caption.weight(.semibold)).lineLimit(1)
-                                    if let r = c.role { Text(r).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
-                                }
-                                .frame(width: 220).padding(.vertical, Theme.Space.xs)
-                            }
-                            .buttonStyle(ThemeTileButtonStyle())
-                        }
-                    }
-                    .padding(.vertical, Theme.Focus.tileRowPadding)
-                }
-                .scrollClipDisabled()
+                CastRow(cast: info.cast, style: theme.detail.cast)
+                    .frame(maxWidth: castWidth, alignment: .leading)
             }
             if !info.recommendations.isEmpty {
                 Text("Ähnliche Titel").textRole(.sectionTitle).accessibilityAddTraits(.isHeader)
