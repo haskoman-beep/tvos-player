@@ -101,9 +101,12 @@ public enum LookOptionCatalog {
         return rawString(value, isBool: e.choices.map(\.raw) == ["true", "false"])
     }
 
-    /// `overrides` with `key` set to `raw`, or removed for `nil` or the value of `preset` (that is no deviation, so
-    /// no accent dot and no count). `nil` when the key or the raw value is unknown; the result is read back through
-    /// the lenient decoder, so only valid values land.
+    /// `overrides` with `key` set to `raw`, or removed for `nil` or the value of `preset`. This builds the stored
+    /// shape only (overrides relative to the preset); it does not say what counts as a change. On the keys where the
+    /// baseline differs from the preset (navigation, accent, cardSize, expandPosters, badgeStyle, trackPanel) a removed
+    /// override still counts and shows the accent dot. "Back to the default" for a row is
+    /// `Profile.setLook(key, to: nil)`. `nil` when the key or the raw value is unknown; the result is read back
+    /// through the lenient decoder, so only valid values land.
     public static func overrides(_ overrides: LookOverrides, setting key: String, to raw: String?,
                                  preset: LookPresetID = .appleTV) -> LookOverrides? {
         guard let e = entry(key) else { return nil }
@@ -124,6 +127,8 @@ public enum LookOptionCatalog {
     /// Whether `key` differs from the baseline (`LookPreset.baseline`, the old defaults; the row carries the
     /// accent dot and offers "Auf Apple TV zurücksetzen"). `overrides` are stored ones, relative to `preset`.
     /// Task 4.5-base: an override that only restates the baseline (e.g. navigation seitenleiste) is no change.
+    /// It reads the stored overrides only, not the old fields that `Profile.themeLook` lets win. For a profile's
+    /// rows use `Profile.isLookOverridden(_:)`.
     public static func isOverridden(_ key: String, in overrides: LookOverrides,
                                     preset: LookPresetID = .appleTV) -> Bool {
         guard let shown = rawValue(key, in: overrides.applied(to: LookPreset.values(preset))) else { return false }
