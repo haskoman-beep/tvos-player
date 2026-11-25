@@ -62,6 +62,14 @@ struct DetailView: View {
     /// Folge, zu der die Folgenliste scrollt, bevor sie den Fokus bekommt (LazyVStack legt sie sonst nicht an).
     @State private var scrollTarget: String?
     @State private var scrollRequest = 0
+    /// Review W1: a title logo that did not load; the head falls back to poster and text title.
+    @State private var failedLogo: String?
+    /// Review W3: height of the scroll area (safe area), measured; 0 until the first layout.
+    @State private var scrollAreaHeight: CGFloat = 0
+    @State private var kinoLogged = false
+    /// Review (minor): the return from the player sets the season itself and its focus target; the season
+    /// change must not scroll the row to its start over that target.
+    @State private var skipRowStart = false
 
     /// Wave W-a: "anime" and other episodic addon types count as series (`ContentKind`); an unknown type once its
     /// meta lists episodes.
@@ -74,10 +82,16 @@ struct DetailView: View {
             ScrollViewReader { proxy in
                 ScrollView(.vertical) {
                     VStack(alignment: .leading, spacing: Theme.Space.l) {
-                        head(spec)
+                        // Review W2: the head above the backing of `lower`, which reaches up into it.
+                        head(spec).zIndex(1)
                         lower(spec)
                     }
                     .padding(.vertical, Theme.Space.edgeVertical)
+                }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
+                    guard abs(h - scrollAreaHeight) >= 1 else { return }
+                    scrollAreaHeight = h
+                    logKinoHead(layoutSpec)
                 }
                 .onChange(of: scrollRequest) {
                     guard let id = scrollTarget else { return }
@@ -173,6 +187,7 @@ struct DetailView: View {
             loading = false
             loaded = true
             logLook()
+            logKinoHead(layoutSpec)
             // Während des Ladens war die Beschreibung das einzige fokussierbare Element: Fokus auf die Hauptaktion holen.
             try? await Task.sleep(for: .milliseconds(50))
             guard !Task.isCancelled else { return }
@@ -206,7 +221,10 @@ struct DetailView: View {
             // Flag für die neu gestartete stehen.
             pendingReturnFocus = false
             let target = playbackFocusTarget()
-            if let s = target.season, s != season { season = s }
+            if let s = target.season, s != season {
+                skipRowStart = true
+                season = s
+            }
             await applyFocus(target, reason: "nach dem Player")
         }
         .onChange(of: season) {
@@ -249,6 +267,7 @@ struct DetailView: View {
                          },
                          isTrailer: true, remoteHLS: t.stream.isHLS)
                 .environmentObject(model)
+                // 5c-merge: once PlayerScreen sets `.badgesInPlayer()` at its root, drop this call.
                 .badgesInPlayer()
         }
     }
@@ -640,6 +659,10 @@ struct DetailView: View {
     /// Task 5.3: on a season change the row scrolls to the season's first unwatched episode (the focus stays on
     /// the season button; entry and return set their own target through `applyFocus`).
     private func scrollRowToStart() {
+        if skipRowStart {
+            skipRowStart = false
+            return
+        }
         guard isSeries, episodesAsRow, let imdb else { return }
         let s = season
         let eps = seasonEpisodes(s)
@@ -661,14 +684,28 @@ struct DetailView: View {
     private var contentLeading: CGFloat { LookMetrics.contentLeading(model.profile.themeLook.global.navigation) }
 
     /// What the head shows: title logo or text, and whether the poster stands next to the info block.
-    private var titleArt: DetailTitleArt { DetailLook.titleArt(model.profile.detailExtras.titleArt, logo: meta?.logo) }
+    /// Review W1/W4: with `titleArt = logo` the poster waits for the meta (no poster → logo jump), and a logo that
+    /// fails brings poster and text title back.
+    private var titleArt: DetailTitleArt {
+        let logo = meta?.logo
+        return DetailLook.titleArt(model.profile.detailExtras.titleArt, logo: logo, metaKnown: meta != nil || !loading,
+                                   logoFailed: logo != nil && logo == failedLogo)
+    }
 
     /// Kino: the head fills the first screen and its info sits at the bottom (movies). A series keeps room for the
     /// season bar so the episodes (entry focus) peek in below.
-    private var kinoHeadHeight: CGFloat {
-        let screen: CGFloat = 1080
-        let rest: CGFloat = isSeries ? 420 : 0
-        return screen - Theme.Space.edgeVertical - CGFloat(layoutSpec.bottomInset) - rest
+    /// Review W3: from the measured scroll area (safe area, tab bar), not from the screen height.
+    private var kinoHeadHeight: CGFloat? {
+        DetailLook.kinoHeadHeight(area: Double(scrollAreaHeight), topPadding: Double(Theme.Space.edgeVertical),
+                                  bottomInset: layoutSpec.bottomInset, series: isSeries).map { CGFloat($0) }
+    }
+
+    /// One line per page with the measured kino head (device check of W3).
+    private func logKinoHead(_ spec: DetailLayoutSpec) {
+        guard spec.anchorsBottom, !kinoLogged, loaded, scrollAreaHeight > 0 else { return }
+        kinoLogged = true
+        let head = kinoHeadHeight.map { "\(Int($0))" } ?? "–"
+        RemoteLog.info("detail", "Kino-Kopf: Fläche \(Int(scrollAreaHeight)) pt, Kopf \(head) pt, Serie \(isSeries ? "ja" : "nein")")
     }
 
     /// Title, poster with info block, and the main actions.
@@ -710,13 +747,21 @@ struct DetailView: View {
 
     @ViewBuilder private func titleView(_ art: DetailTitleArt, spec: DetailLayoutSpec) -> some View {
         let centred = spec.alignment == .center
+        // Without the poster the logo takes its room (`titleArt = logo`).
+        let height: CGFloat = art.showsPoster ? 200 : 260
+        let width = min(CGFloat(700), CGFloat(spec.infoWidth))
         if let logo = art.logo {
-            // Without the poster the logo takes its room (`titleArt = logo`).
-            let height: CGFloat = art.showsPoster ? 200 : 260
-            RemoteImage(url: logo, maxPixels: 1400, fit: true)
-                .frame(maxWidth: min(CGFloat(700), CGFloat(spec.infoWidth)), maxHeight: height,
-                       alignment: centred ? .center : .leading)
+            RemoteImage(url: logo, maxPixels: 1400, fit: true,
+                        onFailure: { url in
+                            failedLogo = url
+                            RemoteLog.info("detail", "Titel-Logo nicht geladen: Poster und Titeltext")
+                        })
+                .frame(maxWidth: width, maxHeight: height, alignment: centred ? .center : .leading)
+                .frame(height: art.reservesLogoSlot ? height : nil, alignment: centred ? .bottom : .bottomLeading)
                 .accessibilityLabel(item.name)
+        } else if art.reservesLogoSlot {
+            // Review W4: meta still loading: keep the logo's room so the info block does not move when it comes.
+            Color.clear.frame(width: width, height: height)
         } else {
             Text(item.name).textRole(.display).accessibilityAddTraits(.isHeader)
                 .multilineTextAlignment(centred ? .center : .leading)
@@ -771,7 +816,12 @@ struct DetailView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.leading, contentLeading)
         .padding(.trailing, Theme.Space.edge)
-        .background(alignment: .top) { DetailLowerBacking() }
+        .background(alignment: .top) { if hasLower { DetailLowerBacking() } }
+    }
+
+    /// Review W2: whether `lower` shows anything (no veil over the head when it is empty).
+    private var hasLower: Bool {
+        (!loading && imdb != nil && (isSeries || extra != nil)) || trailerNote != nil
     }
 
     /// Task 5.3: one line per page with the detail options in effect (device check of the variants).
