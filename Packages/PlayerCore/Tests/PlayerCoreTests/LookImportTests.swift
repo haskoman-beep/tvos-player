@@ -104,10 +104,12 @@ private let edelExport = """
         let (resp, cmds) = page.handle(post("/submit?t=tok", "\(field)=\(formEncoded(raw))"), profileName: "Ich") { Data() }
         #expect(cmds == [.look(try LookImport.parse(Data(raw.utf8)).look)], "\(field)")
         let loc = try #require(resp.extraHeaders["Location"])
-        #expect(loc.contains("lk=2") && loc.contains("lku=2"), "\(loc)")
+        // Task 4.5-base fix round 1 (I1): counted against the baseline (old defaults) like the settings row, not
+        // against the preset: navigation and cardSize match it, accent, expandPosters, badgeStyle, trackPanel not.
+        #expect(loc.contains("lk=4") && loc.contains("lku=2"), "\(loc)")
         let q = Dictionary(uniqueKeysWithValues: (URLComponents(string: loc)?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
         let html = page.page(profileName: "Ich", note: q["ok"], importNote: q["imp"], lookNote: q["lk"], lookUnknown: q["lku"])
-        #expect(html.contains("Aussehen übernommen · 2 Abweichungen"))
+        #expect(html.contains("Aussehen übernommen · 4 Abweichungen"))
         #expect(html.contains("2 Werte kannte diese App-Version nicht"))
     }
     // A broken file in the look field: nothing sent, the page says why.
@@ -179,4 +181,22 @@ private let edelExport = """
         var a = Appearance(); a.navigation = LookMigration.oldValues(for: w).navigation
         #expect(Look.migrated(from: a, player: PlayerComfortSettings(), sources: SourceSettings()).resolved().global.navigation == nav)
     }
+}
+
+@Test func phoneImportOfConfiguratorExportCountsAgainstBaseline() throws {
+    // Task 4.5-base fix round 1 (I1): export.json is exactly the Apple TV preset; the settings row then says
+    // "angepasst · 6", so the phone answer must say 6 as well, not 0.
+    let raw = String(decoding: try importFixture("konfigurator-export.json"), as: UTF8.self)
+    let page = PhoneInputPage()
+    let (resp, cmds) = page.handle(post("/submit?t=tok", "look_json=\(formEncoded(raw))"), profileName: "Ich") { Data() }
+    let look = try LookImport.parse(Data(raw.utf8)).look
+    #expect(cmds == [.look(look)])
+    #expect(LookPreset.baselineDeviationCount(look) == 6)
+    let loc = try #require(resp.extraHeaders["Location"])
+    #expect(loc.contains("lk=6"), "\(loc)")
+    let html = page.page(profileName: "Ich", note: nil, lookNote: "6")
+    #expect(html.contains("Aussehen übernommen · 6 Abweichungen"))
+    var p = Profile(name: "T")
+    p.applyImportedLook(look)
+    #expect(SettingsSummary.lookValue(p) == "angepasst · 6")
 }

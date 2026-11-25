@@ -224,13 +224,14 @@ public struct PhoneInputPage: Sendable {
             var cmds: [PhoneCommand] = []
             func val(_ k: String) -> String? { f[k].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 } }
             var importNote: String?
-            // Task 4.3: answer to a look ("lk" = number of overrides or a failure code, "lku" = unknown values).
+            // Task 4.3: answer to a look ("lk" = number of deviations or a failure code, "lku" = unknown values).
+            // Task 4.5-base fix round 1 (I1): deviations from the baseline, the same count as the settings row.
             var lookParams: [String] = []
             func takeLook(_ text: String) {
                 do {
                     let (look, report) = try LookImport.parse(Data(text.utf8))
                     cmds.append(.look(look))
-                    lookParams = ["lk=\(look.overrides.count)"] + (report.isEmpty ? [] : ["lku=\(report.ignored.count)"])
+                    lookParams = ["lk=\(LookPreset.baselineDeviationCount(look))"] + (report.isEmpty ? [] : ["lku=\(report.ignored.count)"])
                 } catch {
                     lookParams = ["lk=\((error as? LookImport.Failure ?? .notAnExport).code)"]
                 }
@@ -284,7 +285,8 @@ public struct PhoneInputPage: Sendable {
         }
     }
 
-    /// Task 4.3: the page's answer to an imported look. `note` is the number of overrides or a failure code
+    /// Task 4.3: the page's answer to an imported look. `note` is the number of deviations from
+    /// `LookPreset.baseline` or a failure code
     /// (`LookImport.Failure.code`), `unknown` the number of values this build did not know.
     static func lookText(_ note: String?, unknown: String?) -> String? {
         guard let note else { return nil }
