@@ -271,9 +271,15 @@ enum Theme {
     enum CategoryTint: CaseIterable {
         case profile, addons, sources, home, appearance, playback, audio, picture, system
 
-        /// Marks the neutral tile. `IconTile` draws it from the runtime theme (`color.raised` / `color.primary`);
-        /// other views get today's `bg.raised`.
-        static let neutral = Palette.overlayCard
+        /// Marks the neutral tile. `IconTile` and `StatusCard` draw it from the runtime theme (`color.raised` /
+        /// `color.primary`); other views get today's `bg.raised`. Task 4.5 review M4: a value of its own (99.9 %
+        /// opaque, looks like `Palette.overlayCard`), so an explicit `Palette.overlayCard` tint is a normal grey tile
+        /// again. Test with `isNeutral(_:)`, never with `==` at the call site; a derived colour (`.opacity(…)`) is
+        /// not neutral.
+        static let neutral = Palette.overlayCard.opacity(0.999)
+
+        /// Whether `color` is the neutral category tint (the one place that compares colours).
+        static func isNeutral(_ color: Color) -> Bool { color == neutral }
 
         var color: Color { Self.neutral }
     }
@@ -459,7 +465,7 @@ struct IconTile: View {
     let color: Color
     @Environment(\.theme) private var theme
 
-    private var isNeutral: Bool { color == Theme.CategoryTint.neutral }
+    private var isNeutral: Bool { Theme.CategoryTint.isNeutral(color) }
 
     var body: some View {
         Image(systemName: symbol)

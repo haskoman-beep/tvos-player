@@ -71,23 +71,16 @@ struct StatusCard: View {
     }
 
     @ViewBuilder private var leadingMark: some View {
-        let size = Theme.Layout.statusMark
         switch leading {
         case .initial(let text, let color):
             Text(String(text.prefix(1)).uppercased())
                 .font(Theme.TextRole.sectionTitle.font)
-                .foregroundStyle(.white)
-                .frame(width: size, height: size)
-                .background(color, in: Circle())
-                .accessibilityHidden(true)
+                .modifier(StatusMarkCircle(color: color))
         case .symbol(let name, let color):
             Image(systemName: name)
                 .symbolVariant(.fill)
                 .font(.system(size: Theme.Layout.iconSize, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: size, height: size)
-                .background(color, in: Circle())
-                .accessibilityHidden(true)
+                .modifier(StatusMarkCircle(color: color))
         }
     }
 
@@ -107,6 +100,36 @@ struct StatusCard: View {
         DesignText.accessibilityLabel([title, subtitle] + shownMetrics.map { m -> String? in
             m.tone.map { "\($0.accessibilityName): \(m.text)" } ?? m.text
         })
+    }
+}
+
+/// Circle behind the leading mark of a `StatusCard`. Task 4.5 review M3: the neutral category tint follows the
+/// runtime theme like `IconTile` (`color.raised`, symbol `color.primary`), lifted by 14 % of `color.primary` so the
+/// circle stands out from the card (`bg.row`) on every background tone. Any other colour keeps the coloured circle
+/// with the white symbol.
+private struct StatusMarkCircle: ViewModifier {
+    let color: Color
+    @Environment(\.theme) private var theme
+
+    private var isNeutral: Bool { Theme.CategoryTint.isNeutral(color) }
+
+    func body(content: Content) -> some View {
+        let size: CGFloat = Theme.Layout.statusMark
+        content
+            .foregroundStyle(isNeutral ? theme.color.primary : Color.white)
+            .frame(width: size, height: size)
+            .background { fill }
+            .accessibilityHidden(true)
+    }
+
+    @ViewBuilder private var fill: some View {
+        if isNeutral {
+            Circle()
+                .fill(theme.color.raised)
+                .overlay { Circle().fill(theme.color.primary.opacity(0.14)) }
+        } else {
+            Circle().fill(color)
+        }
     }
 }
 

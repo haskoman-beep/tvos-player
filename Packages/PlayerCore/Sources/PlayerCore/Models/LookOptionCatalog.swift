@@ -61,6 +61,11 @@ public enum LookOptionCatalog {
     static let reduceMotionReason = "Das System reduziert Bewegung; diese Einstellung wirkt erst, wenn das aus ist."
     static let noFocusSignHint = "Ohne Fokus-Zeichen setzt die App einen weißen Rahmen."
     static let glowControlledKeys: Set<String> = ["corners", "focusScale", "focusBorder", "focusShadow"]
+    /// Review M5: later-build options whose concept still has an active old row; the reason points there.
+    static let standInRows: [String: String] = [
+        "badgeStyle": "„Plaketten-Stil“ unten",
+        "heroStyle": "„Titelbild oben“ unter Startseite",
+    ]
 
     /// Whether the row `key` can be changed in `build`, and the note shown under it. An option of a later build is
     /// off with "kommt mit Build …"; with glow on, tvOS draws the card (`.buttonStyle(.card)`), so shape, scale,
@@ -68,7 +73,10 @@ public enum LookOptionCatalog {
     public static func isEnabled(_ key: String, in values: LookValues, build: LookBuild = .current,
                                  reduceMotion: Bool = false) -> (enabled: Bool, reason: String?) {
         guard let e = entry(key) else { return (false, nil) }
-        if e.availableFrom > build { return (false, "kommt mit Build \(e.availableFrom.title)") }
+        if e.availableFrom > build {
+            let later = "kommt mit Build \(e.availableFrom.title)"
+            return (false, standInRows[key].map { later + " · bis dahin: " + $0 } ?? later)
+        }
         if glowControlledKeys.contains(key), values.home.focusGlow { return (false, glowReason) }
         if reduceMotion, key == "motion" || key == "expandPosters" { return (true, reduceMotionReason) }
         return (true, nil)
@@ -101,6 +109,23 @@ public enum LookOptionCatalog {
         return rawString(value, isBool: e.choices.map(\.raw) == ["true", "false"])
     }
 
+    /// Review M2: the raw values of all catalog keys in `values` from one encode, keyed by `key` (the same values
+    /// as `rawValue(_:in:)` per key). The settings page reads its 35 rows from this.
+    public static func rawValues(_ values: LookValues) -> [String: String] {
+        guard let data = try? JSONEncoder().encode(values),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] else { return [:] }
+        var out: [String: String] = [:]
+        for e in all {
+            if let v = obj[e.area.rawValue]?[e.key], let r = rawString(v, isBool: e.choices.map(\.raw) == ["true", "false"]) {
+                out[e.key] = r
+            }
+        }
+        return out
+    }
+
+    /// Raw values of the baseline (`LookPreset.baseline`), computed once.
+    public static let baselineRawValues: [String: String] = rawValues(LookPreset.baseline)
+
     /// `overrides` with `key` set to `raw`, or removed for `nil` or the value of `preset`. This builds the stored
     /// shape only (overrides relative to the preset); it does not say what counts as a change. On the keys where the
     /// baseline differs from the preset (navigation, accent, cardSize, expandPosters, badgeStyle, trackPanel) a removed
@@ -132,7 +157,7 @@ public enum LookOptionCatalog {
     public static func isOverridden(_ key: String, in overrides: LookOverrides,
                                     preset: LookPresetID = .appleTV) -> Bool {
         guard let shown = rawValue(key, in: overrides.applied(to: LookPreset.values(preset))) else { return false }
-        return shown != rawValue(key, in: LookPreset.baseline)
+        return shown != baselineRawValues[key]
     }
 
     /// JSONSerialization reads bools and numbers both as NSNumber; the entry says which one it is.
@@ -310,8 +335,11 @@ extension Profile {
     /// Whether the row differs from the baseline (`LookPreset.baseline`, the old defaults; accent dot,
     /// "Auf Standard zurücksetzen").
     public func isLookOverridden(_ key: String) -> Bool {
-        LookOptionCatalog.rawValue(key, in: themeLook) != LookOptionCatalog.rawValue(key, in: LookPreset.baseline)
+        LookOptionCatalog.rawValue(key, in: themeLook) != LookOptionCatalog.baselineRawValues[key]
     }
+
+    /// Review M2: every row's value and accent dot from one `themeLook` and one encode.
+    public var lookRows: LookRowValues { LookRowValues(themeLook) }
 
     /// Sets one option starting from what the theme shows (`nil` = back to the baseline value, the old default),
     /// and writes the old fields it maps to through `applyImportedLook` (old fields first, look last), so
@@ -331,4 +359,19 @@ extension Profile {
         let base = LookOverrides.difference(LookPreset.baseline, from: LookPreset.values(look.preset))
         applyImportedLook(Look(preset: look.preset, overrides: base))
     }
+}
+
+/// Review M2 (Task 4.5): the values of all rows of Einstellungen › Aussehen at once, so a settings body encodes the
+/// look once instead of twice per row.
+public struct LookRowValues: Sendable, Equatable {
+    /// Raw value per catalog key (`LookOptionCatalog.rawValue`).
+    public let raw: [String: String]
+
+    public init(_ values: LookValues) { raw = LookOptionCatalog.rawValues(values) }
+
+    /// Whether `key` differs from the baseline (accent dot), as `Profile.isLookOverridden`.
+    public func isOverridden(_ key: String) -> Bool { raw[key] != LookOptionCatalog.baselineRawValues[key] }
+
+    /// Number of rows that differ.
+    public var overriddenCount: Int { LookOptionCatalog.all.filter { isOverridden($0.key) }.count }
 }

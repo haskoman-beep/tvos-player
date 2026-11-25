@@ -143,3 +143,46 @@ private func lookValueKeys() throws -> [String: Set<String>] {
     #expect(p.appearance.accent == .blue)
     #expect(p.appearance.heroEnabled)
 }
+
+// Task 4.5 review M2: one encode per settings body instead of two per row.
+
+@Test func rawValuesMatchSingleKeyReads() throws {
+    var v = LookPreset.values(.appleTV)
+    v.global.accent = .rot; v.home.focusGlow = true; v.detail.descriptionLines = .five
+    for values in [v, LookPreset.baseline, LookPreset.values(.appleTV)] {
+        let all = LookOptionCatalog.rawValues(values)
+        #expect(all.count == LookOptionCatalog.all.count)
+        for e in LookOptionCatalog.all {
+            #expect(all[e.key] == LookOptionCatalog.rawValue(e.key, in: values), "\(e.key)")
+        }
+    }
+    #expect(LookOptionCatalog.baselineRawValues == LookOptionCatalog.rawValues(LookPreset.baseline))
+}
+
+@Test func profileLookRowsMatchPerKeyReads() {
+    var p = Profile(name: "T")
+    p.setLook("accent", to: "rot")
+    p.setLook("corners", to: "eckig")
+    p.appearance.expandPosters.toggle()
+    let rows = p.lookRows
+    #expect(rows.raw.count == LookOptionCatalog.all.count)
+    for e in LookOptionCatalog.all {
+        #expect(rows.raw[e.key] == p.lookRawValue(e.key), "\(e.key)")
+        #expect(rows.isOverridden(e.key) == p.isLookOverridden(e.key), "\(e.key)")
+    }
+    #expect(rows.raw["accent"] == "rot")
+    #expect(rows.overriddenCount == 3)
+    #expect(Profile(name: "U").lookRows.overriddenCount == 0)
+}
+
+// Task 4.5 review M5: a later-build row whose concept still has an active old row points to it.
+
+@Test func laterBuildRowsPointToTheActiveOldRow() {
+    let v = LookPreset.values(.appleTV)
+    #expect(LookOptionCatalog.isEnabled("badgeStyle", in: v).reason
+        == "kommt mit Build 5b · bis dahin: „Plaketten-Stil“ unten")
+    #expect(LookOptionCatalog.isEnabled("heroStyle", in: v).reason
+        == "kommt mit Build 5a · bis dahin: „Titelbild oben“ unter Startseite")
+    #expect(LookOptionCatalog.isEnabled("heroStyle", in: v, build: .b5a) == (true, nil))
+    #expect(LookOptionCatalog.isEnabled("layout", in: v).reason == "kommt mit Build 5b")
+}
