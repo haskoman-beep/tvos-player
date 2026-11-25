@@ -8,7 +8,104 @@ import Foundation
 /// `pauseGap` (background, a long hang the hitch watchdog logs) is not counted and closes the window early at its last
 /// counted frame, so the pause never stretches a line (review M1). `stop()` closes a partial window.
 /// No allocation per frame (counters only).
+/// Build 4 follow-up 2 (P3): render-side events (`event`) are counted per window, and every missed frame is checked
+/// against the latest event of each kind: within the kind's `span` before the stalled interval it counts as near that
+/// kind (one miss can be near several kinds), otherwise as „ohne“. The line then says whether the missed frames
+/// coincide with backdrop swaps, poster pictures, badge passes or stored sources.
 public struct FramePacing: Sendable {
+    /// Build 4 follow-up 2 (P3): render-side events of the home page that may cost a frame.
+    public enum Event: Int, Sendable, CaseIterable {
+        /// The hero backdrop swaps its picture (start of the 0.6 s crossfade).
+        case backdrop
+        /// A poster card expands after its focus rest (0.25 s animation, larger picture).
+        case expand
+        /// A poster tile sets a loaded picture (0.2 s fade-in, first upload of the bitmap).
+        case poster
+        /// One batched pass of quality badges reached the cards.
+        case badges
+        /// A source list was stored (cache, badge cache).
+        case sources
+        /// A source prefetch started (focus rest or visible tiles).
+        case prefetch
+
+        /// Fixed name in the log line.
+        public var label: String {
+            switch self {
+            case .backdrop: "Hintergrund"
+            case .expand: "Aufklappen"
+            case .poster: "Poster"
+            case .badges: "Plaketten"
+            case .sources: "Quellen"
+            case .prefetch: "Vorladen"
+            }
+        }
+
+        /// Note („zuletzt“) the event leaves in its window.
+        public var note: String {
+            switch self {
+            case .backdrop: "Hintergrund gewechselt"
+            case .expand: "Karte aufgeklappt"
+            case .poster: "Poster angekommen"
+            case .badges: "Plaketten gesetzt"
+            case .sources: "Quellen abgelegt"
+            case .prefetch: "Vorladen gestartet"
+            }
+        }
+
+        /// Seconds after the event in which a stalled frame still counts as near it: the event's own animation
+        /// (crossfade 0.6 s, expansion 0.25 s, fade 0.2 s) plus about 0.2 s for the commit that starts it.
+        public var span: TimeInterval {
+            switch self {
+            case .backdrop: 0.8
+            case .expand: 0.45
+            case .poster, .badges, .sources, .prefetch: 0.3
+            }
+        }
+
+        /// Stored once: `allCases` builds a new array on every call (no allocation per frame).
+        static let all: [Event] = Event.allCases
+    }
+
+    /// Build 4 follow-up 2 (P3): events of one window and the missed frames near them.
+    public struct EventTally: Sendable, Equatable {
+        private var counts = [Int](repeating: 0, count: Event.all.count)
+        private var nearCounts = [Int](repeating: 0, count: Event.all.count)
+        /// Missed frames near no event.
+        public private(set) var missedAlone = 0
+
+        public init() {}
+
+        /// Events of `kind` in the window.
+        public func count(_ kind: Event) -> Int { counts[kind.rawValue] }
+        /// Missed frames near an event of `kind`.
+        public func near(_ kind: Event) -> Int { nearCounts[kind.rawValue] }
+
+        public mutating func counted(_ kind: Event) { counts[kind.rawValue] += 1 }
+
+        /// One missed frame near the given kinds (none: „ohne“).
+        public mutating func missed(near kinds: [Event]) {
+            if kinds.isEmpty { missedAlone += 1 }
+            for k in kinds { nearCounts[k.rawValue] += 1 }
+        }
+
+        /// Frame path: one missed frame, kind by index (no array built).
+        mutating func missedNear(index: Int) { nearCounts[index] += 1 }
+        mutating func missedWithoutEvent() { missedAlone += 1 }
+
+        /// „Hintergrund 1, Poster 2“ (kinds with events, fixed order), nil without any.
+        var countsText: String? { Self.list(counts, extra: nil) }
+
+        /// „Hintergrund 2, ohne 1“, nil without missed frames.
+        var nearText: String? { Self.list(nearCounts, extra: missedAlone) }
+
+        private static func list(_ values: [Int], extra: Int?) -> String? {
+            var parts: [String] = []
+            for e in Event.all where values[e.rawValue] > 0 { parts.append("\(e.label) \(values[e.rawValue])") }
+            if let extra, extra > 0 { parts.append("ohne \(extra)") }
+            return parts.isEmpty ? nil : parts.joined(separator: ", ")
+        }
+    }
+
     /// One line of the log.
     public struct Report: Sendable, Equatable {
         /// Frame intervals counted in the window.
@@ -26,10 +123,13 @@ public struct FramePacing: Sendable {
         public var tenths: Int
         /// Last note set in the window.
         public var note: String?
+        /// Build 4 follow-up 2 (P3): events of the window and the missed frames near them.
+        public var events: EventTally
 
-        public init(frames: Int, missed: Int, dropped: Int, longestMs: Int, hz: Int, tenths: Int, note: String?) {
+        public init(frames: Int, missed: Int, dropped: Int, longestMs: Int, hz: Int, tenths: Int, note: String?,
+                    events: EventTally = EventTally()) {
             self.frames = frames; self.missed = missed; self.dropped = dropped; self.longestMs = longestMs
-            self.hz = hz; self.tenths = tenths; self.note = note
+            self.hz = hz; self.tenths = tenths; self.note = note; self.events = events
         }
     }
 
@@ -60,6 +160,9 @@ public struct FramePacing: Sendable {
     private var longest: TimeInterval = 0
     private var nominal: TimeInterval = FramePacing.fallbackFrame
     private var lastNote: String?
+    private var events = EventTally()
+    /// Latest time of each event kind (also while not measuring: an event just before the start still counts as near).
+    private var lastEventAt = [TimeInterval](repeating: -.infinity, count: Event.all.count)
 
     public init(window: TimeInterval = defaultWindow, keepAlive: TimeInterval = defaultKeepAlive) {
         self.window = window; self.keepAlive = keepAlive
@@ -81,6 +184,15 @@ public struct FramePacing: Sendable {
         lastNote = s
     }
 
+    /// Build 4 follow-up 2 (P3): a render-side event at `now` (same clock as the frame timestamps). Counted and
+    /// named as the window's note only while measuring; its time is kept for the nearness of the next missed frames.
+    public mutating func event(_ kind: Event, at now: TimeInterval) {
+        lastEventAt[kind.rawValue] = now
+        guard isRunning else { return }
+        events.counted(kind)
+        lastNote = kind.note
+    }
+
     /// A display-link frame at `timestamp` with the nominal frame duration `nominal` (≤ 0: 60 Hz).
     public mutating func frame(at timestamp: TimeInterval, nominal: TimeInterval) -> Tick {
         guard isRunning else { return Tick(report: nil, keepRunning: false) }
@@ -99,11 +211,23 @@ public struct FramePacing: Sendable {
             if gap > Self.missFactor * self.nominal {
                 missed += 1
                 dropped += max(1, Int((gap / self.nominal).rounded()) - 1)
+                attributeMiss(stallStart: last)
             }
             if gap > longest { longest = gap }
         }
         guard let start = windowStart, timestamp - start >= window else { return Tick(report: nil, keepRunning: true) }
         return closeWindow(at: timestamp)
+    }
+
+    /// A missed frame whose interval began at `stallStart`: near every kind whose latest event lies within its span
+    /// before that (or during the stall), else without an event.
+    private mutating func attributeMiss(stallStart: TimeInterval) {
+        var any = false
+        for i in 0..<lastEventAt.count where lastEventAt[i] >= stallStart - Event.all[i].span {
+            events.missedNear(index: i)
+            any = true
+        }
+        if !any { events.missedWithoutEvent() }
     }
 
     /// Ends the current window at its last counted frame (no report without frames) and starts the next one at
@@ -131,17 +255,21 @@ public struct FramePacing: Sendable {
 
     private func report(end: TimeInterval, start: TimeInterval) -> Report {
         Report(frames: frames, missed: missed, dropped: dropped, longestMs: Int((longest * 1000).rounded()),
-               hz: Int((1 / nominal).rounded()), tenths: max(0, Int(((end - start) * 10).rounded())), note: lastNote)
+               hz: Int((1 / nominal).rounded()), tenths: max(0, Int(((end - start) * 10).rounded())), note: lastNote,
+               events: events)
     }
 
     private mutating func resetWindow() {
         frames = 0; missed = 0; dropped = 0; longest = 0; lastNote = nil
+        events = EventTally()
     }
 
     /// Log text of a report (category `ruckler`).
     public static func text(_ r: Report) -> String {
         var s = "Startseite \(r.tenths / 10),\(r.tenths % 10) s: \(r.frames) Bilder (\(r.hz) Hz)"
         s += " · \(r.missed) verpasst · ≈\(r.dropped) Bilder fehlen · längstes \(r.longestMs) ms"
+        if let e = r.events.countsText { s += " · Ereignisse: \(e)" }
+        if r.missed > 0, let m = r.events.nearText { s += " · verpasst bei: \(m)" }
         if let n = r.note, !n.isEmpty { s += " · zuletzt: \(n)" }
         return s
     }

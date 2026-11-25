@@ -58,7 +58,7 @@ enum PosterSwapLog {
     private static var stats = PosterSwapStats()
 
     static func note(gapMs: Int?, waitMs: Int) {
-        FrameMeter.note("Poster angekommen")   // S1 frame meter: names this event in the next `ruckler` line
+        FrameMeter.event(.poster)   // S1/P3 frame meter: counted and named in the next `ruckler` line
         guard stats.record(gapMs: gapMs, waitMs: waitMs) else { return }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(PosterSwapStats.window))

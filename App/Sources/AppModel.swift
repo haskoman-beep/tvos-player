@@ -1126,7 +1126,7 @@ extension AppModel {
             // S3: computed off the main thread; only entries kept from the old state are parsed here.
             QualityBadgeCache.shared.streamsStored(id: id, best: prepared.best(stored: list), entries: list.count,
                                                    at: at, model: self)
-            FrameMeter.note("Quellen abgelegt")   // S1 frame meter: names this event in the next `ruckler` line
+            FrameMeter.event(.sources)   // S1/P3 frame meter: counted and named in the next `ruckler` line
             let ended = ProcessInfo.processInfo.systemUptime
             if let line = streamStoreCost.note(entries: list.count, seconds: ended - started, at: ended) {
                 RemoteLog.info("ruckler", line)

@@ -42,7 +42,11 @@ private func feed(_ p: inout FramePacing, from start: TimeInterval, count: Int, 
     r = feed(&p, from: r.end + 0.120, count: 212, step: hz60)   // up to 4.995 s
     #expect(r.reports.isEmpty)
     r = feed(&p, from: r.end, count: 1, step: hz60)              // 5.011 s: the window closes
-    #expect(r.reports == [FramePacing.Report(frames: 315, missed: 2, dropped: 6, longestMs: 80, hz: 64, tenths: 50, note: nil)])
+    var alone = FramePacing.EventTally()                         // P3: both misses lie near no event
+    alone.missed(near: [])
+    alone.missed(near: [])
+    #expect(r.reports == [FramePacing.Report(frames: 315, missed: 2, dropped: 6, longestMs: 80, hz: 64, tenths: 50, note: nil,
+                                             events: alone)])
     #expect(r.stops == 1)                               // last activity 5 s ago (> keepAlive): the link stops
     let stray = p.frame(at: r.end + hz60, nominal: hz60)
     #expect(stray.report == nil && !stray.keepRunning)
