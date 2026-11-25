@@ -31,7 +31,7 @@ actor ImagePipeline {
     /// Welle F-g: bewegte Fokusbilder (GIF) getrennt vom Bildcache: nur das zuletzt fokussierte bleibt (~30 MB).
     private let animated = NSCache<NSString, UIImage>()
     /// Belegung des Speichercaches (Verdrängen meldet NSCache über den Delegate).
-    private let tracker = CacheCostTracker()
+    private let tracker: CacheCostTracker
     private var costLimit = ImageCacheBudget.maximum
     private var playback = false
     private var playbackVersion = 0
@@ -50,8 +50,9 @@ actor ImagePipeline {
     private var animInFlight: [String: AnimLoad] = [:]
     /// Letzter Speicherschlüssel je Adresse (+ Weichzeichner): synchroner Treffer, bevor die Zielgröße bekannt ist.
     private let lastKeys = LockedKeys()
-    /// Treffer/Fehlgriffe des Speichercaches, alle 30 s als Summe geloggt.
-    let stats = CacheStats()
+    /// Treffer/Fehlgriffe des Speichercaches, alle 30 s als Summe geloggt (P3: mit Art der Fehlgriffe, Platte/Netz,
+    /// Dekodierzeit und Freigaben, `ImageCacheTally`).
+    let stats: CacheStats
 
     init() {
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?.appendingPathComponent("images")
@@ -63,7 +64,11 @@ actor ImagePipeline {
         // Wave F-k R1: a picture service that stops answering gives up after 15 s without data (default 60 s); a slow
         // download that keeps receiving is not cut. The tile then tries its next picture (TilePosterImage).
         cfg.timeoutIntervalForRequest = 15
-        session = URLSession(configuration: cfg)
+        let counts = CacheStats()
+        stats = counts
+        tracker = CacheCostTracker(stats: counts)
+        // Build 4 follow-up 2 (P3): a session delegate only for the task metrics (disk cache or network per download).
+        session = URLSession(configuration: cfg, delegate: ImageLoadMetrics(stats: counts), delegateQueue: nil)
         // Task 2.3: downloads go through the HTTPClient (size limit 20 MiB, total time limit) on this cached session.
         http = LimitedHTTPClient(transport: URLSessionByteTransport(session: session))
         urlCache = cache
@@ -87,7 +92,9 @@ actor ImagePipeline {
     func image(_ url: URL, target: ImageTarget, blur: Int = 0) async -> UIImage? {
         let key = Self.memoryKey(url, target: target, blur: blur)
         if let img = memory.object(forKey: key as NSString) { stats.hit(); return img }
-        stats.miss()
+        // P3: new address, other size, dropped since, or a load already running for it.
+        let previous = lastKeys.get(Self.lastKey(url, blur: blur))
+        stats.miss(ImageCacheTally.classify(key: key, lastKey: previous, joined: inFlight[key] != nil))
         if isBlocked(key) { return nil }
         if let running = inFlight[key] { return await running.value }
         let task = Task<UIImage?, Never> {
@@ -312,6 +319,7 @@ actor ImagePipeline {
 
     /// Task 2.3: one picture download with the image limits; the session's cache rule stays in charge.
     private func load(_ url: URL) async throws -> (Data, URLResponse) {
+        stats.fetched()   // P3: disk or network comes from the task metrics (`ImageLoadMetrics`)
         let r = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad)
         let (d, resp) = try await http.data(r, limits: Self.limits, fresh: false)
         return (d, resp)
@@ -341,8 +349,10 @@ actor ImagePipeline {
                 continue
             }
             await acquire()
+            let decodeStart = ContinuousClock.now
             let img = await Task.detached(priority: .utility) { Self.downsample(data, target: target, blur: blur) }.value
             release()
+            stats.decoded(ms: Metric.ms(decodeStart.duration(to: ContinuousClock.now)))   // P3
             if let img { return (img, nil) }
             failure = ImageFailure.combine(failure, .transient)   // undecodable: short memory only
         }
@@ -441,6 +451,10 @@ actor ImagePipeline {
 private final class CacheCostTracker: NSObject, NSCacheDelegate, @unchecked Sendable {
     private let lock = NSLock()
     private var bytes = 0
+    /// P3: releases counted for the 30 s cache line (budget pressure: e.g. 4K backdrops pushing posters out).
+    private let stats: CacheStats
+
+    init(stats: CacheStats) { self.stats = stats }
 
     var total: Int { lock.lock(); defer { lock.unlock() }; return bytes }
     func add(_ c: Int) { lock.lock(); bytes += c; lock.unlock() }
@@ -450,6 +464,20 @@ private final class CacheCostTracker: NSObject, NSCacheDelegate, @unchecked Send
         guard let img = obj as? UIImage else { return }
         let c = ImagePipeline.cost(img)
         lock.lock(); bytes = max(0, bytes - c); lock.unlock()
+        stats.evicted(bytes: c)
+    }
+}
+
+/// Build 4 follow-up 2 (P3): per finished picture download whether it came from the URLCache (disk) or the network.
+/// Called by URLSession on its own queue; `CacheStats` locks.
+private final class ImageLoadMetrics: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let stats: CacheStats
+
+    init(stats: CacheStats) { self.stats = stats }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
+        guard let kind = metrics.transactionMetrics.last?.resourceFetchType else { return }
+        if kind == .localCache { stats.loaded(fromDisk: true) } else if kind == .networkLoad { stats.loaded(fromDisk: false) }
     }
 }
 
@@ -699,20 +727,31 @@ final class LockedKeys: @unchecked Sendable {
 }
 
 /// Welle F-g: Treffer/Fehlgriffe des Bild-Speichercaches, höchstens alle 30 s eine Logzeile (nur wenn etwas passiert ist).
+/// Build 4 follow-up 2 (P3): the line also gives the miss classes, downloads from disk/network, decode time and
+/// releases (`ImageCacheTally`); written on a hit or miss as before.
 final class CacheStats: @unchecked Sendable {
     private let lock = NSLock()
-    private var hits = 0, misses = 0
+    private var tally = ImageCacheTally()
     private var last = Date()
-    func hit() { record(hit: true) }
-    func miss() { record(hit: false) }
-    private func record(hit: Bool) {
+    func hit() { record { $0.hit() } }
+    func miss(_ kind: ImageCacheTally.Miss) { record { $0.miss(kind) } }
+    func fetched() { update { $0.fetched() } }
+    func loaded(fromDisk: Bool) { update { $0.loaded(fromDisk: fromDisk) } }
+    func decoded(ms: Int) { update { $0.decoded(ms: ms) } }
+    func evicted(bytes: Int) { update { $0.evicted(bytes: bytes) } }
+
+    private func update(_ change: (inout ImageCacheTally) -> Void) {
+        lock.lock(); change(&tally); lock.unlock()
+    }
+
+    private func record(_ change: (inout ImageCacheTally) -> Void) {
         lock.lock()
-        if hit { hits += 1 } else { misses += 1 }
+        change(&tally)
         let now = Date()
         var line: String?
         if now.timeIntervalSince(last) >= 30 {
-            line = "Cache Treffer \(hits) / Fehlgriffe \(misses)"
-            hits = 0; misses = 0; last = now
+            line = tally.text()
+            tally = ImageCacheTally(); last = now
         }
         lock.unlock()
         if let line { Task { @MainActor in RemoteLog.info("bilder", line) } }
