@@ -417,7 +417,12 @@ struct Strip<C: View>: View {
     @ViewBuilder let content: C
     /// Wave F-p R1: write-only scroll target of this row (see below); never read.
     @State private var position = ScrollPosition(idType: String.self)
+    /// Build 4 follow-up S4: the anchor action handed to the cards. One box per strip, so every body pass puts the
+    /// same value into the environment (a fresh closure per pass made every card's environment differ).
+    @State private var anchorAction = CardAnchorAction()
     var body: some View {
+        // Points the box at this strip's scroll position (a plain store into the box, observed by nobody).
+        let _ = anchorAction.bind($position)
         let a = model.profile.appearance
         let s = a.cardSize.scale
         let expand = a.expandPosters && expands
@@ -455,7 +460,7 @@ struct Strip<C: View>: View {
         .environment(\.cardScale, s)
         .environment(\.expandPosters, expand)
         // Ohne eigene Animation: läuft in der Transaktion des Aufklappens mit, damit nur eine Bewegung entsteht.
-        .environment(\.anchorFocusedCard, { id in position.scrollTo(id: id, anchor: .leading) })
+        .environment(\.anchorFocusedCard, anchorAction)
     }
 }
 
@@ -737,7 +742,29 @@ struct CardStateOverlay: View {
 private struct CardScaleKey: EnvironmentKey { static let defaultValue: CGFloat = 1 }
 /// Außerhalb der Startseiten-Reihen (Detail, Person) klappt nichts auf.
 private struct ExpandPostersKey: EnvironmentKey { static let defaultValue = false }
-private struct AnchorFocusedCardKey: EnvironmentKey { static let defaultValue: (String) -> Void = { _ in } }
+private struct AnchorFocusedCardKey: EnvironmentKey { static let defaultValue = CardAnchorAction() }
+
+/// Build 4 follow-up S4: the strip's "anchor this card" action. Equal only to itself (box identity), so a strip
+/// body pass hands its cards an unchanged environment value and their `.equatable()` holds. Outside a strip (no
+/// bound position) the call does nothing, as the former default closure did.
+struct CardAnchorAction: Equatable {
+    /// Used on the main thread only (strip body and card focus task).
+    final class Box: @unchecked Sendable {
+        var position: Binding<ScrollPosition>?
+    }
+    private let box = Box()
+
+    /// Strip body: the position the action scrolls (same binding on every pass).
+    func bind(_ position: Binding<ScrollPosition>) { box.position = position }
+
+    /// Card: scroll the strip so the card with this `ForEach` id sits at the leading edge.
+    func callAsFunction(_ id: String) {
+        guard let position = box.position else { return }
+        position.wrappedValue.scrollTo(id: id, anchor: .leading)
+    }
+
+    static func == (a: CardAnchorAction, b: CardAnchorAction) -> Bool { a.box === b.box }
+}
 private struct HidesCardTopLabelKey: EnvironmentKey { static let defaultValue = false }
 
 extension EnvironmentValues {
@@ -752,7 +779,7 @@ extension EnvironmentValues {
     }
     /// Fokussierte, aufklappbare Karte meldet ihre ID; die Reihe verankert die Scrollposition daran.
     /// The id is the `ForEach` id of the strip: `MetaPreview.rowKey` (Task 4.1a, C1).
-    var anchorFocusedCard: (String) -> Void {
+    var anchorFocusedCard: CardAnchorAction {
         get { self[AnchorFocusedCardKey.self] }
         set { self[AnchorFocusedCardKey.self] = newValue }
     }
