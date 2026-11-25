@@ -1,13 +1,14 @@
 import Foundation
 import PlayerCore
 
-/// Quellen vorladen (Task 7): Ruht der Fokus 350 ms auf einer Kachel (Entprellung in `HomeFocus`),
-/// holt die App die Quellen dieses Titels über `AppModel.streams` (10-min-Cache, Abfragen dedupliziert).
+/// Quellen vorladen (Task 7): Ruht der Fokus auf einer Kachel (Entprellung in `HomeFocus`; Build 4 follow-up 2 P3:
+/// 1 s statt 350 ms, `FocusRest.prefetchMilliseconds`, also after the backdrop crossfade and not for short stops while
+/// browsing), holt die App die Quellen dieses Titels über `AppModel.streams` (10-min-Cache, Abfragen dedupliziert).
 /// Höchstens 2 Abfragen gleichzeitig; neue Ruhe-Kacheln verdrängen die älteste wartende,
 /// laufende werden nie abgebrochen. Kein Vorladen, solange ein Player läuft.
 /// Schonung der Addons (AIOStreams/Debrid): leere Ergebnisse 120 s nicht erneut, nach „alle Addons leer“ 5 min Pause.
 /// Wave F-k R1: also quietly for poster tiles on screen (quality badges for every visible tile), planned by PlayerCore
-/// `VisiblePrefetchPlan`: 400 ms after scrolling stops, at most 4 at once (+ the 2 focus slots = 6 in all),
+/// `VisiblePrefetchPlan`: 400 ms after scrolling stops (P3: and 1 s after the last focus move), at most 4 at once (+ the 2 focus slots = 6 in all),
 /// off-screen tiles dropped, a title fetched once per source cache lifetime, only while poster badges are on. Same
 /// pauses as above (player open, „alle Addons leer“, setting off).
 /// Wave F-k R2: one budget for both, 12 searches per 60 s (`PrefetchBudget`): the focus prefetch first (it may use
@@ -133,13 +134,14 @@ final class StreamPrefetcher {
     }
 
     /// Wave F-p: tile focus on a page without hero (folder pages, Library rows, „Ähnliche Titel“): the same request
-    /// after the same 350 ms rest as `HomeFocus` uses on the home page. One slot: a newer tile replaces the waiting one.
+    /// after the same rest as `HomeFocus` uses on the home page (P3: `FocusRest.prefetchMilliseconds`, 1 s). One slot:
+    /// a newer tile replaces the waiting one.
     private var rest: (route: Route, task: Task<Void, Never>)?
 
     func requestAfterRest(_ route: Route, model: AppModel) {
         rest?.task.cancel()
         let task = Task { [weak self, weak model] in
-            try? await Task.sleep(for: .milliseconds(FocusRest.milliseconds))
+            try? await Task.sleep(for: .milliseconds(FocusRest.prefetchMilliseconds))
             guard !Task.isCancelled, let self, let model else { return }
             self.rest = nil
             self.request(route, model: model)
@@ -190,6 +192,7 @@ final class StreamPrefetcher {
         running.insert(job.id)
         let t0 = Date()
         visible.budget.take(.focus, now: t0)
+        FrameMeter.event(.prefetch)   // P3: counted in the next `ruckler` line
         let epoch = resets
         Task {
             // Welle D-b (M3): veralteter, lückenhafter Stand → wirklich neu fragen (nicht nur den Cache-Treffer holen).
@@ -268,7 +271,17 @@ extension StreamPrefetcher {
         let start = visible.pass(now: Date()) { self.tileState($0, model: model) }
         for key in start { startVisible(key, model: model) }
         logVisibleRows()
-        if let next = visible.nextStartAt(now: Date()) { scheduleVisiblePass(model, after: max(0, next.timeIntervalSinceNow)) }
+        // P3: a pass before the focus quiet ended starts nothing: look again at the due time (else the budget's next
+        // free start, as before).
+        if let next = visible.nextPassAt(now: Date()) { scheduleVisiblePass(model, after: max(0, next.timeIntervalSinceNow)) }
+    }
+
+    /// Build 4 follow-up 2 (P3): focus moved to another tile (rows). Visible-tile searches wait until the focus has
+    /// been quiet for `FocusRest.prefetchQuiet` (1 s), so they never run while the focus moves on; the pass already
+    /// planned looks again at the new due time (`visiblePass`). Badge passes wait for the same quiet (`QualityBadgeCache`).
+    func focusMoved() {
+        visible.focusMoved(now: Date())
+        QualityBadgeCache.shared.focusMoved()   // P3: badge passes wait for the same quiet
     }
 
     private func tileState(_ key: String, model: AppModel) -> VisiblePrefetchPlan.TileState {
@@ -288,6 +301,7 @@ extension StreamPrefetcher {
             visible.finished(key, outcome: .unavailable, now: Date()); return
         }
         let epoch = resets
+        FrameMeter.event(.prefetch)   // P3: counted in the next `ruckler` line
         visibleJobs[key] = Task {
             let outcome = await self.searchVisible(item, model: model)
             guard epoch == self.resets else { return }

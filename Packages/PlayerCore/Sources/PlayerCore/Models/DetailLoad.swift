@@ -4,6 +4,35 @@ import Foundation
 /// hero: `StreamPrefetcher.requestAfterRest`). Fast scrolling through a row starts nothing.
 public enum FocusRest {
     public static let milliseconds = 350
+
+    /// Build 4 follow-up 2 (P3): rest before a source prefetch starts (home focus, pages without hero). Longer than
+    /// the backdrop rest plus its 0.6 s crossfade (350 + 600 ms), so the search and what follows it (stored list, badge
+    /// pass, re-render) never land in the crossfade; and longer than the short stops while browsing (device log
+    /// 25.11.: backdrop swaps 0.5–0.8 s apart, each of them started a search). A detail page opened within the first
+    /// second runs its own search as before.
+    public static let prefetchMilliseconds = 1000
+
+    /// The same rest in seconds: the visible-tile prefetch waits as long after the last focus move.
+    public static let prefetchQuiet: TimeInterval = Double(prefetchMilliseconds) / 1000
+
+    /// One focus stop on the home page, counted from the focus landing; a new focus move cancels both steps.
+    public struct Stop: Sendable, Equatable {
+        /// Wait before the backdrop swap; nil when the backdrop already shows this tile.
+        public let backdropWait: Int?
+        /// Wait after the backdrop step (or the landing) before the source prefetch.
+        public let prefetchWait: Int
+
+        public init(backdropWait: Int?, prefetchWait: Int) {
+            self.backdropWait = backdropWait; self.prefetchWait = prefetchWait
+        }
+    }
+
+    /// Steps of a focus stop: backdrop after `milliseconds` (not when already shown), prefetch after
+    /// `prefetchMilliseconds` in all.
+    public static func stop(alreadyShown: Bool) -> Stop {
+        alreadyShown ? Stop(backdropWait: nil, prefetchWait: prefetchMilliseconds)
+            : Stop(backdropWait: milliseconds, prefetchWait: prefetchMilliseconds - milliseconds)
+    }
 }
 
 extension ContentKind {

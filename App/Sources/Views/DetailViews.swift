@@ -1470,9 +1470,9 @@ struct DetailExtras: View {
                 // Wave F-k R1: these tiles prefetch their sources too (badge); log line per page, after 2 s of rest.
                 .environment(\.prefetchRow, PrefetchRow(key: "similar", title: "Ähnliche Titel"))
                 .task(id: info.recommendations.map(\.id)) { noteSimilarBadges() }
-                .onReceive(QualityBadgeCache.shared.stored) { id in
-                    // Wave F-k R2 (m5): only when one of these titles got its sources.
-                    guard info.recommendations.contains(where: { model.streamCacheKeyMatches(id, for: $0) }) else { return }
+                .onReceive(QualityBadgeCache.shared.stored) { ids in
+                    // Wave F-k R2 (m5): only when one of these titles got its sources (P3: batched IDs).
+                    guard info.recommendations.contains(where: { QualityBadgeCache.shared.match(ids, for: $0, model: model) != nil }) else { return }
                     noteSimilarBadges()
                 }
             }

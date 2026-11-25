@@ -2,7 +2,9 @@ import Foundation
 
 /// Wave F-k R1: quiet source prefetch for poster tiles on screen, so every visible tile can show its quality badge
 /// (badges come only from known sources). Pure bookkeeping; the app (`StreamPrefetcher`) runs the searches.
-/// - Tiles report on/off screen per row. A pass runs only after `debounce` without a change (scrolling stopped).
+/// - Tiles report on/off screen per row. A pass runs only after `debounce` without a change (scrolling stopped) and,
+///   Build 4 follow-up 2 (P3), `focusQuiet` after the last focus move (`focusMoved`): no searches while the focus
+///   moves on, the focus-rest prefetch (same 1 s rest) comes first.
 /// - A pass starts the visible tiles that still need sources: the row with the latest change first, tiles in screen
 ///   order; at most `maxRunning` at once and what the shared per-minute `budget` leaves (R2: shared with the focus
 ///   prefetch, which has priority; none while a page runs its own source search). A tile shown in two rows runs once.
@@ -16,13 +18,17 @@ public struct VisiblePrefetchPlan: Sendable {
         public var debounce: TimeInterval
         public var doneFor: TimeInterval
         public var maxDone: Int
+        /// P3: quiet time after the last focus move.
+        public var focusQuiet: TimeInterval
 
         public init(maxRunning: Int = 4, debounce: TimeInterval = 0.4,
-                    doneFor: TimeInterval = 30 * 60, maxDone: Int = 400) {
+                    doneFor: TimeInterval = 30 * 60, maxDone: Int = 400,
+                    focusQuiet: TimeInterval = FocusRest.prefetchQuiet) {
             self.maxRunning = maxRunning
             self.debounce = debounce
             self.doneFor = doneFor
             self.maxDone = maxDone
+            self.focusQuiet = focusQuiet
         }
     }
 
@@ -81,6 +87,7 @@ public struct VisiblePrefetchPlan: Sendable {
     private var queued: Set<String> = []
     private var done: [String: Date] = [:]
     private var changedAt: Date?
+    private var focusMovedAt: Date?
     private var marks: [String: [String: Mark]] = [:]
     private var reported: [String: Tally] = [:]
 
@@ -93,8 +100,25 @@ public struct VisiblePrefetchPlan: Sendable {
     public var queuedCount: Int { queued.count }
     public func isRunning(_ tile: String) -> Bool { running[tile] != nil }
 
-    /// Earliest time of the next pass after the last change (debounce).
-    public var dueAt: Date? { changedAt.map { $0.addingTimeInterval(limits.debounce) } }
+    /// Earliest time of the next pass: debounce after the last tile change, P3: and `focusQuiet` after the last focus
+    /// move, whichever ends later.
+    public var dueAt: Date? {
+        let tiles = changedAt.map { $0.addingTimeInterval(limits.debounce) }
+        let focus = focusMovedAt.map { $0.addingTimeInterval(limits.focusQuiet) }
+        guard let t = tiles else { return focus }
+        guard let f = focus else { return t }
+        return max(t, f)
+    }
+
+    /// Build 4 follow-up 2 (P3): the focus moved to another tile; the next pass waits `focusQuiet` from now.
+    public mutating func focusMoved(now: Date) { focusMovedAt = now }
+
+    /// When the app should run the next pass: the due time while it lies ahead (a pass before it starts nothing),
+    /// else the next free start of the budget for waiting tiles (`nextStartAt`); nil when nothing waits.
+    public func nextPassAt(now: Date) -> Date? {
+        if let due = dueAt, now < due { return due }
+        return nextStartAt(now: now)
+    }
 
     /// Tiles wait only for the per-minute budget (nothing running would trigger a pass): when the next start is
     /// free. nil while a page's own search pauses visible tiles (its end triggers the next pass).

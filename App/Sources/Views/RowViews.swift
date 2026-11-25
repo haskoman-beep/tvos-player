@@ -134,6 +134,7 @@ struct HomeRowView: View {
         }
         .onChange(of: focusedRoute) { old, r in
             if r != nil { RowBodyMeter.focusMoved(onHome: focusMemory != nil) }   // S4: `fokus` field of `metric: home.rowBody`
+            if r != nil { StreamPrefetcher.shared.focusMoved() }   // P3: visible-tile prefetch waits for 1 s focus quiet
             // Wave F-p: focus left this row's tile: its rest prefetch (pages without hero) does not start.
             if r == nil, let old { StreamPrefetcher.shared.cancelRest(old) }
             // S5: the hand-over landed: restart the heading snap (home page). Focus on any other tile ends the wait.
@@ -255,13 +256,19 @@ struct HomeRowView: View {
                 .environment(\.prefetchRow, PrefetchRow(key: "home|\(row.id.uuidString)", title: title))
                 // Wave F-k: how many tiles know their quality (source cache only), again when a prefetch lands here.
                 .task(id: displayed.map(\.id)) { noteBadges() }
-                .onReceive(QualityBadgeCache.shared.stored) { id in
+                .onReceive(QualityBadgeCache.shared.stored) { ids in
                     // S3: cheap per item (`streamCacheKeyMatches`), same answer as comparing `streamCacheKey(for:)`.
-                    guard tileKind == .poster, displayed.contains(where: { model.streamCacheKeyMatches(id, for: $0) }) else { return }
+                    // Log only: no state of the row changes here (P3 check), so the row body does not run again.
+                    guard tileKind == .poster, batchTouchesRow(ids) else { return }
                     noteBadges()
                 }
             }
         }
+    }
+
+    /// P3: one of the batched cache IDs belongs to a tile of this row.
+    private func batchTouchesRow(_ ids: Set<String>) -> Bool {
+        displayed.contains { QualityBadgeCache.shared.match(ids, for: $0, model: model) != nil }
     }
 
     /// Wave F-k: log line „Plaketten: <row> n/m mit Qualität“ for poster rows (only these carry quality badges);
@@ -558,6 +565,7 @@ struct PosterCard: View {
             guard !Task.isCancelled else { return }
             // Verankern nur zusammen mit dem Aufklappen: schnelles Durchscrollen löst kein Programm-Scrollen aus.
             // Task 4.1a (C1): the anchor id must equal the row's `ForEach` id (`rowKey`, type|id since F-A-5).
+            FrameMeter.event(.expand)   // P3: counted in the next `ruckler` line
             withAnimation(.easeInOut(duration: 0.25)) { expanded = true; anchor(item.rowKey) }
         }
     }

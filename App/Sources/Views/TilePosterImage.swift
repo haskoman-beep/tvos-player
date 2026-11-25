@@ -57,12 +57,46 @@ struct TilePosterImage: View {
 enum PosterSwapLog {
     private static var stats = PosterSwapStats()
 
-    static func note(gapMs: Int?, waitMs: Int) {
-        FrameMeter.note("Poster angekommen")   // S1 frame meter: names this event in the next `ruckler` line
+    /// `fades`: the new picture was loaded and fades in. P3 review M5: only those count as a frame-meter event;
+    /// a memory hit (shown at once) would put a `Poster` event next to nearly every missed frame while scrolling.
+    static func note(gapMs: Int?, waitMs: Int, fades: Bool) {
+        if fades { FrameMeter.event(.poster) }   // S1/P3 frame meter: counted and named in the next `ruckler` line
         guard stats.record(gapMs: gapMs, waitMs: waitMs) else { return }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(PosterSwapStats.window))
             if let line = stats.take() { RemoteLog.info("bilder", line) }
+        }
+    }
+}
+
+/// Build 4 follow-up 2 (P3): pictures that went on screen, one `bilder` line per 10 s with activity
+/// (`PictureArrivalStats`): backdrop swaps (`HeroBackdrop`) and the first picture of a poster tile (`RemoteImage`).
+/// Each one that fades in also counts as a frame-meter event (the `ruckler` line names it when missed frames lie near
+/// it); memory hits shown at once do not (P3 review M5).
+@MainActor
+final class PictureArrivalLog {
+    static let backdrop = PictureArrivalLog(title: "Hintergrund", event: .backdrop)
+    static let firstPoster = PictureArrivalLog(title: "Erste Poster", event: .poster)
+
+    private var stats: PictureArrivalStats
+    private let event: FramePacing.Event
+
+    private init(title: String, event: FramePacing.Event) {
+        stats = PictureArrivalStats(title: title)
+        self.event = event
+    }
+
+    /// `img` goes on screen now; `fades`: with a fade-in (0.6 s backdrop crossfade, 0.2 s poster fade).
+    func note(_ img: UIImage, fromMemory: Bool, waitMs: Int, fades: Bool) {
+        if fades { FrameMeter.event(event) }
+        let w = img.cgImage?.width ?? 0
+        let h = img.cgImage?.height ?? 0
+        let opened = stats.record(fromMemory: fromMemory, waitMs: waitMs, pixelWidth: w, pixelHeight: h,
+                                  bytes: ImagePipeline.cost(img), fades: fades)
+        guard opened else { return }
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(PictureArrivalStats.window))
+            if let line = self?.stats.take() { RemoteLog.info("bilder", line) }
         }
     }
 }
