@@ -82,7 +82,47 @@ public enum CardLayout {
 
     /// Whether a focused poster expands: the option, never while the system reduces motion.
     /// 5c5-merge: `LookTheme.expandsPosters(_:reduceMotion:)` (b5c-5.5) is the same rule; keep one of them.
-    public static func expands(_ v: LookValues, reduceMotion: Bool) -> Bool { v.home.expandPosters && !reduceMotion }
+    public static func expands(_ v: LookValues, reduceMotion: Bool) -> Bool { expands(v.home, reduceMotion: reduceMotion) }
+
+    /// Same rule on the home options alone (the app's `ThemeValues.cards`).
+    public static func expands(_ home: LookHome, reduceMotion: Bool) -> Bool { home.expandPosters && !reduceMotion }
+
+    // MARK: Whole home (review I1: hero collapse, list bands)
+
+    /// Tile kind of a home row as `HomeRowView` draws it: list rows follow the card form option, collection rows and
+    /// Top 10 / hero keep their form; „Heute neu“ in hero style shows landscape cards. `oldCard` (diagnosis switch
+    /// „alte Karte“): the row style alone, as Build 4.
+    public static func tileKind(of row: HomeRow, home: LookHome, oldCard: Bool) -> TileKind {
+        if row.content == .list(.upcoming), row.style == .hero { return .landscape }
+        guard !oldCard, case .list = row.content else { return PosterSize.kind(for: row.style) }
+        let kind = HomeRowKind(isContinueWatching: row.content == .list(.continueWatching))
+        return tileKind(style: row.style, row: kind, option: home.cardShape)
+    }
+
+    /// Tile kinds of all rows (for `FocusHeadroom.tallest` in the list's edge band and bottom room).
+    public static func homeTileKinds(_ rows: [HomeRow], home: LookHome, oldCard: Bool) -> [TileKind] {
+        rows.map { tileKind(of: $0, home: home, oldCard: oldCard) }
+    }
+
+    /// Height of the tallest row of a home (0 without rows): heading, card, title strip and lift padding as the rows
+    /// draw them. `badgeBand`: quality strip below posters (0 when off), `heading`: height of the row heading line,
+    /// `titleLine`: line height of the card title font. `oldCard`: the Build 4 estimate
+    /// (`HeroInfoCollapse.tallestRow` with the system card lift, no title strip).
+    public static func tallestHomeRow(_ rows: [HomeRow], home: LookHome, oldCard: Bool, badgeBand: CGFloat,
+                                      heading: CGFloat, headingSpacing: CGFloat, titleLine: CGFloat) -> CGFloat {
+        let f = factor(home.cardSize)
+        if oldCard {
+            return HeroInfoCollapse.tallestRow(homeTileKinds(rows, home: home, oldCard: true), cardScale: f,
+                                               posterExtra: badgeBand, heading: heading,
+                                               headingSpacing: headingSpacing, liftScale: FocusHeadroom.systemCardScale,
+                                               shadow: FocusHeadroom.systemCardShadow, minimumPadding: 32 * f)
+        }
+        return rows.reduce(0) { h, r in
+            let g = row(kind: tileKind(of: r, home: home, oldCard: false), home: home, badgeBand: badgeBand,
+                        titleLine: titleLine, showsTitles: showsTitleStrip(style: r.style))
+            return max(h, g.rowHeight(heading: heading, headingSpacing: headingSpacing))
+        }
+    }
 
     /// VoiceOver value of a card: year, progress ("42 % gesehen") or "gesehen", joined by ", ".
     public static func accessibilityValue(year: String?, fraction: Double?, watched: Bool) -> String {

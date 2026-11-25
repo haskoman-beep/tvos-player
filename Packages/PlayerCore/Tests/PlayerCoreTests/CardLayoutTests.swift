@@ -155,3 +155,74 @@ private func focusLiftStaysInsideItsRow(_ c: LiftCase) {
         }
     }
 }
+
+// MARK: Fix round 1 (review I1): tile kinds and tallest row of a whole home, for the hero collapse and list bands.
+
+private func list(_ s: CatalogSource, _ style: RowStyle) -> HomeRow { HomeRow(content: .list(s), style: style) }
+
+@Test func tileKindOfRowRecutsOnlyListRows() {
+    let h = home()   // querformat
+    #expect(CardLayout.tileKind(of: list(.watchlist, .poster), home: h, oldCard: false) == .landscape)
+    #expect(CardLayout.tileKind(of: list(.watchlist, .top10), home: h, oldCard: false) == .poster)
+    #expect(CardLayout.tileKind(of: HomeRow(content: .collection(id: "c"), style: .logoTiles), home: h, oldCard: false)
+            == .logo)
+    // "Heute neu" in hero style shows landscape cards (UpcomingTodayCard), with and without the old card.
+    #expect(CardLayout.tileKind(of: list(.upcoming, .hero), home: h, oldCard: true) == .landscape)
+    let mixed = home { $0.cardShape = .mischung }
+    #expect(CardLayout.tileKind(of: list(.continueWatching, .poster), home: mixed, oldCard: false) == .landscape)
+    #expect(CardLayout.tileKind(of: list(.watchlist, .landscape), home: mixed, oldCard: false) == .poster)
+    // "alte Karte": the row style alone (Build 4).
+    #expect(CardLayout.tileKind(of: list(.watchlist, .poster), home: h, oldCard: true) == .poster)
+    #expect(CardLayout.homeTileKinds([list(.watchlist, .poster), list(.continueWatching, .top10)], home: h,
+                                     oldCard: false) == [.landscape, .poster])
+}
+
+@Test func tallestHomeRowWithOldCardIsTheBuild4Estimate() {
+    let rows = [list(.watchlist, .poster), list(.continueWatching, .landscape)]
+    let h = home { $0.cardSize = .gross }
+    let old = CardLayout.tallestHomeRow(rows, home: h, oldCard: true, badgeBand: 42, heading: 46, headingSpacing: 12,
+                                        titleLine: 36)
+    let build4 = HeroInfoCollapse.tallestRow([.poster, .landscape], cardScale: 1.2, posterExtra: 42, heading: 46,
+                                             headingSpacing: 12, liftScale: 1.15, shadow: 12, minimumPadding: 32 * 1.2)
+    #expect(abs(old - build4) < 0.001)
+}
+
+@Test func tallestHomeRowCountsTheTitleStrip() {
+    // A home with landscape rows only (review I1): the new row is taller than the Build 4 estimate by the title strip.
+    let rows = [list(.continueWatching, .landscape), list(.watchlist, .landscape)]
+    let h = home()
+    let new = CardLayout.tallestHomeRow(rows, home: h, oldCard: false, badgeBand: 42, heading: 46, headingSpacing: 12,
+                                        titleLine: 36)
+    let expected = CardLayout.row(kind: .landscape, home: h, badgeBand: 42, titleLine: 36)
+        .rowHeight(heading: 46, headingSpacing: 12)
+    #expect(new == expected)
+    let old = CardLayout.tallestHomeRow(rows, home: h, oldCard: true, badgeBand: 42, heading: 46, headingSpacing: 12,
+                                        titleLine: 36)
+    #expect(new >= old + 48 - 1)
+    // Titles off: no strip; Top 10 rows never get one.
+    let off = CardLayout.tallestHomeRow(rows, home: home { $0.cardTitles = .aus }, oldCard: false, badgeBand: 42,
+                                        heading: 46, headingSpacing: 12, titleLine: 36)
+    #expect(off == new - 48)
+    let top10 = CardLayout.tallestHomeRow([list(.watchlist, .top10)], home: h, oldCard: false, badgeBand: 0,
+                                          heading: 46, headingSpacing: 12, titleLine: 36)
+    #expect(top10 == CardLayout.row(kind: .poster, home: h, badgeBand: 0, titleLine: 36, showsTitles: false)
+        .rowHeight(heading: 46, headingSpacing: 12))
+    #expect(CardLayout.tallestHomeRow([], home: h, oldCard: false, badgeBand: 0, heading: 46, headingSpacing: 12,
+                                      titleLine: 36) == 0)
+}
+
+@Test func tallestHomeRowGrowsWithADeepNonGlowLift() {
+    let rows = [list(.watchlist, .landscape)]
+    let glow = CardLayout.tallestHomeRow(rows, home: home(), oldCard: false, badgeBand: 0, heading: 46,
+                                         headingSpacing: 12, titleLine: 36)
+    let deep = CardLayout.tallestHomeRow(rows, home: home { $0.focusGlow = false; $0.focusShadow = .tief;
+        $0.focusBorder = .weiss }, oldCard: false, badgeBand: 0, heading: 46, headingSpacing: 12, titleLine: 36)
+    #expect(deep > glow)
+}
+
+@Test func expandsFromTheHomeOptions() {
+    var h = home()
+    h.expandPosters = true
+    #expect(CardLayout.expands(h, reduceMotion: false))
+    #expect(!CardLayout.expands(h, reduceMotion: true))
+}
