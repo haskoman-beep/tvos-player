@@ -16,6 +16,9 @@ actor ImagePipeline {
     /// Speicher-Anteil des URLCache (Plattencache bleibt unberührt).
     static let urlMemory = 20 << 20
     static let urlMemoryPlayback = 4 << 20
+    /// Bitmaps from this size on (≈ 2560×1600 and larger) count as large: views release them when they disappear
+    /// (`RemoteImage.releaseBytes`) and the decode does not copy them for display (review M2: no 2× peak).
+    static let largeBitmapBytes = 16 << 20
 
     private let session: URLSession
     private let http: LimitedHTTPClient
@@ -392,8 +395,10 @@ actor ImagePipeline {
 
     /// Build 4 follow-up S2: decode into the display format here (off the main thread), so the first frame that shows
     /// the picture needs no colour/format conversion on commit. Kept only when it is still a CGImage-backed bitmap
-    /// (`cost` and the blur step read `cgImage`).
+    /// (`cost` and the blur step read `cgImage`). Large bitmaps (4K backdrops) stay as they are: the copy would double
+    /// their memory at the peak of the decode.
     nonisolated private static func prepared(_ img: UIImage) -> UIImage {
+        guard cost(img) < largeBitmapBytes else { return img }
         guard let p = img.preparingForDisplay(), p.cgImage != nil else { return img }
         return p
     }
@@ -527,7 +532,7 @@ struct RemoteImage: View {
     }
 
     /// Ab dieser Bitmap-Größe gibt die Ansicht beim Verschwinden frei (≈ 2560×1600 und größer).
-    static let releaseBytes = 16 << 20
+    static let releaseBytes = ImagePipeline.largeBitmapBytes
 
     private struct LoadKey: Equatable {
         let url: String?
