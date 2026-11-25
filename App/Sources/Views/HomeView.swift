@@ -150,7 +150,7 @@ struct HomeView: View {
                                     carousel: look.heroStyle == .karussell)
                         rowList(rows, hero: true)
                     }
-                    .padding(.top, 24)
+                    .padding(.top, HeroMetrics.listPadding)
                     .padding(.bottom, 60)
                     .coordinateSpace(.named(HomeTopEdgeWatch.contentSpace))   // S5: row frames
                     .id(HomeTopEdgeWatch.topID)

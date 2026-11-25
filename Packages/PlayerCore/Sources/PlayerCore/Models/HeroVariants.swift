@@ -186,6 +186,22 @@ extension HomeTopEdge {
 
 /// Task 5.2: carousel steps (left/right on the hero button), wrapping at both ends.
 public enum HeroCarousel {
+    /// A remote move on the hero button row.
+    public enum Move: Sendable { case left, right, up, down }
+    /// The focused button of the row: first („Abspielen“) or last („Details“).
+    public enum Button: Sendable { case first, last }
+
+    /// Review I3: whether a move steps the carousel (true forward, false back, nil no step). Only at the row's ends,
+    /// never up or down. With the sidebar navigation left on the first button reaches the sidebar as everywhere,
+    /// so the carousel steps only forward there (it wraps, every title stays reachable).
+    public static func step(for move: Move, at button: Button?, sidebar: Bool) -> Bool? {
+        switch (move, button) {
+        case (.right, .last?): return true
+        case (.left, .first?): return sidebar ? nil : false
+        default: return nil
+        }
+    }
+
     public static func step(_ index: Int, count: Int, forward: Bool) -> Int {
         guard count > 1 else { return 0 }
         let i = min(max(0, index), count - 1)

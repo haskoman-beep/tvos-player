@@ -12,7 +12,7 @@ struct HeroBanner: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             theme.color.base.ignoresSafeArea()
-            HeroCard(content: content, height: height, infoScale: 1)
+            HeroPanel(content: content, height: height, infoScale: 1)
                 .padding(.horizontal, Theme.Space.edge)
                 .padding(.top, HeroMetrics.infoMetrics.frameTop)
         }
@@ -21,7 +21,7 @@ struct HeroBanner: View {
 }
 
 /// Task 5.2: one hero card (banner, carousel): picture, gradients and the info at its bottom left.
-struct HeroCard: View {
+struct HeroPanel: View {
     @Environment(\.theme) private var theme
     let content: HeroContent
     let height: CGFloat

@@ -2,7 +2,7 @@ import SwiftUI
 import PlayerCore
 
 /// Task 5.2 (`heroStyle` karussell): a 1320 × 460 card with the next title cut off after a gap of 32. Left on
-/// „Abspielen“ / right on „Details“ switches the title (`HeroButtons.carousel`, wraps at both ends); down goes to the
+/// „Abspielen“ / right on „Details“ switches the title (`HeroButtons.carousel`, wraps; sidebar navigation: right only); down goes to the
 /// first row (the button row is its own focus section). The cut-off next title is a picture only, never focusable.
 /// The info is scaled by 0.8 at a width of 700.
 struct HeroCarouselCard: View {
@@ -17,7 +17,7 @@ struct HeroCarouselCard: View {
         ZStack(alignment: .topLeading) {
             theme.color.base.ignoresSafeArea()
             HStack(alignment: .top, spacing: metrics.carouselGap) {
-                HeroCard(content: content, height: height, infoScale: metrics.carouselInfoScale)
+                HeroPanel(content: content, height: height, infoScale: metrics.carouselInfoScale)
                     .frame(width: metrics.carouselWidth)
                 HeroCarouselPeek(item: next, height: height)
             }

@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 import PlayerCore
 
 /// Zusatzdaten der Info-Ebene (Logo, Laufzeit, FSK, Genre, Text, Bewertungen).

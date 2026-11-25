@@ -60,6 +60,24 @@ import Testing
     #expect(HeroCarousel.step(9, count: 3, forward: true) == 0)   // stale index after a smaller slide set
 }
 
+@Test func carouselStepsOnlySidewaysAtTheRowEnds() {
+    // Right on the last button („Details“) steps forward; left on the first („Abspielen“) back.
+    #expect(HeroCarousel.step(for: .right, at: .last, sidebar: false) == true)
+    #expect(HeroCarousel.step(for: .left, at: .first, sidebar: false) == false)
+    // Inside the row a move is a focus move only.
+    #expect(HeroCarousel.step(for: .left, at: .last, sidebar: false) == nil)
+    #expect(HeroCarousel.step(for: .right, at: .first, sidebar: false) == nil)
+    #expect(HeroCarousel.step(for: .right, at: nil, sidebar: false) == nil)
+    // Up and down never step (tab bar, first row).
+    for b in [HeroCarousel.Button.first, .last] {
+        #expect(HeroCarousel.step(for: .up, at: b, sidebar: false) == nil)
+        #expect(HeroCarousel.step(for: .down, at: b, sidebar: true) == nil)
+    }
+    // Sidebar navigation: left on „Abspielen“ belongs to the sidebar; right still steps.
+    #expect(HeroCarousel.step(for: .left, at: .first, sidebar: true) == nil)
+    #expect(HeroCarousel.step(for: .right, at: .last, sidebar: true) == true)
+}
+
 @Test func backdropRequestsAtMostOncePerRest() {
     var f = HeroBackdropFollow()
     // Quick moves over three cards: only the last stop asks for a picture, once.

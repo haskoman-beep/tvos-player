@@ -178,13 +178,28 @@ enum HeroMetrics {
     /// Task 5.2: the hero pieces for PlayerCore (`HeroInfoMetrics`, today's tokens, measured overview).
     /// `infoMetrics.compactInfo(.vollbild, level: .standard)` equals `compactInfo` (test
     /// `fullscreenStandardCompactInfoIsTodays`).
+    /// Review M2: every piece that has an app token is fed from it, so a token change cannot drift.
     static let infoMetrics: HeroInfoMetrics = {
         var m = HeroInfoMetrics.standard
+        m.topInset = Theme.Space.s
+        m.logo = logoHeight
+        m.compactLogo = compactLogoHeight
+        m.compactLogoMin = compactLogoMin
+        m.spacing = Theme.Space.m
+        m.compactSpacing = compactSpacing
+        m.metaLine = metaLineHeight
         m.overview = overviewHeight
         m.ratings = ThemeBadge.TechSize.detail.height
         m.badges = ThemeBadge.TechSize.detail.height
+        m.buttonRow = Theme.Layout.rowMinHeight + 2 * Theme.Space.s   // HeroButtons: button + vertical padding
+        m.listPadding = listPadding
+        m.fullscreenListTop = listTop
+        m.frameGap = Theme.Space.m
+        m.carouselGap = Theme.Space.l
         return m
     }()
+    /// Top padding of the hero list content above the button row (`HomeView.heroHome`).
+    static let listPadding: CGFloat = 24
     /// Longest backdrop crossfade (today's 0.6 s; `motion.backdrop` standard is 0.7). The P3 prefetch rest (1 s)
     /// starts after the backdrop rest (350 ms) plus this fade.
     static let backdropFade: Double = 0.6
@@ -407,18 +422,27 @@ struct HeroButtons: View {
     }
 
     /// Task 5.2: carousel step at the row's ends (nothing focusable lies beyond them; the next title is a picture).
-    /// Left inside the row (Details → Abspielen) moves the focus only.
+    /// Rules in PlayerCore `HeroCarousel.step(for:at:sidebar:)` (review I3): never up/down, a move inside the row is
+    /// a focus move only, with the sidebar navigation left on „Abspielen“ reaches the sidebar.
     private func carouselMove(_ direction: MoveCommandDirection) {
-        guard carousel, slides.items.count > 1 else { return }
+        guard carousel, slides.items.count > 1, let move = Self.move(direction) else { return }
         guard fieldMoved.duration(to: ContinuousClock.now) > .milliseconds(150) else { return }
-        let forward: Bool
-        switch (direction, field) {
-        case (.left, .play?): forward = false
-        case (.right, .details?): forward = true
-        default: return
-        }
+        let button: HeroCarousel.Button? = field.map { $0 == .play ? .first : .last }
+        let sidebar: Bool = model.profile.appearance.navigation == .sidebar
+        guard let forward = HeroCarousel.step(for: move, at: button, sidebar: sidebar) else { return }
         slides.step(forward: forward)
-        RemoteLog.info("hero", "Karussell \(forward ? "→" : "←") \(slides.index + 1)/\(slides.items.count): \(slides.current?.name ?? "?")")
+        let title = slides.current?.name ?? "?"
+        RemoteLog.info("hero", "Karussell \(forward ? "vor" : "zurück") → \(title) (\(slides.index + 1)/\(slides.items.count))")
+    }
+
+    private static func move(_ d: MoveCommandDirection) -> HeroCarousel.Move? {
+        switch d {
+        case .left: return .left
+        case .right: return .right
+        case .up: return .up
+        case .down: return .down
+        @unknown default: return nil
+        }
     }
 
     private func retryHero() {

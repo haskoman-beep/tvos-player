@@ -65,10 +65,13 @@ private func lookValueKeys() throws -> [String: Set<String>] {
     #expect(LookOptionCatalog.isEnabled("focusGlow", in: v, build: .b5a).enabled)
     v.home.focusGlow = false
     #expect(LookOptionCatalog.isEnabled("corners", in: v, build: .b5a).enabled)
-    // Build 5a (Task 5.2) is current: its options are on; later builds' options are visible but off.
-    #expect(LookOptionCatalog.isEnabled("heroStyle", in: v) == (true, nil))
-    let later = LookOptionCatalog.isEnabled("corners", in: v, build: .b4)
+    // In Build 4 the later options are visible but off.
+    let later = LookOptionCatalog.isEnabled("corners", in: v, implemented: [])
     #expect(!later.enabled && later.reason == "kommt mit Build 5a")
+    // Task 5.2: the hero options are drawn already, so their rows are active in this build.
+    for key in ["heroStyle", "heroInfo", "heroTitle", "backdropFollowsFocus"] {
+        #expect(LookOptionCatalog.isEnabled(key, in: v) == (true, nil), "\(key)")
+    }
     #expect(LookOptionCatalog.isEnabled("accent", in: v) == (true, nil))
     #expect(LookOptionCatalog.isEnabled("sourceList", in: v).reason == "kommt mit Build 5b")
     // System reduce motion: still selectable, with a note.
