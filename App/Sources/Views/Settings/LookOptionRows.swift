@@ -30,17 +30,17 @@ struct LookOptionRows: View {
     /// Groups of an area in catalog order.
     static func groups(_ area: LookArea) -> [String] {
         var seen: [String] = []
-        for e in LookOptionCatalog.all where e.area == area && !seen.contains(e.group) { seen.append(e.group) }
+        for e in LookOptionCatalog.rows where e.area == area && !seen.contains(e.group) { seen.append(e.group) }
         return seen
     }
 
     static func entries(_ area: LookArea, _ group: String) -> [LookOptionEntry] {
-        LookOptionCatalog.all.filter { $0.area == area && $0.group == group }
+        LookOptionCatalog.rows.filter { $0.area == area && $0.group == group }
     }
 
     /// Number of options that differ (accent dots), for the log line.
     static func overriddenCount(_ p: Profile) -> Int {
-        LookOptionCatalog.all.filter { p.isLookOverridden($0.key) }.count
+        LookOptionCatalog.rows.filter { p.isLookOverridden($0.key) }.count
     }
 
     /// Fern-Log: „aussehen: Mein Look · <n> Abweichungen“ after every change.
@@ -60,6 +60,7 @@ struct LookOptionRows: View {
         case "Aufbau": "doc.text"
         case "Plaketten und Bewertungen": "seal"
         case "Quellenliste": "list.bullet"
+        case "Folgen und Titel": "rectangle.stack"
         case "Steuerleiste": "playpause"
         case "Panels und Hinweise": "rectangle.on.rectangle"
         default: "circle"
