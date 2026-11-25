@@ -515,14 +515,14 @@ struct ScrubPreviewCard: View {
                     }
                     if controller.holdAtLimit {
                         Text(controller.target < 1 ? "Anfang erreicht" : "Halt vor dem Ende")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .textRole(.rowDetail)
                     }
                     Text(controller.holdSpeed != nil ? "Loslassen: anhalten · Select/Play: springen · Zurück: abbrechen"
                                                      : "Select/Play: springen · ◀▶ halten: Schnellsuchlauf · Zurück: abbrechen")
-                        .font(.caption2).foregroundStyle(.secondary)
+                        .textRole(.rowDetail).lineLimit(1).minimumScaleFactor(0.85)
                 }
                 .padding(14)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
+                .overlayCard()   // Task 5.4
                 .position(x: x, y: geo.size.height - 300 - cardW * 9 / 32)
                 .transition(.opacity)
             }

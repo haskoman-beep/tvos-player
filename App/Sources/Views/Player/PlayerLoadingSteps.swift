@@ -42,8 +42,8 @@ struct PlayerLoadingSteps<E: PlaybackEngine>: View {
                     ProgressView(value: Double(p), total: 100).frame(width: 420)
                 }
             }
-            .padding(.horizontal, 48).padding(.vertical, 36)
-            .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 24))
+            .padding(.horizontal, 48).padding(.vertical, OverlayCardMetrics.padding)
+            .overlayCard()   // Task 5.4
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .animation(.easeInOut(duration: 0.2), value: line)
             .onChange(of: line, initial: true) { _, l in RemoteLog.info("player", "Start: \(l.text)\(l.percent.map { " \($0) %" } ?? "")") }

@@ -295,7 +295,7 @@ struct SkipSegmentButton<E: PlaybackEngine>: View {
                 Label("Szene nach dem Abspann", systemImage: "sparkles")
                     .font(.callout.weight(.semibold))
                     .padding(.horizontal, 26).padding(.vertical, 14)
-                    .background(.ultraThinMaterial, in: Capsule())
+                    .overlayCard()   // Task 5.4: overlay card instead of a bare material capsule
                     .padding(.trailing, 80).padding(.top, 80)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                     .transition(.opacity)
