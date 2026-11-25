@@ -203,22 +203,6 @@ extension PlayerControls {
 
 // MARK: Hint in the control bar
 
-/// "▲ Folgen · Kapitel · Quelle · Infos": the way into the side panel, as a pill in the control bar.
-struct SidePanelHint: View {
-    let trackStyle: TrackPanelStyle
-    let pages: [SidePanelPage]
-
-    var body: some View {
-        if let text = SidePanelMenu.hint(trackStyle: trackStyle, pages: pages) {
-            Text(text)
-                .font(.caption.weight(.semibold))
-                .padding(.horizontal, Theme.Space.s).padding(.vertical, 4)
-                .background(Theme.Palette.badgeFill, in: Capsule())
-                .accessibilityLabel("Mehr: " + pages.map(\.title).joined(separator: ", "))
-        }
-    }
-}
-
 extension PlayerExtras {
     /// Pages the start list will show (for the hint), without the stills.
     func pages(chapters: Int) -> [SidePanelPage] {
@@ -297,7 +281,7 @@ struct PlayerSidePanel<E: PlaybackEngine>: View {
             .frame(width: Self.width, alignment: .topLeading)
             .frame(maxHeight: .infinity, alignment: .top)
             .background {
-                ZStack { Rectangle().fill(.ultraThinMaterial); Theme.Palette.scrim }.ignoresSafeArea()
+                Color.clear.overlayCard(.flush, bleed: .all, lifted: false)   // Task 5.4
             }
         }
         .environment(\.colorScheme, .dark)
@@ -550,6 +534,7 @@ struct SideRowLabel: View {
     var mark = false
     var isActive = false
     @Environment(\.isFocused) private var focused
+    @Environment(\.theme) private var theme
 
     static var style: ThemeRowButtonStyle {
         ThemeRowButtonStyle(minHeight: 0, maxWidth: .infinity, maxFocusGrowth: Theme.Focus.rowMaxGrowth,
@@ -567,15 +552,15 @@ struct SideRowLabel: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.callout.weight(isActive ? .semibold : .regular)).lineLimit(2)
                 if let subtitle {
-                    Text(subtitle).font(.caption)
+                    Text(subtitle).font(theme.type.font(.rowDetail))
                         .foregroundStyle(focused ? Theme.Palette.secondaryOnFocus : Theme.Palette.secondary)
                         .lineLimit(3)
                 }
             }
             Spacer(minLength: 0)
-            if mark { Image(systemName: "checkmark.circle.fill").font(.caption) }
+            if mark { Image(systemName: "checkmark.circle.fill").font(.callout) }
             if let detail {
-                Text(detail).font(.caption)
+                Text(detail).font(theme.type.font(.rowDetail))
                     .foregroundStyle(focused ? Theme.Palette.secondaryOnFocus : Theme.Palette.secondary)
                     .lineLimit(1)
             }

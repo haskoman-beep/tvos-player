@@ -17,28 +17,3 @@ struct PlayerHeading: Equatable {
         self.init(title: r.item.name, episodeLine: MediaLabels.episodeLine(season: s, episode: e, title: epTitle))
     }
 }
-
-/// Kapselreihe mit Klartext-Infos (Auflösung, HDR, aktive Tonspur, aktiver Untertitel) statt Engine-Rohtext.
-/// Bridge-/Decoder-Details stehen nur im RemoteLog.
-struct PlayerInfoBadges<E: PlaybackEngine>: View {
-    @ObservedObject var engine: E
-
-    var body: some View {
-        let badges = MediaLabels.infoBadges(
-            videoWidth: engine.sourceVideoWidth,
-            videoFormat: engine.sourceVideoFormatName,
-            audio: engine.audioTracks.first { $0.id == engine.activeAudioID },
-            subtitle: engine.activeSubtitleID.flatMap { id in engine.subtitleTracks.first { $0.id == id } })
-        if !badges.isEmpty {
-            HStack(spacing: 12) {
-                ForEach(badges, id: \.self) { b in
-                    Text(b)
-                        .font(.caption)
-                        .lineLimit(1)
-                        .padding(.horizontal, 14).padding(.vertical, 6)
-                        .background(.white.opacity(0.16), in: Capsule())
-                }
-            }
-        }
-    }
-}

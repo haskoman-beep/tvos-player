@@ -1,21 +1,8 @@
 import Foundation
 
-/// Texte für die Steuerleiste des Players: Plakettenreihe, Folgenzeile, Endzeit.
+/// Texte für die Steuerleiste des Players: Ton-/Untertitelzeile, Folgenzeile, Endzeit.
 /// Regeln: research/vergleich_player_ui.md §7/§8. Nur Formatierung, keine Engine-Abhängigkeit.
 extension MediaLabels {
-
-    /// Plaketten in fester Reihenfolge: Auflösung, Dynamik (SDR: nichts), aktive Tonspur, aktiver Untertitel.
-    /// `videoFormat` ist der Name des Engine-`VideoFormat`-Falls ("sdr", "hdr10", "dolbyVision" …).
-    /// Beispiel Pixels: 1920 breit, sdr, TrueHD-Atmos 8 Kanäle eng → ["1080p", "Englisch · Dolby Atmos (TrueHD) 7.1"].
-    public static func infoBadges(videoWidth: Int?, videoFormat: String?,
-                                  audio: AudioTrackInfo?, subtitle: AudioTrackInfo?) -> [String] {
-        var b: [String] = []
-        if let r = resolution(width: videoWidth) { b.append(r) }
-        if let d = dynamicRange(videoFormat) { b.append(d) }
-        if let a = audio, let t = audioBadge(a) { b.append(t) }
-        if let s = subtitle { b.append(subtitleBadge(s)) }
-        return b
-    }
 
     /// Tonspur als "Sprache · Format Kanäle" ("Englisch · Dolby Atmos (TrueHD) 7.1").
     /// Unbekannte Sprache oder fehlender Codec fallen weg; ohne alles → nil.

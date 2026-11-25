@@ -27,11 +27,11 @@ struct PostPlayCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             HStack(alignment: .firstTextBaseline) {
-                Text(recs.isEmpty ? "Film zu Ende" : "Als Nächstes ansehen").font(.title3.bold())
+                Text(recs.isEmpty ? "Film zu Ende" : "Als Nächstes ansehen").textRole(.sectionTitle)
                 Spacer()
                 if sceneFollows {
                     Label("Szene nach dem Abspann folgt", systemImage: "sparkles")
-                        .font(.callout).foregroundStyle(.secondary)
+                        .textRole(.rowDetail)
                 }
             }
             HStack(alignment: .bottom, spacing: 30) {
@@ -41,7 +41,7 @@ struct PostPlayCard: View {
                             TilePosterImage(item: m)
                                 .frame(width: 170, height: 255)
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
-                            Text(m.name).font(.caption).lineLimit(1).frame(width: 170, alignment: .leading)
+                            Text(m.name).textRole(.rowDetail).lineLimit(1).frame(width: 170, alignment: .leading)
                         }
                     }
                     .buttonStyle(.card)
@@ -62,11 +62,12 @@ struct PostPlayCard: View {
                     .focused($focus, equals: .back)
                 }
                 // Build 4 follow-up: token buttons instead of system buttons (root tint as focused platter and label).
+                // 5.3-merge: ThemeButton(.primary) for „Abspann weiterschauen“.
                 .buttonStyle(ThemeActionButtonStyle())
             }
         }
-        .padding(36)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28))
+        .padding(OverlayCardMetrics.padding)
+        .overlayCard()   // Task 5.4
         .padding(.horizontal, 80).padding(.bottom, 60)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .onAppear { if focus == nil { focus = .keepWatching } }

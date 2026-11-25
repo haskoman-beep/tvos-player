@@ -128,10 +128,10 @@ struct PlayerNetworkBanner: View {
     var body: some View {
         if let text {
             VStack {
-                Label(text, systemImage: "wifi.slash")
+                Label { Text(text) } icon: { Image(systemName: "wifi.slash").foregroundStyle(Theme.Tone.warn.color) }
                     .font(.headline)
                     .padding(.horizontal, 30).padding(.vertical, 18)
-                    .background(.orange.opacity(0.85), in: RoundedRectangle(cornerRadius: 16))
+                    .overlayCard()   // Task 5.4: state colour only on the symbol (A5)
                     .padding(.top, 60)
                 Spacer()
             }

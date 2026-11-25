@@ -227,26 +227,13 @@ private var sample: [TrackPanelColumnModel] {
             == TrackPanelSpot(.subtitles, .track(5)))
 }
 
-@Test func swipeUpClosesOnlyFromTopRow() {
-    let c = sample
-    #expect(TrackPanelLayout.closesOnSwipeUp(startSpot: TrackPanelSpot(.audio, .track(1)), columns: c))
-    #expect(!TrackPanelLayout.closesOnSwipeUp(startSpot: TrackPanelSpot(.audio, .track(0)), columns: c))
-    #expect(TrackPanelLayout.closesOnSwipeUp(startSpot: TrackPanelSpot(.subtitles, .off), columns: c))
-    #expect(!TrackPanelLayout.closesOnSwipeUp(startSpot: TrackPanelSpot(.offset, .reset), columns: c))
-    #expect(TrackPanelLayout.closesOnSwipeUp(startSpot: nil, columns: c))
-    let emptyAudio = [TrackPanelLayout.audioColumn([], activeID: nil, priority: [])]
-    #expect(TrackPanelLayout.closesOnSwipeUp(startSpot: TrackPanelSpot(.audio, .track(0)), columns: emptyAudio))
+@Test func swipeUpGestureIsRecognised() {
     #expect(TrackPanelEntry.isSwipeUp(translationX: 10, translationY: -200, velocityY: -300))
     #expect(TrackPanelEntry.isSwipeUp(translationX: 0, translationY: -80, velocityY: -900))
     #expect(!TrackPanelEntry.isSwipeUp(translationX: 0, translationY: 200, velocityY: 300))
     #expect(!TrackPanelEntry.isSwipeUp(translationX: 200, translationY: -200, velocityY: -900))
 }
 
-@Test func panelIsOneThirdHigh() {
-    #expect(TrackPanelLayout.panelHeight(screenHeight: 1080) == 360)
-    #expect(TrackPanelLayout.panelHeight(screenHeight: 2160) == 720)
-    #expect(TrackPanelLayout.panelHeight(screenHeight: .nan) == 0)
-}
 
 /// R2 N2: Die Zeitgrenzen allein (ohne jede Engine-Änderung) beenden jeden Wechsel; der Takt folgt `nextDeadline`.
 @Test func audioSwitchWatchNeverSticks() {

@@ -515,14 +515,14 @@ struct ScrubPreviewCard: View {
                     }
                     if controller.holdAtLimit {
                         Text(controller.target < 1 ? "Anfang erreicht" : "Halt vor dem Ende")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .textRole(.rowDetail)
                     }
                     Text(controller.holdSpeed != nil ? "Loslassen: anhalten · Select/Play: springen · Zurück: abbrechen"
                                                      : "Select/Play: springen · ◀▶ halten: Schnellsuchlauf · Zurück: abbrechen")
-                        .font(.caption2).foregroundStyle(.secondary)
+                        .textRole(.rowDetail).lineLimit(1).minimumScaleFactor(0.85)
                 }
                 .padding(14)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
+                .overlayCard()   // Task 5.4
                 .position(x: x, y: geo.size.height - 300 - cardW * 9 / 32)
                 .transition(.opacity)
             }
@@ -538,6 +538,8 @@ struct PlayerTimeline: View {
     let position: Double
     let duration: Double
     var marks: [TimelineMark] = []
+    /// Task 5.4: chapter starts as fractions 0…1, drawn as thin ticks (control bar `ausfuehrlich`).
+    var chapters: [Double] = []
     /// Ziel beim Spulen (nil = kein Spulen); dann zeigt `position` die laufende Stelle als dünnen Strich.
     var scrubTarget: Double? = nil
     var current: Double = 0
@@ -555,6 +557,10 @@ struct PlayerTimeline: View {
                 }
                 Capsule().fill(.white).frame(width: max(0, shown * w))
                     .opacity(scrubTarget == nil ? 1 : 0.85)
+                // Index ids: two chapters may start at the same fraction.
+                ForEach(Array(chapters.filter { $0 > 0 && $0 < 1 }.enumerated()), id: \.offset) { _, c in
+                    Rectangle().fill(.black.opacity(0.55)).frame(width: 3, height: 10).offset(x: CGFloat(c) * w - 1.5)
+                }
                 if scrubTarget != nil {
                     let c = min(max(current / d, 0), 1)
                     Rectangle().fill(.white.opacity(0.6)).frame(width: 3, height: 18).offset(x: c * w - 1.5)

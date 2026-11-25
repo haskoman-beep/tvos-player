@@ -196,6 +196,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
     @StateObject private var skip = SkipSegmentController()
     /// Fokus der Spielerfläche; geht zurück, sobald der Überspringen-Knopf verschwindet.
     @FocusState private var surfaceFocused: Bool
+    @Environment(\.theme) private var theme
     /// Jeder Tastendruck („Noch da?“-Zähler).
     var onUserInput: () -> Void = {}
     /// Welle C-a: Urteil über die Quelle (PlayerStability.swift); Lade-Wächter, Netz-Warten, Startzeiten.
@@ -278,21 +279,27 @@ struct PlayerControls<E: PlaybackEngine>: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             Color.black.ignoresSafeArea()
-            engine.surface().ignoresSafeArea()
+            videoLayer   // Task 5.4: own property (type-checker load of this body)
             engine.subtitleLayer(controlsInset: subtitleInset).environment(\.subtitleStyle, profile.subtitleStyle)
+                .opacity(upNextFullScreen ? 0 : 1)
             PlayerLoadingSteps(engine: engine)
             PlayerNetworkBanner(text: stab.networkNotice)
             if let e = loadError ?? engine.errorText {
                 // Auch auf dem Bildschirm ohne Schlüssel/volle Adressen (Fotos, Bildschirmfotos).
-                Text("Fehler: \(LogRedact.text(e))").padding(30).background(.red.opacity(0.8), in: RoundedRectangle(cornerRadius: 16))
+                // Task 5.4: an overlay card; the state colour only on the symbol (A5: never colour alone).
+                OverlayCard {
+                    HStack(alignment: .firstTextBaseline, spacing: theme.space.s) {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.Tone.error.color)
+                        Text("Fehler: \(LogRedact.text(e))").textRole(.rowTitle)
+                    }
+                }
             }
             // F-h3: Leiste unten bzw. Menü decken den unteren Rand; dann keine Steuerleiste darunter.
-            if showOverlay && !panelCoversBottom && !pauseCard.isVisible {
+            if showOverlay && !panelCoversBottom && !pauseCard.isVisible && !upNextFullScreen {
                 // Höhe der Steuerleiste (Titel, Folge, Plaketten, Zeitleiste, Hinweis) → controlsInset der Untertitel.
                 overlay.transition(.opacity)
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { controlsHeight = $0 }
             }
-            if let n = upNext, let t = nextTitle { upNextCard(n, t).transition(.move(edge: .trailing).combined(with: .opacity)) }
+            if let n = upNext, nextTitle != nil { upNextCard(n) }
             SkipSegmentButton(controller: skip, engine: engine, lookup: skipLookup,
                               onBeforeSkip: {
                                   guard !leaving else { return false }   // geordneter Ausstieg: kein Sprung auf die stoppende Engine
@@ -439,11 +446,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
         .modifier(XRayProbeHook(engine: engine, playing: engine.isPlaying, blocked: leaving || showTracks || scrub.isActive || failureNotice != nil))   // X0: debug face probe on pause (XRayProbeHook.swift)
         .fullScreenCover(isPresented: $showTracks, onDismiss: runSideAfterClose) {
             if sideOpen, let sideExtras { sidePanel(sideExtras) }   // Wave P-b
-            else if trackStyle == .menu {
-                PlayerTrackMenu(engine: engine, profile: profile, audioLocked: restorePending, shownLock: trackLock,
-                                lock: { trackLock }, onAudioSwitch: { beginAudioSwitch($0) }, onRemember: onRemember,
-                                onCoverBottom: { coverBottom = $0 })
-            } else {
+            else {
+                // Task 5.4: one panel for Seite / Unten / Mitte (PlayerTrackPanel.swift).
                 PlayerTrackPanel(engine: engine, profile: profile, style: trackStyle, sourceURL: url, audioLocked: restorePending,
                                  shownLock: trackLock, lock: { trackLock }, onAudioSwitch: { beginAudioSwitch($0) },
                                  onRemember: onRemember, onCoverBottom: { coverBottom = $0 })
@@ -635,7 +639,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
             else if engine.isPlaying, !showTracks { if n <= 1 { startNext() } else { upNext = n - 1 } }
         } else if now >= cardAt, rem > 0, engine.isPlaying, !upNextCancelled, !showTracks {
             let fromCredits = cardAt < engine.duration - 20 ? " · ab Abspann \(Int(cardAt))s" : ""
-            RemoteLog.info("player", "Up-next: \(nextTitle ?? "")\(fromCredits)")
+            RemoteLog.info("player", "Up-next: \(nextTitle ?? "")\(fromCredits) · Stil \(profile.themeLook.player.upNext.rawValue)")
             withAnimation { upNext = 10 }
         }
     }
@@ -649,47 +653,73 @@ struct PlayerControls<E: PlaybackEngine>: View {
         leave { onEnded(true) }
     }
 
-    private func upNextCard(_ n: Int, _ title: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Nächste Folge in \(n) s").font(.headline)
-            Text(title).font(.callout).foregroundStyle(.secondary).lineLimit(1)
-            Text("Klick: jetzt · Wischen: abbrechen").font(.caption).foregroundStyle(.secondary)
-        }
-        .padding(28).frame(width: 560, alignment: .leading)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
-        .padding(60)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+    /// Task 5.4: up-next in the layout of `player.upNext` (PlayerUpNext.swift).
+    private func upNextCard(_ n: Int) -> some View {
+        let style = profile.themeLook.player.upNext
+        return PlayerUpNextView(style: style, seconds: n, info: upNextInfo)
+            .transition(style == .karte ? .move(edge: .trailing).combined(with: .opacity) : .opacity)
     }
 
+    /// Task 5.4: the picture, with the `vollbild` backdrop and shrink and the VoiceOver surface.
+    @ViewBuilder private var videoLayer: some View {
+        if upNextFullScreen { PlayerUpNextView.backdrop(upNextInfo).transition(.opacity) }
+        // `upNext = vollbild`: the video shrinks to 420 × 236 at the top left over the still.
+        let scale: CGFloat = upNextFullScreen ? PlayerUpNextFullScreen.videoScale : 1
+        let inset: CGFloat = upNextFullScreen ? PlayerUpNextFullScreen.videoInset : 0
+        engine.surface().ignoresSafeArea()
+            .scaleEffect(scale, anchor: .topLeading)
+            .offset(x: inset, y: inset)
+            .modifier(PlayerSurfaceAccessibility(title: heading?.title ?? title, value: surfaceAccessibilityValue,
+                                                 toggle: surfaceToggle, seek: surfaceSeek))
+    }
+
+    private func surfaceToggle() {
+        guard !leaving else { return }
+        onUserInput(); togglePlay()
+    }
+
+    private func surfaceSeek(_ by: Double) {
+        guard !leaving else { return }
+        onUserInput(); queueSeek(by); poke()
+    }
+
+    /// Task 5.4: up-next fills the screen (`vollbild`): the video shrinks, the control bar and subtitles step aside.
+    private var upNextFullScreen: Bool { upNext != nil && nextTitle != nil && profile.themeLook.player.upNext == .vollbild }
+
+    /// Task 5.4: control bar in the layout of `player.controlBar` (PlayerControlBar.swift).
     private var overlay: some View {
         let _ = tick
+        let look = profile.themeLook.player
+        return PlayerControlBar(mode: look.controlBar, content: controlBarContent(look), onHeight: { controlsHeight = $0 })
+    }
+
+    private func controlBarContent(_ look: LookPlayer) -> PlayerControlBar.Content {
         let d = max(engine.duration, 1)
         let pos = scrub.isActive ? scrub.target : (pendingSeek ?? engine.currentTime)
-        return VStack(alignment: .leading, spacing: 14) {
-            Text(heading?.title ?? title).font(.title3.bold())
-            if let ep = heading?.episodeLine { Text(ep).font(.callout).foregroundStyle(.secondary) }
-            PlayerInfoBadges(engine: engine)
-            PlayerTimeline(position: min(pos, d), duration: d, marks: SkipSegments.timelineMarks(skip.segments, duration: engine.duration),
-                           scrubTarget: scrub.isActive ? scrub.target : nil, current: engine.currentTime)
-            HStack {
-                Text(fmt(pos)); Spacer()
-                if engine.duration > 0, let end = MediaLabels.endTime(remaining: d - pos) {
-                    Text(end).foregroundStyle(.secondary)
-                }
-                Text("-" + fmt(d - pos))
-            }
-            .font(.caption.monospacedDigit())
+        let hasTracks = !engine.audioTracks.isEmpty || !engine.subtitleTracks.isEmpty
+        let pages = sideExtras?.pages(chapters: engine.chapterMarks.count)
+        let chapters = engine.duration > 0 ? engine.chapterMarks.map { $0.start / engine.duration } : []
+        return PlayerControlBar.Content(
+            title: heading?.title ?? title, episodeLine: heading?.episodeLine,
+            position: min(pos, d), duration: d,
+            marks: SkipSegments.timelineMarks(skip.segments, duration: engine.duration),
+            chapters: chapters, scrubTarget: scrub.isActive ? scrub.target : nil, current: engine.currentTime,
+            times: PlayerTimeText.make(position: pos, duration: engine.duration, now: Date(), mode: look.timeDisplay),
+            badges: PlayerBadgeSet.make(streamTech, mode: look.badges),
             // Welle F-h: aktuelle Spurwahl und der Weg ins Panel stehen sichtbar in der Leiste.
-            if !engine.audioTracks.isEmpty || !engine.subtitleTracks.isEmpty {
-                Text(TrackChoice.overlayLine(audio: TrackChoice.active(engine.audioTracks, id: engine.activeAudioID),
-                                             subtitle: TrackChoice.active(engine.subtitleTracks, id: engine.activeSubtitleID)))
-                    .font(.caption).lineLimit(1)
-            }
-            if let x = sideExtras { SidePanelHint(trackStyle: trackStyle, pages: x.pages(chapters: engine.chapterMarks.count)) }   // Wave P-b
-            Text("◀▶ 10 s · ◀▶ halten: Schnellsuchlauf · waagerecht wischen/Rand drehen: spulen · \(SidePanelGesture.trackHint(trackStyle: trackStyle)) · ⏯ Pause · Zurück beenden").font(.caption2).foregroundStyle(.secondary)
-        }
-        .padding(60)
-        .background(LinearGradient(colors: [.black.opacity(0.8), .clear], startPoint: .bottom, endPoint: .top))
+            trackLine: hasTracks ? TrackChoice.overlayLine(audio: TrackChoice.active(engine.audioTracks, id: engine.activeAudioID),
+                                                           subtitle: TrackChoice.active(engine.subtitleTracks, id: engine.activeSubtitleID)) : nil,
+            sideHint: pages.flatMap { SidePanelMenu.hint(trackStyle: trackStyle, pages: $0) },   // Wave P-b
+            sideHintSpoken: pages.map { "Mehr: " + $0.map(\.title).joined(separator: ", ") },
+            gestureHint: "◀▶ 10 s · ◀▶ halten: Schnellsuchlauf · waagerecht wischen/Rand drehen: spulen · \(SidePanelGesture.trackHint(trackStyle: trackStyle)) · ⏯ Pause · Zurück beenden")
+    }
+
+    /// Task 5.4: "Pausiert, 42:10 von 2:08:00" for VoiceOver.
+    private var surfaceAccessibilityValue: String {
+        let state = engine.isPlaying ? "Läuft" : "Pausiert"
+        guard engine.duration > 0 else { return state }
+        let pos = pendingSeek ?? engine.currentTime
+        return "\(state), \(PlayerTimeText.clock(pos)) von \(PlayerTimeText.clock(engine.duration))"
     }
 
     /// Welle F-h3: „Ton & Untertitel öffnen“ (Profil); beim Öffnen gelesen.
@@ -1002,9 +1032,5 @@ struct PlayerControls<E: PlaybackEngine>: View {
             try? await Task.sleep(for: .seconds(4))
             if !Task.isCancelled && engine.isPlaying && !scrub.isActive { withAnimation { showOverlay = false } }
         }
-    }
-
-    private func fmt(_ s: Double) -> String {
-        let t = Int(max(0, s)); return t >= 3600 ? String(format: "%d:%02d:%02d", t / 3600, t / 60 % 60, t % 60) : String(format: "%d:%02d", t / 60, t % 60)
     }
 }

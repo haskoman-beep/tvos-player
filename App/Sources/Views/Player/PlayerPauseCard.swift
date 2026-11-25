@@ -114,9 +114,9 @@ struct PlayerPauseCardLayer<E: PlaybackEngine>: View {
                 if let accessory, let ctx = accessoryContext {
                     accessory.make(ctx)
                 } else if let cast = c.castLine {
-                    Text(cast).font(.caption).lineLimit(1).foregroundStyle(Theme.Palette.secondary)
+                    Text(cast).textRole(.rowDetail).lineLimit(1)
                 }
-                Text("Pausiert · beliebige Taste blendet aus").font(.caption2).foregroundStyle(Theme.Palette.secondary)
+                Text("Pausiert · beliebige Taste blendet aus").textRole(.rowDetail)
             }
             .frame(maxWidth: 1100, alignment: .leading)
             .padding(.horizontal, 80).padding(.bottom, 70)

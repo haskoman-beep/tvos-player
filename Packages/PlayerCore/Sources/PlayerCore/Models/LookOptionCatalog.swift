@@ -66,6 +66,9 @@ public enum LookOptionCatalog {
         "badgeStyle": "„Plaketten-Stil“ unten",
         "heroStyle": "„Titelbild oben“ unter Startseite",
     ]
+    /// Options whose code is already in this build although appendix A names a later one (`availableFrom` stays the
+    /// appendix value). Task 5.4: the five player options of 5c (trackPanel is a Build 4 option already).
+    static let implementedAhead: Set<String> = ["controlBar", "badges", "timeDisplay", "upNext", "stillWatching"]
 
     /// Whether the row `key` can be changed in `build`, and the note shown under it. An option of a later build is
     /// off with "kommt mit Build …"; with glow on, tvOS draws the card (`.buttonStyle(.card)`), so shape, scale,
@@ -73,7 +76,7 @@ public enum LookOptionCatalog {
     public static func isEnabled(_ key: String, in values: LookValues, build: LookBuild = .current,
                                  reduceMotion: Bool = false) -> (enabled: Bool, reason: String?) {
         guard let e = entry(key) else { return (false, nil) }
-        if e.availableFrom > build {
+        if e.availableFrom > build, !implementedAhead.contains(key) {
             let later = "kommt mit Build \(e.availableFrom.title)"
             return (false, standInRows[key].map { later + " · bis dahin: " + $0 } ?? later)
         }
