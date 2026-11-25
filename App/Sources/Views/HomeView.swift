@@ -77,6 +77,7 @@ struct HomeView: View {
         .onChange(of: showsHero, initial: true) { _, hero in if !hero { RemoteLog.startUsable("ohneHero") } }
         // Task 5.2: the hero variant in use (once per change) and whether the backdrop follows the focus.
         .onChange(of: HeroStyleKey(look), initial: true) { _, k in
+            focus.followsBackdrop = k.follows
             RemoteLog.info("hero", k.line)
         }
         .onChange(of: "\(edge.rawValue)|\(appearance.navigation.rawValue)", initial: true) {
@@ -141,7 +142,7 @@ struct HomeView: View {
             ZStack(alignment: .topLeading) {
                 // Task 5.2: one variant per `heroStyle`; the list on top is the same for all of them.
                 HeroLayout(style: look.heroStyle, level: look.heroInfo, title: look.heroTitle,
-                           followsFocus: true, slides: slides, collapse: collapse)
+                           followsFocus: look.backdropFollowsFocus, slides: slides, collapse: collapse)
                 ScrollView(.vertical) {
                     LazyVStack(alignment: .leading, spacing: Theme.Space.xl) {
                         HeroButtons(slides: slides, onFocusChange: { heroButtonsFocus($0) },

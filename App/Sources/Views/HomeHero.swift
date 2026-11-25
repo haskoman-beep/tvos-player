@@ -19,6 +19,11 @@ final class HomeFocus {
     @ObservationIgnored private var outside: Task<Void, Never>?
     /// P2 fix round: the page is covered (detail page, player, other tab); no rest check ends `inRows` meanwhile.
     @ObservationIgnored private var suspended = false
+    /// Task 5.2 (`backdropFollowsFocus`): the backdrop and info follow the resting card; set by `HomeView` from the
+    /// look. Off: the slide stays (the show pauses while the focus is in the rows), the prefetch still runs.
+    @ObservationIgnored var followsBackdrop = false
+    /// Task 5.2: at most one backdrop request per rest (PlayerCore `HeroBackdropFollow`).
+    @ObservationIgnored private var follow = HeroBackdropFollow()
 
     /// Kachel hat den Fokus: Diashow sofort anhalten, Hintergrund erst nach 350 ms Ruhe wechseln.
     /// Ein neuer Fokus bricht die Wartezeit ab; pro Ruhepause höchstens eine Log-Zeile.
@@ -32,14 +37,18 @@ final class HomeFocus {
         if !inRows { inRows = true }
         pending?.cancel()
         pending = nil
-        let stop = FocusRest.stop(alreadyShown: m.id == item?.id)
+        // Task 5.2: no token = nothing to show (option off, or this card is shown already): prefetch only.
+        let token = follow.focus(m.id, follows: followsBackdrop)
+        let stop = FocusRest.stop(alreadyShown: token == nil)
         guard stop.backdropWait != nil || onRest != nil else { return }
         pending = Task { [weak self] in
-            if let wait = stop.backdropWait {
+            if let wait = stop.backdropWait, let token {
                 try? await Task.sleep(for: .milliseconds(wait))
                 guard !Task.isCancelled, let self else { return }
-                self.item = m
-                RemoteLog.info("hero", "Fokus-Hintergrund \(m.id)")
+                if self.follow.rested(token) != nil {
+                    self.item = m
+                    RemoteLog.info("hero", "Fokus-Hintergrund \(m.id)")
+                }
             }
             guard let onRest else { self?.pending = nil; return }
             try? await Task.sleep(for: .milliseconds(stop.prefetchWait))
@@ -96,6 +105,7 @@ final class HomeFocus {
     func leaveRows() {
         pending?.cancel()
         pending = nil
+        follow.leave()
         if inRows { inRows = false }
     }
 }
