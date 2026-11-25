@@ -1005,7 +1005,8 @@ final class AppModel: ObservableObject {
                 // Task 4.3 (controller ruling): the look goes onto the active profile, and the old fields it maps to
                 // are written too, so the views that still read `appearance`/`player` show it today (PlayerCore).
                 update { $0.applyImportedLook(l) }
-                notice = "Aussehen übernommen · \(l.overrides.count) " + (l.overrides.count == 1 ? "Abweichung" : "Abweichungen")
+                let n = LookPreset.baselineDeviationCount(l)   // Task 4.5-base: same count as the settings row
+                notice = "Aussehen übernommen · \(n) " + (n == 1 ? "Abweichung" : "Abweichungen")
             }
         }
         // An import's own result line ("Import: 3 Reihen, …") stays.

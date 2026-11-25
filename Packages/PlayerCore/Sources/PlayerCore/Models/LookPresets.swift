@@ -18,6 +18,12 @@ public enum LookPreset {
     public static let baseline: LookValues =
         Look.migrated(from: Appearance(), player: PlayerComfortSettings(), sources: SourceSettings()).resolved()
 
+    /// Task 4.5-base fix round 1 (I1): how many of the 35 options of `look` differ from `baseline`. The one count
+    /// behind "angepasst · n" and the import notices ("Aussehen übernommen · n Abweichungen") on phone and TV.
+    public static func baselineDeviationCount(_ look: Look) -> Int {
+        LookOverrides.difference(look.resolved(), from: baseline).count
+    }
+
     static let appleTV = LookValues(
         global: LookGlobal(navigation: .oben, clock: false, settingsLayout: .spalten, accent: .weiss,
                            background: .schwarz, typeScale: .standard, typeCharacter: .neutral, motion: .standard),

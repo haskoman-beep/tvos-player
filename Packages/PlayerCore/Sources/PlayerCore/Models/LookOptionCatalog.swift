@@ -276,7 +276,7 @@ extension SettingsSummary {
     /// counts the keys that differ from the baseline (`LookPreset.baseline`, the old defaults), not the stored
     /// overrides, so an untouched profile shows „Apple TV“ and an imported Apple TV export counts its differences.
     public static func lookValue(_ look: Look) -> String {
-        let n = LookOverrides.difference(look.resolved(), from: LookPreset.baseline).count
+        let n = LookPreset.baselineDeviationCount(look)
         return n == 0 ? "Apple TV" : "angepasst · \(n)"
     }
 
