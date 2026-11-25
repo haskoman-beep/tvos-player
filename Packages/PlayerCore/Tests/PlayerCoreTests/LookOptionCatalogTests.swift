@@ -69,7 +69,7 @@ private func lookValueKeys() throws -> [String: Set<String>] {
     let later = LookOptionCatalog.isEnabled("corners", in: v)
     #expect(!later.enabled && later.reason == "kommt mit Build 5a")
     #expect(LookOptionCatalog.isEnabled("accent", in: v) == (true, nil))
-    #expect(LookOptionCatalog.isEnabled("sourceList", in: v).reason == "kommt mit Build 5b")
+    #expect(LookOptionCatalog.isEnabled("sourceList", in: v, implemented: []).reason == "kommt mit Build 5b")
     // System reduce motion: still selectable, with a note.
     let m = LookOptionCatalog.isEnabled("motion", in: v, reduceMotion: true)
     #expect(m.enabled && m.reason == "Das System reduziert Bewegung; diese Einstellung wirkt erst, wenn das aus ist.")
@@ -179,10 +179,12 @@ private func lookValueKeys() throws -> [String: Set<String>] {
 
 @Test func laterBuildRowsPointToTheActiveOldRow() {
     let v = LookPreset.values(.appleTV)
-    #expect(LookOptionCatalog.isEnabled("badgeStyle", in: v).reason
+    // Task 5.3 draws badgeStyle and layout, so the stand-in note shows only without that code (`implemented: []`).
+    #expect(LookOptionCatalog.isEnabled("badgeStyle", in: v, implemented: []).reason
         == "kommt mit Build 5b · bis dahin: „Plaketten-Stil“ unten")
+    #expect(LookOptionCatalog.isEnabled("badgeStyle", in: v) == (true, nil))
     #expect(LookOptionCatalog.isEnabled("heroStyle", in: v).reason
         == "kommt mit Build 5a · bis dahin: „Titelbild oben“ unter Startseite")
     #expect(LookOptionCatalog.isEnabled("heroStyle", in: v, build: .b5a) == (true, nil))
-    #expect(LookOptionCatalog.isEnabled("layout", in: v).reason == "kommt mit Build 5b")
+    #expect(LookOptionCatalog.isEnabled("layout", in: v, implemented: []).reason == "kommt mit Build 5b")
 }

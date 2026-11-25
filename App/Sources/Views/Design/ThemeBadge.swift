@@ -16,7 +16,8 @@ struct ThemeBadge: View {
 
         var height: CGFloat {
             switch self {
-            case .detail: 34
+            // Task 5.3: 38 on the detail page (plan: height 38, inner spacing 12); lists and posters stay compact.
+            case .detail: 38
             case .sources: 30
             case .poster: 26
             }
@@ -65,6 +66,17 @@ struct ThemeBadge: View {
     /// Bewertung: Quelle für das Icon aus dem gewählten Icon-Satz (`RatingIconLabel`); ohne Icon der Markenname.
     var iconSource: String? = nil
 
+    /// Task 5.3: `detail.badgeStyle` from the runtime theme; the player draws `logos` as `gefuellt`.
+    @Environment(\.theme) private var theme
+    @Environment(\.badgesInPlayer) private var inPlayer
+
+    /// On a picture (poster badges of the home rows) the badge keeps today's dark backing in every style: the
+    /// option belongs to the detail page and the source list, and bright pictures must never show through.
+    private var style: LookBadgeStyle {
+        if surface == .image { return .gefuellt }
+        return DetailLook.badgeStyle(theme.badgeStyle, inPlayer: inPlayer)
+    }
+
     var body: some View {
         content
             .lineLimit(1)
@@ -76,13 +88,7 @@ struct ThemeBadge: View {
     @ViewBuilder private var content: some View {
         switch kind {
         case .tech(let size):
-            label
-                .font(size.font)
-                .fontWeight(wordmark ? .heavy : nil)
-                .foregroundStyle(surface == .focusedRow ? Theme.Palette.primaryOnFocus : Theme.Palette.primary)
-                .padding(.horizontal, Theme.Space.s)
-                .frame(height: size.height)
-                .background(techFill, in: RoundedRectangle(cornerRadius: Theme.Radius.badge, style: .continuous))
+            TechBadgeBody(size: size, style: style, surface: surface, wordmark: wordmark) { label }
         case .rating(let brand, let brandColor):
             HStack(spacing: Theme.Space.xs) {
                 if let iconSource {
@@ -111,14 +117,6 @@ struct ThemeBadge: View {
             }
         } else {
             Text(text)
-        }
-    }
-
-    private var techFill: Color {
-        switch surface {
-        case .plain: Theme.Palette.badgeFill
-        case .focusedRow: Theme.Palette.badgeFillOnFocus
-        case .image: Theme.Palette.badgeOnImage
         }
     }
 
@@ -172,7 +170,99 @@ extension ThemeBadge {
 struct Badge: View {
     let text: String
     init(_ text: String, _ color: Color) { self.text = text }
-    var body: some View { ThemeBadge(kind: .tech(.sources), text: text) }
+    /// Task 5.3: only the player uses it, so it draws with the player's fallback (`logos` → `gefuellt`).
+    // 5c-merge: redundant once PlayerScreen sets `.badgesInPlayer()` at its root (TorBoxFilesRow's player lacks it).
+    var body: some View { ThemeBadge(kind: .tech(.sources), text: text).badgesInPlayer() }
+}
+
+/// Task 5.3: marks a subtree as the player, so `ThemeBadge` draws `logos` as `gefuellt` (plan Task 5.3).
+private struct BadgesInPlayerKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var badgesInPlayer: Bool {
+        get { self[BadgesInPlayerKey.self] }
+        set { self[BadgesInPlayerKey.self] = newValue }
+    }
+}
+
+extension View {
+    /// Badges below this view belong to the player (`logos` falls back to `gefuellt`). Set on the player's root.
+    func badgesInPlayer(_ on: Bool = true) -> some View {
+        environment(\.badgesInPlayer, on)
+    }
+}
+
+/// `#111111`, the lettering of `logos` badges (file scope: generic types cannot hold static stored properties).
+private let techBadgeLogoInk = Color(white: Double(0x11) / 255.0)
+
+/// Task 5.3: one tech badge in the style of `detail.badgeStyle` (configurator `.bd`):
+/// - `umriss`: 2 pt edge white 60 %, text white 90 %.
+/// - `gefuellt`: surface `badgeFill` (on the focused row the focus tint), white text.
+/// - `text`: no surface, white 75 %, weight 600 (semibold).
+/// - `logos`: white surface, text `#111111`, radius 5, italic heavy lettering set by the app (no brand images).
+/// On a picture (poster) `ThemeBadge` passes `gefuellt`, drawn with today's dark backing (`badgeOnImage`).
+private struct TechBadgeBody<Label: View>: View {
+    let size: ThemeBadge.TechSize
+    let style: LookBadgeStyle
+    let surface: ThemeBadge.Surface
+    let wordmark: Bool
+    @ViewBuilder let label: () -> Label
+    @Environment(\.theme) private var theme
+
+    private var onFocus: Bool { surface == .focusedRow }
+
+    private var foreground: Color {
+        switch style {
+        case .logos: return techBadgeLogoInk
+        case .umriss: return onFocus ? theme.color.primaryOnFocus : theme.color.primary.opacity(0.9)
+        case .text: return onFocus ? theme.color.primaryOnFocus.opacity(0.7) : theme.color.primary.opacity(0.75)
+        case .gefuellt: return onFocus ? theme.color.primaryOnFocus : theme.color.primary
+        }
+    }
+
+    private var fill: Color {
+        if surface == .image { return Theme.Palette.badgeOnImage }
+        if style == .logos { return .white }
+        switch style {
+        // Review: the runtime token `badgeFill` instead of a literal (plan white 20 %, token white 18 %).
+        case .gefuellt: return onFocus ? Theme.Palette.badgeFillOnFocus : theme.color.badgeFill
+        default: return .clear
+        }
+    }
+
+    /// `umriss`: its edge. `logos` on the focused (white) row: a dark edge keeps the white badge's shape visible.
+    private var edge: Color {
+        switch style {
+        case .umriss: return onFocus ? Color.black.opacity(0.5) : theme.color.primary.opacity(0.6)
+        case .logos: return onFocus && surface != .image ? Color.black.opacity(0.5) : .clear
+        default: return .clear
+        }
+    }
+
+    private var radius: CGFloat { style == .logos ? 5 : theme.radius.badge }
+
+    /// `text` has no surface, so no inner spacing either (except on a picture, where the backing stays).
+    private var padding: CGFloat { style == .text && surface != .image ? 0 : theme.space.s }
+
+    private var weight: Font.Weight? {
+        if wordmark || style == .logos { return .heavy }
+        return style == .text ? .semibold : nil
+    }
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        label()
+            .font(size.font)
+            .fontWeight(weight)
+            .italic(style == .logos)
+            .foregroundStyle(foreground)
+            .padding(.horizontal, padding)
+            .frame(height: size.height)
+            .background(fill, in: shape)
+            .overlay { shape.strokeBorder(edge, lineWidth: style == .logos ? 1 : 2) }
+    }
 }
 
 /// Meta-Zeile als reiner Text in `rowDetail` mit „ · “ („2018 · 97 min · FSK 0 · Animation“).
