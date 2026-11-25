@@ -91,7 +91,7 @@ struct RootView: View {
             } else {
                 // Task 5.6: navigation, clock and settings layout read the theme (`theme.chrome`, from the look).
                 styled(tabs(theme.chrome), chrome: theme.chrome)
-                    .overlay(alignment: .topTrailing) { ClockOverlay() }
+                    .overlay(alignment: .topTrailing) { ClockOverlay(overPushedPage: clockOverPushedPage) }
                     // Task 4.5 (D-14): the tint is the look's accent (all eight configurator colours).
                     .tint(theme.color.accent)
                     .onAppear { pickedProfile = true }   // F-B-2: the picker decision is made once
@@ -124,7 +124,7 @@ struct RootView: View {
             Tab("Einstellungen", systemImage: "gearshape", value: AppTab.settings) {
                 // Menu-Kette der Einstellungen: Inhalt → aktive Kategorie (CategoryList) → Start-Tab (N2).
                 stack($settingsPath, tab: .settings, rootHandlesMenu: false) {
-                    SettingsView(selected: $settingsCategory) { toStartTab(from: .settings, level: "Kategorienspalte") }
+                    SettingsView(selected: $settingsCategory) { toStartTab(from: .settings, level: $0) }
                         .onAppear { settingsRootVisible = true }
                         .onDisappear { settingsRootVisible = false }
                 }
@@ -176,6 +176,13 @@ struct RootView: View {
     }
 
     /// Gepushte Seiten im Pfad eines Tabs (ohne NavigationLink-/navigationDestination(item:)-Seiten).
+    /// Task 5.6 (review minor): a page is pushed on the visible tab (a settings subpage counts too). In the sidebar
+    /// the clock then goes, as it does with the top bar, which tvOS hides on pushed pages: grids (genre, person)
+    /// scroll under the top right corner.
+    private var clockOverPushedPage: Bool {
+        depth(tab) > 0 || (tab == .settings && !settingsRootVisible)
+    }
+
     private func depth(_ t: AppTab) -> Int {
         switch t {
         case .home: path.count

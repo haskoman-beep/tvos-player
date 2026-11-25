@@ -55,7 +55,8 @@ struct SettingsView: View {
     @Binding var selected: SettingsCategory
     /// Zurück in der obersten Ebene: verlässt die Einstellungen (RootView wechselt zum Start-Tab, N2).
     /// Ohne Standardwert (fix-einstellungen Minor 1): ein vergessener Aufrufer fiele sonst still in ein No-op.
-    let leave: () -> Void
+    /// Task 5.6: gets the level for the log line (column, tile grid or list).
+    let leave: (String) -> Void
     @Environment(\.theme) private var theme
     /// Layout drawn last, and whether the root is on screen: a new layout waits until no subpage is open
     /// (`SettingsLayoutTree.shown`), else the link of the open page would leave the root and pop it.
@@ -85,13 +86,13 @@ struct SettingsView: View {
             CategoryList(items: SettingsCategory.allCases, selected: $selected,
                          entry: { CategoryEntry(title: $0.title, symbol: $0.symbol, tint: $0.tint) },
                          groupLabel: { $0.groupLabel },
-                         onExit: leave,
+                         onExit: { leave("Kategorienspalte") },
                          header: { phoneTile },
                          content: { content($0) })
         case .kacheln:
-            SettingsTilesView(selected: $selected, leave: leave, content: { content($0) })
+            SettingsTilesView(selected: $selected, leave: { leave("Kachelraster") }, content: { content($0) })
         case .liste:
-            SettingsListView(leave: leave, header: { phoneTile }, content: { content($0) })
+            SettingsListView(selected: $selected, leave: { leave("Liste") }, header: { phoneTile }, content: { content($0) })
         }
     }
 

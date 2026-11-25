@@ -27,7 +27,8 @@ struct SettingsTilesView<Content: View>: View {
                     }
                 }
             }
-            .padding(.leading, theme.chrome.leadingExtra)
+            // 5.6-later: `theme.chrome.leadingExtra` (content from 150 in the sidebar) once the device shows what
+            // `.sidebarAdaptable` reserves; until then every page starts at 80 (review I3).
             .padding(.vertical, theme.space.m)
         }
         .scrollClipDisabled()

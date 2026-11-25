@@ -6,15 +6,26 @@ import PlayerCore
 /// from the screen edge, `meta` role 27 pt × typeScale, weight 500, white 75 %, digits of equal width. It lies
 /// over the tab view, so the player (a full-screen cover) hides it. With the top bar it follows the bar
 /// (Build 3 device test: it moves up with the bar and fades out when the bar is off screen or hidden).
+/// In the sidebar it leaves pushed pages (`overPushedPage`); the top bar hides there and the clock with it.
 struct ClockOverlay: View {
+    var overPushedPage = false
     @Environment(\.theme) private var theme
+    @State private var frameLogged = false
 
     var body: some View {
         let chrome = theme.chrome
-        if chrome.showsClock {
+        if chrome.showsClock, !(chrome.navigation == .seitenleiste && overPushedPage) {
             ClockView(followsTabBar: chrome.navigation == .oben, style: .look(size: chrome.clockFontSize))
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { r in
+                    // Once per run (review I2): the device shows whether it sits at right 80 / top 56.
+                    guard !frameLogged, r.width > 0 else { return }
+                    frameLogged = true
+                    RemoteLog.info("nav", "Uhr-Rahmen x \(Int(r.minX))–\(Int(r.maxX)), y \(Int(r.minY))–\(Int(r.maxY))")
+                }
                 .padding(.top, LookChrome.clockTop)
                 .padding(.trailing, LookChrome.clockTrailing)
+                // Fill the screen first, then leave the safe area: the paddings count from the screen edge.
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                 .ignoresSafeArea()
                 .onAppear { RemoteLog.info("nav", "Uhr an (\(chrome.navigation.rawValue))") }
                 .onDisappear { RemoteLog.info("nav", "Uhr aus") }
@@ -37,8 +48,8 @@ struct ClockView: View {
     @State private var bar = TabBarFollower()
     @Environment(\.theme) private var theme
 
-    /// One formatter for the device locale and time zone (both rarely change; a change shows after a relaunch).
-    private static let format = LookChrome.clockFormatter(locale: .current, timeZone: .current)
+    /// One formatter; the autoupdating time zone follows a change in the system settings at the next minute.
+    private static let format = LookChrome.clockFormatter(locale: .autoupdatingCurrent, timeZone: .autoupdatingCurrent)
 
     var body: some View {
         TimelineView(.everyMinute) { ctx in
