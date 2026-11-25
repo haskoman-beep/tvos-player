@@ -385,8 +385,16 @@ actor ImagePipeline {
         // Weichgezeichnet sieht ein Viertel der Auflösung gleich aus und kostet ein Sechzehntel.
         if blur > 0 { maxPixels = max(64, maxPixels / 4) }
         guard let img = downsample(src, maxPixels: maxPixels) else { return nil }
-        guard blur > 0 else { return img }
-        return blurred(img, radius: max(1, Double(blur) / 4)) ?? img
+        guard blur > 0 else { return prepared(img) }
+        return prepared(blurred(img, radius: max(1, Double(blur) / 4)) ?? img)
+    }
+
+    /// Build 4 follow-up S2: decode into the display format here (off the main thread), so the first frame that shows
+    /// the picture needs no colour/format conversion on commit. Kept only when it is still a CGImage-backed bitmap
+    /// (`cost` and the blur step read `cgImage`).
+    nonisolated private static func prepared(_ img: UIImage) -> UIImage {
+        guard let p = img.preparingForDisplay(), p.cgImage != nil else { return img }
+        return p
     }
 
     nonisolated static func downsample(_ data: Data, maxPixels: Int) -> UIImage? {
