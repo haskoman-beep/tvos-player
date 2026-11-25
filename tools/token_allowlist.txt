@@ -1,0 +1,11 @@
+# Files tools/check_tokens.sh skips. One path per line, relative to the repo root; '#' starts a comment.
+# Remove a line in the same commit that converts the file to theme tokens (the check warns about stale lines).
+
+# Permanent: colours that are data, not design.
+App/Sources/Views/Player/SubtitleTextView.swift          # subtitle colours from the subtitle file (ASS/SSA tags)
+
+# Pending: converted by the Build 5 task named (state of 25.11., branch b4-nacharbeit-2 02b17c7).
+App/Sources/Views/RowViews.swift                         # 5a (Task 5.1): Top-10 rank numbers, tile symbols
+App/Sources/Views/DetailViews.swift                      # 5b (Task 5.3): rating source colours
+App/Sources/Views/PersonView.swift                       # 5b (Task 5.3): initial without photo
+App/Sources/Views/Settings/SubtitleStyleSettingsRows.swift   # 4.5 minors: subtitle preview backgrounds

@@ -3,7 +3,7 @@ on:
   push:
     # Branches only: tags (build-N, also from the backfill) do not start a run; paths does not apply to tag pushes.
     branches: ['**']
-    paths: ['App/**', 'Packages/**', '.github/workflows/**', 'tools/release_notes.sh', 'tools/check_ipa.sh', 'tools/xray_model/**']
+    paths: ['App/**', 'Packages/**', '.github/workflows/**', 'tools/release_notes.sh', 'tools/check_ipa.sh', 'tools/check_tokens.sh', 'tools/token_allowlist.txt', 'tools/xray_model/**']
   workflow_dispatch:
     inputs:
       release_dry_run:
@@ -27,6 +27,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+      # Task 5.5 (D-3): no `.font(.system(size:` and no `Color(red:` outside App/Sources/Views/Design/. Files the
+      # later Build 5 tasks still convert are listed in tools/token_allowlist.txt (stale lines only warn).
+      - name: Design tokens
+        run: bash tools/check_tokens.sh
       - name: swift test
         run: cd Packages/PlayerCore && swift test
   build:
