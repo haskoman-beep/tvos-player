@@ -56,7 +56,7 @@ struct HomeView: View {
                     let room = listBottomRoom(rows)
                     let bottom = max(room, Self.bottomSafeArea)
                     ScrollView(.vertical) {
-                        LazyVStack(alignment: .leading, spacing: Theme.Space.xl) { rowList(rows, hero: false) }
+                        LazyVStack(alignment: .leading, spacing: rowGap) { rowList(rows, hero: false) }
                             .padding(.top, max(0, 40 - room))
                             .padding(.bottom, 40)
                             .coordinateSpace(.named(HomeTopEdgeWatch.contentSpace))   // S5: row frames
@@ -148,10 +148,12 @@ struct HomeView: View {
                 HeroLayout(style: look.heroStyle, level: look.heroInfo, title: look.heroTitle,
                            followsFocus: look.backdropFollowsFocus, slides: slides, collapse: collapse)
                 ScrollView(.vertical) {
-                    LazyVStack(alignment: .leading, spacing: Theme.Space.xl) {
+                    LazyVStack(alignment: .leading, spacing: rowGap) {
                         HeroButtons(slides: slides, onFocusChange: { heroButtonsFocus($0) },
                                     leading: HeroMetrics.buttonLeading(look.heroStyle),
                                     carousel: look.heroStyle == .karussell)
+                            // The buttons keep the device-verified Build 4 gap to the first row (`Theme.Space.xl`).
+                            .padding(.bottom, Theme.Space.xl - rowGap)
                         rowList(rows, hero: true)
                     }
                     .padding(.top, HeroMetrics.listPadding)
@@ -207,6 +209,10 @@ struct HomeView: View {
         let kinds = tileKinds(rows)
         return Theme.Focus.listEdgeBand(height: FocusHeadroom.tallest(kinds, cardScale: a.cardSize.scale, posterExtra: strip))
     }
+
+    /// Integration build 5 (review b5a1 m3/n2): row ↔ row gap of `rowSpacing` as the list spacing, so a row's frame is
+    /// exactly what `CardLayout.tallestHomeRow` measures (Build 4 `Theme.Space.xl` with „alte Karte“).
+    private var rowGap: CGFloat { oldCard ? Theme.Space.xl : CardLayout.rowGap(theme.cards.home.rowSpacing) }
 
     /// Integration build 5 (review b5a1 I1): tile kinds as the rows draw them (card form option, „alte Karte“).
     private func tileKinds(_ rows: [HomeRow]) -> [TileKind] {

@@ -72,9 +72,6 @@ struct HomeRowView: View {
                 .focusSection()
                 .defaultFocus($focusedRoute, rememberedRoute, priority: .userInitiated)
         }
-        // Task 5.1: row ↔ row gap of `rowSpacing` on the home page (its list keeps `Theme.Space.xl` between rows;
-        // 5a-merge: better as the home list's spacing in HomeView). Below the cards' lift room, nothing visible.
-        .padding(.bottom, rowGapDelta)
         // Task 5.1: the strip and its cards draw these options (default outside: legacy).
         .environment(\.cardStyle, cardStyle)
         .onChange(of: cardStyle, initial: true) { _, s in if focusMemory != nil { CardStyleLog.note(s) } }
@@ -292,13 +289,6 @@ struct HomeRowView: View {
     /// Task 5.1: the card options in effect for this row: the look on the home page (both layouts), Build 4 cards
     /// with the diagnosis switch „alte Karte“ and on the other pages that reuse this row (library, collection, list).
     private var cardStyle: CardStyle { CardStyle.resolve(theme, oldCard: oldCard || focusMemory == nil) }
-
-    /// Task 5.1: extra bottom room so rows stand `rowSpacing` apart (home page only, none with „alte Karte“).
-    private var rowGapDelta: CGFloat {
-        let style = cardStyle
-        guard !style.legacy, focusMemory != nil else { return 0 }
-        return CardLayout.rowGap(style.rowSpacing) - Theme.Space.xl
-    }
 
     /// Task 5.1: geometry of this row's cards (title strip, title shift), nil when the row shows no titles below.
     private func titleSlot(_ kind: TileKind) -> CardTitleSlot? {
