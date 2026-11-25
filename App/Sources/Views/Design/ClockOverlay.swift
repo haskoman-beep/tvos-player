@@ -2,32 +2,67 @@ import SwiftUI
 import UIKit
 import PlayerCore
 
-/// Uhr oben rechts für die obere Leiste (Format HH:mm, aktualisiert jede Minute).
-/// Build 3 device test: the clock lay fixed over the page while the top bar scrolled away (source list); it now
-/// follows the bar (`followsTabBar`): moves up with it and fades out when the bar is off screen or hidden.
-struct ClockView: View {
-    var followsTabBar = false
-    @State private var bar = TabBarFollower()
+/// Task 5.6 (D-28): the clock of the look (`global.clock`) at the top right of every tab page: right 80, top 56
+/// from the screen edge, `meta` role 27 pt × typeScale, weight 500, white 75 %, digits of equal width. It lies
+/// over the tab view, so the player (a full-screen cover) hides it. With the top bar it follows the bar
+/// (Build 3 device test: it moves up with the bar and fades out when the bar is off screen or hidden).
+struct ClockOverlay: View {
+    @Environment(\.theme) private var theme
 
-    private static let format: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm"
-        return f
-    }()
+    var body: some View {
+        let chrome = theme.chrome
+        if chrome.showsClock {
+            ClockView(followsTabBar: chrome.navigation == .oben, style: .look(size: chrome.clockFontSize))
+                .padding(.top, LookChrome.clockTop)
+                .padding(.trailing, LookChrome.clockTrailing)
+                .ignoresSafeArea()
+                .onAppear { RemoteLog.info("nav", "Uhr an (\(chrome.navigation.rawValue))") }
+                .onDisappear { RemoteLog.info("nav", "Uhr aus") }
+        }
+    }
+}
+
+/// Time text, HH:mm on the 24-hour clock in the locale's form (`LookChrome.clockText`), refreshed at every full
+/// minute. Used by `ClockOverlay` and the pause card of the player.
+struct ClockView: View {
+    enum Style: Equatable {
+        /// Pause card: today's look (title3, semibold, secondary).
+        case pauseCard
+        /// Look clock: `meta` size from `LookChrome`, weight 500, white 75 %.
+        case look(size: CGFloat)
+    }
+
+    var followsTabBar = false
+    var style: Style = .pauseCard
+    @State private var bar = TabBarFollower()
+    @Environment(\.theme) private var theme
+
+    /// One formatter for the device locale and time zone (both rarely change; a change shows after a relaunch).
+    private static let format = LookChrome.clockFormatter(locale: .current, timeZone: .current)
 
     var body: some View {
         TimelineView(.everyMinute) { ctx in
-            Text(Self.format.string(from: ctx.date))
-                .font(.title3.monospacedDigit().weight(.semibold))
-                .foregroundStyle(.secondary)
+            styled(Text(Self.format.string(from: ctx.date)))
         }
         .offset(y: followsTabBar ? bar.shift : 0)
         .opacity(followsTabBar && !bar.shown ? 0 : 1)
-        .animation(.easeInOut(duration: 0.2), value: bar.shown)
+        .animation(theme.motion.fade > 0 ? Animation.easeInOut(duration: 0.2) : nil, value: bar.shown)
         .allowsHitTesting(false)
+        .accessibilityHidden(true)
         .onAppear { if followsTabBar { bar.start() } }
         .onDisappear { bar.stop() }
         .onChange(of: followsTabBar) { _, on in if on { bar.start() } else { bar.stop() } }
+    }
+
+    @ViewBuilder private func styled(_ text: Text) -> some View {
+        switch style {
+        case .pauseCard:
+            text.font(.title3.monospacedDigit().weight(.semibold))
+                .foregroundStyle(.secondary)
+        case .look(let size):
+            text.font(.system(size: size, weight: ThemeValues.TypeScale.weight(LookChrome.clockWeight)).monospacedDigit())
+                .foregroundStyle(theme.color.primary.opacity(LookChrome.clockOpacity))
+        }
     }
 }
 

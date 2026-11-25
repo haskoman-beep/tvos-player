@@ -17,6 +17,9 @@ struct ThemeValues: Equatable {
     var elevation: Elevation
     var focus: FocusStyle
     var motion: Motion
+    /// Task 5.6: main navigation, clock and settings layout (`global.*`). Always the profile's values (like the
+    /// accent); `standard` carries the baseline (today's defaults).
+    var chrome = LookChrome(LookPreset.baseline)
 
     struct Colors: Equatable {
         var base: Color
@@ -196,6 +199,7 @@ struct ThemeValues: Equatable {
         if reduceTransparency { t.color.scrim = t.color.base }
         t.type = TypeScale(scale: values.global.typeScale, character: values.global.typeCharacter)
         t.focus.border = LookOptionCatalog.effectiveFocusBorder(values)
+        t.chrome = LookChrome(values)
         if LookTheme.usesPlanMotion(values, reduceMotion: reduceMotion) {
             let m = LookTheme.motion(values.global.motion, reduceMotion: reduceMotion)
             t.motion = Motion(focus: m.focus, press: m.focus == 0 ? 0 : t.motion.press, fade: m.fade,
