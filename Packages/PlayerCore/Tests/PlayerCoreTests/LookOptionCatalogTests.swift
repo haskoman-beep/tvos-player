@@ -65,8 +65,9 @@ private func lookValueKeys() throws -> [String: Set<String>] {
     #expect(LookOptionCatalog.isEnabled("focusGlow", in: v, build: .b5a).enabled)
     v.home.focusGlow = false
     #expect(LookOptionCatalog.isEnabled("corners", in: v, build: .b5a).enabled)
-    // In Build 4 the later options are visible but off.
-    let later = LookOptionCatalog.isEnabled("corners", in: v)
+    // Build 5a (Task 5.2) is current: its options are on; later builds' options are visible but off.
+    #expect(LookOptionCatalog.isEnabled("heroStyle", in: v) == (true, nil))
+    let later = LookOptionCatalog.isEnabled("corners", in: v, build: .b4)
     #expect(!later.enabled && later.reason == "kommt mit Build 5a")
     #expect(LookOptionCatalog.isEnabled("accent", in: v) == (true, nil))
     #expect(LookOptionCatalog.isEnabled("sourceList", in: v).reason == "kommt mit Build 5b")

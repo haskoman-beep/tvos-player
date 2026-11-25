@@ -24,9 +24,19 @@ public enum HeroInfoCollapse {
         public var ratings: CGFloat
         /// Overview, two lines of its font.
         public var overview: CGFloat
+        /// Task 5.2: number of gaps below the logo (one per shown part; Build 4: meta, ratings, overview = 3).
+        public var gaps: Int
+        /// Task 5.2: quality badge line (`heroInfo` ausführlich), 0 when not shown.
+        public var badges: CGFloat
+        /// Task 5.2: room below the info inside the hero (banner / carousel card inset and gap to the list).
+        public var bottomInset: CGFloat
 
         public init(topInset: CGFloat, logoMax: CGFloat, logoMin: CGFloat, spacing: CGFloat, metaLine: CGFloat,
-                    ratings: CGFloat, overview: CGFloat) {
+                    ratings: CGFloat, overview: CGFloat, gaps: Int = 3, badges: CGFloat = 0,
+                    bottomInset: CGFloat = 0) {
+            self.gaps = max(0, gaps)
+            self.badges = badges
+            self.bottomInset = bottomInset
             self.topInset = topInset
             self.logoMax = logoMax
             self.logoMin = min(logoMin, logoMax)
@@ -38,8 +48,8 @@ public enum HeroInfoCollapse {
 
         /// Height of the collapsed info with a logo of `logo` points.
         func height(logo: CGFloat) -> CGFloat {
-            max(0, topInset) + max(0, logo) + 3 * max(0, spacing) + max(0, metaLine) + max(0, ratings)
-                + max(0, overview)
+            let parts = max(0, metaLine) + max(0, ratings) + max(0, overview) + max(0, badges)
+            return max(0, topInset) + max(0, logo) + CGFloat(gaps) * max(0, spacing) + parts + max(0, bottomInset)
         }
     }
 
