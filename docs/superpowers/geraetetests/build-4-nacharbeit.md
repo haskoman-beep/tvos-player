@@ -53,10 +53,12 @@ Device test 25.11. evening (user, remote log switched on):
    with a text + circle label. On tvOS that style gives no focus highlight for such a label. The circle is also a
    fixed `.blue`, not the theme accent. Fix: focus-aware style (scale + accent ring, like the other token buttons).
 2. **Home poster row still stutters** while pressing right (symptom 2 not fixed by S1–S4).
-3. **Posters „abgehackt“** (cut off / choppy, to be clarified with the user; see symptom 3 / S5).
+3. **Row still cut off at the bottom (symptom 3, S5 not effective).** User: the first move down does not scroll
+   far enough, a piece at the bottom is missing; up and down again corrects it.
 4. **No remote-log lines arrived.** `~/tvos_player/logs` has no file after `player-2026-11-23.log`, although the
    switch is on. The collector (`playerlog.service`, signed mode since 24.11. 22:04) runs and announces
    `Player-Log`, but it answers wrong signatures with a silent 401 (`log_message` muted). Candidates: the TV status
    is „noch kein Empfänger gewählt“ / „kein Schlüssel“, or the TV secret (phone page, key `playerlog`) differs from
    `~/.config/playerlog/secret`. The app keeps the last 500 lines in memory; once sending works, they flush,
-   provided the app was not restarted.
+   provided the app was not restarted. TV page shows receiver „Player-Log“ chosen. The signed collector and its
+   secret date from 24.11. 22:04, after the last log, so the TV most likely never got this secret.
