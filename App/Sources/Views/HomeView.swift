@@ -145,7 +145,8 @@ struct HomeView: View {
                 ScrollView(.vertical) {
                     LazyVStack(alignment: .leading, spacing: Theme.Space.xl) {
                         HeroButtons(slides: slides, onFocusChange: { heroButtonsFocus($0) },
-                                    leading: HeroMetrics.buttonLeading(look.heroStyle))
+                                    leading: HeroMetrics.buttonLeading(look.heroStyle),
+                                    carousel: look.heroStyle == .karussell)
                         rowList(rows, hero: true)
                     }
                     .padding(.top, 24)

@@ -134,6 +134,12 @@ final class HeroSlides {
     }
 
     var next: MetaPreview? { items.count > 1 ? items[(index + 1) % items.count] : nil }
+
+    /// Task 5.2: carousel left/right on the hero button, wrapping at both ends (PlayerCore `HeroCarousel`).
+    func step(forward: Bool) {
+        guard items.count > 1 else { return }
+        index = HeroCarousel.step(index, count: items.count, forward: forward)
+    }
 }
 
 enum HeroMetrics {
@@ -290,8 +296,13 @@ struct HeroButtons: View {
     var onFocusChange: ((Bool) -> Void)? = nil
     /// Task 5.2: leading inset (full screen: `Theme.Space.edge`; banner and carousel: inside the card).
     var leading: CGFloat = Theme.Space.edge
+    /// Task 5.2 (`heroStyle` karussell): left on „Abspielen“ / right on „Details“ switches the title.
+    var carousel = false
     @FocusState private var field: Field?
     @State private var starting = false
+    /// Task 5.2: when the focus last moved inside the row; a move command right after it was that focus move, not a
+    /// carousel step at the row's end (the order of focus update and move command is not guaranteed).
+    @State private var fieldMoved = ContinuousClock.now
 
     enum Field: Hashable { case play, details }
 
@@ -327,6 +338,7 @@ struct HeroButtons: View {
         .padding(.trailing, Theme.Space.edge)
         .padding(.vertical, Theme.Space.s)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onMoveCommand(perform: moveAction)
         .focusSection()
         .defaultFocus($field, .play, priority: .userInitiated)
         // Die App-Akzentfarbe (RootView .tint) färbte beide Knöpfe blau; Welle F-i: Token-Knöpfe (ThemeActionButtonStyle).
@@ -335,6 +347,7 @@ struct HeroButtons: View {
             if f != nil { focus.leaveRows() }
         }
         .onChange(of: field != nil) { _, f in onFocusChange?(f) }
+        .onChange(of: field) { fieldMoved = ContinuousClock.now }
         // Back from a pushed page with the focus state unchanged: report it again.
         .onAppear { if field != nil { onFocusChange?(true) } }
         .onDisappear { onFocusChange?(false) }
@@ -375,6 +388,27 @@ struct HeroButtons: View {
             LaunchFocus.finish("Startfenster vorbei", way: "fenster",
                                usableAt: LaunchFocus.firstPlayFocus ?? LaunchFocus.shownAt ?? ContinuousClock.now)
         }
+    }
+
+    /// Task 5.2: only the carousel listens to left/right (other styles keep the plain focus moves).
+    private var moveAction: ((MoveCommandDirection) -> Void)? {
+        guard carousel else { return nil }
+        return { carouselMove($0) }
+    }
+
+    /// Task 5.2: carousel step at the row's ends (nothing focusable lies beyond them; the next title is a picture).
+    /// Left inside the row (Details → Abspielen) moves the focus only.
+    private func carouselMove(_ direction: MoveCommandDirection) {
+        guard carousel, slides.items.count > 1 else { return }
+        guard fieldMoved.duration(to: ContinuousClock.now) > .milliseconds(150) else { return }
+        let forward: Bool
+        switch (direction, field) {
+        case (.left, .play?): forward = false
+        case (.right, .details?): forward = true
+        default: return
+        }
+        slides.step(forward: forward)
+        RemoteLog.info("hero", "Karussell \(forward ? "→" : "←") \(slides.index + 1)/\(slides.items.count): \(slides.current?.name ?? "?")")
     }
 
     private func retryHero() {

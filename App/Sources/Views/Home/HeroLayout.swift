@@ -59,8 +59,9 @@ struct HeroLayout: View {
         switch style {
         case .banner:
             HeroBanner(content: content, height: cardHeight)
-        case .vollbild, .karussell, .aus:   // 5.2: the carousel follows in its own commit
-
+        case .karussell:
+            HeroCarouselCard(content: content, next: slides.next, height: cardHeight)
+        case .vollbild, .aus:
             HeroFullscreen(content: content)
         }
     }
