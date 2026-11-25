@@ -168,7 +168,6 @@ extension Route {
 /// Hintergrund + Info des angezeigten Titels; steuert den Diashow-Takt.
 struct HeroLayer: View {
     @Environment(HomeFocus.self) private var focus
-    @Environment(\.displayScale) private var displayScale
     let slides: HeroSlides
     /// P2 (follow-up 2): collapsed info while the focus is in the rows.
     let collapse: HeroCollapse
@@ -203,7 +202,8 @@ struct HeroLayer: View {
         .onChange(of: slides.index, initial: true) {
             // Nächste Folie schon laden, damit die Überblendung ohne Lücke läuft.
             guard let n = slides.next, let s = n.background ?? n.poster, let u = URL(string: s) else { return }
-            Task { await ImagePipeline.shared.prefetch([u], target: .fullScreen(scale: displayScale)) }
+            // P3 device test 1: same target as `HeroBackdrop` (1920×1080), so the swap hits the prefetched bitmap.
+            Task { await ImagePipeline.shared.prefetch([u], target: .heroBackdrop) }
         }
     }
 }
@@ -211,7 +211,6 @@ struct HeroLayer: View {
 /// Vollbild-Hintergrund; das neue Bild wird erst geladen und dann in 0,6 s übergeblendet.
 struct HeroBackdrop: View {
     let url: String?
-    @Environment(\.displayScale) private var displayScale
     @State private var shown: Shown?
 
     private struct Shown: Equatable {
@@ -244,7 +243,7 @@ struct HeroBackdrop: View {
                 return
             }
             if shown?.url == s { return }
-            let target = ImageTarget.fullScreen(scale: displayScale)
+            let target = ImageTarget.heroBackdrop   // P3 device test 1: at most 1920×1080 px (user decision)
             let started = ContinuousClock.now
             // Speichercache-Treffer nach dem Freigeben (Rückkehr): sofort, ohne Überblendung.
             if shown == nil, let hit = ImagePipeline.shared.cachedImage(u, target: target) {
@@ -503,6 +502,7 @@ struct HeroButtons: View {
 
 extension ImageTarget {
     /// Vollbild-Hintergrund (1920×1080 Punkte × Bildschirmfaktor; auf 4K also 3840 px breit), Welle C-b #16.
+    /// Not used by the home hero since device test 1 (P3): it decodes at `ImageTarget.heroBackdrop` (1920×1080 px).
     static func fullScreen(scale: CGFloat) -> ImageTarget {
         ImageTarget(points: 1920, 1080, scale: Double(scale), fit: false) ?? ImageTarget(width: 1920, height: 1280, fit: false)
     }
