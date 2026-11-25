@@ -152,7 +152,7 @@ struct HomeView: View {
                 .environment(\.heroBackdropShared, true)
                 // Wave F-k: focus scrolling keeps only the card's frame inside the list, the lift (tag at the poster's
                 // top edge) reaches above it. The list draws past its top edge into a band as high as that lift
-                // (`Theme.Focus.listEdgeBand`, clear of the hero info); only the band's top fades.
+                // (`Theme.Focus.listEdgeBand`, clear of the expanded hero info; the collapsed info reaches into it, device test 1); only the band's top fades.
                 .scrollClipDisabled()
                 // Weicher Rand oben, damit hochgescrollte Reihen nicht hart an der Info abreißen.
                 .mask(alignment: .top) {
@@ -177,8 +177,7 @@ struct HomeView: View {
         let a = model.profile.appearance
         let strip = a.titles.posterBadges == .bottom ? PosterQualityBadges.bandHeight : 0
         return HeroListFrame(focus: focus, collapse: collapse, kinds: rows.map { PosterSize.kind(for: $0.style) },
-                             cardScale: a.cardSize.scale, posterStrip: strip, bottomRoom: listBottomRoom(rows),
-                             edgeBand: listEdgeBand(rows))
+                             cardScale: a.cardSize.scale, posterStrip: strip, bottomRoom: listBottomRoom(rows))
     }
 
     /// Wave F-k: band above the hero list for the lift of its tallest tile (card size, quality strip below posters).

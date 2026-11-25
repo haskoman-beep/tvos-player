@@ -142,13 +142,23 @@ enum HeroMetrics {
     static let logoHeight: CGFloat = 140
     /// Height of the meta line ("2018 · 1 h 37 min · FSK 0").
     static let metaLineHeight: CGFloat = 30
+    /// Device test 1 (user decision): logo (or title) of the collapsed info when there is room ("about 100 instead
+    /// of 140").
+    static let compactLogoHeight: CGFloat = 100
     /// P2 (follow-up 2): smallest logo (or title) of the collapsed info; with less room the floor of the collapsed
     /// list top wins and the tallest row no longer fits whole (logged as "passt nicht").
     static let compactLogoMin: CGFloat = 80
-    /// P2: the collapsed info as `HeroLayer` places it: top inset, logo, gap, meta line (PlayerCore `HeroInfoCollapse`).
-    static let compactInfo = HeroInfoCollapse.CompactInfo(topInset: Theme.Space.s, logoMax: logoHeight,
-                                                          logoMin: compactLogoMin, spacing: Theme.Space.m,
-                                                          metaLine: metaLineHeight)
+    /// Device test 1: tighter gaps of the collapsed info (full info: `Theme.Space.m`).
+    static let compactSpacing: CGFloat = Theme.Space.s
+    /// Two lines of the overview (`.callout`, `lineLimit(2)`).
+    static let overviewHeight: CGFloat = (UIFont.preferredFont(forTextStyle: .callout).lineHeight * 2).rounded(.up)
+    /// P2: the collapsed info as `HeroLayer` places it (PlayerCore `HeroInfoCollapse`): top inset, logo, meta line,
+    /// ratings and the two-line overview (device test 1: nothing is dropped any more).
+    static let compactInfo = HeroInfoCollapse.CompactInfo(topInset: Theme.Space.s, logoMax: compactLogoHeight,
+                                                          logoMin: compactLogoMin, spacing: compactSpacing,
+                                                          metaLine: metaLineHeight,
+                                                          ratings: ThemeBadge.TechSize.detail.height,   // InfoBadges.height
+                                                          overview: overviewHeight)
 }
 
 extension Route {
@@ -290,17 +300,18 @@ struct HeroDetails {
 struct HeroInfo: View {
     @EnvironmentObject var model: AppModel
     let item: MetaPreview
-    /// P2 (follow-up 2): collapsed info (logo or title of this height + meta line); nil = full info.
+    /// P2 (follow-up 2): collapsed info with a logo (or title) of this height and tighter gaps; nil = full info.
     var compactLogo: CGFloat? = nil
     @State private var details: HeroDetails?
     @State private var detailsID: String?
 
     private var current: HeroDetails? { detailsID == item.id ? details : nil }
     private var logoHeight: CGFloat { compactLogo ?? HeroMetrics.logoHeight }
+    private var spacing: CGFloat { compactLogo == nil ? Theme.Space.m : HeroMetrics.compactSpacing }
 
     var body: some View {
         let d = current
-        VStack(alignment: .leading, spacing: Theme.Space.m) {
+        VStack(alignment: .leading, spacing: spacing) {
             Group {
                 if let logo = d?.logo ?? item.logo {
                     RemoteImage(url: logo, maxPixels: 1200, fit: true)
@@ -314,13 +325,11 @@ struct HeroInfo: View {
             // Meta ist Text, keine Plakette (§4.5): „2018 · 1 h 37 min · FSK 0“.
             MetaLine(parts: [item.releaseInfo, d?.runtime, d?.certification])
                 .frame(height: HeroMetrics.metaLineHeight, alignment: .leading)
-            // P2: the collapsed info drops ratings and overview (the list moves up into their room).
-            if compactLogo == nil {
-                InfoBadges(ratings: d.map { model.ratingBadges(imdbRating: $0.imdbRating, mdblist: $0.ratings) } ?? [], tech: [])
-                    .frame(height: InfoBadges.height, alignment: .leading)
-                Text(d?.overview ?? item.description ?? "").font(.callout).lineLimit(2)
-                    .frame(maxWidth: Theme.Layout.contentMaxWidth, alignment: .leading)
-            }
+            // Device test 1 (user decision): the collapsed info keeps ratings and overview (`HeroMetrics.compactInfo`).
+            InfoBadges(ratings: d.map { model.ratingBadges(imdbRating: $0.imdbRating, mdblist: $0.ratings) } ?? [], tech: [])
+                .frame(height: InfoBadges.height, alignment: .leading)
+            Text(d?.overview ?? item.description ?? "").font(.callout).lineLimit(2)
+                .frame(maxWidth: Theme.Layout.contentMaxWidth, alignment: .leading)
         }
         .shadow(color: .black.opacity(0.6), radius: 8)
         .animation(.easeInOut(duration: 0.3), value: item.id)

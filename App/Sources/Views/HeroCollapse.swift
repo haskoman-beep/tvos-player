@@ -4,8 +4,9 @@ import PlayerCore
 
 /// P2 (Build 4 follow-up 2): collapsing hero info, Apple TV app style. With the focus on the hero buttons (the top
 /// edge of the page) the layout is as before. Once the focus enters a row (`HomeFocus.inRows` turns true: card,
-/// placeholder, status tile) the info shows only the logo (or title) and the meta line, and the list top moves up so
-/// the page's tallest row fits between the list's top and its visible bottom (PlayerCore `HeroInfoCollapse`).
+/// placeholder, status tile) the info moves up and gets more compact (device test 1, user decision: logo about 100
+/// instead of 140, tighter gaps; meta line, ratings and overview stay), and the list top moves up so the page's
+/// tallest row fits between the list's top and its visible bottom (PlayerCore `HeroInfoCollapse`).
 /// The list frame (`HeroListFrame`) and the info (`HeroLayer`) read this one object, so both change in the same
 /// animated transaction.
 /// Fix round (user decision 25.11., review M2): the collapse is a latch. It does not follow the F-A-12 rest check:
@@ -15,7 +16,7 @@ import PlayerCore
     /// Applied state (changed with the theme's expand animation by `HeroListFrame`).
     fileprivate(set) var collapsed = false
     /// Logo (or title) height of the collapsed info, from the current layout.
-    fileprivate(set) var compactLogo: CGFloat = HeroMetrics.logoHeight
+    fileprivate(set) var compactLogo: CGFloat = HeroMetrics.compactLogoHeight
     /// The hero buttons (Abspielen/Details) hold the focus; set by `HomeView` from `HeroButtons`. Turning true
     /// expands the info.
     var heroButtonsFocused = false
@@ -37,7 +38,7 @@ import PlayerCore
 }
 
 /// P2: frame of the hero home list. Top: expanded `HeroMetrics.listTop`, collapsed from `HeroInfoCollapse` (tallest
-/// row, measured page top, lift band above, room below). Bottom: the lift room of wave F-m, unchanged.
+/// row, measured page top, room below). Bottom: the lift room of wave F-m, unchanged.
 /// The heading snap (`HeadingSnap`) works in list content coordinates (row top against the scroll offset), so it
 /// follows the new list top by itself; its first check (0.4 s) runs after the collapse animation (≤ 0.3 s).
 struct HeroListFrame: ViewModifier {
@@ -47,9 +48,8 @@ struct HeroListFrame: ViewModifier {
     let kinds: [TileKind]
     let cardScale: CGFloat
     let posterStrip: CGFloat
-    /// Room below the list (`listBottomRoom`) and lift band above it (`listEdgeBand`).
+    /// Room below the list (`listBottomRoom`).
     let bottomRoom: CGFloat
-    let edgeBand: CGFloat
     @Environment(\.theme) private var theme
     /// Top of the page in the window (safe area and tab bar; device log: 157).
     @State private var pageTop: CGFloat = 0
@@ -82,10 +82,11 @@ struct HeroListFrame: ViewModifier {
                                               shadow: Theme.Focus.cardLiftShadow, minimumPadding: Theme.Space.l * cardScale)
         return HeroInfoCollapse.layout(screenHeight: Theme.Screen.bounds.height, pageTop: pageTop,
                                        bottomRoom: bottomRoom, rowHeight: row, expandedTop: HeroMetrics.listTop,
-                                       edgeBand: edgeBand, info: HeroMetrics.compactInfo)
+                                       info: HeroMetrics.compactInfo)
     }
 
-    /// One `nav` line per change: "Info eingeklappt|ausgeklappt: Liste <top>…<bottom>, höchste Reihe <h>".
+    /// One `nav` line per change: "Info eingeklappt|ausgeklappt: Liste <top>…<bottom>, höchste Reihe <h>" (collapsed:
+    /// plus ", Logo <n>").
     private func apply(_ c: Bool, layout: HeroInfoCollapse.Layout) {
         guard c != collapse.collapsed else { return }
         // Theme motion "expand" (standard 0.3 s, dezent 0.25 s; 0 = motion off or reduced: no animation).
