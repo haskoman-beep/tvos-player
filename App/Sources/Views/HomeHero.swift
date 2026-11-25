@@ -142,13 +142,23 @@ enum HeroMetrics {
     static let logoHeight: CGFloat = 140
     /// Height of the meta line ("2018 · 1 h 37 min · FSK 0").
     static let metaLineHeight: CGFloat = 30
+    /// Device test 1 (user decision): logo (or title) of the collapsed info when there is room ("about 100 instead
+    /// of 140").
+    static let compactLogoHeight: CGFloat = 100
     /// P2 (follow-up 2): smallest logo (or title) of the collapsed info; with less room the floor of the collapsed
     /// list top wins and the tallest row no longer fits whole (logged as "passt nicht").
     static let compactLogoMin: CGFloat = 80
-    /// P2: the collapsed info as `HeroLayer` places it: top inset, logo, gap, meta line (PlayerCore `HeroInfoCollapse`).
-    static let compactInfo = HeroInfoCollapse.CompactInfo(topInset: Theme.Space.s, logoMax: logoHeight,
-                                                          logoMin: compactLogoMin, spacing: Theme.Space.m,
-                                                          metaLine: metaLineHeight)
+    /// Device test 1: tighter gaps of the collapsed info (full info: `Theme.Space.m`).
+    static let compactSpacing: CGFloat = Theme.Space.s
+    /// Two lines of the overview (`.callout`, `lineLimit(2)`).
+    static let overviewHeight: CGFloat = (UIFont.preferredFont(forTextStyle: .callout).lineHeight * 2).rounded(.up)
+    /// P2: the collapsed info as `HeroLayer` places it (PlayerCore `HeroInfoCollapse`): top inset, logo, meta line,
+    /// ratings and the two-line overview (device test 1: nothing is dropped any more).
+    static let compactInfo = HeroInfoCollapse.CompactInfo(topInset: Theme.Space.s, logoMax: compactLogoHeight,
+                                                          logoMin: compactLogoMin, spacing: compactSpacing,
+                                                          metaLine: metaLineHeight,
+                                                          ratings: ThemeBadge.TechSize.detail.height,   // InfoBadges.height
+                                                          overview: overviewHeight)
 }
 
 extension Route {
@@ -168,7 +178,6 @@ extension Route {
 /// Hintergrund + Info des angezeigten Titels; steuert den Diashow-Takt.
 struct HeroLayer: View {
     @Environment(HomeFocus.self) private var focus
-    @Environment(\.displayScale) private var displayScale
     let slides: HeroSlides
     /// P2 (follow-up 2): collapsed info while the focus is in the rows.
     let collapse: HeroCollapse
@@ -203,7 +212,8 @@ struct HeroLayer: View {
         .onChange(of: slides.index, initial: true) {
             // Nächste Folie schon laden, damit die Überblendung ohne Lücke läuft.
             guard let n = slides.next, let s = n.background ?? n.poster, let u = URL(string: s) else { return }
-            Task { await ImagePipeline.shared.prefetch([u], target: .fullScreen(scale: displayScale)) }
+            // P3 device test 1: same target as `HeroBackdrop` (1920×1080), so the swap hits the prefetched bitmap.
+            Task { await ImagePipeline.shared.prefetch([u], target: .heroBackdrop) }
         }
     }
 }
@@ -211,7 +221,6 @@ struct HeroLayer: View {
 /// Vollbild-Hintergrund; das neue Bild wird erst geladen und dann in 0,6 s übergeblendet.
 struct HeroBackdrop: View {
     let url: String?
-    @Environment(\.displayScale) private var displayScale
     @State private var shown: Shown?
 
     private struct Shown: Equatable {
@@ -244,7 +253,7 @@ struct HeroBackdrop: View {
                 return
             }
             if shown?.url == s { return }
-            let target = ImageTarget.fullScreen(scale: displayScale)
+            let target = ImageTarget.heroBackdrop   // P3 device test 1: at most 1920×1080 px (user decision)
             let started = ContinuousClock.now
             // Speichercache-Treffer nach dem Freigeben (Rückkehr): sofort, ohne Überblendung.
             if shown == nil, let hit = ImagePipeline.shared.cachedImage(u, target: target) {
@@ -259,12 +268,11 @@ struct HeroBackdrop: View {
             PictureArrivalLog.backdrop.note(img, fromMemory: inMemory, waitMs: waited, fades: true)
             withAnimation(.easeInOut(duration: 0.6)) { shown = Shown(url: s, image: img) }
         }
-        // Verdeckt (Detailseite, Wiedergabe): Vollbild-Bitmap nicht außerhalb des Cache-Budgets halten.
-        // Beim Wiederkommen startet `.task(id:)` neu und holt es aus dem Speicher- oder Plattencache.
-        .onDisappear {
-            guard let img = shown?.image, ImagePipeline.cost(img) >= RemoteImage.releaseBytes else { return }
-            shown = nil
-        }
+        // Covered (detail page, playback): do not pin the backdrop bitmap outside the cache budget. P3 review 2 (M2):
+        // since device test 1 it is ≈ 7.9 MiB, below `RemoteImage.releaseBytes`, so it is released without a size
+        // check. On return `.task(id:)` runs again and takes it from the memory cache (`aus Speicher` in the
+        // `bilder: Hintergrund` line) or the URLCache.
+        .onDisappear { shown = nil }
     }
 }
 
@@ -290,17 +298,18 @@ struct HeroDetails {
 struct HeroInfo: View {
     @EnvironmentObject var model: AppModel
     let item: MetaPreview
-    /// P2 (follow-up 2): collapsed info (logo or title of this height + meta line); nil = full info.
+    /// P2 (follow-up 2): collapsed info with a logo (or title) of this height and tighter gaps; nil = full info.
     var compactLogo: CGFloat? = nil
     @State private var details: HeroDetails?
     @State private var detailsID: String?
 
     private var current: HeroDetails? { detailsID == item.id ? details : nil }
     private var logoHeight: CGFloat { compactLogo ?? HeroMetrics.logoHeight }
+    private var spacing: CGFloat { compactLogo == nil ? Theme.Space.m : HeroMetrics.compactSpacing }
 
     var body: some View {
         let d = current
-        VStack(alignment: .leading, spacing: Theme.Space.m) {
+        VStack(alignment: .leading, spacing: spacing) {
             Group {
                 if let logo = d?.logo ?? item.logo {
                     RemoteImage(url: logo, maxPixels: 1200, fit: true)
@@ -314,13 +323,11 @@ struct HeroInfo: View {
             // Meta ist Text, keine Plakette (§4.5): „2018 · 1 h 37 min · FSK 0“.
             MetaLine(parts: [item.releaseInfo, d?.runtime, d?.certification])
                 .frame(height: HeroMetrics.metaLineHeight, alignment: .leading)
-            // P2: the collapsed info drops ratings and overview (the list moves up into their room).
-            if compactLogo == nil {
-                InfoBadges(ratings: d.map { model.ratingBadges(imdbRating: $0.imdbRating, mdblist: $0.ratings) } ?? [], tech: [])
-                    .frame(height: InfoBadges.height, alignment: .leading)
-                Text(d?.overview ?? item.description ?? "").font(.callout).lineLimit(2)
-                    .frame(maxWidth: Theme.Layout.contentMaxWidth, alignment: .leading)
-            }
+            // Device test 1 (user decision): the collapsed info keeps ratings and overview (`HeroMetrics.compactInfo`).
+            InfoBadges(ratings: d.map { model.ratingBadges(imdbRating: $0.imdbRating, mdblist: $0.ratings) } ?? [], tech: [])
+                .frame(height: InfoBadges.height, alignment: .leading)
+            Text(d?.overview ?? item.description ?? "").font(.callout).lineLimit(2)
+                .frame(maxWidth: Theme.Layout.contentMaxWidth, alignment: .leading)
         }
         .shadow(color: .black.opacity(0.6), radius: 8)
         .animation(.easeInOut(duration: 0.3), value: item.id)
@@ -503,6 +510,9 @@ struct HeroButtons: View {
 
 extension ImageTarget {
     /// Vollbild-Hintergrund (1920×1080 Punkte × Bildschirmfaktor; auf 4K also 3840 px breit), Welle C-b #16.
+    /// No caller on this branch since device test 1 (P3): the home hero, its slide prefetch and the expanded card use
+    /// `ImageTarget.heroBackdrop` (1920×1080 px). Kept only so concurrent branches that still call it keep compiling;
+    /// remove once they are merged. A new caller would split the hero's cache entry again.
     static func fullScreen(scale: CGFloat) -> ImageTarget {
         ImageTarget(points: 1920, 1080, scale: Double(scale), fit: false) ?? ImageTarget(width: 1920, height: 1280, fit: false)
     }

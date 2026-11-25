@@ -29,6 +29,9 @@ struct HomeRowView: View {
     /// S5 (Build 4 follow-up): card the focus is handed to after the load; once it holds the focus, the home page's
     /// heading snap restarts (the row-level focus flag stays true through the hand-over, so nothing else reruns it).
     @State private var handoverTarget: Route?
+    /// Device test 1 (Build 4 follow-up 2): filters the row's raw focus state for `onFocusInside` (a gap between two
+    /// cards is no leave). A reference held in `@State`: changes do not re-render the row.
+    @State private var presence = RowFocusPresenceBox()
     /// Startseite mit Hero: fokussierte Kachel meldet sich (nil außerhalb der Startseite).
     @Environment(HomeFocus.self) private var homeFocus: HomeFocus?
     @FocusState private var focusedRoute: Route?
@@ -99,9 +102,9 @@ struct HomeRowView: View {
         // Review M1: focus left the row: a pending hand-over ends here (no stale restart on a later visit).
         .onChange(of: focusedRoute != nil || focusedPlaceholder != nil) { _, f in
             if !f, handoverTarget != nil { handoverTarget = nil }
-            onFocusInside?(f)
+            reportInside(f)
         }
-        .onAppear { if focusedRoute != nil || focusedPlaceholder != nil { onFocusInside?(true) } }
+        .onAppear { if focusedRoute != nil || focusedPlaceholder != nil { reportInside(true) } }
         // Task 4.1a (F-A-2): collection rows hand over like list rows: a focused placeholder (or status tile) goes to
         // the tile at the same place when the kit file arrives, else to the status tile.
         .onChange(of: collectionLoadPhase) { _, p in
@@ -127,6 +130,7 @@ struct HomeRowView: View {
         // Task 4.1a (F-A-3): `initial` also claims a target when the lazy list builds this row after the scroll.
         .onChange(of: focusTarget?.serial, initial: true) { _, _ in claimFocusTarget() }
         .onDisappear {
+            presence.disappear()
             onFocusInside?(false)
             if handoverTarget != nil { handoverTarget = nil }   // Review M1
             // Wave F-p R1: page left with focus in this row within the 350 ms rest: no stale request.
@@ -327,6 +331,35 @@ struct HomeRowView: View {
     /// have moved the focus to a card of this row (placeholder nil) when the hand-over runs.
     private var rowHoldsFocus: Bool { focusedRoute != nil || focusedPlaceholder != nil }
 
+    /// Device test 1 (Build 4 follow-up 2): moving right, the raw state passed through "nothing focused" between two
+    /// cards, so the row reported leave + enter on every step and the heading snap scrolled again each time (the
+    /// heading jittered). An enter is reported at once, a leave only after `RowFocusPresence.leaveDelayMs` without
+    /// the focus coming back; the `nav` line on the real leave counts the bridged gaps.
+    private func reportInside(_ inside: Bool) {
+        guard let onFocusInside else { return }
+        let box = presence
+        switch box.state.raw(inside, now: ProcessInfo.processInfo.systemUptime) {
+        case .none:
+            break
+        case .enter:
+            box.cancelLeave()
+            onFocusInside(true)
+        case .cancelLeave:
+            box.cancelLeave()
+        case .scheduleLeave(let serial):
+            box.cancelLeave()
+            let name = title
+            box.leave = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(RowFocusPresence.leaveDelayMs))
+                guard !Task.isCancelled else { return }
+                box.leave = nil
+                guard let leave = box.state.leaveDue(serial: serial, inside: rowHoldsFocus) else { return }
+                if let line = leave.line(title: name) { RemoteLog.info("nav", line) }
+                onFocusInside(false)
+            }
+        }
+    }
+
     /// S5 (Build 4 follow-up): focus goes from a placeholder to the loaded card. The home page's heading snap
     /// restarts once the card holds the focus (`onChange(of: focusedRoute)`), or right away when it already does.
     private func handOver(to target: Route) {
@@ -412,6 +445,25 @@ struct HomeRowView: View {
                 focusedRoute = target
             }
         }
+    }
+}
+
+/// Device test 1 (Build 4 follow-up 2): `RowFocusPresence` of one row and its pending leave timer. Not observable:
+/// the row never re-renders for it.
+@MainActor
+final class RowFocusPresenceBox {
+    var state = RowFocusPresence()
+    var leave: Task<Void, Never>?
+
+    func cancelLeave() {
+        leave?.cancel()
+        leave = nil
+    }
+
+    /// The row left the screen: the visit ends without delay (the caller reports the leave).
+    func disappear() {
+        cancelLeave()
+        _ = state.disappear()
     }
 }
 
@@ -575,14 +627,14 @@ struct PosterCard: View {
 /// deshalb wird das Bild auch erst dann angefordert.
 private struct ExpandedPoster: View {
     let item: MetaPreview
-    @Environment(\.displayScale) private var displayScale
     @Environment(\.heroBackdropShared) private var heroShared
     var body: some View {
         GeometryReader { g in
             ZStack(alignment: .bottomLeading) {
                 // Mit Hero: gleiche Variante wie der Vollbild-Hintergrund (gleiche Adresse), ein Download, ein Bitmap.
                 // Ohne Hero: nach gezeichneter Größe.
-                RemoteImage(url: item.background ?? item.poster, fixedTarget: heroShared ? .fullScreen(scale: displayScale) : nil)
+                // P3 device test 1: the hero's 1920×1080 target (`ImageTarget.heroBackdrop`), so it stays one bitmap.
+                RemoteImage(url: item.background ?? item.poster, fixedTarget: heroShared ? .heroBackdrop : nil)
                     .frame(width: g.size.width, height: g.size.height).clipped()
                 LinearGradient(colors: [.black.opacity(0.75), .clear], startPoint: .bottom, endPoint: .center)
                 Group {
