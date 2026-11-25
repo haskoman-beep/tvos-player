@@ -47,23 +47,49 @@ private let info = HeroInfoCollapse.CompactInfo(topInset: 12, logoMax: 140, logo
 
 @Test func collapsedListFitsTheTallestRowOnTheDevice() {
     // Device: page top 157 (safe area + tab bar), room below the list 45, band above it 45 + 24.
+    // Fix round (review M1): 4 pt slack below the row, 878 − 580 − 4 = 294.
     let l = HeroInfoCollapse.layout(screenHeight: 1080, pageTop: 157, bottomRoom: 45, rowHeight: 580, expandedTop: 470,
                                     edgeBand: 69, info: info)
+    #expect(HeroInfoCollapse.fitSlack == 4)
     #expect(l.listBottom == 878)
-    #expect(l.collapsedTop == 298)
-    #expect(l.collapsedTop + l.rowHeight <= l.listBottom)
+    #expect(l.collapsedTop == 294)
+    #expect(l.collapsedTop + l.rowHeight + HeroInfoCollapse.fitSlack <= l.listBottom)
     #expect(l.fits)
     // Enough room: the compact info keeps the full logo height.
     #expect(l.compactLogo == 140)
     #expect(l.top(collapsed: false) == 470)
-    #expect(l.top(collapsed: true) == 298)
+    #expect(l.top(collapsed: true) == 294)
+}
+
+@Test func slackLeavesRoomBelowTheRowAndZeroSlackFitsExactly() {
+    // Review M1: without slack the row ended exactly at the visible bottom (455 + 580 = 1035 in the window).
+    let exact = HeroInfoCollapse.layout(screenHeight: 1080, pageTop: 157, bottomRoom: 45, rowHeight: 580,
+                                        expandedTop: 470, edgeBand: 69, info: info, slack: 0)
+    #expect(exact.collapsedTop == 298)
+    #expect(exact.fits)
+    // The floor (69 + 12 + 80 + 20 + 30 = 211) wins over 878 − 665 − 4 = 209: only 2 pt are left below the row,
+    // but the row itself still fits, so `fits` stays true.
+    let tight = HeroInfoCollapse.layout(screenHeight: 1080, pageTop: 157, bottomRoom: 45, rowHeight: 665,
+                                        expandedTop: 470, edgeBand: 69, info: info)
+    #expect(tight.floor == 211)
+    #expect(tight.collapsedTop == 211)
+    #expect(tight.fits)
+}
+
+@Test func floorAboveTheExpandedTopKeepsTheExpandedTop() {
+    // Review M3: the collapsed top never goes below the expanded top; the floor applies only up to it.
+    let l = HeroInfoCollapse.layout(screenHeight: 1080, pageTop: 157, bottomRoom: 45, rowHeight: 580, expandedTop: 200,
+                                    edgeBand: 69, info: info)
+    #expect(l.floor == 211)
+    #expect(l.collapsedTop == 200)
+    #expect(l.compactLogo == 80)
 }
 
 @Test func collapsedTopIsWholePointsAndNeverTooLow() {
-    // Heading line 45.6: row 579.6 → the top is rounded down, so the row still fits.
+    // Heading line 45.6: row 579.6 → 878 − 579.6 − 4 = 294.4 is rounded down, so the row still fits.
     let l = HeroInfoCollapse.layout(screenHeight: 1080, pageTop: 157, bottomRoom: 45, rowHeight: 579.6, expandedTop: 470,
                                     edgeBand: 69, info: info)
-    #expect(l.collapsedTop == 298)
+    #expect(l.collapsedTop == 294)
     #expect(l.fits)
 }
 
@@ -71,10 +97,10 @@ private let info = HeroInfoCollapse.CompactInfo(topInset: 12, logoMax: 140, logo
     // Large cards with the strip below the posters: row 628, room 48, band 48 + 24.
     let l = HeroInfoCollapse.layout(screenHeight: 1080, pageTop: 157, bottomRoom: 48, rowHeight: 628, expandedTop: 470,
                                     edgeBand: 72, info: info)
-    #expect(l.collapsedTop == 247)
+    #expect(l.collapsedTop == 243)
     #expect(l.fits)
-    // 247 − band 72 − (12 + 20 + 30) = 113.
-    #expect(l.compactLogo == 113)
+    // 875 − 628 − 4 = 243; 243 − band 72 − (12 + 20 + 30) = 109.
+    #expect(l.compactLogo == 109)
 }
 
 @Test func smallRowsNeverMoveTheListDown() {
@@ -98,7 +124,7 @@ private let info = HeroInfoCollapse.CompactInfo(topInset: 12, logoMax: 140, logo
 @Test func collapseLogLinesInWindowCoordinates() {
     let l = HeroInfoCollapse.layout(screenHeight: 1080, pageTop: 157, bottomRoom: 45, rowHeight: 579.6, expandedTop: 470,
                                     edgeBand: 69, info: info)
-    #expect(HeroInfoCollapse.line(collapsed: true, layout: l) == "Info eingeklappt: Liste 455…1035, höchste Reihe 580")
+    #expect(HeroInfoCollapse.line(collapsed: true, layout: l) == "Info eingeklappt: Liste 451…1035, höchste Reihe 580")
     #expect(HeroInfoCollapse.line(collapsed: false, layout: l) == "Info ausgeklappt: Liste 627…1035, höchste Reihe 580")
     let tight = HeroInfoCollapse.layout(screenHeight: 1080, pageTop: 157, bottomRoom: 59, rowHeight: 738, expandedTop: 470,
                                         edgeBand: 83, info: info)

@@ -58,7 +58,8 @@ struct HomeRowView: View {
         let _ = RowBodyMeter.pass(onHome: focusMemory != nil)
         VStack(alignment: .leading, spacing: Theme.Space.s) {
             if row.style != .hero {
-                Text(title).textRole(.sectionTitle).padding(.leading, Theme.Space.edge)
+                // P2 fix round (review M1): one line, the collapsed hero list fits a row with a one-line heading.
+                Text(title).textRole(.sectionTitle).lineLimit(1).padding(.leading, Theme.Space.edge)
                     .accessibilityAddTraits(.isHeader)
             }
             content

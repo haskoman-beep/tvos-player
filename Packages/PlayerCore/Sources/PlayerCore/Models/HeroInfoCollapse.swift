@@ -70,22 +70,32 @@ public enum HeroInfoCollapse {
         public var pageTop: CGFloat
 
         /// The tallest row fits between the collapsed top and the list's visible bottom (false: the floor won).
+        /// The slack is not part of this check: a row that fits with less than the slack still fits.
         public var fits: Bool { collapsedTop + rowHeight <= listBottom + 0.001 }
 
         public func top(collapsed: Bool) -> CGFloat { collapsed ? collapsedTop : expandedTop }
     }
 
+    /// Review M1 (fix round): room left below the tallest row in the collapsed list, so a few points the model
+    /// misses (rounded text metrics, a heading font a little taller than measured) do not cut the row again.
+    public static let fitSlack: CGFloat = 4
+
     /// `screenHeight`: window height; `pageTop`: the page's top in the window; `bottomRoom`: room between the list and
     /// the screen bottom (`FocusHeadroom.listBottomRoom`); `edgeBand`: band above the list top where a lifted card
-    /// draws (`FocusHeadroom.edgeBand`), kept clear of the info. The collapsed top is just low enough for the tallest
-    /// row (whole points, rounded so the row fits), never below the floor and never below the expanded top.
+    /// draws (`FocusHeadroom.edgeBand`), kept clear of the info; `slack`: room kept below the row.
+    /// `collapsedTop = min(expandedTop, max(floor, needed))`, with `needed` the top that leaves the tallest row plus
+    /// `slack` above the list bottom (whole points, rounded so the row fits). The collapsed top is never a larger y
+    /// than the expanded top, so the floor (room for the compact info) holds only while it is smaller than the
+    /// expanded top; above that the expanded top wins and the compact logo is clamped to `logoMin`. When the floor
+    /// wins over `needed`, the row may not fit (`fits` false).
     public static func layout(screenHeight: CGFloat, pageTop: CGFloat, bottomRoom: CGFloat, rowHeight: CGFloat,
-                              expandedTop: CGFloat, edgeBand: CGFloat, info: CompactInfo) -> Layout {
+                              expandedTop: CGFloat, edgeBand: CGFloat, info: CompactInfo,
+                              slack: CGFloat = fitSlack) -> Layout {
         let page = max(0, pageTop)
         let listBottom = max(0, screenHeight - page - max(0, bottomRoom))
         let row = max(0, rowHeight)
         let band = max(0, edgeBand)
-        let needed = (listBottom - row).rounded(.down)
+        let needed = (listBottom - row - max(0, slack)).rounded(.down)
         let floor = (band + info.height(logo: info.logoMin)).rounded(.up)
         let top = min(expandedTop, max(floor, needed))
         let logo = min(info.logoMax, max(info.logoMin, top - band - info.height(logo: 0)))

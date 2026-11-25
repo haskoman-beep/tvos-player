@@ -89,10 +89,10 @@ import Testing
     let cut = HeadingSnapSample(row: HomeRowSpan(minY: 1283, maxY: 1863), scroll: HomeListScroll(offset: 1284, maxOffset: 4918),
                                 list: list)
     #expect(HeadingSnap.bottomRoom(cut) == -171)
-    // Collapsed info (list from 455): the same row fits.
+    // Collapsed info (list from 451, 4 pt slack): the same row fits with room to spare.
     var fits = cut
-    fits.list?.frameMinY = 455
-    #expect(HeadingSnap.bottomRoom(fits) == 1)
+    fits.list?.frameMinY = 451
+    #expect(HeadingSnap.bottomRoom(fits) == 5)
     #expect(HeadingSnap.bottomRoom(HeadingSnapSample(row: cut.row, scroll: cut.scroll, list: nil)) == nil)
 }
 
