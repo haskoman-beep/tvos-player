@@ -25,6 +25,8 @@ struct HomeView: View {
     @State private var focusTarget = HomeFocusTarget()
     /// Task 4.1a (F-A-11): rows holding the focus (launch claim of the page without hero).
     @State private var focusedRows: Set<UUID> = []
+    /// P2 (follow-up 2): collapsing hero info while the focus is in the rows (read by `HeroListFrame` and `HeroLayer`).
+    @State private var collapse = HeroCollapse()
 
     var body: some View {
         let layout = model.profile.home
@@ -128,7 +130,7 @@ struct HomeView: View {
     private func heroHome(_ rows: [HomeRow]) -> some View {
         ScrollViewReader { proxy in
             ZStack(alignment: .topLeading) {
-                HeroLayer(slides: slides)
+                HeroLayer(slides: slides, collapse: collapse)
                 ScrollView(.vertical) {
                     LazyVStack(alignment: .leading, spacing: Theme.Space.xl) {
                         HeroButtons(slides: slides, onFocusChange: { topWatch.report(.heroButtons, $0) })
@@ -157,14 +159,20 @@ struct HomeView: View {
                     // Wave F-m: the mask reaches into the room below the list too (lifted card stays opaque).
                     .padding(.bottom, -listBottomRoom(rows))
                 }
-                .padding(.top, HeroMetrics.listTop)
-                // Wave F-m: build 198 photo: the list reached the screen edge, focus scrolling stopped the card's frame
-                // there and its lift was cut. The list now ends above the edge by that lift and draws into the room.
-                .padding(.bottom, listBottomRoom(rows))
-                .ignoresSafeArea(edges: .bottom)
+                // P2 (follow-up 2): list top (collapsing info) and the wave F-m room below the list.
+                .modifier(heroListFrame(rows))
             }
         }
         .environment(focus)
+    }
+
+    /// P2 (follow-up 2): frame of the hero list; the collapsed top fits the tallest row (`HeroInfoCollapse`).
+    private func heroListFrame(_ rows: [HomeRow]) -> HeroListFrame {
+        let a = model.profile.appearance
+        let strip = a.titles.posterBadges == .bottom ? PosterQualityBadges.bandHeight : 0
+        return HeroListFrame(focus: focus, collapse: collapse, kinds: rows.map { PosterSize.kind(for: $0.style) },
+                             cardScale: a.cardSize.scale, posterStrip: strip, bottomRoom: listBottomRoom(rows),
+                             edgeBand: listEdgeBand(rows))
     }
 
     /// Wave F-k: band above the hero list for the lift of its tallest tile (card size, quality strip below posters).
@@ -265,8 +273,12 @@ struct HomeView: View {
             .padding(.leading, Theme.Space.edge)
         } else {
             // Keine Akzentfarbe (RootView .tint) auf der Startseite; Welle F-i: Token-Knopf wie Abspielen/Details.
+            // P2: below the rows the hero info stays collapsed (`HeroCollapse.belowRows`).
             FocusReportingButton(title: "Reihen & Collections", action: { manager = ManagerTarget() },
-                                 onFocus: { topWatch.report(.actionButton, $0) }, focusTarget: focusTarget)
+                                 onFocus: { f in
+                                     topWatch.report(.actionButton, f)
+                                     if hero, collapse.belowRows != f { collapse.belowRows = f }
+                                 }, focusTarget: focusTarget)
                 .padding(.top, 20)
                 .padding(.leading, Theme.Space.edge)
         }
