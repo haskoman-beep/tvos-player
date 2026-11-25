@@ -47,17 +47,21 @@ struct SettingsRowLabel: View {
     var reserveDetailSpace = true
     /// Task 4.5: accent dot before the value (the row differs from "Mein Look").
     var marked = false
+    /// Review M6 (Task 4.5): with `detailAlwaysVisible`, the shorter text a row shows while not focused (e.g. only
+    /// the reason); the focused row shows `detail`. `nil`: always `detail`.
+    var restingDetail: String? = nil
     @Environment(\.isFocused) private var focused
     @Environment(\.theme) private var theme
 
     private var detailShown: Bool { focused || detailAlwaysVisible }
+    private var shownDetail: String? { focused ? detail : (restingDetail ?? detail) }
 
     var body: some View {
         HStack(alignment: .center, spacing: Theme.Space.m) {
             IconTile(symbol: symbol, color: tint)
             VStack(alignment: .leading, spacing: Theme.Space.xs / 2) {
                 Text(title).textRoleInRow(.rowTitle).lineLimit(1)
-                if let detail, !detail.isEmpty {
+                if let detail = shownDetail, !detail.isEmpty {
                     if reserveDetailSpace {
                         detailText(detail).opacity(detailShown ? 1 : 0)
                     } else if detailShown {

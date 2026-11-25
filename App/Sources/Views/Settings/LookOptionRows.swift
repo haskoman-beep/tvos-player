@@ -117,7 +117,7 @@ private struct LookOptionRow: View {
 
     private var value: String { raw.flatMap { entry.choiceLabel($0) } ?? "" }
     /// Review M6: a disabled row shows only its reason, so it stays one line high; an enabled row keeps the help
-    /// text (after the reduce-motion note, if any).
+    /// text (after the reduce-motion note, if any) while focused and only the note at rest (`restingDetail`).
     private var detail: String { enabled ? DesignText.metaLine([reason, entry.help]) : (reason ?? entry.help) }
 
     var body: some View {
@@ -152,7 +152,8 @@ private struct LookOptionRow: View {
     private func label(_ accessory: SettingsRowAccessory) -> some View {
         SettingsRowLabel(symbol: LookOptionRows.symbol(entry), tint: SettingsCategory.appearance.tint,
                          title: entry.label, detail: detail, accessory: accessory,
-                         detailAlwaysVisible: reason != nil, reserveDetailSpace: false, marked: overridden)
+                         detailAlwaysVisible: reason != nil, reserveDetailSpace: false, marked: overridden,
+                         restingDetail: reason)
     }
 }
 
