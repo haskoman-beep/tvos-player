@@ -62,3 +62,24 @@ Device test 25.11. evening (user, remote log switched on):
    `~/.config/playerlog/secret`. The app keeps the last 500 lines in memory; once sending works, they flush,
    provided the app was not restarted. TV page shows receiver „Player-Log“ chosen. The signed collector and its
    secret date from 24.11. 22:04, after the last log, so the TV most likely never got this secret.
+   **Fixed 25.11. ~21:15:** new key in 4 groups (`~/.config/playerlog/secret`, old one kept as
+   `secret.alt-2026-11-24`), collector restarted, 465 buffered lines arrived (session from 20:59).
+
+### Log evaluation (`logs/player-2026-11-25.log`, 20:59–21:16 local)
+
+- **Row cut off = layout, not scroll.** Every `nav` line shows `Liste 627…1080` (list top = safe area 157 + 470,
+  inset bottom 45), i.e. 453 pt of list, about 408 pt usable, but a poster row is 580 pt tall (`Reihe 1283…1863`).
+  At `Abstand 0` (heading at the top edge) the row's bottom is ~130–170 pt below the screen. When the snap fails
+  (`Abstand -95 … -133`, the system focus scroll wins: `nach Rasten` stays off or even gets worse, e.g. -98 → -110),
+  the poster is fully visible and the heading is hidden instead. That matches „after up/down it is correct“.
+  S5 cannot fix this; it needs a layout decision (smaller row, higher list top, or align to the row bottom).
+- **Stutter: main thread mostly fine.** `ruckler` 5-s windows: 0–10 missed frames (mostly 2–4), longest 33–48 ms,
+  once 83 / 97 ms. `zuletzt: Quellen abgelegt` in almost every window: the 350-ms rest after each focus stop starts
+  the backdrop swap + source prefetch (`prefetch → … 84–257 Quellen`, 0.5–2 s) and badge updates (`Plaketten …`),
+  which re-render rows (`metric: home.rowBody` up to 38, `karten` up to 51 per 5 s). No `Quellen abgelegt` line
+  ≥ 8 ms, so parsing is off main as intended. Picture cache hit rate is low (`Cache Treffer 21 / Fehlgriffe 180`).
+  Suspects: render side (backdrop crossfade, first poster uploads) and the prefetch → badge → row re-render chain.
+  Quick A/B without code: Einstellungen → Quellen → „Quellen vorladen“ off, then the same right-press test.
+- **S2 works:** all `bilder: Kachelwechsel … mit Lücke 0`; longest wait for an addon poster 3.7 s.
+- Other: `ruckler: Hauptthread hing 262 ms` once when opening a detail page (streams list, 185 sources);
+  `nav: Leiste hing fest` once in Einstellungen (handled by the existing fallback).
