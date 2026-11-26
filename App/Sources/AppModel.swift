@@ -16,6 +16,8 @@ final class AppModel: ObservableObject {
     let secrets: SecretStore = KeychainSecretStore()
     /// What the Keychain holds per profile after the last save; `save()` writes only the differences.
     private var secretSnapshot: SecretSnapshot = [:]
+    /// Build 5 device test 1: bytes per profile part at the last load or save (`noteProfileSizes`).
+    private var profileSizes: [UUID: [String: Int]] = [:]
     /// Task 1.3: `.unreadable` while the stored profiles cannot be read; RootView then shows ProfileRecoveryView and
     /// `save()` writes nothing until the user restores a version or starts again.
     @Published private(set) var storeState: StoreState = .ready
@@ -380,6 +382,24 @@ final class AppModel: ObservableObject {
         }
         do { try store.save(stored) } catch { lastError = "Speichern fehlgeschlagen: \(error)"; return }
         mirrorSecrets()   // only after the file was written, so the Keychain never holds what the profile lacks
+        noteProfileSizes(load: false)
+    }
+
+    /// Build 5 device test 1 (profiles.json 24.0 → 19.4 KB): bytes per profile part. On load one summary line per
+    /// profile; after a save a line only when a part lost at least `ProfileSizeReport.minimumDelta` bytes.
+    func noteProfileSizes(load: Bool) {
+        var next: [UUID: [String: Int]] = [:]
+        for (i, p) in stored.profiles.enumerated() {
+            let s = ProfileSizeReport.sections(p)
+            next[p.id] = s
+            if load {
+                RemoteLog.info("speicher", "Profil \(i + 1): \(ProfileSizeReport.summary(s))")
+            } else if let before = profileSizes[p.id],
+                      let line = ProfileSizeReport.shrinkLine(name: "\(i + 1)", before: before, after: s) {
+                RemoteLog.info("speicher", line)
+            }
+        }
+        profileSizes = next
     }
 
     // MARK: Task 2.2: Keychain
@@ -438,6 +458,7 @@ final class AppModel: ObservableObject {
             storeState = .ready
             RemoteLog.info("speicher", report.isEmpty ? "Profile geladen · Bericht leer"
                                                       : "Profile geladen · ignoriert: \(report.ignored.joined(separator: ", "))")
+            noteProfileSizes(load: true)
         case .fresh:
             storeState = .ready
             RemoteLog.info("speicher", "Profile neu angelegt")
