@@ -241,6 +241,10 @@ struct PlayerControls<E: PlaybackEngine>: View {
     @State var leaving = false
     @State private var upNext: Int?
     @State private var upNextCancelled = false
+    /// Review M1: uptime of the last „Abbrechen“; a Select that tvOS also hands to the surface right after is dropped.
+    @State private var upNextCancelledAt: TimeInterval = -1
+    /// Review M2: focus did not land on the up-next buttons; the surface keeps the focus and acts for the card.
+    @State private var upNextFocusMissed = false
     @State private var nextPrefetched = false
     @Environment(\.dismiss) var dismiss
     @State private var showOverlay = true
@@ -339,6 +343,14 @@ struct PlayerControls<E: PlaybackEngine>: View {
             if scrub.isActive { onUserInput(); confirmScrub(); return }   // Select bestätigt das Spulen
             // Select auf dem Überspringen-Knopf überspringt nur, kein zusätzliches Pausieren; ebenso die Up-next-Knöpfe.
             guard !skip.holdsFocus, !upNextHoldsFocus else { return }
+            // Review M1: the Select that pressed „Abbrechen“ must not also pause.
+            if ProcessInfo.processInfo.systemUptime - upNextCancelledAt < 0.5 {
+                RemoteLog.info("player", "Up-next: Select nach Abbrechen ignoriert"); return
+            }
+            // Review M2: buttons without focus, Select on the surface plays the next episode.
+            if upNext != nil, nextTitle != nil {
+                onUserInput(); RemoteLog.info("player", "Up-next: Jetzt abspielen (Fläche, ohne Knopf-Fokus)"); startNext(); return
+            }
             onUserInput(); togglePlay()
         }
         .onMoveCommand { dir in
@@ -347,6 +359,11 @@ struct PlayerControls<E: PlaybackEngine>: View {
             if skip.noteKey() { return }   // wave P-a: stops a skip countdown; the card after a movie takes the arrows
             // Decision 26.11.: the arrows move between „Jetzt abspielen“ and „Abbrechen“ (no cancel by arrow).
             if upNextHoldsFocus { return }
+            // Review M2: buttons without focus, an arrow cancels as before the decision (never 20 s dead input).
+            if upNext != nil, nextTitle != nil {
+                withAnimation { upNext = nil }; upNextCancelled = true
+                RemoteLog.info("player", "Up-next abgebrochen (Pfeil, ohne Knopf-Fokus)"); return
+            }
             // Beim Spulen verschieben ◀/▶ das Ziel; kurz nach einer Wischbewegung zählen sie nicht als Sprung.
             if scrub.isActive { if dir == .left { scrub.nudge(-10) } else if dir == .right { scrub.nudge(10) }; poke(); return }
             if dir == .left || dir == .right, scrub.suppressesMove() { return }
@@ -643,6 +660,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
         } else if now >= cardAt, rem > 0, engine.isPlaying, !upNextCancelled, !showTracks {
             let fromCredits = cardAt < engine.duration - 20 ? " · ab Abspann \(Int(cardAt))s" : ""
             RemoteLog.info("player", "Up-next: \(nextTitle ?? "")\(fromCredits) · Stil \(profile.themeLook.player.upNext.rawValue)")
+            upNextFocusMissed = false
             withAnimation { upNext = UpNextCountdown.seconds }
         }
     }
@@ -663,8 +681,14 @@ struct PlayerControls<E: PlaybackEngine>: View {
                                 onPlay: { onUserInput(); RemoteLog.info("player", "Up-next: Jetzt abspielen"); startNext() },
                                 onCancel: {
                                     onUserInput()
+                                    upNextCancelledAt = ProcessInfo.processInfo.systemUptime   // review M1
                                     withAnimation { upNext = nil }; upNextCancelled = true
                                     RemoteLog.info("player", "Up-next abgebrochen (Knopf)")
+                                },
+                                onFocusMissed: {
+                                    guard upNext != nil, !upNextFocusMissed else { return }
+                                    upNextFocusMissed = true
+                                    RemoteLog.info("player", "Up-next: Knöpfe ohne Fokus, Fläche übernimmt (Select spielt, Pfeil bricht ab)")
                                 })
             .transition(style == .karte ? .move(edge: .trailing).combined(with: .opacity) : .opacity)
     }
@@ -693,7 +717,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
     }
 
     /// The up-next card stands with its buttons: the surface gives up its focus (decision 26.11.).
-    private var upNextHoldsFocus: Bool { upNext != nil && nextTitle != nil }
+    private var upNextHoldsFocus: Bool { upNext != nil && nextTitle != nil && !upNextFocusMissed }
     /// Task 5.4: up-next fills the screen (`vollbild`): the video shrinks, the control bar and subtitles step aside.
     private var upNextFullScreen: Bool { upNext != nil && nextTitle != nil && profile.themeLook.player.upNext == .vollbild }
 

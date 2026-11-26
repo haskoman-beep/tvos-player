@@ -27,6 +27,8 @@ struct PlayerUpNextView: View {
     let info: UpNextInfo
     let onPlay: () -> Void
     let onCancel: () -> Void
+    /// Review M2: focus did not land on a button after the retries; the player surface takes over.
+    let onFocusMissed: () -> Void
     @Environment(\.theme) private var theme
     @FocusState private var focus: Target?
 
@@ -42,11 +44,17 @@ struct PlayerUpNextView: View {
         }
         .defaultFocus($focus, .play)
         .task {
-            // Focus at once (the surface is no longer focusable), again one round later in case the tree was not ready
-            // (as `PostPlayCard`).
+            // Focus at once (the surface is no longer focusable), then retry while the card slides in (as
+            // `PostPlayCard`); still no button focused after about 0.6 s: the surface takes over (review M2).
             focus = .play
-            try? await Task.sleep(for: .milliseconds(50))
-            if focus == nil { focus = .play }
+            for _ in 0..<6 {
+                try? await Task.sleep(for: .milliseconds(100))
+                if Task.isCancelled { return }
+                if focus != nil { return }
+                focus = .play
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+            if !Task.isCancelled, focus == nil { onFocusMissed() }
         }
     }
 
