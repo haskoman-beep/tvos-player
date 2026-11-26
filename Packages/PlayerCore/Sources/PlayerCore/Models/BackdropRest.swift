@@ -5,12 +5,14 @@ import Foundation
 /// (each swap a 0.6 s full-screen crossfade plus a hero info reload); the missed frames sat mostly at "Hintergrund".
 /// Now the rest is at least `baseMilliseconds`, and while the user presses in a rhythm (moves less than
 /// `burstGapMilliseconds` apart) it is longer than the longest of the last `historyCount` gaps, so no swap lands
-/// between two presses. Capped at `maxMilliseconds`. Pure value, the caller passes a monotonic clock in seconds.
+/// between two presses. Capped at `maxMilliseconds` (a 1.6–2.0 s rhythm swaps once at 1.5 s). Pure value, the caller
+/// passes a monotonic clock in seconds.
 public struct BackdropRest: Sendable, Equatable {
     public static let baseMilliseconds = 800
     public static let maxMilliseconds = 1500
-    /// Moves further apart than this are no burst: the user looked at the card.
-    public static let burstGapMilliseconds = 1500
+    /// Moves further apart than this are no burst: the user looked at the card. b5r review M2: 2 s, device test 2
+    /// had 6 of 22 swap gaps at 1.56–1.82 s, which a 1.5 s limit still counted as single stops.
+    public static let burstGapMilliseconds = 2000
     /// The rest is this much longer than the burst's longest recent gap.
     public static let marginMilliseconds = 300
     public static let historyCount = 3

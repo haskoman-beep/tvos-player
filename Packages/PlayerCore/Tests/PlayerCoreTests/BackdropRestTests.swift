@@ -50,6 +50,17 @@ import Testing
     #expect(r.moved(at: 3.7) == 800)
 }
 
+// b5r review M2: device test 2 had swap gaps of 1.56–1.82 s; such a rhythm is a burst now and rests the cap.
+@Test func pressesUpToTwoSecondsApartAreABurst() {
+    #expect(BackdropRest.burstGapMilliseconds == 2000)
+    var r = BackdropRest()
+    _ = r.moved(at: 0)
+    #expect(r.moved(at: 1.6) == BackdropRest.maxMilliseconds)
+    #expect(r.moved(at: 3.4) == BackdropRest.maxMilliseconds)
+    #expect(r.moved(at: 5.4) == BackdropRest.maxMilliseconds)   // exactly 2.0 s: still a burst
+    #expect(r.moved(at: 7.5) == 800)                           // 2.1 s: a stop
+}
+
 // b5r review M1: badge pass and visible-tile prefetch on the home page wait out the longest rest plus the fade.
 @Test func homeFocusQuietCoversTheLongestRestAndTheCrossfade() {
     #expect(BackdropRest.fadeMilliseconds == 600)
