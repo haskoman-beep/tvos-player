@@ -134,6 +134,7 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         let migratedLook = Look.migrated(from: appearance, player: player, sources: sources)
         look = c.decodeLenient(Look.self, forKey: .look, default: migratedLook, report: r)
         detailExtras = c.decodeLenient(LookDetailExtras.self, forKey: .detailExtras, default: d.detailExtras, report: r)
+        adoptOldLookRows()   // integration build 5: the old rows „Plaketten-Stil“ and „Titelbild oben“ are gone
     }
 
     /// Same keys, order and format as the former synthesized encoding; only `hiddenRows` gets the raw leftovers

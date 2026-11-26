@@ -2,7 +2,8 @@ import SwiftUI
 import PlayerCore
 
 /// Kategorie „Startseite“ (§2.2): Status, Reihen & Collections › / Fusion-Kit / Import (HomeSettings, Welle F-b2,
-/// hier nur eingehängt), Titelbild, Kalender. Task 4.5: card size is the catalog row „Kartengröße“ under Aussehen.
+/// hier nur eingehängt), Titelbild, Kalender. Task 4.5: card size is the catalog row „Kartengröße“ under Aussehen;
+/// integration build 5: hero on/off is the catalog row „Hero-Stil“ there too.
 struct HomeCategorySettings: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var kit = FusionKitStore.shared
@@ -20,11 +21,10 @@ struct HomeCategorySettings: View {
                 // Reihen & Collections ›, Fusion-Kit, Collections importieren › (Inhalt gehört Welle F-b2).
                 HomeSettings()
             }
-            SettingsSection("Titelbild") {
-                SettingsToggleRow(symbol: "photo.artframe", tint: tint, title: "Titelbild oben",
-                                  detail: "Großes Bild mit Titel oben auf der Startseite.",
-                                  reserveDetailSpace: false, isOn: model.binding(\.appearance.heroEnabled))
-                if p.appearance.heroEnabled {
+            // Integration build 5 (user decision 26.11.): the old toggle „Titelbild oben“ is gone; the look row
+            // `heroStyle` (Aussehen › Hero-Stil, „Aus“) switches the hero, so the source row follows the theme.
+            if p.themeLook.home.heroStyle != .aus {
+                SettingsSection("Titelbild") {
                     SettingsChoiceRow(symbol: "photo", tint: tint, title: "Titelbild zeigt",
                                       detail: "Aus welcher Reihe das Titelbild kommt.",
                                       options: [UUID?.none] + listRows.map { UUID?.some($0.id) },

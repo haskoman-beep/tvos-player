@@ -184,17 +184,16 @@ private func lookValueKeys() throws -> [String: Set<String>] {
     #expect(Profile(name: "U").lookRows.overriddenCount == 0)
 }
 
-// Task 4.5 review M5: a later-build row whose concept still has an active old row points to it.
+// Task 4.5 review M5 pointed a later-build row to its old stand-in row; integration build 5 (user decision 26.11.)
+// removed „Plaketten-Stil“ and „Titelbild oben“, so the note is plain.
 
 @Test func laterBuildRowsPointToTheActiveOldRow() {
     let v = LookPreset.values(.appleTV)
-    // Task 5.3 draws badgeStyle and layout, so the stand-in note shows only without that code (`implemented: []`).
-    #expect(LookOptionCatalog.isEnabled("badgeStyle", in: v, implemented: []).reason
-        == "kommt mit Build 5b · bis dahin: „Plaketten-Stil“ unten")
+    // Task 5.3 draws badgeStyle and layout, so the note shows only without that code (`implemented: []`).
+    #expect(LookOptionCatalog.isEnabled("badgeStyle", in: v, implemented: []).reason == "kommt mit Build 5b")
     #expect(LookOptionCatalog.isEnabled("badgeStyle", in: v) == (true, nil))
-    // Task 5.2 draws heroStyle too: active by default, the stand-in note only without that code.
-    #expect(LookOptionCatalog.isEnabled("heroStyle", in: v, implemented: []).reason
-        == "kommt mit Build 5a · bis dahin: „Titelbild oben“ unter Startseite")
+    // Task 5.2 draws heroStyle too: active by default, the note only without that code.
+    #expect(LookOptionCatalog.isEnabled("heroStyle", in: v, implemented: []).reason == "kommt mit Build 5a")
     #expect(LookOptionCatalog.isEnabled("heroStyle", in: v) == (true, nil))
     #expect(LookOptionCatalog.isEnabled("heroStyle", in: v, build: .b5a, implemented: []) == (true, nil))
     #expect(LookOptionCatalog.isEnabled("layout", in: v, implemented: []).reason == "kommt mit Build 5b")

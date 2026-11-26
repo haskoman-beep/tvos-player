@@ -5,8 +5,9 @@ import PlayerCore
 /// four areas (`LookOptionRows`). The old rows for Navigation, Akzentfarbe, Postergröße and Poster aufklappen are
 /// gone: the catalog rows `navigation`, `accent`, `cardSize` and `expandPosters` replace them fully and write the
 /// old fields through `Profile.setLook`. Sprache der App stays the first row under „Mein Look“. What the catalog
-/// does not have otherwise stays below the areas: poster images, ratings and badges („Titelbild oben“ stays under Startseite; badge style stays until `badgeStyle`
-/// takes effect in Build 5b).
+/// does not have otherwise stays below the areas: poster images, ratings and badges. Integration build 5 (user
+/// decision 26.11.): the old row „Plaketten-Stil“ is gone too; the look row `badgeStyle` sets the style
+/// (`Profile.adoptOldLookRows` moves an old value into the look once).
 struct AppearanceSettings: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var icons = RatingIconStore.shared
@@ -34,10 +35,6 @@ struct AppearanceSettings: View {
                                 value: RatingChoiceSettingRow.summary(a.titles)) {
                     RatingsSettingsPage()
                 }
-                SettingsChoiceRow(symbol: "seal", tint: tint, title: "Plaketten-Stil",
-                                  detail: "Logos oder schlichter Text für Auflösung, HDR und Ton.",
-                                  options: [BadgeStyle.logo, .text], selection: model.binding(\.appearance.badges.style),
-                                  label: { $0 == .logo ? "Logo" : "Text" })
                 SettingsLinkRow(symbol: "list.bullet", tint: tint, title: "Plaketten im Detail",
                                 detail: "Einzelne Plaketten-Arten ein- und ausschalten.",
                                 value: "\(BadgeDetailPage.shownCount(a.badges)) von \(BadgeDetailPage.types.count)") {

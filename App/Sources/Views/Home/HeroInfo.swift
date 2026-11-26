@@ -131,18 +131,19 @@ private struct HeroTitle: View {
 }
 
 /// Task 5.2 (`heroInfo` ausführlich): quality badges of the shown title (4K, Dolby Vision/HDR, Atmos) from the
-/// source cache, in the badge style of the settings. Waits for the batched `stored` pass like the poster badges.
-/// 5b-merge: channels and the `badgeStyle` of the look come with Task 5.3 (detail page); this uses
-/// `appearance.badges` like the posters.
+/// source cache. Waits for the batched `stored` pass like the poster badges. Integration build 5 (user decision
+/// 26.11.): drawn in the theme's badge style (`detail.badgeStyle`, `logos` = wordmark logos), the shown badge types
+/// from `appearance.badges`.
 private struct HeroQualityBadges: View {
     @EnvironmentObject var model: AppModel
+    @Environment(\.theme) private var theme
     let item: MetaPreview
     @State private var best: BestQuality?
     @State private var bestID: String?
 
     var body: some View {
         let shown = bestID == item.id ? best : nil
-        let list = shown.map { QualityBadges.poster($0, settings: model.profile.appearance.badges) } ?? []
+        let list = shown.map { QualityBadges.poster($0, settings: model.profile.appearance.badges.drawn(as: theme.badgeStyle)) } ?? []
         InfoBadges(ratings: [], tech: list)
             .frame(height: InfoBadges.height, alignment: .leading)
             .task(id: item.id) {
