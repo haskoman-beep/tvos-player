@@ -89,7 +89,7 @@ struct HeroLayout: View {
         let logo: CGFloat = collapsed ? collapse.compactLogo : (card ? m.cardLogo : m.logo)
         let spacing: CGFloat = collapsed || card ? m.compactSpacing : m.spacing
         return HeroInfoStyle(parts: parts, title: title, logoHeight: logo, spacing: spacing,
-                             width: HeroMetrics.infoWidth(style))
+                             width: HeroMetrics.infoWidth(style), overviewLines: collapsed ? collapse.overviewLines : 2)
     }
 }
 

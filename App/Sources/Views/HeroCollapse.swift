@@ -17,6 +17,8 @@ import PlayerCore
     fileprivate(set) var collapsed = false
     /// Logo (or title) height of the collapsed info, from the current layout.
     fileprivate(set) var compactLogo: CGFloat = HeroMetrics.compactLogoHeight
+    /// Lines of the collapsed overview (user decision 26.11.: 1 when two lines leave the tallest row no room).
+    fileprivate(set) var overviewLines = 2
     /// Task 5.2: list top of the collapsed state (banner and carousel end their card above it).
     fileprivate(set) var collapsedTop: CGFloat = HeroMetrics.listTop
     /// The hero buttons (Abspielen/Details) hold the focus; set by `HomeView` from `HeroButtons`. Turning true
@@ -77,6 +79,9 @@ struct HeroListFrame: ViewModifier {
             .onChange(of: layout.collapsedTop, initial: true) { _, top in
                 if collapse.collapsedTop != top { collapse.collapsedTop = top }
             }
+            .onChange(of: layout.overviewLines, initial: true) { _, lines in
+                if collapse.overviewLines != lines { collapse.overviewLines = lines }
+            }
             // Latch: focus into a row collapses, focus on the hero buttons expands; nothing else changes it.
             .onChange(of: focus.inRows) { _, inRows in
                 if inRows { apply(true, layout: layout) }
@@ -104,7 +109,7 @@ struct HeroListFrame: ViewModifier {
     }
 
     /// One `nav` line per change: "Info eingeklappt|ausgeklappt: Liste <top>…<bottom>, höchste Reihe <h>" (collapsed:
-    /// plus ", Logo <n>").
+    /// plus ", Logo <n>", and ", Beschreibung 1 Zeile" when the overview was shortened).
     private func apply(_ c: Bool, layout: HeroInfoCollapse.Layout) {
         guard c != collapse.collapsed else { return }
         // Theme motion "expand" (standard 0.3 s, dezent 0.25 s; 0 = motion off or reduced: no animation).

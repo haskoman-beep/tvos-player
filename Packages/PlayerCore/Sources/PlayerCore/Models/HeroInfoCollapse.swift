@@ -6,7 +6,9 @@ import Foundation
 // the info collapses while the focus is in the rows and the list top moves up so the tallest row fits between the
 // list's top and its visible bottom. Device test 1 (user decision): the collapsed info keeps everything (logo, meta
 // line, ratings, two-line overview), only moved up and more compact (smaller logo, tighter gaps), and it may reach
-// down to the collapsed list top. Pure maths; the tokens come from the app.
+// down to the collapsed list top. User decision 26.11.: when even the smallest logo leaves too little room (quality
+// strip below the posters: the info needs 267, the row leaves 243), the overview drops to one line instead of
+// cutting the row, and the logo keeps close to its largest size. Pure maths; the tokens come from the app.
 
 public enum HeroInfoCollapse {
     /// The collapsed info, top to bottom (points): inset above the logo, logo (or title), meta line, ratings and the
@@ -45,6 +47,9 @@ public enum HeroInfoCollapse {
             self.ratings = ratings
             self.overview = overview
         }
+
+        /// The same info with a one-line overview (half of the two lines; user decision 26.11.).
+        var oneLineOverview: CompactInfo { var c = self; c.overview = max(0, overview) / 2; return c }
 
         /// Height of the collapsed info with a logo of `logo` points.
         func height(logo: CGFloat) -> CGFloat {
@@ -92,6 +97,8 @@ public enum HeroInfoCollapse {
         public var listBottom: CGFloat
         /// The page's top in the window (for log lines in window coordinates, like the `nav` heading lines).
         public var pageTop: CGFloat
+        /// Lines of the collapsed overview: 2, or 1 when the two-line info does not fit (user decision 26.11.).
+        public var overviewLines: Int = 2
 
         /// The tallest row fits between the collapsed top and the list's visible bottom (false: the floor won).
         /// The slack is not part of this check: a row that fits with less than the slack still fits.
@@ -112,30 +119,36 @@ public enum HeroInfoCollapse {
     /// list top the band holds only the row gap and the lift room of the row above). The collapsed top is never a
     /// larger y than the expanded top, so the floor (room for the collapsed info with `logoMin`) holds only while it
     /// is smaller than the expanded top; above that the expanded top wins and the logo is clamped to `logoMin`. When
-    /// the floor wins over `needed`, the row may not fit (`fits` false).
+    /// the floor wins over `needed`, the row may not fit (`fits` false). User decision 26.11.: when the two-line floor
+    /// is above `needed` and there is an overview, the overview gets one line (`overviewLines` 1) and floor and logo
+    /// come from that shorter info.
     public static func layout(screenHeight: CGFloat, pageTop: CGFloat, bottomRoom: CGFloat, rowHeight: CGFloat,
                               expandedTop: CGFloat, info: CompactInfo, slack: CGFloat = fitSlack) -> Layout {
         let page = max(0, pageTop)
         let listBottom = max(0, screenHeight - page - max(0, bottomRoom))
         let row = max(0, rowHeight)
         let needed = (listBottom - row - max(0, slack)).rounded(.down)
-        let floor = info.height(logo: info.logoMin).rounded(.up)
+        let twoLines = info.height(logo: info.logoMin).rounded(.up)
+        let short = info.overview > 0 && twoLines > needed
+        let shown = short ? info.oneLineOverview : info
+        let floor = shown.height(logo: shown.logoMin).rounded(.up)
         let top = min(expandedTop, max(floor, needed))
-        let logo = min(info.logoMax, max(info.logoMin, top - info.height(logo: 0)))
+        let logo = min(shown.logoMax, max(shown.logoMin, top - shown.height(logo: 0)))
         return Layout(expandedTop: expandedTop, collapsedTop: top, floor: floor, compactLogo: logo.rounded(.down),
-                      rowHeight: row, listBottom: listBottom, pageTop: page)
+                      rowHeight: row, listBottom: listBottom, pageTop: page, overviewLines: short ? 1 : 2)
     }
 
     /// `nav` line per collapse / expand: "Info eingeklappt: Liste 451…1035, höchste Reihe 580, Logo 100" (window
     /// coordinates: list top … visible list bottom, as the heading lines print the list frame; the collapsed logo
-    /// height only when collapsed).
+    /// height only when collapsed; ", Beschreibung 1 Zeile" when the collapsed overview was shortened).
     public static func line(collapsed: Bool, layout l: Layout) -> String {
         let top = l.pageTop + l.top(collapsed: collapsed)
         let bottom = l.pageTop + l.listBottom
         let state = collapsed ? "eingeklappt" : "ausgeklappt"
         let logo = collapsed ? ", Logo \(pt(l.compactLogo))" : ""
+        let lines = collapsed && l.overviewLines == 1 ? ", Beschreibung 1 Zeile" : ""
         let tight = collapsed && !l.fits ? " (passt nicht, Untergrenze der Info)" : ""
-        return "Info \(state): Liste \(pt(top))…\(pt(bottom)), höchste Reihe \(pt(l.rowHeight))\(logo)\(tight)"
+        return "Info \(state): Liste \(pt(top))…\(pt(bottom)), höchste Reihe \(pt(l.rowHeight))\(logo)\(lines)\(tight)"
     }
 
     private static func pt(_ v: CGFloat) -> String { "\(Int(v.rounded()))" }

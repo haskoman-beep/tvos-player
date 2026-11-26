@@ -31,6 +31,9 @@ struct HeroInfoStyle: Equatable {
     var spacing: CGFloat
     /// Width of the overview and the title text.
     var width: CGFloat
+    /// Lines of the overview: 2, or 1 in the collapsed info when the two lines leave the tallest row no room
+    /// (`HeroInfoCollapse.Layout.overviewLines`, user decision 26.11.).
+    var overviewLines: Int = 2
 }
 
 /// Logo (sonst Name) und je nach `heroInfo` Metazeile Jahr · Laufzeit · FSK · Genre, Bewertungen, Beschreibung in
@@ -59,7 +62,7 @@ struct HeroInfo: View {
                     .frame(height: InfoBadges.height, alignment: .leading)
             }
             if style.parts.overview {
-                Text(d?.overview ?? item.description ?? "").font(.callout).lineLimit(2)
+                Text(d?.overview ?? item.description ?? "").font(.callout).lineLimit(style.overviewLines)
                     .frame(maxWidth: style.width, alignment: .leading)
             }
             if style.parts.badges {

@@ -64,19 +64,29 @@ private let info = HeroInfoCollapse.CompactInfo(topInset: 12, logoMax: 100, logo
     #expect(info.height(logo: l.compactLogo) <= l.collapsedTop)
     #expect(l.top(collapsed: false) == 470)
     #expect(l.top(collapsed: true) == 294)
+    #expect(l.overviewLines == 2)   // the two-line overview fits
 }
 
 @Test func collapsedInfoKeepsRatingsAndOverview() {
-    // User decision (device test 1): ratings and the two-line overview stay in the collapsed info.
+    // User decision (device test 1): ratings and the two-line overview stay in the collapsed info while they fit.
     #expect(info.height(logo: 0) == 187)
     #expect(info.height(logo: 100) == 287)
-    // A fractional overview (two callout lines) still gives a whole-point floor that leaves room for all of it.
+    // A fractional overview (two callout lines) still gives a whole-point floor that leaves room for all of it:
+    // 12 + 80 + 36 + 30 + 34 + 74.3 = 266.3 → 267 (row 600: 878 − 600 − 4 = 274 leaves room for it).
     let fine = HeroInfoCollapse.CompactInfo(topInset: 12, logoMax: 100, logoMin: 80, spacing: 12, metaLine: 30,
                                             ratings: 34, overview: 74.3)
-    let l = HeroInfoCollapse.layout(screenHeight: 1080, pageTop: 157, bottomRoom: 45, rowHeight: 700, expandedTop: 470,
+    let l = HeroInfoCollapse.layout(screenHeight: 1080, pageTop: 157, bottomRoom: 45, rowHeight: 600, expandedTop: 470,
                                     info: fine)
     #expect(l.floor == 267)
+    #expect(l.overviewLines == 2)
     #expect(fine.height(logo: fine.logoMin) <= l.floor)
+    // Row 700 (878 − 700 − 4 = 174): one line, 12 + 80 + 36 + 30 + 34 + 37.15 = 229.15 → 230; ratings stay.
+    let one = HeroInfoCollapse.layout(screenHeight: 1080, pageTop: 157, bottomRoom: 45, rowHeight: 700, expandedTop: 470,
+                                      info: fine)
+    #expect(one.overviewLines == 1)
+    #expect(one.floor == 230)
+    #expect(fine.oneLineOverview.height(logo: fine.logoMin) <= one.floor)
+    #expect(fine.oneLineOverview.ratings == 34 && fine.oneLineOverview.overview == 37.15)
 }
 
 @Test func tallerRowShrinksTheCollapsedLogoTowardsItsMinimum() {
@@ -94,14 +104,15 @@ private let info = HeroInfoCollapse.CompactInfo(topInset: 12, logoMax: 100, logo
                                         expandedTop: 470, info: info, slack: 0)
     #expect(exact.collapsedTop == 298)
     #expect(exact.fits)
-    // The floor (12 + 80 + 3·12 + 30 + 34 + 75 = 267) wins over 878 − 609 − 4 = 265: only 2 pt are left below the
-    // row, but the row itself still fits, so `fits` stays true.
+    // The two-line floor (12 + 80 + 3·12 + 30 + 34 + 75 = 267) is above 878 − 609 − 4 = 265: since 26.11. the
+    // overview gets one line (floor 230), the list top is 265 with the full slack and the logo keeps 100.
     let tight = HeroInfoCollapse.layout(screenHeight: 1080, pageTop: 157, bottomRoom: 45, rowHeight: 609,
                                         expandedTop: 470, info: info)
-    #expect(tight.floor == 267)
-    #expect(tight.collapsedTop == 267)
+    #expect(tight.overviewLines == 1)
+    #expect(tight.floor == 230)
+    #expect(tight.collapsedTop == 265)
     #expect(tight.fits)
-    #expect(tight.compactLogo == 80)
+    #expect(tight.compactLogo == 100)
 }
 
 @Test func floorAboveTheExpandedTopKeepsTheExpandedTop() {
@@ -121,16 +132,27 @@ private let info = HeroInfoCollapse.CompactInfo(topInset: 12, logoMax: 100, logo
     #expect(l.fits)
 }
 
-@Test func qualityStripDoesNotFitTheWholeCollapsedInfo() {
-    // Large cards with the strip below the posters: row 628, room 48. 875 − 628 − 4 = 243 would fit the row, but the
-    // whole info needs 267 even with the 80 pt logo: the floor wins and the row's bottom 20 pt are cut (open question
-    // in the P2 report: smaller logo minimum, or less room for the overview, with the strip on).
+@Test func qualityStripShortensTheOverviewToOneLine() {
+    // Large cards with the strip below the posters: row 628, room 48. 875 − 628 − 4 = 243 fits the row, but the
+    // two-line info needs 267 even with the 80 pt logo (Build 5 cut the row's bottom 20 pt). User decision 26.11.:
+    // the overview drops to one line (12 + 80 + 36 + 30 + 34 + 37.5 = 229.5 → floor 230), the list top is 243 and
+    // the logo gets 243 − 149.5 = 93.5 → 93, close to its 100.
     let l = HeroInfoCollapse.layout(screenHeight: 1080, pageTop: 157, bottomRoom: 48, rowHeight: 628, expandedTop: 470,
                                     info: info)
-    #expect(l.collapsedTop == 267)
-    #expect(!l.fits)
-    #expect(l.compactLogo == 80)
-    #expect(l.collapsedTop + l.rowHeight - l.listBottom == 20)
+    #expect(l.overviewLines == 1)
+    #expect(l.floor == 230)
+    #expect(l.collapsedTop == 243)
+    #expect(l.fits)
+    #expect(l.compactLogo == 93)
+    #expect(info.oneLineOverview.height(logo: l.compactLogo) <= l.collapsedTop)
+    #expect(HeroInfoCollapse.line(collapsed: true, layout: l)
+        == "Info eingeklappt: Liste 400…1032, höchste Reihe 628, Logo 93, Beschreibung 1 Zeile")
+    // Without an overview nothing can shorten: the floor stays that of the full info.
+    var bare = info; bare.overview = 0
+    let b = HeroInfoCollapse.layout(screenHeight: 1080, pageTop: 157, bottomRoom: 48, rowHeight: 700, expandedTop: 470,
+                                    info: bare)
+    #expect(b.overviewLines == 2)
+    #expect(b.floor == 192)   // 12 + 80 + 36 + 30 + 34
 }
 
 @Test func smallRowsNeverMoveTheListDown() {
@@ -142,11 +164,13 @@ private let info = HeroInfoCollapse.CompactInfo(topInset: 12, logoMax: 100, logo
 }
 
 @Test func floorKeepsRoomForTheCollapsedInfo() {
-    // Hero-style row (738) does not fit below the collapsed info: the floor (12 + 80 + 36 + 30 + 34 + 75) wins.
+    // Hero-style row (738) does not fit below the collapsed info even with a one-line overview: the floor
+    // (12 + 80 + 36 + 30 + 34 + 37.5 = 229.5 → 230) wins.
     let l = HeroInfoCollapse.layout(screenHeight: 1080, pageTop: 157, bottomRoom: 59, rowHeight: 738, expandedTop: 470,
                                     info: info)
-    #expect(l.floor == 267)
-    #expect(l.collapsedTop == 267)
+    #expect(l.overviewLines == 1)
+    #expect(l.floor == 230)
+    #expect(l.collapsedTop == 230)
     #expect(!l.fits)
     #expect(l.compactLogo == 80)
 }
@@ -159,5 +183,5 @@ private let info = HeroInfoCollapse.CompactInfo(topInset: 12, logoMax: 100, logo
     let tight = HeroInfoCollapse.layout(screenHeight: 1080, pageTop: 157, bottomRoom: 59, rowHeight: 738, expandedTop: 470,
                                         info: info)
     #expect(HeroInfoCollapse.line(collapsed: true, layout: tight)
-        == "Info eingeklappt: Liste 424…1021, höchste Reihe 738, Logo 80 (passt nicht, Untergrenze der Info)")
+        == "Info eingeklappt: Liste 387…1021, höchste Reihe 738, Logo 80, Beschreibung 1 Zeile (passt nicht, Untergrenze der Info)")
 }
