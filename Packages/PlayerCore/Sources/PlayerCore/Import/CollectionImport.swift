@@ -17,6 +17,10 @@ public enum CollectionImportFormat: Equatable, Sendable {
     case collections
     /// Recognised but not importable here.
     case backup
+    /// Build 5 (b5f): Omni/UME snapshot (`{"values":{…}}`); the Fusion Widget Manager converts it to a widget export.
+    case omniSnapshot
+    /// Build 5 (b5f): AIOMetadata configuration or catalog export (`{"catalogs":[…]}`) – belongs into the addon.
+    case addonConfig
     case iconPack
     case invalidJSON
     case unknown
@@ -26,6 +30,10 @@ public enum CollectionImportFormat: Equatable, Sendable {
         if let d = o as? [String: Any] {
             if d["profiles"] != nil { return .backup }
             if d["exportType"] as? String == "fusionWidgets" || d["widgets"] is [Any] { return .widgets }
+            if d["values"] is [String: Any] { return .omniSnapshot }
+            // An addon manifest (`id`, `resources`) also has `catalogs`; it stays unknown here.
+            if d["resources"] == nil, d["id"] == nil,
+               d["catalogs"] is [Any] || (d["config"] as? [String: Any])?["catalogs"] is [Any] { return .addonConfig }
             return .unknown
         }
         guard let arr = o as? [Any] else { return .unknown }
@@ -45,6 +53,8 @@ public enum CollectionImportFormat: Equatable, Sendable {
         switch self {
         case .widgets, .collectionList, .previewPack, .collections: nil
         case .backup: "Das ist eine Sicherung – bitte „Sicherung wiederherstellen“ nutzen."
+        case .omniSnapshot: "Das ist ein Omni-Snapshot – bitte im Fusion Widget Manager öffnen und den Widget-Export (Export → JSON) importieren."
+        case .addonConfig: "Das ist eine AIOMetadata-Konfiguration – sie gehört ins AIOMetadata-Addon. Hier den Widget-Export importieren."
         case .iconPack: "Das ist ein Bewertungs-Icon-Satz – bitte das Feld „Eigener Bewertungs-Icon-Satz“ nutzen."
         case .invalidJSON: "Kein gültiges JSON (abgeschnitten oder kein Text-Export?)."
         case .unknown: "Format nicht erkannt. Möglich: Widget-Export, Preview Pack oder Collection-Export (JSON)."
@@ -59,6 +69,8 @@ public enum CollectionImportFormat: Equatable, Sendable {
         case .previewPack: "Preview Pack"
         case .collections: "Collection-Export"
         case .backup: "Sicherung"
+        case .omniSnapshot: "Omni-Snapshot"
+        case .addonConfig: "AIOMetadata-Konfiguration"
         case .iconPack: "Icon-Satz"
         case .invalidJSON, .unknown: "unbekannt"
         }
@@ -173,6 +185,16 @@ public struct ImportSummary: Equatable, Sendable {
     public static func videos(_ collections: [MediaCollection]) -> [String] {
         var seen = Set<String>()
         return collections.flatMap(\.folders).compactMap { FocusVideoURL.playable($0.focusVideo) }.filter { seen.insert($0).inserted }
+    }
+
+    /// Build 5 (b5f): what an import skipped or changed, for the result line (" · Hinweise: A ×2, B ×1"); "" = nothing.
+    /// At most `limit` kinds, by count, then name; the rest as "…".
+    public static func note(_ warnings: [String: Int], limit: Int = 4) -> String {
+        guard !warnings.isEmpty else { return "" }
+        let sorted = warnings.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+        var parts = sorted.prefix(limit).map { "\($0.key) ×\($0.value)" }
+        if sorted.count > limit { parts.append("…") }
+        return " · Hinweise: " + parts.joined(separator: ", ")
     }
 
     /// "Import: 3 Reihen, 42 Kacheln, 35 mit Video, 30 mit Ton".

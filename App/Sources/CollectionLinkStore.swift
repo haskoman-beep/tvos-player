@@ -301,7 +301,7 @@ final class CollectionLinkStore: ObservableObject {
             case .previewPack:
                 let (entries, skipped) = try PreviewPack.parse(data)
                 return .pack(entries, skipped: skipped)
-            case .backup, .iconPack, .invalidJSON, .unknown: throw LinkError.http(0)
+            case .backup, .iconPack, .omniSnapshot, .addonConfig, .invalidJSON, .unknown: throw LinkError.http(0)
             }
         }
         return (format, r)
@@ -343,7 +343,7 @@ final class CollectionLinkStore: ObservableObject {
             }.map { PreviewPack.apply(packIndex, to: $0) }
             probe = ImportSummary.videos(collections)
             let base = ImportSummary.of(collections)
-            line = { n in var s = base; s.rows = c.rows.count; s.sound = n; return s.line }
+            line = { n in var s = base; s.rows = c.rows.count; s.sound = n; return s.line + ImportSummary.note(c.warnings) }
         case .collections(let r):
             // A refresh of a stored link takes the fresh media addresses (I4); a first import only fills gaps.
             model.importNuvio(result: r, refresh: previous.map { snapshot($0.id) ?? [:] }, profile: scope.profile)

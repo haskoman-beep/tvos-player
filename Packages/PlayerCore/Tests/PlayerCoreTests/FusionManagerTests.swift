@@ -138,3 +138,31 @@ private func addon(_ id: String, _ url: String, _ catalogs: [(String, String)]) 
     let c = try FusionImport.parse(Data(json.utf8), sourceKey: "p")
     #expect(c.rows.count == 1 && c.rows[0].style == .poster)
 }
+
+// MARK: Formats the app cannot import
+
+@Test func managerOtherFormatsAreNamed() {
+    let omni = #"{"values":{"main_group_order":["g1"],"main_catalog_groups":{"g1":{"name":"A"}}}}"#
+    #expect(CollectionImportFormat.detect(Data(omni.utf8)) == .omniSnapshot)
+    #expect(CollectionImportFormat.omniSnapshot.problem?.contains("Omni") == true)
+    let catalogs = #"{"version":1,"exportedAt":"2026-01-01T00:00:00Z","catalogs":[{"id":"trakt.list.1","type":"movie","name":"L","enabled":true,"source":"trakt"}]}"#
+    #expect(CollectionImportFormat.detect(Data(catalogs.utf8)) == .addonConfig)
+    #expect(CollectionImportFormat.addonConfig.problem?.contains("AIOMetadata") == true)
+    #expect(PhoneImportDetect.detect(omni) == .refused(.omniSnapshot))
+    #expect(PhoneImportDetect.detect(catalogs) == .refused(.addonConfig))
+    // A widget export stays a widget export.
+    #expect(CollectionImportFormat.detect(Data(managerExport.utf8)) == .widgets)
+}
+
+@Test func addonManifestIsNoAddonConfig() {
+    let manifest = #"{"id":"com.example.a","version":"1","name":"A","resources":["catalog"],"types":["movie"],"catalogs":[{"type":"movie","id":"x"}]}"#
+    #expect(CollectionImportFormat.detect(Data(manifest.utf8)) == .unknown)
+}
+
+
+@Test func importSummaryNamesSkipped() {
+    #expect(ImportSummary.note([:]) == "")
+    #expect(ImportSummary.note(["AniList-Katalog übersprungen": 3, "Kachel ohne Quellen": 1])
+            == " · Hinweise: AniList-Katalog übersprungen ×3, Kachel ohne Quellen ×1")
+}
+
