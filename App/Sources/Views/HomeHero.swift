@@ -26,20 +26,21 @@ final class HomeFocus {
     /// Task 5.2: at most one backdrop request per rest (PlayerCore `HeroBackdropFollow`).
     @ObservationIgnored private var follow = HeroBackdropFollow()
     /// Build 5 device test 1 (item 2): up from the first row was dropped; „Abspielen“ takes the focus (observed only
-    /// by `HeroButtons`). `heroFocusPending` keeps the request for a button row the lazy list builds again later.
+    /// by `HeroButtons`). the request also reaches a button row the lazy list builds again (within a second).
     private(set) var heroFocusRequest = 0
-    @ObservationIgnored private var heroFocusPending = false
+    /// Review N1: a request nobody claimed within a second expires.
+    @ObservationIgnored private var heroFocusUntil: ContinuousClock.Instant?
 
     func requestHeroFocus() {
-        heroFocusPending = true
+        heroFocusUntil = ContinuousClock.now + .seconds(1)
         heroFocusRequest &+= 1
     }
 
-    /// True once per request (for the button row that applies it).
+    /// True once per unexpired request (for the button row that applies it).
     func takeHeroFocusRequest() -> Bool {
-        guard heroFocusPending else { return false }
-        heroFocusPending = false
-        return true
+        guard let until = heroFocusUntil else { return false }
+        heroFocusUntil = nil
+        return ContinuousClock.now < until
     }
 
     /// Build 5 (b5r): rest before the backdrop follows (800 ms, longer while the user presses in a rhythm).

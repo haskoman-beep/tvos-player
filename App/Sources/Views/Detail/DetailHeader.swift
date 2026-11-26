@@ -131,15 +131,21 @@ struct DetailBadges: View {
 
 /// Task 5.3: the backdrop of the detail page with the shades of `detail.layout` (always in the background tone).
 struct DetailBackdrop: View {
-    let url: String?
+    let meta: String?
+    let tile: String?
     let shades: [DetailShade]
     @Environment(\.theme) private var theme
+    /// Review W1b: a meta address that failed; the tile image takes over.
+    @State private var failed: String?
 
     var body: some View {
+        // Build 5 device test 1 (item 3): the tile's cached picture stands in until the full-size meta image is there
+        // (`DetailPage.backdrop`); the detail page keeps its 4K target (no fixed hero target).
+        let b = DetailPage.backdrop(tile: tile, meta: meta, failed: failed)
         ZStack {
             theme.color.base
-            // Build 5 device test 1 (item 3): same target as the hero picture, so the cached bitmap is reused.
-            RemoteImage(url: url, fixedTarget: .heroBackdrop)
+            RemoteImage(url: b.main, placeholder: b.placeholder.map { AnyView(RemoteImage(url: $0)) },
+                        onFailure: { failed = $0 })
             ForEach(Array(shades.enumerated()), id: \.offset) { _, shade in
                 DetailShadeView(shade: shade, base: theme.color.base)
             }

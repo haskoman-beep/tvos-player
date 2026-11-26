@@ -117,7 +117,9 @@ extension TMDBClient {
             guard let id = c["id"] as? Int, let name = nonEmpty(c["name"]) else { continue }
             let role = nonEmpty(c["character"]) ?? ((c["roles"] as? [[String: Any]])?.first.flatMap { nonEmpty($0["character"]) })
             if let i = cast.firstIndex(where: { $0.id == id }) {
-                if let role, cast[i].role != role { cast[i].role = cast[i].role.map { "\($0) / \(role)" } ?? role }
+                // Review N8: each role once ("X / Y", never "X / Y / X").
+                let known = cast[i].role.map { $0.components(separatedBy: " / ") } ?? []
+                if let role, !known.contains(role) { cast[i].role = (known + [role]).joined(separator: " / ") }
                 continue
             }
             guard cast.count < 20 else { continue }
@@ -132,7 +134,10 @@ extension TMDBClient {
         let crew = (credits["crew"] as? [[String: Any]]) ?? []
         if series {
             m.creators = ((o["created_by"] as? [[String: Any]]) ?? []).compactMap { nonEmpty($0["name"]) }
-            m.studioLogos = studios("networks") + studios("production_companies").prefix(2)
+            // Review N6: a company that is network and producer once (by name); then two producers at most.
+            let networks = studios("networks")
+            m.studioLogos = networks + studios("production_companies")
+                .filter { p in !networks.contains { $0.name == p.name } }.prefix(2)
             m.studios = m.studioLogos.map(\.name)
             m.seasons = o["number_of_seasons"] as? Int
             m.episodes = o["number_of_episodes"] as? Int
@@ -167,7 +172,10 @@ extension TMDBClient {
         m.trailerYouTubeLanguage = ordered.first.flatMap { nonEmpty($0["iso_639_1"]) }
 
         let recs = (((o["recommendations"] as? [String: Any])?["results"] as? [[String: Any]]) ?? [])
+        // Review N8: each title once (ForEach by ID on the page).
+        var seenRecs = Set<String>()
         m.recommendations = recs.prefix(20).compactMap { preview($0, defaultType: series ? .series : .movie) }
+            .filter { seenRecs.insert("\($0.type):\($0.id)").inserted }
         return m
     }
 

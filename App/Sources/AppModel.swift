@@ -634,6 +634,9 @@ final class AppModel: ObservableObject {
         let stamp = PackageArtMemo.Stamp(profile: profileRevision, kit: kit.revision)
         let art = packageArt.collection(c, stamp: stamp) { PackageArtSource.userImports(profile.collections) + kit.artSources }
         // Build 5 device test 1 (item 6): an imported preview pack also gives the package tiles their focus videos.
+        // Review M4: the pack fills only an empty video slot, but a video plays before a GIF (`TileMotion`), so on
+        // a built-in tile the pack video beats a kit GIF. Intended: the user imports a pack to get videos on these
+        // tiles. Imported kit/user tiles keep their own order (their own video or GIF is never replaced).
         return CollectionLinkStore.shared.enriched(art, profileRevision: profileRevision, kitRevision: kit.revision)
     }
 

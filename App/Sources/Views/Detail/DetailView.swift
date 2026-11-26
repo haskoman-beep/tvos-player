@@ -78,7 +78,7 @@ struct DetailView: View {
     var body: some View {
         let spec = layoutSpec
         ZStack(alignment: .topLeading) {
-            DetailBackdrop(url: DetailPage.backdrop(tile: item.background, meta: meta?.background), shades: spec.shades)
+            DetailBackdrop(meta: meta?.background, tile: item.background, shades: spec.shades)
             ScrollViewReader { proxy in
                 ScrollView(.vertical) {
                     VStack(alignment: .leading, spacing: Theme.Space.l) {

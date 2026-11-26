@@ -42,7 +42,30 @@ final class RemoteLog {
         _ = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil,
                                                    queue: .main) { _ in
             // queue .main: already on the main thread, so save right here instead of in a later Task.
-            MainActor.assumeIsolated { RemoteLog.shared.saveRing(now: true) }
+            MainActor.assumeIsolated {
+                RemoteLog.info("app", "Hintergrund")   // review W3b: leaving the app, not a crash
+                RemoteLog.shared.flush()
+                RemoteLog.shared.saveRing(now: true)
+            }
+        }
+        // Review W3b (build 5 device test 1: three restarts on the home page, crash or exit?): one line per
+        // lifecycle step; a restart without „Hintergrund“/„beendet“ before it was a crash or a kill.
+        let lifecycle: [(Notification.Name, String)] = [
+            (UIApplication.willResignActiveNotification, "inaktiv"),
+            (UIApplication.didBecomeActiveNotification, "aktiv"),
+            (UIApplication.didReceiveMemoryWarningNotification, "Speicherwarnung"),
+        ]
+        for (name, text) in lifecycle {
+            _ = NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { RemoteLog.info("app", text) }
+            }
+        }
+        _ = NotificationCenter.default.addObserver(forName: UIApplication.willTerminateNotification, object: nil,
+                                                   queue: .main) { _ in
+            MainActor.assumeIsolated {
+                RemoteLog.info("app", "beendet")
+                RemoteLog.shared.saveRing(now: true)
+            }
         }
     }
 

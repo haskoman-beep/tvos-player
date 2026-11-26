@@ -92,7 +92,7 @@ struct HomeView: View {
             rowFocus.state.covered = false
             focus.resume()   // P2 fix round: the F-A-12 rest check runs again
             topWatch.start()
-            topWatch.onFailedMove = { up in rescueFailedMove(up: up) }
+            topWatch.onFailedMove = { up, row in rescueFailedMove(up: up, from: row) }
             FrameMeter.homeVisible(true)   // S1: frame meter while focus moves on this page
         }
         .onDisappear {
@@ -100,6 +100,7 @@ struct HomeView: View {
             rowFocus.state.covered = true
             focus.suspend()   // P2 fix round: no expand of the hero info behind the detail page
             topWatch.stop()
+            topWatch.onFailedMove = nil   // review N5
             FrameMeter.homeVisible(false)
             focusTarget.drop("verworfen, Startseite verlassen")   // review I1
         }
@@ -243,12 +244,12 @@ struct HomeView: View {
     /// Build 5 device test 1 (items 2, 7): the focus engine dropped an up/down press in the rows (target not built
     /// by the lazy list or outside it after the heading snap). Up from the first row goes to „Abspielen“ (scrolled
     /// to the very top), other presses to the neighbour row (remembered or first card, `HomeFocusTarget`).
-    private func rescueFailedMove(up: Bool) {
+    private func rescueFailedMove(up: Bool, from row: UUID) {
         let rows = model.profile.home.rowsBelowHero(model.profile.appearance)
         let look = model.profile.themeLook.home
         let hasHero = HomeTopEdge.showsHero(look.heroStyle, hasHeroSource: model.profile.home.heroSource(model.profile.appearance) != nil)
         let edge: HomeTopEdge = hasHero ? .heroButtons : .firstRow
-        let index = rows.firstIndex { focusedRows.contains($0.id) }
+        let index = rows.firstIndex { $0.id == row }   // review W2: the row under the focused element
         guard let index, let rescue = HomeMoveRescue.decide(up: up, focusedRow: index, rowCount: rows.count, edge: edge)
         else { return }
         var target: HomeRow?
@@ -261,6 +262,10 @@ struct HomeView: View {
                 DispatchQueue.main.async { withAnimation(.easeOut(duration: 0.25)) { scroll(target.id) } }
             }
         } else {
+            // Review M2: no heading check of the first row may scroll against the way to the top.
+            topWatch.headingChecks?.cancel()
+            topWatch.headingChecks = nil
+            headingRow = nil
             if let top = topWatch.scrollToTop { withAnimation(.easeOut(duration: 0.2)) { top() } }
             focus.requestHeroFocus()
         }

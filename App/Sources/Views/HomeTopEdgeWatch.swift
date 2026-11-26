@@ -32,7 +32,10 @@ import PlayerCore
     @ObservationIgnored var scrollToRow: ((UUID) -> Void)?
     /// Build 5 device test 1 (items 2, 7): an up (true) or down (false) press the focus engine dropped on the home
     /// page; `HomeView` moves the focus itself (`HomeMoveRescue`).
-    @ObservationIgnored var onFailedMove: ((Bool) -> Void)?
+    /// Review W2/M1: with the row that kept the focus (from the focused element's frame, never from the row presence).
+    @ObservationIgnored var onFailedMove: ((Bool, UUID) -> Void)?
+    /// Review W2: successful focus updates; a rescue waits one main-queue hop and is dropped when one came in.
+    @ObservationIgnored private var updateSerial = 0
 
     /// S5 (Build 4 follow-up): coordinate space of the list content; row frames in it only change with the layout.
     static let contentSpace = "home.list.content"
@@ -173,10 +176,8 @@ import PlayerCore
             inBar = nextInBar
             updateRequest()
         }
-        if failed, context.previouslyFocusedItem.map(Self.isInTabBar) != true {
-            if context.focusHeading.contains(.up) { onFailedMove?(true) }
-            else if context.focusHeading.contains(.down) { onFailedMove?(false) }
-        }
+        if !failed { updateSerial &+= 1 }
+        if failed { rescueLater(context) }
         guard context.focusHeading.contains(.up) else { return }
         // Review F-j M2: up inside the bar itself has no target; that is not a home page failure.
         if failed, context.previouslyFocusedItem.map(Self.isInTabBar) == true { return }
@@ -197,6 +198,24 @@ import PlayerCore
               let line = TabBarReachLog.up(outcome, atTop: atTop, edge: focus.edge, bar: Self.tabBarState(),
                                            offset: offset, navigation: navigation) else { return }
         RemoteLog.info("nav", line)
+    }
+
+    /// Build 5 device test 1 (items 2, 7) with review W2/M1/N3: a dropped up/down press of an element inside the
+    /// home list goes to `onFailedMove` with the row under that element, one hop later and only when no focus
+    /// update came in meanwhile; at most one per direction and second.
+    private func rescueLater(_ context: UIFocusUpdateContext) {
+        let up = context.focusHeading.contains(.up)
+        guard up || context.focusHeading.contains(.down), onFailedMove != nil,
+              let view = context.previouslyFocusedItem as? UIView, let sv = TabBarGuard.shared.knownScrollView,
+              view.window != nil, view.isDescendant(of: sv) else { return }
+        let y = Double(view.convert(view.bounds, to: sv).midY)
+        guard let row = HomeMoveRescue.row(atContentY: y, spans: rowSpans.map { ($0.key, $0.value) }),
+              throttle.allow(up ? "rescue up" : "rescue down", now: Self.now) else { return }
+        let serial = updateSerial
+        Task { @MainActor [weak self] in
+            guard let self, self.updateSerial == serial else { return }
+            self.onFailedMove?(up, row)
+        }
     }
 
     // MARK: UIKit lookup (read only)
