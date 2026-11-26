@@ -268,8 +268,9 @@ private func omniSnapshot() -> String {
 @Test func githubPageLinkBecomesRawLink() {
     #expect(CollectionImportLink.raw("https://github.com/someone/repo/blob/main/dir/file.json")
             == "https://raw.githubusercontent.com/someone/repo/main/dir/file.json")
+    // Review M2: /raw/ links worked before (GitHub redirects) and stay as they are (stored link ids).
     #expect(CollectionImportLink.raw("https://github.com/someone/repo/raw/refs/heads/main/a%20b.json")
-            == "https://raw.githubusercontent.com/someone/repo/refs/heads/main/a%20b.json")
+            == "https://github.com/someone/repo/raw/refs/heads/main/a%20b.json")
     #expect(CollectionImportLink.raw("https://example.invalid/x.json") == "https://example.invalid/x.json")
     #expect(CollectionImportLink.raw("https://github.com/someone/repo") == "https://github.com/someone/repo")
 }
@@ -287,4 +288,47 @@ private func omniSnapshot() -> String {
     #expect(ImportSummary.addonNote(2) == " · 2 Reihen warten auf ein Addon mit den Katalogen (z. B. AIOMetadata)")
     #expect(ImportSummary.addonNote(1) == " · 1 Reihe wartet auf ein Addon mit den Katalogen (z. B. AIOMetadata)")
     #expect(ImportSummary.addonNote(0) == "")
+}
+
+
+// MARK: Review round (b5f-review.md)
+
+@Test func importNoteCapsKeysAndLength() {
+    let long = "Quelle " + String(repeating: "x", count: 5000) + "\nzwei übersprungen"
+    let n = ImportSummary.note([long: 1, "Kurz": 2])
+    #expect(!n.contains("\n") && n.count <= ImportSummary.maxNoteLength)
+    #expect(n.hasPrefix(" · Hinweise: Kurz ×2, Quelle xxx"))
+    // Keys are capped when the importer records them, too.
+    let json = #"{"exportType":"fusionWidgets","widgets":[{"id":"a","title":"A","type":"row.classic","dataSource":{"kind":"\#(String(repeating: "k", count: 3000))","payload":{}}}]}"#
+    let c = try? FusionImport.parse(Data(json.utf8), sourceKey: "w")
+    #expect(c.map { $0.warnings.keys.allSatisfy { $0.count <= ImportSummary.maxWarningLength + 20 } } == true)
+    #expect(ImportSummary.emptyWidgets([:], format: "Omni-Snapshot") == "Import: Omni-Snapshot ohne lesbare Reihen (keine Widgets gefunden)")
+}
+
+@Test func omniLargeSnapshotIsCapped() throws {
+    let ids = (0..<(OmniImport.maxRows + 30)).map { "\"movie:cat.\($0)\"" }.joined(separator: ",")
+    let json = #"{"values":{"catalog_ordering":["# + ids + "," + ids + #"]}}"#
+    let c = try FusionImport.parse(Data(json.utf8), sourceKey: "o")
+    #expect(c.rows.count == OmniImport.maxRows)
+    #expect(c.warnings["Omni-Kataloge über der Grenze"] == 30)
+}
+
+@Test func resolverIndexAndAmbiguousFallback() {
+    let any = AddonCatalogResolver.anyAddon
+    let cinemeta = addon("com.example.cinemeta", "https://c.example.invalid/manifest.json", [("movie", "top")])
+    let tmdb = addon("com.example.tmdb", "https://t.example.invalid/manifest.json", [("movie", "top")])
+    // Several addons declare a generic id: no guess …
+    #expect(AddonCatalogResolver.resolve([cinemeta, tmdb], addonId: any, catalogId: "top", type: "movie") == nil)
+    #expect(AddonCatalogResolver.resolve([cinemeta, tmdb], addonId: "https://gone.example.invalid", catalogId: "top", type: "movie") == nil)
+    // … the exact host still decides, and an AIOMetadata addon is preferred for the placeholder.
+    #expect(AddonCatalogResolver.resolve([cinemeta, tmdb], addonId: "https://t.example.invalid", catalogId: "top", type: "movie")?.addon == tmdb)
+    let aio = addon("com.example.aiometadata", "https://aio.example.invalid/x/manifest.json", [("movie", "top")])
+    #expect(AddonCatalogResolver.resolve([cinemeta, aio], addonId: any, catalogId: "top", type: "movie")?.addon == aio)
+    // Requested `all` with two declared types (none `all`): ambiguous.
+    let two = addon("com.example.two", "https://two.example.invalid/manifest.json", [("movie", "d"), ("series", "d")])
+    #expect(AddonCatalogResolver.resolve([two], addonId: any, catalogId: "d", type: "all") == nil)
+    // The index gives the same answers as the plain call.
+    let idx = AddonCatalogIndex([cinemeta, aio, two])
+    #expect(AddonCatalogResolver.resolve(idx, addonId: any, catalogId: "top", type: "movie")?.addon == aio)
+    #expect(AddonCatalogResolver.resolve(idx, addonId: any, catalogId: "d", type: "series")?.type == "series")
 }

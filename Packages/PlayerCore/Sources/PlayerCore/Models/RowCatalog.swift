@@ -63,7 +63,7 @@ public struct RowCatalog: Sendable {
         groups.append(.fixed(.collections, entries: ownEntries))
 
         // 3. Fusion-Kit, nach Thema gruppiert; der Ersteller steht im Untertitel.
-        groups.append(RowCatalog.kitGroup(sources: kitSources, contents: kitContents, addons: addons, traktID: traktID,
+        groups.append(RowCatalog.kitGroup(sources: kitSources, contents: kitContents, addons: AddonCatalogIndex(addons), traktID: traktID,
                                           traktLogin: traktLogin, tmdb: tmdb, errors: kitErrors, status: status))
 
         // 4. Trakt.
@@ -190,7 +190,7 @@ public struct RowCatalog: Sendable {
     static func kitTopicRank(_ topic: String) -> Int { kitTopicRanks[fold(topic)] ?? 5 }
 
     /// b5f: `addons` = installed addons; kit addon catalog sources without a serving addon are left out (nil = no check).
-    static func kitGroup(sources: [FusionKitSource], contents: [String: FusionKitContent], addons: [InstalledAddon]? = nil,
+    static func kitGroup(sources: [FusionKitSource], contents: [String: FusionKitContent], addons: AddonCatalogIndex? = nil,
                          traktID: Bool, traktLogin: Bool,
                          tmdb: Bool = true, errors: [String: String] = [:],
                          status: (String) -> RowCatalogEntry.Status) -> RowCatalogGroup {
@@ -208,7 +208,7 @@ public struct RowCatalog: Sendable {
             for row in content.rows {
                 // Without the addon check: what Trakt alone leaves (tells the reason apart).
                 let byTrakt = row.available(traktID: traktID, traktLogin: traktLogin)
-                guard let shown = addons == nil ? byTrakt : row.available(traktID: traktID, traktLogin: traktLogin, addons: addons) else {
+                guard let shown = addons == nil ? byTrakt : row.available(traktID: traktID, traktLogin: traktLogin, catalogs: addons) else {
                     hidden += 1
                     if byTrakt == nil { hiddenByTrakt = true }
                     if row.needs.contains(.traktID) && !traktID { hiddenNeedsID = true }

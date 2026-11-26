@@ -339,7 +339,7 @@ final class CollectionLinkStore: ObservableObject {
         case .widgets(let c, let src):
             // b5f (device test 26.11.): no readable row → say why, keep nothing (was a silent "0 Reihen").
             guard !c.rows.isEmpty else {
-                let reason = ImportSummary.emptyWidgets(c.warnings)
+                let reason = ImportSummary.emptyWidgets(c.warnings, format: format.name)
                 model.lastError = reason
                 RemoteLog.info("import", "\(format.name)\(link == nil ? " (Code)" : ""): \(reason)")
                 return

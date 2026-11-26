@@ -76,14 +76,15 @@ public enum CollectionImportFormat: Equatable, Sendable {
     }
 }
 
-/// b5f (device test 26.11.): a GitHub page link (`github.com/<owner>/<repo>/blob|raw/<ref…>/<path>`) loads the HTML
+/// b5f (device test 26.11.): a GitHub page link (`github.com/<owner>/<repo>/blob/<ref…>/<path>`) loads the HTML
 /// page, not the file; it is rewritten to the raw file address. Every other link stays as it is.
 public enum CollectionImportLink {
     public static func raw(_ link: String) -> String {
         guard let u = URLComponents(string: link), u.scheme == "https" || u.scheme == "http",
               ["github.com", "www.github.com"].contains(u.host?.lowercased() ?? "") else { return link }
         let parts = u.percentEncodedPath.split(separator: "/", omittingEmptySubsequences: true)
-        guard parts.count >= 5, parts[2] == "blob" || parts[2] == "raw" else { return link }
+        // Review M2: only /blob/ (the HTML page); /raw/ links already load the file and keep their stored id.
+        guard parts.count >= 5, parts[2] == "blob" else { return link }
         let rest = ([parts[0], parts[1]] + parts[3...]).joined(separator: "/")
         return "https://raw.githubusercontent.com/" + rest
     }
@@ -204,14 +205,25 @@ public struct ImportSummary: Equatable, Sendable {
     public static func note(_ warnings: [String: Int], limit: Int = 4) -> String {
         guard !warnings.isEmpty else { return "" }
         let sorted = warnings.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
-        var parts = sorted.prefix(limit).map { "\($0.key) ×\($0.value)" }
+        var parts = sorted.prefix(limit).map { "\(cappedWarning($0.key)) ×\($0.value)" }
         if sorted.count > limit { parts.append("…") }
-        return " · Hinweise: " + parts.joined(separator: ", ")
+        let s = " · Hinweise: " + parts.joined(separator: ", ")
+        return s.count <= maxNoteLength ? s : String(s.prefix(maxNoteLength - 1)) + "…"
+    }
+
+    /// Review M1: longest hint key and longest hint text (they end up in the link summary in UserDefaults).
+    public static let maxWarningLength = 60
+    public static let maxNoteLength = 300
+
+    /// Hint key on one line, at most `maxWarningLength` characters.
+    public static func cappedWarning(_ s: String) -> String {
+        let line = s.split(whereSeparator: \.isNewline).joined(separator: " ")
+        return line.count <= maxWarningLength ? line : String(line.prefix(maxWarningLength - 1)) + "…"
     }
 
     /// b5f (device test 26.11.): a widget export without a single readable row; the hints say why.
-    public static func emptyWidgets(_ warnings: [String: Int]) -> String {
-        "Import: Widget-Export ohne lesbare Reihen" + (warnings.isEmpty ? " (keine Widgets gefunden)" : note(warnings))
+    public static func emptyWidgets(_ warnings: [String: Int], format: String = "Widget-Export") -> String {
+        "Import: \(format) ohne lesbare Reihen" + (warnings.isEmpty ? " (keine Widgets gefunden)" : note(warnings))
     }
 
     /// b5f: rows of the import that stay hidden until an addon serves their catalogs ("" = none).

@@ -62,6 +62,11 @@ public struct FusionKitRow: Sendable, Hashable, Identifiable {
     /// - Parameter addons: b5f: installed addons; an addon catalog source stays only when one of them serves it
     ///   (`AddonCatalogResolver`). nil = no addon check (as before).
     public func available(traktID: Bool, traktLogin: Bool, addons: [InstalledAddon]? = nil) -> FusionKitRow? {
+        available(traktID: traktID, traktLogin: traktLogin, catalogs: addons.map(AddonCatalogIndex.init))
+    }
+
+    /// Same with prebuilt addon index (review L5: one index per sync, not per row). nil = no addon check.
+    public func available(traktID: Bool, traktLogin: Bool, catalogs addons: AddonCatalogIndex?) -> FusionKitRow? {
         func ok(_ s: CatalogSource) -> Bool {
             let n = FusionNeeds.of(s)
             if n.contains(.traktID) && !traktID { return false }
@@ -99,8 +104,9 @@ public struct FusionKitContent: Sendable, Hashable {
 
     /// b5f: rows that only an addon catalog keeps from showing (Trakt and TMDB as available) with these addons.
     public func waitingForAddon(_ addons: [InstalledAddon]) -> Int {
-        rows.filter { $0.available(traktID: true, traktLogin: true) != nil
-            && $0.available(traktID: true, traktLogin: true, addons: addons) == nil }.count
+        let index = AddonCatalogIndex(addons)
+        return rows.filter { $0.available(traktID: true, traktLogin: true) != nil
+            && $0.available(traktID: true, traktLogin: true, catalogs: index) == nil }.count
     }
 }
 
@@ -150,7 +156,8 @@ public enum FusionImport {
     public static func parse(_ data: Data, sourceKey: String, title: String = "Kit", now: Date = Date()) throws -> FusionKitContent {
         let any = try JSONSerialization.jsonObject(with: data)
         var warnings: [String: Int] = [:]
-        let warn: (String) -> Void = { warnings[$0, default: 0] += 1 }
+        // Review M1: keys carry strings from the file; capped before they reach summary, notice or UserDefaults.
+        let warn: (String) -> Void = { warnings[ImportSummary.cappedWarning($0), default: 0] += 1 }
         let ctx = Context(sourceKey: sourceKey, today: day(now), warn: warn)
         var rows: [FusionKitRow] = []
 
@@ -162,6 +169,7 @@ public enum FusionImport {
             }
             guard obj["exportType"] as? String == "fusionWidgets" || obj["widgets"] != nil else { throw FusionImportError.unknownFormat }
             if let v = obj["exportVersion"] as? Int, v != 1 { warn("exportVersion \(v) unbekannt") }
+            if let n = obj[OmniImport.skippedKey] as? Int, n > 0 { warnings["Omni-Kataloge über der Grenze", default: 0] += n }
             // Reihe für Reihe: eine kaputte Reihe kostet nur sich selbst, nie die ganze Datei.
             let export = try JSONDecoder().decode(RawExport.self, from: data)
             if export.widgetsUnreadable { warn("widgets unlesbar") }
