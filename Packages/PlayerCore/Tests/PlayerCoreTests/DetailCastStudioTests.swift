@@ -83,3 +83,23 @@ import Testing
     #expect(genres.folders.first { $0.title == "Komödie" }?.focusVideo == "https://v.example/comedy.mp4")
     #expect(PreviewPack.matches(pack, in: [ReadyPackages.genreCollection]) == 1)
 }
+
+// Review N6/N8: a series names the same company as network and producer; a person's role repeats; a
+// recommendation repeats. Each once.
+@Test func studiosRolesAndRecommendationsOnce() {
+    let json = #"""
+    {"id":9,"name":"S","networks":[{"id":49,"name":"HBO","logo_path":"/hbo.png"}],
+     "production_companies":[{"id":49,"name":"HBO","logo_path":"/hbo.png"},{"id":7,"name":"P1"}],
+     "aggregate_credits":{"cast":[
+       {"id":1,"name":"A","roles":[{"character":"X"}]},
+       {"id":1,"name":"A","roles":[{"character":"Y"}]},
+       {"id":1,"name":"A","roles":[{"character":"X"}]}]},
+     "recommendations":{"results":[
+       {"id":5,"name":"R","media_type":"tv","poster_path":"/r.jpg"},
+       {"id":5,"name":"R","media_type":"tv","poster_path":"/r.jpg"}]}}
+    """#
+    let s = TMDBClient.parseLocalized(Data(json.utf8), lang: "de", region: "DE", series: true)
+    #expect(s?.studios == ["HBO", "P1"])
+    #expect(s?.cast.first?.role == "X / Y")
+    #expect(s?.recommendations.count == 1)
+}
