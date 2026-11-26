@@ -50,6 +50,9 @@ import Testing
     var t = ImageCacheTally()
     t.decoded(ms: 10, untilDoneMs: 12, pixels: 500 * 750)
     t.decoded(ms: 30, untilDoneMs: 40, pixels: 1920 * 1080)
-    #expect(t.text() == "Cache Treffer 0 / Fehlgriffe 0 · dekodiert 2, längstes 30 ms (bis fertig 40 ms)"
-            + " · Ø 20 ms · 2,4 Mpx")
+    // b5r review L3: a failed decode (no picture, no pixels) counts as a decode, but both means cover only the
+    // decodes with a picture: Ø 20 ms, Ø (0.375 + 2.07) / 2 ≈ 1.2 Mpx.
+    t.decoded(ms: 100, untilDoneMs: 100, pixels: 0)
+    #expect(t.text() == "Cache Treffer 0 / Fehlgriffe 0 · dekodiert 3, längstes 100 ms (bis fertig 100 ms)"
+            + " · Ø 20 ms · Ø 1,2 Mpx")
 }

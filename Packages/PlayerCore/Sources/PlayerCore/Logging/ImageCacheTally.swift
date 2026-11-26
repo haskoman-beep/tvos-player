@@ -29,7 +29,9 @@ public struct ImageCacheTally: Sendable, Equatable {
     public private(set) var decodes = 0
     public private(set) var longestDecodeMs = 0
     public private(set) var longestUntilDecodedMs = 0
-    /// b5r: sum of the decode times and of the decoded pixels (only decodes that report their pixels).
+    /// b5r: decodes that gave a picture (reported pixels), the sum of their decode times and of their pixels; the
+    /// line shows both means over this same set (review L3).
+    public private(set) var pictureDecodes = 0
     public private(set) var totalDecodeMs = 0
     public private(set) var decodedPixels = 0
     public private(set) var releases = 0
@@ -51,8 +53,11 @@ public struct ImageCacheTally: Sendable, Equatable {
     /// b5r: `pixels` of the decoded bitmap (width × height), 0 when unknown.
     public mutating func decoded(ms: Int, untilDoneMs: Int, pixels: Int = 0) {
         decodes += 1
-        totalDecodeMs += max(0, ms)
-        decodedPixels += max(0, pixels)
+        if pixels > 0 {
+            pictureDecodes += 1
+            totalDecodeMs += max(0, ms)
+            decodedPixels += pixels
+        }
         longestDecodeMs = max(longestDecodeMs, ms)
         longestUntilDecodedMs = max(longestUntilDecodedMs, untilDoneMs)
     }
@@ -71,9 +76,9 @@ public struct ImageCacheTally: Sendable, Equatable {
         if fetches > 0 { line += " · Ladungen \(fetches) (lokal \(fromLocalCache) · Netz \(fromNetwork))" }
         if decodes > 0 {
             line += " · dekodiert \(decodes), längstes \(longestDecodeMs) ms (bis fertig \(longestUntilDecodedMs) ms)"
-            if decodedPixels > 0 {
-                let tenths = Int((Double(decodedPixels) / 100_000).rounded())
-                line += " · Ø \(totalDecodeMs / decodes) ms · \(tenths / 10),\(tenths % 10) Mpx"
+            if pictureDecodes > 0 {
+                let tenths = Int((Double(decodedPixels) / Double(pictureDecodes) / 100_000).rounded())
+                line += " · Ø \(totalDecodeMs / pictureDecodes) ms · Ø \(tenths / 10),\(tenths % 10) Mpx"
             }
         }
         if releases > 0 { line += " · freigegeben \(releases) (\(PictureArrivalStats.mb(releasedBytes)) MB)" }
