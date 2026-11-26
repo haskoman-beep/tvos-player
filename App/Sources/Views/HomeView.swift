@@ -92,6 +92,7 @@ struct HomeView: View {
             rowFocus.state.covered = false
             focus.resume()   // P2 fix round: the F-A-12 rest check runs again
             topWatch.start()
+            topWatch.onFailedMove = { up in rescueFailedMove(up: up) }
             FrameMeter.homeVisible(true)   // S1: frame meter while focus moves on this page
         }
         .onDisappear {
@@ -237,6 +238,32 @@ struct HomeView: View {
         let kinds = tileKinds(rows)
         return Theme.Focus.listBottomRoom(height: FocusHeadroom.tallest(kinds, cardScale: a.cardSize.scale, posterExtra: strip),
                                           lift: listLift)
+    }
+
+    /// Build 5 device test 1 (items 2, 7): the focus engine dropped an up/down press in the rows (target not built
+    /// by the lazy list or outside it after the heading snap). Up from the first row goes to „Abspielen“ (scrolled
+    /// to the very top), other presses to the neighbour row (remembered or first card, `HomeFocusTarget`).
+    private func rescueFailedMove(up: Bool) {
+        let rows = model.profile.home.rowsBelowHero(model.profile.appearance)
+        let look = model.profile.themeLook.home
+        let hasHero = HomeTopEdge.showsHero(look.heroStyle, hasHeroSource: model.profile.home.heroSource(model.profile.appearance) != nil)
+        let edge: HomeTopEdge = hasHero ? .heroButtons : .firstRow
+        let index = rows.firstIndex { focusedRows.contains($0.id) }
+        guard let index, let rescue = HomeMoveRescue.decide(up: up, focusedRow: index, rowCount: rows.count, edge: edge)
+        else { return }
+        var target: HomeRow?
+        if case .row(let i) = rescue { target = rows[i] }
+        RemoteLog.info("nav", rescue.line(up: up, from: index, fromTitle: model.homeRowTitle(rows[index].content),
+                                          toTitle: target.map { model.homeRowTitle($0.content) }))
+        if let target {
+            focusTarget.request(.row(target.id))
+            if let scroll = topWatch.scrollToRow {
+                DispatchQueue.main.async { withAnimation(.easeOut(duration: 0.25)) { scroll(target.id) } }
+            }
+        } else {
+            if let top = topWatch.scrollToTop { withAnimation(.easeOut(duration: 0.2)) { top() } }
+            focus.requestHeroFocus()
+        }
     }
 
     /// Build 2 device test: focus scrolling only keeps the focused card's frame inside the list, so a row entered

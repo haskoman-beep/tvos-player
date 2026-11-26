@@ -1,0 +1,29 @@
+import Testing
+@testable import PlayerCore
+
+// Build 5 device test 1, item 2: up from the first row must reach the hero buttons; item 7: a dropped up/down
+// press in the rows moves to the neighbour row instead of being swallowed.
+@Test func upFromTheFirstRowGoesToTheHeroButtons() {
+    #expect(HomeMoveRescue.decide(up: true, focusedRow: 0, rowCount: 9, edge: .heroButtons) == .heroButtons)
+    // Without a hero the first row is the top edge; the tab bar above is reached by the system.
+    #expect(HomeMoveRescue.decide(up: true, focusedRow: 0, rowCount: 9, edge: .firstRow) == nil)
+}
+
+@Test func droppedMovesInTheRowsGoToTheNeighbourRow() {
+    #expect(HomeMoveRescue.decide(up: true, focusedRow: 3, rowCount: 9, edge: .heroButtons) == .row(2))
+    #expect(HomeMoveRescue.decide(up: false, focusedRow: 3, rowCount: 9, edge: .heroButtons) == .row(4))
+    #expect(HomeMoveRescue.decide(up: true, focusedRow: 3, rowCount: 9, edge: .firstRow) == .row(2))
+}
+
+@Test func noRescueAtTheBottomOrOutsideTheRows() {
+    #expect(HomeMoveRescue.decide(up: false, focusedRow: 8, rowCount: 9, edge: .heroButtons) == nil)
+    #expect(HomeMoveRescue.decide(up: true, focusedRow: nil, rowCount: 9, edge: .heroButtons) == nil)
+    #expect(HomeMoveRescue.decide(up: false, focusedRow: 9, rowCount: 9, edge: .heroButtons) == nil)
+}
+
+@Test func rescueLineNamesBothEnds() {
+    #expect(HomeMoveRescue.heroButtons.line(up: true, from: 0, fromTitle: "Weiterschauen", toTitle: nil)
+            == "Hoch verschluckt in Reihe 1 (Weiterschauen) → Knopfzeile fokussiert")
+    #expect(HomeMoveRescue.row(4).line(up: false, from: 3, fromTitle: "Genres", toTitle: "Streaming-Dienste")
+            == "Runter verschluckt in Reihe 4 (Genres) → Reihe 5 (Streaming-Dienste) fokussiert")
+}

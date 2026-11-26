@@ -24,6 +24,22 @@ final class HomeFocus {
     @ObservationIgnored var followsBackdrop = false
     /// Task 5.2: at most one backdrop request per rest (PlayerCore `HeroBackdropFollow`).
     @ObservationIgnored private var follow = HeroBackdropFollow()
+    /// Build 5 device test 1 (item 2): up from the first row was dropped; „Abspielen“ takes the focus (observed only
+    /// by `HeroButtons`). `heroFocusPending` keeps the request for a button row the lazy list builds again later.
+    private(set) var heroFocusRequest = 0
+    @ObservationIgnored private var heroFocusPending = false
+
+    func requestHeroFocus() {
+        heroFocusPending = true
+        heroFocusRequest &+= 1
+    }
+
+    /// True once per request (for the button row that applies it).
+    func takeHeroFocusRequest() -> Bool {
+        guard heroFocusPending else { return false }
+        heroFocusPending = false
+        return true
+    }
 
     /// Kachel hat den Fokus: Diashow sofort anhalten, Hintergrund erst nach 350 ms Ruhe wechseln.
     /// Ein neuer Fokus bricht die Wartezeit ab; pro Ruhepause höchstens eine Log-Zeile.
@@ -375,7 +391,11 @@ struct HeroButtons: View {
         .onChange(of: field != nil) { _, f in onFocusChange?(f) }
         .onChange(of: field) { fieldMoved = ContinuousClock.now }
         // Back from a pushed page with the focus state unchanged: report it again.
-        .onAppear { if field != nil { onFocusChange?(true) } }
+        .onAppear {
+            if field != nil { onFocusChange?(true) }
+            claimHeroFocusRequest()
+        }
+        .onChange(of: focus.heroFocusRequest) { claimHeroFocusRequest() }
         .onDisappear { onFocusChange?(false) }
         .task { await claimLaunchFocus() }
     }
@@ -414,6 +434,12 @@ struct HeroButtons: View {
             LaunchFocus.finish("Startfenster vorbei", way: "fenster",
                                usableAt: LaunchFocus.firstPlayFocus ?? LaunchFocus.shownAt ?? ContinuousClock.now)
         }
+    }
+
+    /// Build 5 device test 1 (item 2): a dropped up press in the first row hands the focus to „Abspielen“.
+    private func claimHeroFocusRequest() {
+        guard focus.takeHeroFocusRequest() else { return }
+        DispatchQueue.main.async { field = .play }
     }
 
     /// Task 5.2: only the carousel listens to left/right (other styles keep the plain focus moves).

@@ -30,6 +30,9 @@ import PlayerCore
     @ObservationIgnored var scrollToTop: (() -> Void)?
     /// Set by the scroll view (ScrollViewReader): scrolls a home row (heading included) to the list's top edge.
     @ObservationIgnored var scrollToRow: ((UUID) -> Void)?
+    /// Build 5 device test 1 (items 2, 7): an up (true) or down (false) press the focus engine dropped on the home
+    /// page; `HomeView` moves the focus itself (`HomeMoveRescue`).
+    @ObservationIgnored var onFailedMove: ((Bool) -> Void)?
 
     /// S5 (Build 4 follow-up): coordinate space of the list content; row frames in it only change with the layout.
     static let contentSpace = "home.list.content"
@@ -169,6 +172,10 @@ import PlayerCore
         if !failed, nextInBar != inBar {
             inBar = nextInBar
             updateRequest()
+        }
+        if failed, context.previouslyFocusedItem.map(Self.isInTabBar) != true {
+            if context.focusHeading.contains(.up) { onFailedMove?(true) }
+            else if context.focusHeading.contains(.down) { onFailedMove?(false) }
         }
         guard context.focusHeading.contains(.up) else { return }
         // Review F-j M2: up inside the bar itself has no target; that is not a home page failure.
