@@ -680,7 +680,7 @@ Feldern. Die alten Felder werden weiter geschrieben.
 - `LookPreset.values(.appleTV) -> LookValues` liefert genau `export.json`:
   - `global`: navigation `oben`, clock `false`, settingsLayout `spalten`, accent `weiss`, background `schwarz`,
     typeScale `standard`, typeCharacter `neutral`, motion `standard`
-  - `home`: heroStyle `vollbild`, heroInfo `minimal`, heroTitle `logo`, backdropFollowsFocus `false`, cardShape
+  - `home`: heroStyle `vollbild`, heroInfo `standard`, heroTitle `logo`, backdropFollowsFocus `true` (user decision 26.11.), cardShape
     `querformat`, cardSize `gross`, corners `rund`, rowSpacing `luftig`, rowTitle `standard`, cardTitles `immer`,
     expandPosters `false`, focusScale `kraeftig`, focusBorder `keiner`, focusShadow `tief`, focusGlow `true`
   - `detail`: layout `kino`, descriptionLines `2`, cast `kreise`, badgeStyle `text`, ratingStyle `text`,
@@ -1300,9 +1300,9 @@ Spalte „ab Build“ = ab wann die Option in den Einstellungen wirkt; vorher is
 | global · Schrift und Bewegung | `typeCharacter` „Schriftcharakter“ | `neutral` Neutral, `editorial` Editorial, `technisch` Technisch | `neutral` | Neutral entspricht tvOS. Editorial setzt große Titel leichter und enger. Technisch setzt Metadaten kräftiger und weiter. | 4 |
 | global · Schrift und Bewegung | `motion` „Bewegung“ | `aus` Aus, `dezent` Dezent, `standard` Standard | `standard` | Dauer und Stärke der Übergänge. Aus schaltet Überblendungen ab. | 4 |
 | home · Hero | `heroStyle` „Hero-Stil“ | `vollbild` Vollbild, `banner` Banner, `karussell` Karussell, `aus` Aus | `vollbild` | Vollbild füllt den ganzen Bildschirm hinter den Reihen. Banner ist eine eigene Fläche über den Reihen. Karussell zeigt den Nachbartitel angeschnitten. | 5a |
-| home · Hero | `heroInfo` „Info-Ebene“ | `minimal` Minimal, `standard` Standard, `ausfuehrlich` Ausführlich | `minimal` | Wie viel Text über dem Hero-Bild steht. | 5a |
+| home · Hero | `heroInfo` „Info-Ebene“ | `minimal` Minimal, `standard` Standard, `ausfuehrlich` Ausführlich | `standard` | Wie viel Text über dem Hero-Bild steht. | 5a |
 | home · Hero | `heroTitle` „Logo oder Titel“ | `logo` Logo, `text` Titel als Text | `logo` | Logo nimmt das Titel-Logo aus den Metadaten, wenn es eines gibt. Titel setzt den Namen immer als Text. | 5a |
-| home · Hero | `backdropFollowsFocus` „Hintergrund nach Fokus“ | `true` An, `false` Aus | `false` | Der Hintergrund wechselt auf den Titel, auf dem der Fokus kurz ruht. | 5a |
+| home · Hero | `backdropFollowsFocus` „Hintergrund nach Fokus“ | `true` An, `false` Aus | `true` | Der Hintergrund wechselt auf den Titel, auf dem der Fokus kurz ruht. | 5a |
 | home · Karten und Reihen | `cardShape` „Kartenform“ | `poster` Poster, `querformat` Querformat, `mischung` Mischung | `querformat` | Poster ist Hochformat, Querformat zeigt Szenenbilder. Mischung nutzt Querformat für Weiterschauen und Poster für den Rest. | 5a |
 | home · Karten und Reihen | `cardSize` „Kartengröße“ | `klein` Klein, `mittel` Mittel, `gross` Groß | `gross` | Größere Karten wirken ruhiger, zeigen aber weniger Titel pro Reihe. | 4 |
 | home · Karten und Reihen | `corners` „Ecken“ | `eckig` Eckig, `leicht` Leicht, `weich` Weich, `rund` Rund | `rund` | Radius der Karten und Flächen. | 5a |

@@ -17,9 +17,9 @@
     },
     "home": {
       "heroStyle": "vollbild",
-      "heroInfo": "minimal",
+      "heroInfo": "standard",
       "heroTitle": "logo",
-      "backdropFollowsFocus": false,
+      "backdropFollowsFocus": true,
       "cardShape": "querformat",
       "cardSize": "gross",
       "corners": "rund",

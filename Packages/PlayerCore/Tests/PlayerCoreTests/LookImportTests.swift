@@ -76,8 +76,9 @@ private let edelExport = """
     let (look, report) = try LookImport.parse(Data(edelExport.utf8))
     #expect(look.preset == .appleTV)
     #expect(report.isEmpty)
-    // Every value of the edel example that differs from "Mein Look" (07 §5.2 against export.json).
-    #expect(look.overrides.count == 26)
+    // Every value of the edel example that differs from "Mein Look" (07 §5.2 against export.json). 24 since
+    // 26.11.: "Mein Look" has heroInfo standard and backdropFollowsFocus true like edel.
+    #expect(look.overrides.count == 24)
     let v = look.resolved()
     #expect(v.global.accent == .champagner && v.home.cardShape == .mischung && v.detail.descriptionLines == .three)
     #expect(v.player.stillWatching == .karte && v.home.rowSpacing == .luftig)

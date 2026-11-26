@@ -27,7 +27,7 @@ public enum LookPreset {
     static let appleTV = LookValues(
         global: LookGlobal(navigation: .oben, clock: false, settingsLayout: .spalten, accent: .weiss,
                            background: .schwarz, typeScale: .standard, typeCharacter: .neutral, motion: .standard),
-        home: LookHome(heroStyle: .vollbild, heroInfo: .minimal, heroTitle: .logo, backdropFollowsFocus: false,
+        home: LookHome(heroStyle: .vollbild, heroInfo: .standard, heroTitle: .logo, backdropFollowsFocus: true,
                        cardShape: .querformat, cardSize: .gross, corners: .rund, rowSpacing: .luftig,
                        rowTitle: .standard, cardTitles: .immer, expandPosters: false, focusScale: .kraeftig,
                        focusBorder: .keiner, focusShadow: .tief, focusGlow: true),

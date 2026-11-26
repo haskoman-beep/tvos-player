@@ -120,6 +120,16 @@ private func leafCount(_ v: JSONValue) -> Int {
     #expect(same.overrides.isEmpty)
 }
 
+@Test func appleTVPresetShowsStandardHeroInfoAndFollowsFocus() {
+    // User decision 26.11.: "Mein Look" shows the standard hero info (meta line, ratings, overview) and the
+    // backdrop follows the focus; the clock stays off. Old profiles without these overrides get them as well.
+    let v = LookPreset.values(.appleTV)
+    #expect(v.home.heroInfo == .standard)
+    #expect(v.home.backdropFollowsFocus)
+    #expect(!v.global.clock)
+    #expect(LookPreset.baseline.home.heroInfo == .standard && LookPreset.baseline.home.backdropFollowsFocus)
+}
+
 @Test func appleTVPresetResolvesCompletely() throws {
     let values = Look().resolved()
     #expect(values == LookPreset.values(.appleTV))
