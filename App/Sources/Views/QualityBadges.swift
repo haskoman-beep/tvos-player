@@ -103,14 +103,15 @@ struct PosterBadgeBand: View {
 /// `streamsStored`, wartende Poster aktualisieren sich dann über `stored`.
 /// Build 4 follow-up 2 (P3): the values are stored at once (a card appearing reads them in its `.task`), the
 /// notification goes out collected (`BadgeBatch`): one pass for all results of 0.5 s, not before the focus has been
-/// quiet for 1 s (no badge fade during the card lift, expansion or backdrop crossfade), at the latest 3 s after the
+/// quiet for `BackdropRest.homeFocusQuiet` (2.1 s, b5r; no badge fade during the card lift or backdrop rest and
+/// crossfade), at the latest 3 s after the
 /// first result. Only the cards whose key is in the batch change state (`PosterQualityBadges.best`); rows only log.
 @MainActor
 final class QualityBadgeCache {
     static let shared = QualityBadgeCache()
     /// Sendet die Cache-IDs mit neuen Quellen im AppModel-Cache, gebündelt (P3).
     let stored = PassthroughSubject<Set<String>, Never>()
-    private var batch = BadgeBatch()
+    private var batch = BadgeBatch(limits: BadgeBatch.Limits(focusQuiet: BackdropRest.homeFocusQuiet))
     private var flushTask: Task<Void, Never>?
     /// P3: one `ruckler` line per 10 s with passes (`Plaketten gebündelt: …`).
     private var passStats = BadgePassStats()

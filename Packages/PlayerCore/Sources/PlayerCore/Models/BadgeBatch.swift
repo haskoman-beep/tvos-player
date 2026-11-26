@@ -4,8 +4,8 @@ import Foundation
 /// cards instead of one pass per result. The values themselves are stored at once; only the notification waits.
 /// - `coalesce` (0.5 s) after the first waiting result: searches started together (up to 6 at once) end spread over
 ///   0.5–2 s; one pass per half second instead of one per title.
-/// - Not before the focus has been quiet for `focusQuiet` (1 s, `FocusRest.prefetchQuiet`): the card lift, the
-///   expansion after 350 ms and the 0.6 s backdrop crossfade are over by then.
+/// - Not before the focus has been quiet for `focusQuiet` (default 1 s, `FocusRest.prefetchQuiet`; the home page
+///   uses `BackdropRest.homeFocusQuiet`, 2.1 s, b5r): the card lift and the backdrop rest plus crossfade are over.
 /// - At the latest `maxHold` (3 s) after the first waiting result, so a long browse does not hold badges back for good
 ///   (at most one pass per 3 s while the focus keeps moving).
 public struct BadgeBatch: Sendable {

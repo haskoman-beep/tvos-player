@@ -10,20 +10,17 @@ private let t0 = Date(timeIntervalSince1970: 1_000_000)
 private func at(_ s: TimeInterval) -> Date { t0.addingTimeInterval(s) }
 
 @Test func prefetchRestIsLongerThanTheBackdropRestAndItsCrossfade() {
-    #expect(FocusRest.milliseconds == 350)
     #expect(FocusRest.prefetchMilliseconds == 1000)
-    // The 0.6 s backdrop crossfade starts at the earliest 350 ms after the focus stop; the prefetch starts after it.
-    #expect(FocusRest.prefetchMilliseconds >= FocusRest.milliseconds + 600)
     #expect(FocusRest.prefetchQuiet == 1.0)
+    // b5r: the home stop starts the prefetch after the backdrop rest plus its crossfade (800 + 600 ms).
+    let fresh = FocusRest.stop(alreadyShown: false, backdropRest: BackdropRest.baseMilliseconds)
+    #expect((fresh.backdropWait ?? 0) + fresh.prefetchWait >= BackdropRest.baseMilliseconds + BackdropRest.fadeMilliseconds)
 }
 
-@Test func focusStopSchedulesBackdropThenPrefetch() {
-    // A tile not shown yet: backdrop after 350 ms, then the prefetch 650 ms later (1000 ms after the stop).
-    let fresh = FocusRest.stop(alreadyShown: false)
-    #expect(fresh == FocusRest.Stop(backdropWait: 350, prefetchWait: 650))
+@Test func focusStopOnTheShownTileKeepsTheFullPrefetchRest() {
     // Back on the tile whose backdrop is shown (focus moved away and back before the prefetch): no swap, but the
     // prefetch still gets its full rest.
-    let shown = FocusRest.stop(alreadyShown: true)
+    let shown = FocusRest.stop(alreadyShown: true, backdropRest: BackdropRest.baseMilliseconds)
     #expect(shown == FocusRest.Stop(backdropWait: nil, prefetchWait: 1000))
 }
 

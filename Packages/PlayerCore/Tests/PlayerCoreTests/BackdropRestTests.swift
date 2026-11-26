@@ -10,7 +10,6 @@ import Testing
     var r = BackdropRest()
     #expect(r.moved(at: 10) == BackdropRest.baseMilliseconds)
     #expect(BackdropRest.baseMilliseconds == 800)
-    #expect(!r.inBurst)
 }
 
 @Test func quickPressesKeepTheBaseRest() {
@@ -18,7 +17,6 @@ import Testing
     _ = r.moved(at: 10)
     // 300 ms apart: 300 + margin is below the base, the base wins.
     #expect(r.moved(at: 10.3) == 800)
-    #expect(r.inBurst)
 }
 
 @Test func rhythmicPressesRestLongerThanTheirRhythm() {
@@ -46,9 +44,18 @@ import Testing
     var r = BackdropRest()
     _ = r.moved(at: 0)
     _ = r.moved(at: 1.2)
-    // 2 s without a move: the user looked; the next move starts fresh.
-    #expect(r.moved(at: 3.2) == 800)
-    #expect(!r.inBurst)
+    // More than 2 s without a move: the user looked; the next move starts fresh (base rest, then the next short
+    // gap alone decides).
+    #expect(r.moved(at: 3.3) == 800)
+    #expect(r.moved(at: 3.7) == 800)
+}
+
+// b5r review M1: badge pass and visible-tile prefetch on the home page wait out the longest rest plus the fade.
+@Test func homeFocusQuietCoversTheLongestRestAndTheCrossfade() {
+    #expect(BackdropRest.fadeMilliseconds == 600)
+    #expect(BackdropRest.homeFocusQuiet == 2.1)
+    #expect(BackdropRest.homeFocusQuiet * 1000 >= Double(BackdropRest.maxMilliseconds + BackdropRest.fadeMilliseconds))
+    #expect(BackdropRest.homeFocusQuiet < BadgeBatch.Limits().maxHold)   // badges still come while browsing
 }
 
 @Test func resetStartsFreshAndClockGoingBackIsNoBurst() {
@@ -57,8 +64,7 @@ import Testing
     _ = r.moved(at: 1.2)
     r.reset()
     #expect(r.moved(at: 1.3) == 800)
-    #expect(!r.inBurst)
-    #expect(r.moved(at: 0.5) == 800)
+    #expect(r.moved(at: 0.5) == 800)    // clock went back: no burst
 }
 
 @Test func swapCountsTheMovesItSkipped() {
@@ -74,7 +80,7 @@ import Testing
 
 @Test func homeStopPrefetchesAfterTheRestAndTheCrossfade() {
     // Base rest: backdrop after 800 ms, prefetch after the 600 ms crossfade (1400 ms after the stop).
-    #expect(FocusRest.stop(alreadyShown: false, backdropRest: 800, fadeMilliseconds: 600)
+    #expect(FocusRest.stop(alreadyShown: false, backdropRest: 800)
             == FocusRest.Stop(backdropWait: 800, prefetchWait: 600))
     // A short rest keeps the 1 s prefetch rest in all.
     #expect(FocusRest.stop(alreadyShown: false, backdropRest: 300, fadeMilliseconds: 600)

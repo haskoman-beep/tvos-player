@@ -139,7 +139,7 @@ struct HomeRowView: View {
             presence.disappear()
             onFocusInside?(false)
             if handoverTarget != nil { handoverTarget = nil }   // Review M1
-            // Wave F-p R1: page left with focus in this row within the 350 ms rest: no stale request.
+            // Wave F-p R1: page left with focus in this row before its prefetch rest ended: no stale request.
             if let r = focusedRoute { StreamPrefetcher.shared.cancelRest(r) }
         }
         .onChange(of: focusedRoute) { old, r in

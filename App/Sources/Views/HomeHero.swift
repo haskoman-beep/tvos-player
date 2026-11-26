@@ -212,9 +212,9 @@ enum HeroMetrics {
     static let listPadding: CGFloat = 24
     /// Longest backdrop crossfade (today's 0.6 s; `motion.backdrop` standard is 0.7). The P3 prefetch rest (1 s)
     /// starts after the backdrop rest (b5r: `BackdropRest`, at least 800 ms) plus this fade.
-    static let backdropFade: Double = 0.6
+    static let backdropFade: Double = Double(BackdropRest.fadeMilliseconds) / 1000
     /// The same fade in ms for `FocusRest.stop(alreadyShown:backdropRest:fadeMilliseconds:)`.
-    static let backdropFadeMilliseconds: Int = 600
+    static let backdropFadeMilliseconds: Int = BackdropRest.fadeMilliseconds
 }
 
 extension Route {

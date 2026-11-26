@@ -14,6 +14,12 @@ public struct BackdropRest: Sendable, Equatable {
     /// The rest is this much longer than the burst's longest recent gap.
     public static let marginMilliseconds = 300
     public static let historyCount = 3
+    /// The backdrop crossfade (`HeroMetrics.backdropFade`, today's 0.6 s).
+    public static let fadeMilliseconds = 600
+    /// b5r review M1: how long the home focus must be quiet before the badge pass (`BadgeBatch`) and the visible-tile
+    /// prefetch (`VisiblePrefetchPlan`) may run: the longest rest plus the crossfade (2.1 s), so neither lands in a
+    /// backdrop swap. Replaces P3's 1 s (350 ms rest + 0.6 s fade) on the home page.
+    public static let homeFocusQuiet: TimeInterval = Double(maxMilliseconds + fadeMilliseconds) / 1000
 
     private var lastMove: TimeInterval?
     private var gaps: [Int] = []
@@ -34,9 +40,6 @@ public struct BackdropRest: Sendable, Equatable {
         return min(Self.maxMilliseconds, max(Self.baseMilliseconds, longest + Self.marginMilliseconds))
     }
 
-    /// The moves before this one were part of a burst.
-    public var inBurst: Bool { !gaps.isEmpty }
-
     /// The backdrop followed the latest card: how many earlier moves since the last swap got none (log line).
     public mutating func swapped() -> Int {
         defer { movesSinceSwap = 0 }
@@ -54,7 +57,9 @@ extension FocusRest {
     /// Build 5 (b5r): a home focus stop with the backdrop rest of `BackdropRest`. The source prefetch keeps its
     /// 1 s rest in all, but never starts before the crossfade (`fadeMilliseconds`) after the swap is over (with the
     /// 800 ms rest it starts 1.4 s after the stop). Shown already: no swap, the prefetch after its full rest.
-    public static func stop(alreadyShown: Bool, backdropRest: Int, fadeMilliseconds: Int) -> Stop {
+    /// (Replaces the 350 ms `stop(alreadyShown:)` of P3.)
+    public static func stop(alreadyShown: Bool, backdropRest: Int,
+                            fadeMilliseconds: Int = BackdropRest.fadeMilliseconds) -> Stop {
         guard !alreadyShown else { return Stop(backdropWait: nil, prefetchWait: prefetchMilliseconds) }
         let rest = max(0, backdropRest)
         return Stop(backdropWait: rest, prefetchWait: max(prefetchMilliseconds - rest, max(0, fadeMilliseconds)))

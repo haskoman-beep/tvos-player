@@ -4,7 +4,7 @@ import Foundation
 /// (badges come only from known sources). Pure bookkeeping; the app (`StreamPrefetcher`) runs the searches.
 /// - Tiles report on/off screen per row. A pass runs only after `debounce` without a change (scrolling stopped) and,
 ///   Build 4 follow-up 2 (P3), `focusQuiet` after the last focus move (`focusMoved`): no searches while the focus
-///   moves on, the focus-rest prefetch (same 1 s rest) comes first.
+///   moves on, the focus-rest prefetch comes first (default 1 s; the app passes `BackdropRest.homeFocusQuiet`, b5r).
 /// - A pass starts the visible tiles that still need sources: the row with the latest change first, tiles in screen
 ///   order; at most `maxRunning` at once and what the shared per-minute `budget` leaves (R2: shared with the focus
 ///   prefetch, which has priority; none while a page runs its own source search). A tile shown in two rows runs once.
