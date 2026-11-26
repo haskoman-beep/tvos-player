@@ -130,6 +130,10 @@ private func addon(_ id: String, _ url: String, _ catalogs: [(String, String)]) 
             == ["com.example.b", "all"])
     #expect(AddonCatalogResolver.resolve([a, b], addonId: any, catalogId: "s1", type: "series")?.addon == b)
     #expect(AddonCatalogResolver.resolve([a, b], addonId: any, catalogId: "missing", type: "movie") == nil)
+    // One declared type: taken for a guessed type; two other types: ambiguous, no match.
+    #expect(AddonCatalogResolver.resolve([a], addonId: any, catalogId: "m1", type: "series")?.type == "movie")
+    let c = addon("com.example.c", "https://c.example.invalid/manifest.json", [("movie", "d"), ("anime", "d")])
+    #expect(AddonCatalogResolver.resolve([c], addonId: any, catalogId: "d", type: "series") == nil)
     #expect(AddonCatalogResolver.resolve([], addonId: any, catalogId: "m1", type: "movie") == nil)
 }
 
@@ -215,4 +219,29 @@ private func omniSnapshot() -> String {
     #expect(OmniImport.normalizedID("Movie:a.b") == "movie::a.b" && OmniImport.normalizedID("series::c") == "series::c")
     #expect(OmniImport.catalogType("tmdb.top.shows") == "series"
             && OmniImport.catalogType("tmdb.top_shows") == "movie" && OmniImport.catalogType("all::x") == "all")
+}
+
+// MARK: Rows without a serving addon stay hidden until it is installed
+
+@Test func managerRowsNeedAServingAddon() throws {
+    let c = try FusionImport.parse(Data(managerExport.utf8), sourceKey: "m")
+    let aio = addon("com.example.aio", "https://aio.example.invalid/stremio/cfg/manifest.json",
+                    [("movie", "mdblist.123"), ("movie", "streaming.a"), ("anime", "streaming.a")])
+    #expect(c.rows[0].available(traktID: true, traktLogin: true, addons: []) == nil)
+    #expect(c.rows[0].available(traktID: true, traktLogin: true, addons: [aio]) == c.rows[0])
+    #expect(c.rows[0].available(traktID: true, traktLogin: true) == c.rows[0])   // nil = no addon check
+    // Tile row: the series catalog is not declared (and the id has two other types) → that source goes, the tile
+    // stays; the Trakt tile is untouched.
+    let tiles = try #require(c.rows[2].available(traktID: true, traktLogin: false, addons: [aio]))
+    guard case .collection(let col) = tiles.body else { Issue.record("keine Collection"); return }
+    #expect(col.folders.map(\.title) == ["Service A", "Trakt"] && col.folders[0].sources.count == 1)
+
+    let src = FusionKitSource(id: "m", title: "M", url: "https://example.invalid/m.json", custom: true)
+    var st = FusionKitSettings(enabled: true)
+    st.setSelected("fusion.m.catalog.r1", true, source: src)
+    var layout = HomeLayout(rows: [])
+    var r = FusionKitSync.apply(layout: &layout, settings: &st, contents: ["m": c], traktID: true, traktLogin: true, addons: [])
+    #expect(r.hidden == ["fusion.m.catalog.r1"] && layout.rows.isEmpty && st.isSelected("fusion.m.catalog.r1"))
+    r = FusionKitSync.apply(layout: &layout, settings: &st, contents: ["m": c], traktID: true, traktLogin: true, addons: [aio])
+    #expect(r.added == ["fusion.m.catalog.r1"] && layout.rows.count == 1)
 }

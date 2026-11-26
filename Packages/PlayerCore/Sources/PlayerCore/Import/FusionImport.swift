@@ -59,11 +59,15 @@ public struct FusionKitRow: Sendable, Hashable, Identifiable {
 
     /// Nur Quellen, die mit den vorhandenen Diensten laden (Trakt ohne Client ID bzw. ohne Anmeldung fällt weg);
     /// Kacheln ohne Quelle entfallen. nil = nichts bleibt übrig, Reihe ausblenden.
-    public func available(traktID: Bool, traktLogin: Bool) -> FusionKitRow? {
+    /// - Parameter addons: b5f: installed addons; an addon catalog source stays only when one of them serves it
+    ///   (`AddonCatalogResolver`). nil = no addon check (as before).
+    public func available(traktID: Bool, traktLogin: Bool, addons: [InstalledAddon]? = nil) -> FusionKitRow? {
         func ok(_ s: CatalogSource) -> Bool {
             let n = FusionNeeds.of(s)
             if n.contains(.traktID) && !traktID { return false }
             if n.contains(.traktLogin) && !traktLogin { return false }
+            if let addons, case .addon(let a, let c, let t) = s.kind,
+               AddonCatalogResolver.resolve(addons, addonId: a, catalogId: c, type: t) == nil { return false }
             return true
         }
         switch body {

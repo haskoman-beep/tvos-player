@@ -185,7 +185,8 @@ public enum FusionKitSync {
     /// - Parameter contents: geladene Kit-Dateien je Quellen-Schlüssel. Ist eine Quelle (noch) nicht geladen,
     ///   bleiben ihre Reihen, wie sie sind – sonst gingen Platz und Stil bei jedem Start ohne Netz verloren.
     public static func apply(layout: inout HomeLayout, settings: inout FusionKitSettings,
-                             contents: [String: FusionKitContent], traktID: Bool, traktLogin: Bool) -> FusionKitSyncResult {
+                             contents: [String: FusionKitContent], traktID: Bool, traktLogin: Bool,
+                             addons: [InstalledAddon]? = nil) -> FusionKitSyncResult {
         var res = FusionKitSyncResult()
         let present = Set(layout.rows.compactMap { FusionImport.kitID(of: $0) })
 
@@ -204,7 +205,7 @@ public enum FusionKitSync {
                 guard let key = FusionImport.sourceKey(ofID: id) else { continue }
                 guard let content = contents[key] else { unknown.insert(id); continue }
                 guard let row = content.row(id) else { continue }   // nicht mehr im Kit
-                if let r = row.available(traktID: traktID, traktLogin: traktLogin) { want[id] = r; order.append(id) }
+                if let r = row.available(traktID: traktID, traktLogin: traktLogin, addons: addons) { want[id] = r; order.append(id) }
                 else { res.hidden.append(id) }
             }
         }

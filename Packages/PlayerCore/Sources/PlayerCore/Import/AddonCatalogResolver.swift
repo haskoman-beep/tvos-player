@@ -31,8 +31,10 @@ public enum AddonCatalogResolver {
 
     /// The addon and the catalog type to request. A manifest id match is taken as it is (unchanged behaviour). For a
     /// stored address the addons on that host come first, then every installed addon; for `anyAddon` every addon.
-    /// The catalog must be declared in the manifest; the declared type wins when the requested one is not declared
-    /// (e.g. `all::` catalogs of AIOMetadata).
+    /// The catalog must be declared in the manifest. When the requested type is not declared, the declared type is
+    /// taken only if that is unambiguous: one side is `all` (AIOMetadata `all::` catalogs, which the manager exports as
+    /// `series`), or the id is declared with exactly one type (a guessed type of an Omni id). Otherwise no match, so a
+    /// series source never loads the movie catalog of the same id.
     public static func resolve(_ addons: [InstalledAddon], addonId: String, catalogId: String,
                                type: String) -> (addon: InstalledAddon, type: String)? {
         if let a = addons.first(where: { $0.manifest.id == addonId }) { return (a, type) }
@@ -44,7 +46,10 @@ public enum AddonCatalogResolver {
                 return (a, type)
             }
             for a in group {
-                if let c = a.manifest.catalogs.first(where: { $0.id == catalogId }) { return (a, c.type) }
+                let declared = a.manifest.catalogs.filter { $0.id == catalogId }
+                if let c = declared.first(where: { $0.type == "all" || type == "all" }) ?? (declared.count == 1 ? declared.first : nil) {
+                    return (a, c.type)
+                }
             }
         }
         return nil

@@ -391,7 +391,10 @@ final class FusionKitStore: ObservableObject {
         let traktID = model.hasTraktID, traktLogin = model.isConnected("trakt")
         var layout = model.profile.home
         var s = settings
-        let r = FusionKitSync.apply(layout: &layout, settings: &s, contents: contents, traktID: traktID, traktLogin: traktLogin)
+        // b5f: addon catalog sources (widget exports) need an installed addon that serves them.
+        let addons = model.profile.addons
+        let r = FusionKitSync.apply(layout: &layout, settings: &s, contents: contents, traktID: traktID, traktLogin: traktLogin,
+                                    addons: addons)
 
         var vis: [String: MediaCollection] = [:]
         var hiddenTiles = 0
@@ -400,7 +403,7 @@ final class FusionKitStore: ObservableObject {
         for (_, c) in contents {
             for row in c.rows {
                 guard case .collection(let full) = row.body else { continue }
-                if let a = row.available(traktID: traktID, traktLogin: traktLogin), case .collection(let v) = a.body {
+                if let a = row.available(traktID: traktID, traktLogin: traktLogin, addons: addons), case .collection(let v) = a.body {
                     vis[row.id] = PreviewPack.apply(pack, to: v)
                     if s.placed.contains(row.id) { hiddenTiles += full.folders.count - v.folders.count }
                 }
@@ -431,7 +434,8 @@ final class FusionKitStore: ObservableObject {
         }
         if !loggedHidden, !r.hidden.isEmpty || hiddenTiles > 0 {
             loggedHidden = true
-            let why = traktID ? "Trakt-Anmeldung fehlt" : "Trakt Client ID fehlt"
+            let why = traktID && traktLogin ? "kein installiertes Addon mit dem Katalog"
+                : (traktID ? "Trakt-Anmeldung fehlt" : "Trakt Client ID fehlt") + " oder kein Addon mit dem Katalog"
             RemoteLog.info("kit", "\(r.hidden.count) Kit-Reihe(n) und \(hiddenTiles) Kachel(n) ausgeblendet: \(why)")
         }
     }
