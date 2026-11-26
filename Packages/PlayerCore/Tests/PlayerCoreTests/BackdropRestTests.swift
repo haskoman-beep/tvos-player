@@ -76,6 +76,10 @@ import Testing
     r.reset()
     #expect(r.moved(at: 1.3) == 800)
     #expect(r.moved(at: 0.5) == 800)    // clock went back: no burst
+    // b5r review L2: reset also clears the skipped-move count.
+    r.reset()
+    _ = r.moved(at: 2)
+    #expect(r.swapped() == 0)
 }
 
 @Test func swapCountsTheMovesItSkipped() {
@@ -86,6 +90,10 @@ import Testing
     // The backdrop swapped after the third move: two moves before it never got a swap.
     #expect(r.swapped() == 2)
     _ = r.moved(at: 3)
+    #expect(r.swapped() == 0)
+    // b5r review L2: moves that want no swap (card shown already, follow off) are not counted as skipped.
+    _ = r.moved(at: 3.4, wantsSwap: false)
+    _ = r.moved(at: 3.8)
     #expect(r.swapped() == 0)
 }
 

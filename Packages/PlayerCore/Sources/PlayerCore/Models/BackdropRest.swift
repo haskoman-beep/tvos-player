@@ -29,10 +29,11 @@ public struct BackdropRest: Sendable, Equatable {
 
     public init() {}
 
-    /// The focus moved at `now`; returns the rest in ms before the backdrop may follow this card.
-    public mutating func moved(at now: TimeInterval) -> Int {
+    /// The focus moved at `now`; returns the rest in ms before the backdrop may follow this card. `wantsSwap` false
+    /// (card shown already, backdrop follow off): the move still shapes the rhythm, but is not counted as skipped.
+    public mutating func moved(at now: TimeInterval, wantsSwap: Bool = true) -> Int {
         defer { lastMove = now }
-        movesSinceSwap += 1
+        if wantsSwap { movesSinceSwap += 1 }
         guard let last = lastMove else { gaps = []; return Self.baseMilliseconds }
         let gap = Int(((now - last) * 1000).rounded())
         guard gap >= 0, gap <= Self.burstGapMilliseconds else { gaps = []; return Self.baseMilliseconds }
@@ -52,6 +53,7 @@ public struct BackdropRest: Sendable, Equatable {
     public mutating func reset() {
         lastMove = nil
         gaps = []
+        movesSinceSwap = 0
     }
 }
 

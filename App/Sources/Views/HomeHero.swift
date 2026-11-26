@@ -43,7 +43,7 @@ final class HomeFocus {
         pending = nil
         // Task 5.2: no token = nothing to show (option off, or this card is shown already): prefetch only.
         let token = follow.focus(m.id, follows: followsBackdrop)
-        let restMs: Int = rest.moved(at: ProcessInfo.processInfo.systemUptime)
+        let restMs: Int = rest.moved(at: ProcessInfo.processInfo.systemUptime, wantsSwap: token != nil)
         let stop = FocusRest.stop(alreadyShown: token == nil, backdropRest: restMs,
                                   fadeMilliseconds: HeroMetrics.backdropFadeMilliseconds)
         guard stop.backdropWait != nil || onRest != nil else { return }
