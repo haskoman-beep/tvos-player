@@ -498,7 +498,7 @@ struct HomeRowView: View {
         // Review m6: Top 10 cards keep their rank in the label.
         let name: String = rank.map { "Platz \($0), \(m.name)" } ?? m.name
         let key = HomeRowCardKey(item: m, rank: rank, kind: kind, titled: titles != nil, style: row.style,
-                                 upcoming: row.content == .list(.upcoming))
+                                 upcoming: row.content == .list(.upcoming), row: row)
         let focused: Bool = focusedRoute == route
         return HomeRowCard(route: route, name: name, accessibilityText: value, titles: titles, focused: focused,
                            inContinueRow: row.content == .list(.continueWatching),

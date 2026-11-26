@@ -7,7 +7,8 @@ import PlayerCore
 /// ran its link, tile menu, accessibility and title line again. Equatable over the values it draws: on a focus move
 /// only the cards whose `focused` flag changed run their body, the others are skipped (`.equatable()`).
 /// The closures (activation, row menu actions, neighbour focus) are not compared: they reach the row's and the page's
-/// state through its storage, so an older copy acts the same; `menu.canMoveUp` is its only value and is compared.
+/// state through its storage, so an older copy acts the same; `menu.canMoveUp` is compared, and the row value (which the
+/// hide/delete closures capture) is part of `labelKey`.
 struct HomeRowCard<Label: View>: View, Equatable {
     let route: Route
     /// Accessibility label (Top 10: with the rank) and value (year, progress).
@@ -17,7 +18,7 @@ struct HomeRowCard<Label: View>: View, Equatable {
     let focused: Bool
     let inContinueRow: Bool
     let inWatchlistRow: Bool
-    /// What decides `label` (item, rank, card form, title room, row style, upcoming row).
+    /// What decides `label` (item, rank, card form, title room, row style, upcoming row) and the row.
     let labelKey: HomeRowCardKey
     let focus: FocusState<Route?>.Binding
     let onActivate: (Route) -> Route?
@@ -60,4 +61,7 @@ struct HomeRowCardKey: Equatable {
     var style: RowStyle
     /// Row content „Heute neu“ (`UpcomingTodayCard`).
     var upcoming: Bool
+    /// b5r review L1: the whole row value, so the row menu closures (hide/delete confirm with the row title) are
+    /// rebuilt whenever the row changes, even when its cards stay the same.
+    var row: HomeRow
 }
