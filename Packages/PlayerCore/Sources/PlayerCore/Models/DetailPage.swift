@@ -16,11 +16,16 @@ public enum DetailPage {
         case play
     }
 
-    /// Build 5 device test 1 (item 3): the page's backdrop is the image the tile and the hero showed (already in the
-    /// image cache); the meta image only fills a gap. Meta first had shown another picture, loaded again.
-    public static func backdrop(tile: String?, meta: String?) -> String? {
-        func usable(_ s: String?) -> String? { s.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 } }
-        return usable(tile) ?? usable(meta)
+    /// Build 5 device test 1 (item 3, review W1b): the page's backdrop is the meta image (full size); the image the
+    /// tile and the hero showed (already cached) stands in until it arrives, and takes over when it fails.
+    /// `failed`: an address that could not be loaded.
+    public static func backdrop(tile: String?, meta: String?, failed: String? = nil) -> (main: String?, placeholder: String?) {
+        func usable(_ s: String?) -> String? {
+            s.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty || $0 == failed ? nil : $0 }
+        }
+        let t = usable(tile)
+        guard let m = usable(meta) else { return (t, nil) }
+        return (m, t == m ? nil : t)
     }
 
     /// Whether the page shows the „Sofort abspielen“ card and builds a best choice at all.

@@ -43,13 +43,18 @@ import Testing
     #expect(s?.studioLogos.first?.logo == "https://image.tmdb.org/t/p/w300/hbo.png")
 }
 
-// Item 3: the detail page showed another backdrop than the tile and hero (meta image first, then the catalogue
-// one) and loaded it again. The page now takes the tile's image first; the meta image only fills a gap.
-@Test func detailBackdropKeepsTheTileImage() {
-    #expect(DetailPage.backdrop(tile: "https://a/tile.jpg", meta: "https://b/meta.jpg") == "https://a/tile.jpg")
-    #expect(DetailPage.backdrop(tile: nil, meta: "https://b/meta.jpg") == "https://b/meta.jpg")
-    #expect(DetailPage.backdrop(tile: "  ", meta: "https://b/meta.jpg") == "https://b/meta.jpg")
-    #expect(DetailPage.backdrop(tile: nil, meta: nil) == nil)
+// Item 3 (review W1b): the meta image is the backdrop; the tile's (cached) image stands in until it arrives and
+// takes over when the meta address fails.
+@Test func detailBackdropShowsTheTileImageUntilTheMetaImage() {
+    let b = DetailPage.backdrop(tile: "https://a/tile.jpg", meta: "https://b/meta.jpg")
+    #expect(b.main == "https://b/meta.jpg"); #expect(b.placeholder == "https://a/tile.jpg")
+    let early = DetailPage.backdrop(tile: "https://a/tile.jpg", meta: nil)
+    #expect(early.main == "https://a/tile.jpg"); #expect(early.placeholder == nil)
+    let failed = DetailPage.backdrop(tile: "https://a/tile.jpg", meta: "https://b/meta.jpg", failed: "https://b/meta.jpg")
+    #expect(failed.main == "https://a/tile.jpg"); #expect(failed.placeholder == nil)
+    let same = DetailPage.backdrop(tile: "https://a/x.jpg", meta: "https://a/x.jpg")
+    #expect(same.main == "https://a/x.jpg"); #expect(same.placeholder == nil)
+    #expect(DetailPage.backdrop(tile: "  ", meta: nil).main == nil)
 }
 
 // Item 6: a preview pack (20 videos, "0 Kacheln zugeordnet" in device test 1) applies to the built-in package tiles
