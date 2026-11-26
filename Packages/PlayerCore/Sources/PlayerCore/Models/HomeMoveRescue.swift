@@ -22,6 +22,12 @@ public enum HomeMoveRescue: Equatable, Sendable {
         return i + 1 < rowCount ? .row(i + 1) : nil
     }
 
+    /// Review W2/M1: the row whose frame (list content coordinates) holds `y`, the centre of the element that kept
+    /// the focus; nil between rows or outside them (then nothing is rescued).
+    public static func row(atContentY y: Double, spans: [(UUID, HomeRowSpan)]) -> UUID? {
+        spans.first { y >= $0.1.minY && y <= $0.1.maxY }?.0
+    }
+
     /// Log line: "Hoch|Runter verschluckt in Reihe <n> (<title>) → Knopfzeile|Reihe <m> (<title>)".
     public func line(up: Bool, from: Int, fromTitle: String, toTitle: String?) -> String {
         let target: String

@@ -1,4 +1,5 @@
 import Testing
+import Foundation
 @testable import PlayerCore
 
 // Build 5 device test 1, item 2: up from the first row must reach the hero buttons; item 7: a dropped up/down
@@ -26,4 +27,16 @@ import Testing
             == "Hoch verschluckt in Reihe 1 (Weiterschauen) → Knopfzeile fokussiert")
     #expect(HomeMoveRescue.row(4).line(up: false, from: 3, fromTitle: "Genres", toTitle: "Streaming-Dienste")
             == "Runter verschluckt in Reihe 4 (Genres) → Reihe 5 (Streaming-Dienste) fokussiert")
+}
+
+// Review W2/M1: the row of a dropped press comes from the element that kept the focus (its centre in the list's
+// content), not from the row-presence set (a leave is reported 100 ms late).
+@Test func rescueRowIsTheRowUnderTheFocusedElement() {
+    let spans: [(UUID, HomeRowSpan)] = [(UUID(uuidString: "00000000-0000-0000-0000-000000000001")!, HomeRowSpan(minY: 470, maxY: 900)),
+                                        (UUID(uuidString: "00000000-0000-0000-0000-000000000002")!, HomeRowSpan(minY: 964, maxY: 1400))]
+    #expect(HomeMoveRescue.row(atContentY: 700, spans: spans) == spans[0].0)
+    #expect(HomeMoveRescue.row(atContentY: 1000, spans: spans) == spans[1].0)
+    // Between rows (gap) or above them (hero buttons): no row, no rescue.
+    #expect(HomeMoveRescue.row(atContentY: 930, spans: spans) == nil)
+    #expect(HomeMoveRescue.row(atContentY: 200, spans: spans) == nil)
 }
