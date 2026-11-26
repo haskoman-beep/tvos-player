@@ -632,7 +632,9 @@ final class AppModel: ObservableObject {
         guard id.hasPrefix("pkg.") else { return CollectionLinkStore.shared.enriched(c, profileRevision: profileRevision) }
         let kit = FusionKitStore.shared
         let stamp = PackageArtMemo.Stamp(profile: profileRevision, kit: kit.revision)
-        return packageArt.collection(c, stamp: stamp) { PackageArtSource.userImports(profile.collections) + kit.artSources }
+        let art = packageArt.collection(c, stamp: stamp) { PackageArtSource.userImports(profile.collections) + kit.artSources }
+        // Build 5 device test 1 (item 6): an imported preview pack also gives the package tiles their focus videos.
+        return CollectionLinkStore.shared.enriched(art, profileRevision: profileRevision, kitRevision: kit.revision)
     }
 
     // MARK: Kataloge

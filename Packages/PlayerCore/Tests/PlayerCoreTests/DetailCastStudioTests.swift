@@ -51,3 +51,22 @@ import Testing
     #expect(DetailPage.backdrop(tile: "  ", meta: "https://b/meta.jpg") == "https://b/meta.jpg")
     #expect(DetailPage.backdrop(tile: nil, meta: nil) == nil)
 }
+
+// Item 6: a preview pack (20 videos, "0 Kacheln zugeordnet" in device test 1) applies to the built-in package tiles
+// by title too, and the pack's video becomes the focus motion of such a tile.
+@Test func previewPackFillsBuiltInPackageTiles() {
+    let pack = PreviewPack.Index([PreviewPackEntry(title: "Netflix", video: "https://v.example/netflix.mp4"),
+                                  PreviewPackEntry(title: "action", video: "https://v.example/action.mp4")])
+    #expect(PreviewPack.matches(pack, in: ReadyPackages.all) == 2)
+    let streaming = PreviewPack.apply(pack, to: ReadyPackages.streamingDE)
+    let netflix = streaming.folders.first { $0.title == "Netflix" }
+    #expect(netflix?.focusVideo == "https://v.example/netflix.mp4")
+    if let netflix { #expect(TileMotion.of(netflix, reduceMotion: false) == .video("https://v.example/netflix.mp4")) }
+    // Fallback reason for the log line of a focused tile that stays a still.
+    let wow = streaming.folders.first { $0.title == "WOW" }
+    if let wow {
+        #expect(TileMotion.stillReason(wow, reduceMotion: false) == "kein Video/GIF (kein Pack-Treffer)")
+        #expect(TileMotion.stillReason(wow, reduceMotion: true) == "Bewegung reduziert")
+    }
+    if let netflix { #expect(TileMotion.stillReason(netflix, reduceMotion: false) == nil) }
+}

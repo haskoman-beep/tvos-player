@@ -66,4 +66,12 @@ extension TileMotion {
     public static func of(_ f: Folder, reduceMotion: Bool) -> TileMotion {
         reduceMotion ? .still : of(f)
     }
+
+    /// Build 5 device test 1 (item 6): why a focused tile stays a still (log line); nil when it moves.
+    public static func stillReason(_ f: Folder, reduceMotion: Bool) -> String? {
+        if reduceMotion { return "Bewegung reduziert" }
+        guard of(f) == .still else { return nil }
+        if let v = f.focusVideo, !v.isEmpty { return "Video-Adresse nicht abspielbar" }
+        return "kein Video/GIF (kein Pack-Treffer)"
+    }
 }

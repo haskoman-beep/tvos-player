@@ -188,9 +188,10 @@ final class CollectionLinkStore: ObservableObject {
     }
 
     /// A profile collection with the preview packs applied (memoised per collection).
-    func enriched(_ c: MediaCollection, profileRevision: Int) -> MediaCollection {
+    /// `kitRevision`: package tiles also change with the kit's art (build 5 device test 1, item 6).
+    func enriched(_ c: MediaCollection, profileRevision: Int, kitRevision: Int = 0) -> MediaCollection {
         guard !packIndex.isEmpty else { return c }
-        let stamp = [profileRevision, packRevision]
+        let stamp = [profileRevision, packRevision, kitRevision]
         if let m = memo[c.id], m.stamp == stamp { return m.c }
         let out = PreviewPack.apply(packIndex, to: c)
         memo[c.id] = (stamp, out)
@@ -360,7 +361,8 @@ final class CollectionLinkStore: ObservableObject {
             }
             pack = entries
             let index = PreviewPack.Index(entries)
-            let targets = model.profile.collections.filter { !$0.id.hasPrefix("pkg.") } + FusionKitStore.shared.importedCollections
+            // Build 5 device test 1 (item 6): the built-in package tiles take the pack's videos by title too.
+            let targets = model.profile.collections + FusionKitStore.shared.importedCollections
             let matched = PreviewPack.matches(index, in: targets)
             var seen = Set<String>()
             probe = entries.map(\.video).filter { seen.insert($0).inserted }

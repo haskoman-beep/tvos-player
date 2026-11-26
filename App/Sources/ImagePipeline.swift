@@ -733,6 +733,10 @@ struct FocusGIF: View {
             if img == nil, Self.logged.insert(url).inserted {
                 RemoteLog.info("bilder", "Fokus-GIF nicht geladen (\(u.host ?? "?") \(u.lastPathComponent))")
             }
+            // Build 5 device test 1 (item 6): a GIF that plays says so once per address.
+            if let img, Self.logged.insert("ok|" + url).inserted {
+                RemoteLog.info("bilder", "Fokus-GIF spielt (\(img.images?.count ?? 1) Bilder, \(u.lastPathComponent))")
+            }
             withAnimation(.easeOut(duration: 0.2)) { image = img }
         }
     }

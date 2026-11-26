@@ -529,10 +529,26 @@ struct TileMotionOverlay: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
+        motion
+            .onChange(of: focused) { _, f in if f { noteStill() } }
+    }
+
+    @ViewBuilder private var motion: some View {
         switch TileMotion.of(folder, reduceMotion: theme.system.reduceMotion) {
         case .video(let v): FocusVideo(url: v, tile: folder.title, focused: focused, sound: sound)
         case .gif(let g): FocusGIF(url: g, focused: focused)
         case .still: EmptyView()
         }
     }
+
+    /// Build 5 device test 1 (item 6): why a focused package tile stays still, once per tile and app run.
+    private func noteStill() {
+        guard let why = TileMotion.stillReason(folder, reduceMotion: theme.system.reduceMotion),
+              TileMotionLog.noted.insert(folder.id).inserted else { return }
+        RemoteLog.info("bilder", "Kachel-Video: \(folder.title) nur Standbild (\(why))")
+    }
+}
+
+@MainActor private enum TileMotionLog {
+    static var noted = Set<String>()
 }
