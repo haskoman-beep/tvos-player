@@ -126,6 +126,15 @@ public enum PreviewPack {
         }
 
         public func entry(forTitle t: String) -> PreviewPackEntry? { byExact[PreviewPack.exactKey(t)] ?? byKey[PreviewPack.key(t)] }
+
+        /// Review M3 (build 5): a built-in package tile also matches by its art aliases ("Komödie" ← "Comedy").
+        public func entry(for f: Folder) -> PreviewPackEntry? {
+            if let e = entry(forTitle: f.title) { return e }
+            for alias in ReadyPackages.artNames(forFolderID: f.id) ?? [] {
+                if let e = byKey[PreviewPack.key(alias)] { return e }
+            }
+            return nil
+        }
     }
 
     /// Fills the gaps of matching tiles: focus video where there is none, still where there is none. The tile's own
@@ -134,7 +143,7 @@ public enum PreviewPack {
         guard !index.isEmpty else { return c }
         var out = c
         for i in out.folders.indices {
-            guard let e = index.entry(forTitle: out.folders[i].title) else { continue }
+            guard let e = index.entry(for: out.folders[i]) else { continue }
             if (out.folders[i].focusVideo ?? "").isEmpty { out.folders[i].focusVideo = e.video }
             if (out.folders[i].coverImage ?? "").isEmpty, let b = e.background { out.folders[i].coverImage = b }
         }
@@ -143,7 +152,7 @@ public enum PreviewPack {
 
     /// Tiles of the collections whose title has an entry in the pack.
     public static func matches(_ index: Index, in collections: [MediaCollection]) -> Int {
-        collections.reduce(0) { n, c in n + c.folders.filter { index.entry(forTitle: $0.title) != nil }.count }
+        collections.reduce(0) { n, c in n + c.folders.filter { index.entry(for: $0) != nil }.count }
     }
 
     struct RawEntry: Decodable { var title: String?; var videoURL: String?; var backgroundURL: String? }

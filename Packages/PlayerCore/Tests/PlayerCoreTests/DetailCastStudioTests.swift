@@ -75,3 +75,11 @@ import Testing
     }
     if let netflix { #expect(TileMotion.stillReason(netflix, reduceMotion: false) == nil) }
 }
+
+// Review M3: English pack titles reach the German genre tiles through the package art aliases.
+@Test func previewPackUsesThePackageAliases() {
+    let pack = PreviewPack.Index([PreviewPackEntry(title: "Comedy", video: "https://v.example/comedy.mp4")])
+    let genres = PreviewPack.apply(pack, to: ReadyPackages.genreCollection)
+    #expect(genres.folders.first { $0.title == "Komödie" }?.focusVideo == "https://v.example/comedy.mp4")
+    #expect(PreviewPack.matches(pack, in: [ReadyPackages.genreCollection]) == 1)
+}
