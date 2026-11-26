@@ -16,6 +16,13 @@ public enum DetailPage {
         case play
     }
 
+    /// Build 5 device test 1 (item 3): the page's backdrop is the image the tile and the hero showed (already in the
+    /// image cache); the meta image only fills a gap. Meta first had shown another picture, loaded again.
+    public static func backdrop(tile: String?, meta: String?) -> String? {
+        func usable(_ s: String?) -> String? { s.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 } }
+        return usable(tile) ?? usable(meta)
+    }
+
     /// Whether the page shows the „Sofort abspielen“ card and builds a best choice at all.
     public static func showsInstantPlay(setting: Bool, isSeries: Bool) -> Bool {
         setting && !isSeries

@@ -42,3 +42,12 @@ import Testing
     #expect(s?.studioLogos.map(\.name) == ["HBO", "P1", "P2"])
     #expect(s?.studioLogos.first?.logo == "https://image.tmdb.org/t/p/w300/hbo.png")
 }
+
+// Item 3: the detail page showed another backdrop than the tile and hero (meta image first, then the catalogue
+// one) and loaded it again. The page now takes the tile's image first; the meta image only fills a gap.
+@Test func detailBackdropKeepsTheTileImage() {
+    #expect(DetailPage.backdrop(tile: "https://a/tile.jpg", meta: "https://b/meta.jpg") == "https://a/tile.jpg")
+    #expect(DetailPage.backdrop(tile: nil, meta: "https://b/meta.jpg") == "https://b/meta.jpg")
+    #expect(DetailPage.backdrop(tile: "  ", meta: "https://b/meta.jpg") == "https://b/meta.jpg")
+    #expect(DetailPage.backdrop(tile: nil, meta: nil) == nil)
+}

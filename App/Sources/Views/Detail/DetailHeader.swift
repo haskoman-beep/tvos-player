@@ -138,7 +138,8 @@ struct DetailBackdrop: View {
     var body: some View {
         ZStack {
             theme.color.base
-            RemoteImage(url: url)
+            // Build 5 device test 1 (item 3): same target as the hero picture, so the cached bitmap is reused.
+            RemoteImage(url: url, fixedTarget: .heroBackdrop)
             ForEach(Array(shades.enumerated()), id: \.offset) { _, shade in
                 DetailShadeView(shade: shade, base: theme.color.base)
             }
