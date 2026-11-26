@@ -227,7 +227,9 @@ private func leafCount(_ v: JSONValue) -> Int {
     let second = stored.profiles[1].look           // version 2, preset "edel", unknown accent and fields
     #expect(second.preset == .appleTV)
     #expect(second.version == 2)
-    #expect(second.overrides.isEmpty)
+    // The old badge row (appearance.badges.style = logo) wins over the stored look on load (adoptOldLookRows).
+    #expect(second.overrides.count == 1)
+    #expect(second.overrides.detail.badgeStyle == .logos)
     #expect(Set(report.ignored) == ["profiles[1].look.preset", "profiles[1].look.overrides.global.accent"])
     // The old fields stay as they were and keep being written next to `look`.
     #expect(stored.profiles[0].appearance.accent == .orange)
