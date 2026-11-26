@@ -2,7 +2,8 @@
 
 Build: branch `build-5`, head ce56ca5 (Tasks 5.1–5.6 of docs/superpowers/plans/2026-11-22-verbesserungen.md plus the
 Task 4.5 minors, on top of `b4-nacharbeit-2` 649b50f). CI: pending. App code was never compiled locally; CI is the
-first compiler. Way back: `b4-nacharbeit-2`.
+first compiler. Way back: `b4-nacharbeit-2`. Decision round 26.11. (section 13) on top: commits c41ce76 to the
+docs commit of that round; its PlayerCore tests were not run locally (CPU pause), CI runs them first.
 
 Format per line: action → expected → confirming remote-log line (`–` = visual only).
 
@@ -17,9 +18,10 @@ Format per line: action → expected → confirming remote-log line (`–` = vis
 
 ## 3. Home, default look
 - [ ] Start the app → one cards line → `home: Karten: Form querformat, Größe gross, Titel immer, Abstände luftig, Reihentitel standard, Fokus Glanz`.
-- [ ] Hero at launch → logo + buttons only (heroInfo minimal) → `hero: Stil vollbild, Info minimal, Titel logo, Hintergrund folgt Fokus aus`.
-- [ ] Down into the rows → info collapses (logo only), backdrop stays, collapse latch as before → `nav … Info eingeklappt …`, `ruckler` like Build 4.
-- [ ] Rest 1 s on a card → prefetch still runs, no backdrop swap → no `hero: Fokus-Hintergrund` line.
+- [ ] Hero at launch → logo, meta line, ratings, two-line overview, buttons (heroInfo standard, decision 26.11.) → `hero: Stil vollbild, Info standard, Titel logo, Hintergrund folgt Fokus an`.
+- [ ] Down into the rows → info collapses (logo ≈ 100, meta, ratings, overview), collapse latch as before → `nav … Info eingeklappt …`, `ruckler` like Build 4.
+- [ ] Rest 1 s on a card → prefetch still runs, one backdrop swap per rest (backdropFollowsFocus on by default) → `hero: Fokus-Hintergrund <id>` at most once per rest.
+- [ ] Quality strip below posters on, large cards, focus into a poster row → collapsed overview one line, logo ≈ 93, row fully visible → `nav: Info eingeklappt: … Logo 93, Beschreibung 1 Zeile`.
 - [ ] Fast left/right in a 40-card row (querformat gross), up/down between rows and into the hero → no jump, no stutter → `nav` lines unchanged, `ruckler` per minute not above Build 4.
 - [ ] Focus the lowest row (also on a home with only landscape/collection rows) → card title below the card fully on screen → `nav: … unten …`.
 - [ ] Row gap and hero button gap at luftig → hero buttons keep their gap, focus ring does not touch the first row heading → –
@@ -27,8 +29,9 @@ Format per line: action → expected → confirming remote-log line (`–` = vis
 - [ ] A row that fails to load → no height jump of the rows below → –
 
 ## 4. Home hero variants (Aussehen › Startseite & Hero)
-- [ ] heroInfo standard → expanded and collapsed exactly like Build 4 follow-up 2 (list 470, collapsed ≈ 451 window) → `hero: Stil vollbild, Info standard, …`.
-- [ ] backdropFollowsFocus an, rest on a card → one swap per rest; quick moves → none → `hero: Fokus-Hintergrund <id>` at most once per rest.
+- [ ] heroInfo standard (default) → expanded and collapsed exactly like Build 4 follow-up 2 (list 470, collapsed ≈ 451 window) → `hero: Stil vollbild, Info standard, …`.
+- [ ] heroInfo minimal → logo + buttons only → `hero: Stil vollbild, Info minimal, …`.
+- [ ] backdropFollowsFocus an (default), rest on a card → one swap per rest; quick moves → none → `hero: Fokus-Hintergrund <id>` at most once per rest. aus → no swap, no line.
 - [ ] vollbild: up from the first row → focus on „Abspielen“ → –
 - [ ] banner → card, buttons inside the card bottom; down → row 1, up → „Abspielen“ → `hero: Stil banner, …`.
 - [ ] banner/karussell collapsed (focus in the tab bar) → note whether the button row shows below the shrunk card → –
@@ -58,6 +61,9 @@ Format per line: action → expected → confirming remote-log line (`–` = vis
 - [ ] kacheln → after the choice page closes the root switches; 4 columns, OK opens a page, Menu back to the grid, Menu again → Start → `nav: Einstellungs-Layout spalten → kacheln`, `nav: Einstellungen › Aussehen (Kachel)`.
 - [ ] liste → one centred column with all categories, subpages open and close, Menu → Start → `Einstellungen (Liste): X per Fokus|Bildlauf`.
 - [ ] Look rows: a changed row has an accent dot; „Folgen“ / „Titelbild“ rows show their value; summary n matches → `aussehen: Mein Look · <n> Abweichungen` (extras counted).
+- [ ] Aussehen has no „Plaketten-Stil“ row, Startseite no „Titelbild oben“ toggle; Hero-Stil aus → Startseite hides „Titelbild zeigt“ → –
+- [ ] Profile with Build-4 „Plaketten-Stil Text“ or „Titelbild oben aus“ and a changed look → after the update Plaketten-Stil (look) = Text, Hero-Stil = Aus → –
+- [ ] Plaketten-Stil logos / text in the look → hero badges (heroInfo ausführlich) follow → –
 - [ ] Hintergrundton swatches → four tones distinguishable (two-tone swatch) → –
 - [ ] Category pages: leading status circle visible, lighter than the card, tinted with graphit/tinte/warm → –
 
@@ -80,11 +86,13 @@ Format per line: action → expected → confirming remote-log line (`–` = vis
 - [ ] Plaketten voll with a DV/Atmos source → „4K · Dolby Vision · Atmos · 7.1 · HEVC · NN Mbit/s“ (max 6), filled, not white logos; also TorBox playback and trailer → –
 - [ ] Spur-Panel Seite (▼) → panel from the right; ▲ from the first audio row closes; ▲ from subtitles only jumps to audio → `player: Spur-Panel öffnen (…, Seite)`, `Panel auf (Seite)`, `Panel zu (Wisch nach oben)`.
 - [ ] Seite → rows indented equally left/right, long track names not cut earlier → –
-- [ ] Unten (▲) → ▼ from the lowest row closes; ◀ from Versatz lands on the active subtitle row → `Panel auf (Unten)`.
+- [ ] Unten (▲) → one row Ton | Untertitel, Versatz as a strip of steps below (decision 26.11.); ▼ from the last list row moves onto the strip, ▼ from the strip closes; ▲ from the strip lands on the active row → `Panel auf (Unten)`, `Panel zu (Wisch nach unten)`.
+- [ ] Unten during an audio reload (strip locked) → ▼ from the last list row closes → `Panel zu (Wisch nach unten)`.
 - [ ] Mitte (▲) → dimmed card, only Menu closes; subtitles do not touch the card edge → `Panel auf (Mitte)`, `Panel zu`.
-- [ ] Nächste Folge karte / leiste / vollbild (series, autoplay) → click starts, arrow cancels; vollbild: video small top left → `player: Up-next: <Titel> · Stil karte`, `Nächste Folge startet` / `Up-next abgebrochen`.
+- [ ] Nächste Folge karte / leiste / vollbild (series, autoplay) → countdown from 20 s; focus on „Jetzt abspielen“, ◀/▶ moves to „Abbrechen“; Select starts or cancels; Menu and Play/Pause as before; vollbild: video small top left → `player: Up-next: <Titel> · Stil karte`, `Up-next: Jetzt abspielen`, `Nächste Folge startet` / `Up-next abgebrochen (Knopf)`, `Menu: Up-next abgebrochen`.
+- [ ] Up-next cancelled → focus back on the video, ◀/▶ jump ±10 s again → –
 - [ ] vollbild with a DV source → video draws cleanly under the scale animation → –
-- [ ] „Jetzt abspielen“ label with a light accent → readable (accent 80 %, dark text) → –
+- [ ] „Jetzt abspielen“ button with a light accent → resting readable (accent 80 %, dark text), focused white → –
 - [ ] „Noch da?“ (counter small) → answer both ways → `player: Noch da?: gefragt (Stil dialog)`, `Noch da?: Weiterschauen` / `Noch da?: Beenden`.
 - [ ] „Noch da?“ → Weiterschauen with episode 2 preloaded → next episode starts → `Noch da?: Weiterschauen`, then the episode start.
 - [ ] „Noch da?“ → Menu → note „Wiedergabe beendet …“ → `Noch da?: Beenden`. No answer → `Noch da?: keine Antwort in 60 s, nichts gestartet`.
@@ -96,7 +104,7 @@ Format per line: action → expected → confirming remote-log line (`–` = vis
 - [ ] Phone page → all texts fit at 29 pt (also with the backup code block); status lines with symbol → –
 - [ ] Library › TorBox row → tiles 480 × 180, nothing cut (also with the resolving spinner) → –
 - [ ] Reihen & Collections › Verschieben → orange frame and tile; VoiceOver adds „wird verschoben“ → –
-- [ ] Look rows of later builds show „bis dahin: …“ notes where still relevant; long notes fit in two lines → –
+- [ ] Look rows of later builds show plain „kommt mit Build …“ notes (no „bis dahin“ any more, the old rows are gone); long notes fit in two lines → –
 
 ## 11. Accessibility
 - [ ] Bewegung reduzieren on → no crossfades, no poster expand, no focus video/GIF on package tiles, row manager bar opens without animation → –
@@ -111,21 +119,17 @@ Format per line: action → expected → confirming remote-log line (`–` = vis
 **Fallback triggers:** focus jumps or hangs on home (first „Alte Karte (Test)“, then fall back); detail page does not
 open or focus does not reach the source list; player overlay covers the controls or audio/subtitle choice fails.
 
-## 13. Open decisions (user)
-- Apple-TV defaults change untouched profiles: detail kino, white „logos“ badges, compact source list, episode row;
-  player minimal control bar + side track panel. Keep or keep the old look as default?
-- Home preset heroInfo minimal + backdropFollowsFocus off vs the 25.11. rule „collapsed keeps everything“: preset to
-  standard / follow on, or keep minimal?
-- Clock off by default (top-bar users lose it until Aussehen › Uhr): default on for top-bar profiles?
-- Two rows for one concept: badgeStyle vs „Plaketten-Stil“, heroStyle vs „Titelbild oben“ (hero badges still read
-  the old row).
-- Player plan deviations: badges also in standard, Unten with 3 columns, up-next buttons as labels without focus,
-  countdown 10 s, Mitte replaces the two-step menu.
-- Sidebar content inset 150 only as a token (all pages stay at 80) until the device shows what the sidebar reserves.
-- cardShape querformat recuts every poster row (incl. „Heute neu“); new cards only on the home page.
-- Detail: compact source list keeps the first addon text line; zentriert without sources panel; description opens on
-  press only.
-- Look tweaks: status circles 14 % lift, two-tone swatches, „bis dahin: …“ wording, orange move frame, captions 29 pt
-  (TorBox tiles 180 high).
-- Build 4 follow-up 2: collapsed overview reaches into the 69 pt list edge band; with the quality strip it does not
-  fit (needs 267, has 243) – lower the logo minimum or cut the overview?
+## 13. Decisions (user, 26.11. 07:35)
+- Taken: Apple-TV preset heroInfo standard, backdropFollowsFocus on; clock stays off, all other defaults stay.
+- Taken: player badges stay in standard; up-next back to the plan (20 s, focusable „Jetzt abspielen“ / „Abbrechen“);
+  Unten back to the plan (one row Ton | Untertitel, Versatz as a strip below); gestures, „Noch da?“, skip and track
+  choice unchanged. Consequence: arrows no longer cancel up-next (they move between the buttons).
+- Taken: old rows „Plaketten-Stil“ and „Titelbild oben“ removed; a non-default old value moves into the look once on
+  load (JSON unchanged); hero badges read the look's badge style.
+- Taken: collapsed hero info shortens the overview to one line when two lines leave the row no room (strip case:
+  logo 93, row fits).
+- Still open: Apple-TV defaults for untouched profiles (detail kino, white „logos“ badges, compact source list,
+  episode row; minimal control bar + side track panel); clock default for top-bar profiles; Mitte replaces the
+  two-step menu; sidebar content inset 150 only as a token; cardShape querformat recuts every poster row; detail
+  (compact source list text line, zentriert without sources panel, description on press); look tweaks (status
+  circles 14 %, two-tone swatches, orange move frame, captions 29 pt); collapsed overview in the 69 pt edge band.
