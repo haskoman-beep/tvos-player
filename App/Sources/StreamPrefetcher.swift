@@ -2,8 +2,8 @@ import Foundation
 import PlayerCore
 
 /// Quellen vorladen (Task 7): Ruht der Fokus auf einer Kachel (Entprellung in `HomeFocus`; Build 4 follow-up 2 P3:
-/// 1 s statt 350 ms, `FocusRest.prefetchMilliseconds`, also after the backdrop crossfade and not for short stops while
-/// browsing), holt die App die Quellen dieses Titels über `AppModel.streams` (10-min-Cache, Abfragen dedupliziert).
+/// 1 s, `FocusRest.prefetchMilliseconds`, b5r: on the home page after the backdrop rest + crossfade; not for short
+/// stops while browsing), holt die App die Quellen dieses Titels über `AppModel.streams` (10-min-Cache, Abfragen dedupliziert).
 /// Höchstens 2 Abfragen gleichzeitig; neue Ruhe-Kacheln verdrängen die älteste wartende,
 /// laufende werden nie abgebrochen. Kein Vorladen, solange ein Player läuft.
 /// Schonung der Addons (AIOStreams/Debrid): leere Ergebnisse 120 s nicht erneut, nach „alle Addons leer“ 5 min Pause.
@@ -42,7 +42,9 @@ final class StreamPrefetcher {
 
     /// Wave F-k R1: tiles on screen (plan), their entries, row names for the log, running jobs, pending pass.
     /// Its `budget` is the token bucket of both prefetchers (R2).
-    private var visible = VisiblePrefetchPlan(budget: PrefetchBudget(perMinute: StreamPrefetcher.searchesPerMinute,
+    /// b5r review M1: quiet for the longest backdrop rest plus its crossfade after a focus move (2.1 s).
+    private var visible = VisiblePrefetchPlan(limits: VisiblePrefetchPlan.Limits(focusQuiet: BackdropRest.homeFocusQuiet),
+                                              budget: PrefetchBudget(perMinute: StreamPrefetcher.searchesPerMinute,
                                                                      focusReserve: StreamPrefetcher.focusReserve))
     private var visibleItems: [String: MetaPreview] = [:]
     private var rowTitles: [String: String] = [:]
@@ -277,7 +279,8 @@ extension StreamPrefetcher {
     }
 
     /// Build 4 follow-up 2 (P3): focus moved to another tile (rows). Visible-tile searches wait until the focus has
-    /// been quiet for `FocusRest.prefetchQuiet` (1 s), so they never run while the focus moves on; the pass already
+    /// been quiet for `BackdropRest.homeFocusQuiet` (2.1 s, b5r), so they never run while the focus moves on or the
+    /// backdrop fades; the pass already
     /// planned looks again at the new due time (`visiblePass`). Badge passes wait for the same quiet (`QualityBadgeCache`).
     func focusMoved() {
         visible.focusMoved(now: Date())

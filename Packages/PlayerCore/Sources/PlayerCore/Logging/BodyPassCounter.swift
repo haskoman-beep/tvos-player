@@ -3,13 +3,15 @@ import Foundation
 /// Build 4 follow-up S4: counts view body passes and focus moves for `metric: home.rowBody`. The first event opens a
 /// window; the caller closes it `window` seconds later and logs the result. A window without a focus move gives no
 /// line (body passes alone, e.g. a progress save during playback, are not what the metric is about).
-/// Two pass counters: rows (`HomeRowView`) and cards (`PosterCard`, field `karten`, S4 review).
+/// Pass counters: rows (`HomeRowView`), cards (`PosterCard`, field `karten`, S4 review) and, b5r, the equatable
+/// home row cells (`HomeRowCard`, field `zellen`).
 public struct BodyPassCounter: Sendable {
     /// Seconds per window.
     public static let window: TimeInterval = 5
 
     private var passes = 0
     private var cards = 0
+    private var cells = 0
     private var focusMoves = 0
     private var open = false
 
@@ -27,6 +29,12 @@ public struct BodyPassCounter: Sendable {
         return opened()
     }
 
+    /// b5r: one `HomeRowCard` body pass. True when it opened a window.
+    public mutating func cellPass() -> Bool {
+        cells += 1
+        return opened()
+    }
+
     /// Focus moved onto a tile. True when it opened a window.
     public mutating func focusMoved() -> Bool {
         focusMoves += 1
@@ -34,10 +42,10 @@ public struct BodyPassCounter: Sendable {
     }
 
     /// Ends the window: its counts, or nil without a focus move. The next event opens a new window.
-    public mutating func close() -> (passes: Int, cards: Int, focusMoves: Int)? {
-        defer { passes = 0; cards = 0; focusMoves = 0; open = false }
+    public mutating func close() -> (passes: Int, cards: Int, cells: Int, focusMoves: Int)? {
+        defer { passes = 0; cards = 0; cells = 0; focusMoves = 0; open = false }
         guard open, focusMoves > 0 else { return nil }
-        return (passes, cards, focusMoves)
+        return (passes, cards, cells, focusMoves)
     }
 
     private mutating func opened() -> Bool {

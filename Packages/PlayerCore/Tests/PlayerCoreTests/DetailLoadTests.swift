@@ -52,10 +52,6 @@ import Testing
     #expect(m.logged)
 }
 
-@Test func focusRestMatchesTheHeroRest() {
-    #expect(FocusRest.milliseconds == 350)
-}
-
 @Test func sharedLookupRetriesOnlyAfterAnError() {
     let found = SharedLookup<Int>.found(7), none = SharedLookup<Int>.none, failed = SharedLookup<Int>.failed
     #expect(found.value == 7 && !found.retriesOnJoin)

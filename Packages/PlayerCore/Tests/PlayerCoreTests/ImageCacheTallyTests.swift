@@ -43,3 +43,16 @@ import Testing
     t.miss(.new)
     #expect(t.text() == "Cache Treffer 2 / Fehlgriffe 1 (neu 1 · andere Größe 0 · verdrängt 0 · läuft schon 0)")
 }
+
+// b5r: the decode part also shows the mean decode time and the decoded megapixels, so the next device test tells
+// how much decode work the posters and backdrops cost (pixels given by the app; without them the line stays as before).
+@Test func decodeLineShowsMeanTimeAndMegapixels() {
+    var t = ImageCacheTally()
+    t.decoded(ms: 10, untilDoneMs: 12, pixels: 500 * 750)
+    t.decoded(ms: 30, untilDoneMs: 40, pixels: 1920 * 1080)
+    // b5r review L3: a failed decode (no picture, no pixels) counts as a decode, but both means cover only the
+    // decodes with a picture: Ø 20 ms, Ø (0.375 + 2.07) / 2 ≈ 1.2 Mpx.
+    t.decoded(ms: 100, untilDoneMs: 100, pixels: 0)
+    #expect(t.text() == "Cache Treffer 0 / Fehlgriffe 0 · dekodiert 3, längstes 100 ms (bis fertig 100 ms)"
+            + " · Ø 20 ms · Ø 1,2 Mpx")
+}

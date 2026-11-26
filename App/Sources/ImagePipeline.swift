@@ -358,7 +358,9 @@ actor ImagePipeline {
                 return (decoded, Metric.ms(begin.duration(to: ContinuousClock.now)))
             }.value
             release()
-            stats.decoded(ms: decodeMs, untilDoneMs: Metric.ms(requested.duration(to: ContinuousClock.now)))
+            // b5r: decoded pixels too (mean decode time and Mpx in the `Cache` line).
+            let pixels: Int = img?.cgImage.map { $0.width * $0.height } ?? 0
+            stats.decoded(ms: decodeMs, untilDoneMs: Metric.ms(requested.duration(to: ContinuousClock.now)), pixels: pixels)
             if let img { return (img, nil) }
             failure = ImageFailure.combine(failure, .transient)   // undecodable: short memory only
         }
@@ -777,7 +779,9 @@ final class CacheStats: @unchecked Sendable {
     func miss(_ kind: ImageCacheTally.Miss) { record { $0.miss(kind) } }
     func fetched() { update { $0.fetched() } }
     func loaded(local: Bool) { update { $0.loaded(local: local) } }
-    func decoded(ms: Int, untilDoneMs: Int) { update { $0.decoded(ms: ms, untilDoneMs: untilDoneMs) } }
+    func decoded(ms: Int, untilDoneMs: Int, pixels: Int) {
+        update { $0.decoded(ms: ms, untilDoneMs: untilDoneMs, pixels: pixels) }
+    }
     func evicted(bytes: Int) { update { $0.evicted(bytes: bytes) } }
 
     private func update(_ change: (inout ImageCacheTally) -> Void) {
