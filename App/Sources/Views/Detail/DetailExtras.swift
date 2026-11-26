@@ -39,6 +39,11 @@ struct DetailExtras: View {
                 CastRow(cast: info.cast, style: theme.detail.cast)
                     .frame(maxWidth: castWidth, alignment: .leading)
             }
+            if !info.studioLogos.isEmpty {
+                Text(isSeries ? "Sender & Studios" : "Studios").textRole(.sectionTitle).accessibilityAddTraits(.isHeader)
+                StudioRow(studios: info.studioLogos)
+                    .onAppear { RemoteLog.info("detail", "Studios \(info.studioLogos.count), mit Logo \(info.studioLogos.filter { $0.logo != nil }.count)") }
+            }
             if !info.recommendations.isEmpty {
                 Text("Ähnliche Titel").textRole(.sectionTitle).accessibilityAddTraits(.isHeader)
                 ScrollView(.horizontal) {
