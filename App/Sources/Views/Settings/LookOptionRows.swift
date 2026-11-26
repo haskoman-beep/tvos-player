@@ -11,7 +11,8 @@ import PlayerCore
 /// Rows are keyed by `entry.id` and keep their view type when the value changes, so focus stays on the row.
 struct LookOptionRows: View {
     @EnvironmentObject var model: AppModel
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Review b5i N3: reduce motion as the theme reads it (`ThemeValues.system`), one source for rows and drawing.
+    @Environment(\.theme) private var theme
 
     struct AreaSection: Identifiable {
         let area: LookArea
@@ -95,7 +96,7 @@ struct LookOptionRows: View {
                             SettingsFootnote(hint)
                         }
                         ForEach(Self.entries(section.area, group)) { e in
-                            let state = LookOptionCatalog.isEnabled(e.key, in: values, reduceMotion: reduceMotion)
+                            let state = LookOptionCatalog.isEnabled(e.key, in: values, reduceMotion: theme.system.reduceMotion)
                             LookOptionRow(entry: e, raw: rows.raw[e.key], overridden: rows.isOverridden(e.key),
                                           enabled: state.enabled, reason: state.reason)
                         }
