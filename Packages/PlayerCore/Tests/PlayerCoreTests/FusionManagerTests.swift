@@ -262,3 +262,29 @@ private func omniSnapshot() -> String {
                                       traktID: true, traktLogin: true).group("kit"))
     #expect(all.hiddenCount == 0 && all.hint == nil)
 }
+
+// MARK: Device test 26.11. (github.com page link, widget export with 0 rows)
+
+@Test func githubPageLinkBecomesRawLink() {
+    #expect(CollectionImportLink.raw("https://github.com/someone/repo/blob/main/dir/file.json")
+            == "https://raw.githubusercontent.com/someone/repo/main/dir/file.json")
+    #expect(CollectionImportLink.raw("https://github.com/someone/repo/raw/refs/heads/main/a%20b.json")
+            == "https://raw.githubusercontent.com/someone/repo/refs/heads/main/a%20b.json")
+    #expect(CollectionImportLink.raw("https://example.invalid/x.json") == "https://example.invalid/x.json")
+    #expect(CollectionImportLink.raw("https://github.com/someone/repo") == "https://github.com/someone/repo")
+}
+
+@Test func widgetImportLines() throws {
+    // Nothing readable: a reason instead of a silent "0 Reihen".
+    #expect(ImportSummary.emptyWidgets(["Quelle mdblist übersprungen": 2])
+            == "Import: Widget-Export ohne lesbare Reihen · Hinweise: Quelle mdblist übersprungen ×2")
+    #expect(ImportSummary.emptyWidgets([:]) == "Import: Widget-Export ohne lesbare Reihen (keine Widgets gefunden)")
+    // Rows that wait for an addon are counted.
+    let c = try FusionImport.parse(Data(managerExport.utf8), sourceKey: "m")
+    #expect(c.waitingForAddon([]) == 2)
+    let aio = addon("com.example.aio", "https://aio.example.invalid/manifest.json", [("movie", "mdblist.123"), ("all", "trakt.list.42")])
+    #expect(c.waitingForAddon([aio]) == 0)
+    #expect(ImportSummary.addonNote(2) == " · 2 Reihen warten auf ein Addon mit den Katalogen (z. B. AIOMetadata)")
+    #expect(ImportSummary.addonNote(1) == " · 1 Reihe wartet auf ein Addon mit den Katalogen (z. B. AIOMetadata)")
+    #expect(ImportSummary.addonNote(0) == "")
+}

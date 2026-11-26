@@ -76,6 +76,19 @@ public enum CollectionImportFormat: Equatable, Sendable {
     }
 }
 
+/// b5f (device test 26.11.): a GitHub page link (`github.com/<owner>/<repo>/blob|raw/<ref…>/<path>`) loads the HTML
+/// page, not the file; it is rewritten to the raw file address. Every other link stays as it is.
+public enum CollectionImportLink {
+    public static func raw(_ link: String) -> String {
+        guard let u = URLComponents(string: link), u.scheme == "https" || u.scheme == "http",
+              ["github.com", "www.github.com"].contains(u.host?.lowercased() ?? "") else { return link }
+        let parts = u.percentEncodedPath.split(separator: "/", omittingEmptySubsequences: true)
+        guard parts.count >= 5, parts[2] == "blob" || parts[2] == "raw" else { return link }
+        let rest = ([parts[0], parts[1]] + parts[3...]).joined(separator: "/")
+        return "https://raw.githubusercontent.com/" + rest
+    }
+}
+
 /// One video of a preview pack.
 public struct PreviewPackEntry: Codable, Equatable, Hashable, Sendable {
     public var title: String
@@ -194,6 +207,18 @@ public struct ImportSummary: Equatable, Sendable {
         var parts = sorted.prefix(limit).map { "\($0.key) ×\($0.value)" }
         if sorted.count > limit { parts.append("…") }
         return " · Hinweise: " + parts.joined(separator: ", ")
+    }
+
+    /// b5f (device test 26.11.): a widget export without a single readable row; the hints say why.
+    public static func emptyWidgets(_ warnings: [String: Int]) -> String {
+        "Import: Widget-Export ohne lesbare Reihen" + (warnings.isEmpty ? " (keine Widgets gefunden)" : note(warnings))
+    }
+
+    /// b5f: rows of the import that stay hidden until an addon serves their catalogs ("" = none).
+    public static func addonNote(_ rows: Int) -> String {
+        guard rows > 0 else { return "" }
+        return rows == 1 ? " · 1 Reihe wartet auf ein Addon mit den Katalogen (z. B. AIOMetadata)"
+            : " · \(rows) Reihen warten auf ein Addon mit den Katalogen (z. B. AIOMetadata)"
     }
 
     /// "Import: 3 Reihen, 42 Kacheln, 35 mit Video, 30 mit Ton".

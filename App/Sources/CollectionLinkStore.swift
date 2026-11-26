@@ -218,7 +218,8 @@ final class CollectionLinkStore: ObservableObject {
     func importLink(_ raw: String, model: AppModel) async {
         ensure(model)
         let scope = model.scopes.current   // Task 3.1: the import belongs to this profile and epoch
-        let u = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        // b5f: a GitHub page link (…/blob/…) loads the raw file instead of the HTML page.
+        let u = CollectionImportLink.raw(raw.trimmingCharacters(in: .whitespacesAndNewlines))
         guard let url = URL(string: u), url.scheme == "https" || url.scheme == "http", url.host != nil else {
             model.lastError = "Import: Link ungültig (\(u))."
             return
@@ -336,6 +337,14 @@ final class CollectionLinkStore: ObservableObject {
         var line: (Int?) -> String
         switch parsed {
         case .widgets(let c, let src):
+            // b5f (device test 26.11.): no readable row → say why, keep nothing (was a silent "0 Reihen").
+            guard !c.rows.isEmpty else {
+                let reason = ImportSummary.emptyWidgets(c.warnings)
+                model.lastError = reason
+                RemoteLog.info("import", "\(format.name)\(link == nil ? " (Code)" : ""): \(reason)")
+                return
+            }
+            let waiting = c.waitingForAddon(model.profile.addons)
             FusionKitStore.shared.importContent(c, source: src, data: data)
             let collections = c.rows.compactMap { r -> MediaCollection? in
                 if case .collection(let m) = r.body { return m }
@@ -343,7 +352,7 @@ final class CollectionLinkStore: ObservableObject {
             }.map { PreviewPack.apply(packIndex, to: $0) }
             probe = ImportSummary.videos(collections)
             let base = ImportSummary.of(collections)
-            line = { n in var s = base; s.rows = c.rows.count; s.sound = n; return s.line + ImportSummary.note(c.warnings) }
+            line = { n in var s = base; s.rows = c.rows.count; s.sound = n; return s.line + ImportSummary.note(c.warnings) + ImportSummary.addonNote(waiting) }
         case .collections(let r):
             // A refresh of a stored link takes the fresh media addresses (I4); a first import only fills gaps.
             model.importNuvio(result: r, refresh: previous.map { snapshot($0.id) ?? [:] }, profile: scope.profile)

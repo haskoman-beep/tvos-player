@@ -96,6 +96,12 @@ public struct FusionKitContent: Sendable, Hashable {
     public init(rows: [FusionKitRow], warnings: [String: Int] = [:]) { self.rows = rows; self.warnings = warnings }
 
     public func row(_ id: String) -> FusionKitRow? { rows.first { $0.id == id } }
+
+    /// b5f: rows that only an addon catalog keeps from showing (Trakt and TMDB as available) with these addons.
+    public func waitingForAddon(_ addons: [InstalledAddon]) -> Int {
+        rows.filter { $0.available(traktID: true, traktLogin: true) != nil
+            && $0.available(traktID: true, traktLogin: true, addons: addons) == nil }.count
+    }
 }
 
 public enum FusionImportError: Error, Equatable, CustomStringConvertible {
