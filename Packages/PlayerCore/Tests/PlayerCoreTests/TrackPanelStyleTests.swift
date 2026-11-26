@@ -76,6 +76,34 @@ private func step(_ style: TrackPanelStyle, _ g: TrackPanelGesture, upNext: Bool
     #expect(!TrackPanelLayout.closesOnSwipe(.swipeUp, style: .menu, startSpot: nil, columns: cols))
 }
 
+/// User decision 26.11.: „Unten“ shows Ton | Untertitel in one row with Versatz as a strip below. A swipe down
+/// from the strip closes; from the last row of Ton or Untertitel it steps down onto the strip, unless the strip
+/// cannot take focus (locked), then that row is the lowest and closes as before.
+@Test func bottomBarSwipeDownClosesFromOffsetStrip() {
+    let audio = TrackPanelLayout.audioColumn([a(0, "deu"), a(1, "eng")], activeID: 0, priority: ["de"])
+    let subs = TrackPanelLayout.subtitleColumn([], activeID: nil, preferredLanguage: nil)
+    let offset = TrackPanelLayout.offsetColumn(offset: 0, nativeTrack: false)
+    let cols = [audio, subs, offset]
+    let lastAudio = TrackPanelSpot(.audio, .track(1)), off = TrackPanelSpot(.subtitles, .off)
+    #expect(!TrackPanelLayout.closesOnSwipe(.swipeDown, style: .bottomBar, startSpot: lastAudio, columns: cols))
+    #expect(!TrackPanelLayout.closesOnSwipe(.swipeDown, style: .bottomBar, startSpot: off, columns: cols))
+    #expect(TrackPanelLayout.closesOnSwipe(.swipeDown, style: .bottomBar, startSpot: TrackPanelSpot(.offset, .step(0)), columns: cols))
+    #expect(TrackPanelLayout.closesOnSwipe(.swipeDown, style: .bottomBar, startSpot: TrackPanelSpot(.offset, .reset), columns: cols))
+    #expect(!TrackPanelLayout.closesOnSwipe(.swipeUp, style: .bottomBar, startSpot: TrackPanelSpot(.offset, .reset), columns: cols))
+    #expect(TrackPanelLayout.closesOnSwipe(.swipeDown, style: .bottomBar, startSpot: nil, columns: cols))
+    // Strip locked (audio reload): the last list row is the lowest focusable row again.
+    let locked = TrackPanelLayout.applying(.audioSwitching, to: cols)
+    #expect(locked.first { $0.column == .offset }?.isLocked == true)
+    #expect(TrackPanelLayout.closesOnSwipe(.swipeDown, style: .bottomBar, startSpot: lastAudio, columns: locked))
+    // Seite keeps its rule: Versatz is stacked, a swipe down is a list step.
+    #expect(!TrackPanelLayout.closesOnSwipe(.swipeDown, style: .topBar, startSpot: TrackPanelSpot(.offset, .reset), columns: cols))
+}
+
+@Test func bottomBarDetailNamesTwoColumnsAndStrip() {
+    #expect(TrackPanelStyle.bottomBar.detail
+            == "Wisch nach oben öffnet eine Karte am unteren Rand mit den Spalten Ton und Untertitel, darunter Versatz.")
+}
+
 // MARK: Einstellung
 
 @Test func trackPanelStyleSettingDecodes() throws {

@@ -41,7 +41,7 @@ public enum TrackPanelStyle: String, Codable, Sendable, CaseIterable {
     public var detail: String {
         switch self {
         case .topBar: "Wisch nach unten öffnet ein Panel von rechts: Ton, darunter Untertitel und Versatz."
-        case .bottomBar: "Wisch nach oben öffnet eine Karte am unteren Rand mit den Spalten Ton, Untertitel und Versatz."
+        case .bottomBar: "Wisch nach oben öffnet eine Karte am unteren Rand mit den Spalten Ton und Untertitel, darunter Versatz."
         case .menu: "Wisch nach oben öffnet eine Karte in der Mitte mit den Spalten Ton, Untertitel und Versatz; das Bild wird abgedunkelt."
         }
     }
@@ -95,7 +95,8 @@ extension TrackPanelEntry {
 
 extension TrackPanelLayout {
     /// Welle F-h3: schließt ein Wisch im offenen Panel? Seite: Wisch nach oben aus der obersten Zeile des Panels.
-    /// Leiste unten: Wisch nach unten aus der untersten Zeile. Sonst ist es ein Listenschritt. Menü: nie (Menü-Taste).
+    /// Leiste unten: Wisch nach unten aus der untersten Zeile (der Versatz-Leiste unter Ton | Untertitel, solange sie
+    /// Fokus nehmen kann). Sonst ist es ein Listenschritt. Menü: nie (Menü-Taste).
     /// Ohne Fokus oder in einer leeren Spalte schließt der passende Wisch immer.
     /// Task 5.4: the side panel („Seite“) stacks the columns, so only the first row of the first column with rows is
     /// the top edge; a swipe up from the top row of Untertitel is a step up into Ton.
@@ -108,7 +109,11 @@ extension TrackPanelLayout {
             return top.column == s.column && top.rows.first?.id == s.row
         case (.bottomBar, .swipeDown):
             guard let s = startSpot, let c = columns.first(where: { $0.column == s.column }), let last = c.rows.last else { return true }
-            return last.id == s.row
+            // User decision 26.11.: Versatz is a strip below Ton | Untertitel, so it is the lowest row; the last
+            // list row steps down onto it unless the strip cannot take focus (locked).
+            if s.column == .offset { return true }
+            let strip = columns.contains { $0.column == .offset && !$0.rows.isEmpty && !$0.isLocked }
+            return !strip && last.id == s.row
         default: return false
         }
     }

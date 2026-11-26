@@ -112,8 +112,9 @@ struct TrackPicker<E: PlaybackEngine> {
 /// keeps the stored names and the gestures of Build 198):
 /// - Seite (`topBar`, swipe down / ▼): panel from the right, 640 wide, full height; Ton, below it Untertitel and
 ///   Versatz. A swipe up from the very top closes it (`TrackPanelLayout.closesOnSwipe`).
-/// - Unten (`bottomBar`, swipe up / ▲): card 80 from the left/right and 60 from the bottom, columns
-///   Ton | Untertitel | Versatz. A swipe down from the lowest row closes it.
+/// - Unten (`bottomBar`, swipe up / ▲): card 80 from the left/right and 60 from the bottom, one row with the
+///   columns Ton | Untertitel (plan, user decision 26.11.), Versatz as a strip of steps below them. A swipe down
+///   from the lowest row (the strip) closes it.
 /// - Mitte (`menu`, swipe up / ▲): the picture dimmed 45 %, a card 1000 wide in the centre (top 190) with the
 ///   columns Ton | Untertitel (Versatz below Untertitel). Only Menu closes it.
 /// Selection works at once (checkmark). Menu closes only the panel, playback keeps running. Info as one footer line.
@@ -226,9 +227,9 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
             HStack(alignment: .top, spacing: TrackPanelLook.columnSpacing) {
                 column(cols[0], width: w.audio, empty: "Keine Tonspuren")
                 column(cols[1], width: w.subtitles, empty: nil)
-                column(cols[2], width: TrackPanelMetrics.offsetColumnWidth, empty: nil)
             }
             .frame(maxHeight: .infinity, alignment: .top)
+            offsetStrip(cols[2])
             // R2 N3: bei Sperrzeile oben fällt die Info-Fußzeile weg, die Liste behält ≈ 3,5 Zeilen.
             if showsInfo { infoLine }
         }
@@ -279,6 +280,25 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
             ScrollView(.vertical) { rows(c, empty: empty) }
         }
         .frame(width: CGFloat(width), alignment: .leading)
+        .focusSection()
+    }
+
+    /// Versatz in „Unten“: heading and the steps side by side in one row below Ton | Untertitel.
+    private func offsetStrip(_ c: TrackPanelColumnModel) -> some View {
+        HStack(alignment: .center, spacing: theme.space.s) {
+            TrackPanelHeading(title: c.title, note: c.note)
+                .frame(width: TrackPanelLook.stripHeadingWidth, alignment: .leading)
+            ForEach(c.rows) { r in
+                Button { choose(TrackPanelSpot(c.column, r.id)) } label: { TrackPanelRowLabel(row: r, mark: false) }
+                    .buttonStyle(TrackPanelRowLabel.style)
+                    .focused($focus, equals: TrackPanelSpot(c.column, r.id))
+                    .disabled(c.isLocked)
+                    .frame(width: r.id == .reset ? TrackPanelLook.stripResetWidth : TrackPanelLook.stripStepWidth)
+            }
+        }
+        .padding(.horizontal, theme.space.xs)
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .focusSection()
     }
 
@@ -336,8 +356,13 @@ enum TrackPanelLook {
     static let edgeH: CGFloat = 80
     static let edgeBottom: CGFloat = 60
     static let columnSpacing: CGFloat = 40
-    /// Card „Unten“: ⅓ of the screen plus the card padding, so the lists keep ≈ 3,5 rows as the old bar.
-    static let bottomHeight: CGFloat = 400
+    /// Card „Unten“: ⅓ of the screen plus the card padding, so the lists keep ≈ 3,5 rows as the old bar; 60 more
+    /// for the Versatz strip below the two columns (user decision 26.11.).
+    static let bottomHeight: CGFloat = 460
+    /// Versatz strip in „Unten“: heading („Versatz +0,5 s“, note), four steps and „Zurücksetzen“.
+    static let stripHeadingWidth: CGFloat = 300
+    static let stripStepWidth: CGFloat = 170
+    static let stripResetWidth: CGFloat = 260
     static let centreWidth: CGFloat = 1000
     static let centreTop: CGFloat = 190
     static let centreHeight: CGFloat = 700
@@ -351,8 +376,8 @@ enum TrackPanelLook {
             let w = Double(sideWidth - 2 * sidePaddingH)
             return (w, w)
         case .bottomBar:
-            // 1920 − 2 × 80 − 2 × 36 = 1688: 720 + 640 + 230 + 2 × 40 = 1670.
-            return (720, 640)
+            // 1920 − 2 × 80 − 2 × 36 = 1688: 840 + 808 + 40 = 1688 (two columns, Versatz as a strip below).
+            return (840, 808)
         case .menu:
             let w = Double(centreWidth - 2 * OverlayCardMetrics.padding - columnSpacing) / 2
             return (w, w)
