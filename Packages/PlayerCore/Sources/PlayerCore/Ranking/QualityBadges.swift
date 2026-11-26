@@ -29,7 +29,6 @@ public struct QualityBadge: Hashable, Sendable, Identifiable {
     }
 }
 
-/// Plaketten-Einstellungen eines Profils (Teil von `Appearance`). Fehlende Felder: Standardwerte.
 extension BadgeSettings {
     /// Integration build 5 (user decision 26.11.): these settings drawn in the look's badge style (`detail.badgeStyle`,
     /// the only remaining style row): `logos` attaches the wordmark logos, every other style draws text badges.
@@ -40,6 +39,7 @@ extension BadgeSettings {
     }
 }
 
+/// Plaketten-Einstellungen eines Profils (Teil von `Appearance`). Fehlende Felder: Standardwerte.
 public struct BadgeSettings: Codable, Sendable, Hashable {
     public var resolution: Bool
     public var hdr: Bool

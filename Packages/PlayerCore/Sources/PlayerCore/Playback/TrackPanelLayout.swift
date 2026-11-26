@@ -67,12 +67,12 @@ public struct TrackPanelColumnModel: Equatable, Sendable {
 }
 
 /// Welle F-h2 R1: Maße des Panels und Zeichenbudget einer Zeile aus der echten Spaltenbreite.
-/// Breiten: Ton 780 + Untertitel 660 + Versatz 230 + 2 Abstände 32 = 1734 ≤ 1760 (1920 minus Sicherheitsrand 2 × 80).
+/// Breiten: Ton 780 + Untertitel 660 + Abstand 32 = 1472 ≤ 1760 (1920 minus Sicherheitsrand 2 × 80); Versatz hat
+/// seit der Entscheidung 26.11. keine eigene Spalte mehr (Leiste unten: Streifen unter Ton | Untertitel).
 /// Info steht als eine Fußzeile unter den Spalten, damit Ton und Untertitel die Breite bekommen.
 public enum TrackPanelMetrics {
     public static let audioColumnWidth: Double = 780
     public static let subtitleColumnWidth: Double = 660
-    public static let offsetColumnWidth: Double = 230
     public static let columnSpacing: Double = 32
     /// Zeilenschrift `.callout` auf tvOS (pt) und mittlere Zeichenbreite gemischter deutscher Texte (Anteil der Größe).
     public static let lineFontSize: Double = 31

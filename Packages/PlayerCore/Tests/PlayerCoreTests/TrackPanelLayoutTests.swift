@@ -96,7 +96,7 @@ private func s(_ id: Int, _ lang: String?, codec: String = "subrip", forced: Boo
     #expect(TrackPanelMetrics.lineBudget(columnWidth: .nan) == 8)
     // Spalten passen in den Sicherheitsrand (1920 − 2 × 80)
     let total = TrackPanelMetrics.audioColumnWidth + TrackPanelMetrics.subtitleColumnWidth
-        + TrackPanelMetrics.offsetColumnWidth + 2 * TrackPanelMetrics.columnSpacing
+        + TrackPanelMetrics.columnSpacing
     #expect(total <= 1760)
     // die echte Ton-Zeile mit Standard-Marke bleibt ungekürzt
     let line = TrackPanelLayout.audioLines([a(0, "eng", ch: 6, codec: "eac3", atmos: true, def: true)])

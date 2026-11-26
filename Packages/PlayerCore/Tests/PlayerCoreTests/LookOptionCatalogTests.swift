@@ -187,7 +187,7 @@ private func lookValueKeys() throws -> [String: Set<String>] {
 // Task 4.5 review M5 pointed a later-build row to its old stand-in row; integration build 5 (user decision 26.11.)
 // removed „Plaketten-Stil“ and „Titelbild oben“, so the note is plain.
 
-@Test func laterBuildRowsPointToTheActiveOldRow() {
+@Test func builtRowsAreActiveAndNoteOnlyWithoutTheirCode() {
     let v = LookPreset.values(.appleTV)
     // Task 5.3 draws badgeStyle and layout, so the note shows only without that code (`implemented: []`).
     #expect(LookOptionCatalog.isEnabled("badgeStyle", in: v, implemented: []).reason == "kommt mit Build 5b")
