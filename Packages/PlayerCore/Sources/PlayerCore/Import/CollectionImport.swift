@@ -15,8 +15,12 @@ public enum CollectionImportFormat: Equatable, Sendable {
     case previewPack
     /// Public collection export `[{"title","folders":[…]}]`.
     case collections
+    /// Build 5 (b5f): Omni/UME snapshot (`{"values":{…}}`), converted like the Fusion Widget Manager does (`OmniImport`).
+    case omniSnapshot
     /// Recognised but not importable here.
     case backup
+    /// Build 5 (b5f): AIOMetadata configuration or catalog export (`{"catalogs":[…]}`) – belongs into the addon.
+    case addonConfig
     case iconPack
     case invalidJSON
     case unknown
@@ -26,6 +30,10 @@ public enum CollectionImportFormat: Equatable, Sendable {
         if let d = o as? [String: Any] {
             if d["profiles"] != nil { return .backup }
             if d["exportType"] as? String == "fusionWidgets" || d["widgets"] is [Any] { return .widgets }
+            if d["values"] is [String: Any] { return .omniSnapshot }   // `widgets` was checked first
+            // An addon manifest (`id`, `resources`) also has `catalogs`; it stays unknown here.
+            if d["resources"] == nil, d["id"] == nil,
+               d["catalogs"] is [Any] || (d["config"] as? [String: Any])?["catalogs"] is [Any] { return .addonConfig }
             return .unknown
         }
         guard let arr = o as? [Any] else { return .unknown }
@@ -43,8 +51,9 @@ public enum CollectionImportFormat: Equatable, Sendable {
     /// German text for a format that cannot be imported, else nil.
     public var problem: String? {
         switch self {
-        case .widgets, .collectionList, .previewPack, .collections: nil
+        case .widgets, .collectionList, .omniSnapshot, .previewPack, .collections: nil
         case .backup: "Das ist eine Sicherung – bitte „Sicherung wiederherstellen“ nutzen."
+        case .addonConfig: "Das ist eine AIOMetadata-Konfiguration – sie gehört ins AIOMetadata-Addon. Hier den Widget-Export importieren."
         case .iconPack: "Das ist ein Bewertungs-Icon-Satz – bitte das Feld „Eigener Bewertungs-Icon-Satz“ nutzen."
         case .invalidJSON: "Kein gültiges JSON (abgeschnitten oder kein Text-Export?)."
         case .unknown: "Format nicht erkannt. Möglich: Widget-Export, Preview Pack oder Collection-Export (JSON)."
@@ -59,9 +68,25 @@ public enum CollectionImportFormat: Equatable, Sendable {
         case .previewPack: "Preview Pack"
         case .collections: "Collection-Export"
         case .backup: "Sicherung"
+        case .omniSnapshot: "Omni-Snapshot"
+        case .addonConfig: "AIOMetadata-Konfiguration"
         case .iconPack: "Icon-Satz"
         case .invalidJSON, .unknown: "unbekannt"
         }
+    }
+}
+
+/// b5f (device test 26.11.): a GitHub page link (`github.com/<owner>/<repo>/blob/<ref…>/<path>`) loads the HTML
+/// page, not the file; it is rewritten to the raw file address. Every other link stays as it is.
+public enum CollectionImportLink {
+    public static func raw(_ link: String) -> String {
+        guard let u = URLComponents(string: link), u.scheme == "https" || u.scheme == "http",
+              ["github.com", "www.github.com"].contains(u.host?.lowercased() ?? "") else { return link }
+        let parts = u.percentEncodedPath.split(separator: "/", omittingEmptySubsequences: true)
+        // Review M2: only /blob/ (the HTML page); /raw/ links already load the file and keep their stored id.
+        guard parts.count >= 5, parts[2] == "blob" else { return link }
+        let rest = ([parts[0], parts[1]] + parts[3...]).joined(separator: "/")
+        return "https://raw.githubusercontent.com/" + rest
     }
 }
 
@@ -173,6 +198,39 @@ public struct ImportSummary: Equatable, Sendable {
     public static func videos(_ collections: [MediaCollection]) -> [String] {
         var seen = Set<String>()
         return collections.flatMap(\.folders).compactMap { FocusVideoURL.playable($0.focusVideo) }.filter { seen.insert($0).inserted }
+    }
+
+    /// Build 5 (b5f): what an import skipped or changed, for the result line (" · Hinweise: A ×2, B ×1"); "" = nothing.
+    /// At most `limit` kinds, by count, then name; the rest as "…".
+    public static func note(_ warnings: [String: Int], limit: Int = 4) -> String {
+        guard !warnings.isEmpty else { return "" }
+        let sorted = warnings.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+        var parts = sorted.prefix(limit).map { "\(cappedWarning($0.key)) ×\($0.value)" }
+        if sorted.count > limit { parts.append("…") }
+        let s = " · Hinweise: " + parts.joined(separator: ", ")
+        return s.count <= maxNoteLength ? s : String(s.prefix(maxNoteLength - 1)) + "…"
+    }
+
+    /// Review M1: longest hint key and longest hint text (they end up in the link summary in UserDefaults).
+    public static let maxWarningLength = 60
+    public static let maxNoteLength = 300
+
+    /// Hint key on one line, at most `maxWarningLength` characters.
+    public static func cappedWarning(_ s: String) -> String {
+        let line = s.split(whereSeparator: \.isNewline).joined(separator: " ")
+        return line.count <= maxWarningLength ? line : String(line.prefix(maxWarningLength - 1)) + "…"
+    }
+
+    /// b5f (device test 26.11.): a widget export without a single readable row; the hints say why.
+    public static func emptyWidgets(_ warnings: [String: Int], format: String = "Widget-Export") -> String {
+        "Import: \(format) ohne lesbare Reihen" + (warnings.isEmpty ? " (keine Widgets gefunden)" : note(warnings))
+    }
+
+    /// b5f: rows of the import that stay hidden until an addon serves their catalogs ("" = none).
+    public static func addonNote(_ rows: Int) -> String {
+        guard rows > 0 else { return "" }
+        return rows == 1 ? " · 1 Reihe wartet auf ein Addon mit den Katalogen (z. B. AIOMetadata)"
+            : " · \(rows) Reihen warten auf ein Addon mit den Katalogen (z. B. AIOMetadata)"
     }
 
     /// "Import: 3 Reihen, 42 Kacheln, 35 mit Video, 30 mit Ton".

@@ -391,18 +391,27 @@ final class FusionKitStore: ObservableObject {
         let traktID = model.hasTraktID, traktLogin = model.isConnected("trakt")
         var layout = model.profile.home
         var s = settings
-        let r = FusionKitSync.apply(layout: &layout, settings: &s, contents: contents, traktID: traktID, traktLogin: traktLogin)
+        // b5f: addon catalog sources (widget exports) need an installed addon that serves them.
+        let addons = model.profile.addons
+        let r = FusionKitSync.apply(layout: &layout, settings: &s, contents: contents, traktID: traktID, traktLogin: traktLogin,
+                                    addons: addons)
+        let index = AddonCatalogIndex(addons)   // review L5: one index for all rows of this sync
 
         var vis: [String: MediaCollection] = [:]
-        var hiddenTiles = 0
+        var hiddenTiles = 0, hiddenTilesByTrakt = 0
         // Wave F-o round 2: imported preview packs fill video and still of tiles with the same title.
         let pack = CollectionLinkStore.shared.packIndex
         for (_, c) in contents {
             for row in c.rows {
                 guard case .collection(let full) = row.body else { continue }
-                if let a = row.available(traktID: traktID, traktLogin: traktLogin), case .collection(let v) = a.body {
+                if let a = row.available(traktID: traktID, traktLogin: traktLogin, catalogs: index), case .collection(let v) = a.body {
                     vis[row.id] = PreviewPack.apply(pack, to: v)
-                    if s.placed.contains(row.id) { hiddenTiles += full.folders.count - v.folders.count }
+                    if s.placed.contains(row.id) {
+                        hiddenTiles += full.folders.count - v.folders.count
+                        if case .collection(let t)? = row.available(traktID: traktID, traktLogin: traktLogin)?.body {
+                            hiddenTilesByTrakt += full.folders.count - t.folders.count
+                        }
+                    }
                 }
             }
         }
@@ -431,7 +440,15 @@ final class FusionKitStore: ObservableObject {
         }
         if !loggedHidden, !r.hidden.isEmpty || hiddenTiles > 0 {
             loggedHidden = true
-            let why = traktID ? "Trakt-Anmeldung fehlt" : "Trakt Client ID fehlt"
+            // Review L9: name only the reasons that apply (Trakt, addon or both).
+            let rowsByTrakt = r.hidden.filter { id in
+                guard let key = FusionImport.sourceKey(ofID: id), let row = contents[key]?.row(id) else { return false }
+                return row.available(traktID: traktID, traktLogin: traktLogin) == nil
+            }.count
+            var reasons: [String] = []
+            if rowsByTrakt > 0 || hiddenTilesByTrakt > 0 { reasons.append(traktID ? "Trakt-Anmeldung fehlt" : "Trakt Client ID fehlt") }
+            if rowsByTrakt < r.hidden.count || hiddenTilesByTrakt < hiddenTiles { reasons.append("kein installiertes Addon mit dem Katalog") }
+            let why = reasons.joined(separator: ", ")
             RemoteLog.info("kit", "\(r.hidden.count) Kit-Reihe(n) und \(hiddenTiles) Kachel(n) ausgeblendet: \(why)")
         }
     }

@@ -13,6 +13,8 @@ public enum PhoneImportDetect {
     /// Grund der Ablehnung; `rawValue` geht als Kennung in die Rückmeldung der Seite.
     public enum Refusal: String, Equatable, Sendable {
         case backup, kitText
+        /// Build 5 (b5f): AIOMetadata configuration (belongs into the addon; the text says what to import instead).
+        case addonConfig
         /// Task 4.3: a configurator export (`schema` matches) that `LookImport` cannot read.
         case lookInvalid
         public var text: String {
@@ -20,6 +22,7 @@ public enum PhoneImportDetect {
             case .lookInvalid: "Aussehen nicht übernommen: keine lesbare Aussehen-Datei aus dem Konfigurator."
             case .backup: "Sicherung erkannt: bitte das Feld „Sicherung wiederherstellen“ nutzen."
             case .kitText: "Fusion-Kit als Text: bitte die „Copy JSON URL“ einfügen."
+            case .addonConfig: CollectionImportFormat.addonConfig.problem ?? ""
             }
         }
     }
@@ -59,8 +62,9 @@ public enum PhoneImportDetect {
             return .command(.look(look))
         }
         switch CollectionImportFormat.detect(data) {
-        case .widgets, .collectionList, .previewPack, .collections: return .command(.importCollectionCode(data))
+        case .widgets, .collectionList, .omniSnapshot, .previewPack, .collections: return .command(.importCollectionCode(data))
         case .backup: return .refused(.backup)
+        case .addonConfig: return .refused(.addonConfig)
         case .iconPack, .invalidJSON, .unknown: return .unknown
         }
     }

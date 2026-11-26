@@ -665,8 +665,12 @@ final class AppModel: ObservableObject {
                 guard let tmdb else { return CatalogLoad(items: []) }
                 out = try await tmdb.items(for: source)
             case .addon(let addonId, let catalogId, let type):
-                guard let a = profile.addons.first(where: { $0.manifest.id == addonId }) else { return CatalogLoad(items: []) }
-                out = try await addons.catalog(a, type: type, id: catalogId)
+                // b5f: manifest id, or (widget exports) the addon on the stored host / any addon declaring the catalog.
+                guard let hit = AddonCatalogResolver.resolve(profile.addons, addonId: addonId, catalogId: catalogId, type: type) else {
+                    RemoteLog.info("katalog", "\(source.title): kein installiertes Addon mit Katalog \(type)/\(catalogId)")
+                    return CatalogLoad(items: [])
+                }
+                out = try await addons.catalog(hit.addon, type: hit.type, id: catalogId)
             case .trakt(let user, let list):
                 guard let trakt = trakt ?? traktPublic else { return CatalogLoad(items: []) }   // öffentliche Listen: Client ID reicht
                 out = try await trakt.list(user: user, slug: list, token: await token("trakt"), limit: source.limit)

@@ -59,11 +59,20 @@ public struct FusionKitRow: Sendable, Hashable, Identifiable {
 
     /// Nur Quellen, die mit den vorhandenen Diensten laden (Trakt ohne Client ID bzw. ohne Anmeldung fällt weg);
     /// Kacheln ohne Quelle entfallen. nil = nichts bleibt übrig, Reihe ausblenden.
-    public func available(traktID: Bool, traktLogin: Bool) -> FusionKitRow? {
+    /// - Parameter addons: b5f: installed addons; an addon catalog source stays only when one of them serves it
+    ///   (`AddonCatalogResolver`). nil = no addon check (as before).
+    public func available(traktID: Bool, traktLogin: Bool, addons: [InstalledAddon]? = nil) -> FusionKitRow? {
+        available(traktID: traktID, traktLogin: traktLogin, catalogs: addons.map(AddonCatalogIndex.init))
+    }
+
+    /// Same with prebuilt addon index (review L5: one index per sync, not per row). nil = no addon check.
+    public func available(traktID: Bool, traktLogin: Bool, catalogs addons: AddonCatalogIndex?) -> FusionKitRow? {
         func ok(_ s: CatalogSource) -> Bool {
             let n = FusionNeeds.of(s)
             if n.contains(.traktID) && !traktID { return false }
             if n.contains(.traktLogin) && !traktLogin { return false }
+            if let addons, case .addon(let a, let c, let t) = s.kind,
+               AddonCatalogResolver.resolve(addons, addonId: a, catalogId: c, type: t) == nil { return false }
             return true
         }
         switch body {
@@ -92,6 +101,13 @@ public struct FusionKitContent: Sendable, Hashable {
     public init(rows: [FusionKitRow], warnings: [String: Int] = [:]) { self.rows = rows; self.warnings = warnings }
 
     public func row(_ id: String) -> FusionKitRow? { rows.first { $0.id == id } }
+
+    /// b5f: rows that only an addon catalog keeps from showing (Trakt and TMDB as available) with these addons.
+    public func waitingForAddon(_ addons: [InstalledAddon]) -> Int {
+        let index = AddonCatalogIndex(addons)
+        return rows.filter { $0.available(traktID: true, traktLogin: true) != nil
+            && $0.available(traktID: true, traktLogin: true, catalogs: index) == nil }.count
+    }
 }
 
 public enum FusionImportError: Error, Equatable, CustomStringConvertible {
@@ -140,13 +156,20 @@ public enum FusionImport {
     public static func parse(_ data: Data, sourceKey: String, title: String = "Kit", now: Date = Date()) throws -> FusionKitContent {
         let any = try JSONSerialization.jsonObject(with: data)
         var warnings: [String: Int] = [:]
-        let warn: (String) -> Void = { warnings[$0, default: 0] += 1 }
+        // Review M1: keys carry strings from the file; capped before they reach summary, notice or UserDefaults.
+        let warn: (String) -> Void = { warnings[ImportSummary.cappedWarning($0), default: 0] += 1 }
         let ctx = Context(sourceKey: sourceKey, today: day(now), warn: warn)
         var rows: [FusionKitRow] = []
 
         if let obj = any as? [String: Any] {
+            // b5f: Omni/UME snapshot → widget export (as the Fusion Widget Manager converts it), then as usual.
+            if OmniImport.claims(obj) {
+                let converted = try JSONSerialization.data(withJSONObject: OmniImport.widgets(obj))
+                return try parse(converted, sourceKey: sourceKey, title: title, now: now)
+            }
             guard obj["exportType"] as? String == "fusionWidgets" || obj["widgets"] != nil else { throw FusionImportError.unknownFormat }
             if let v = obj["exportVersion"] as? Int, v != 1 { warn("exportVersion \(v) unbekannt") }
+            if let n = obj[OmniImport.skippedKey] as? Int, n > 0 { warnings["Omni-Kataloge über der Grenze", default: 0] += n }
             // Reihe für Reihe: eine kaputte Reihe kostet nur sich selbst, nie die ganze Datei.
             let export = try JSONDecoder().decode(RawExport.self, from: data)
             if export.widgetsUnreadable { warn("widgets unlesbar") }
@@ -197,7 +220,8 @@ public enum FusionImport {
         let style: RowStyle
         switch w.type {
         case "row.classic.numbered": style = .top10
-        case "row.classic", nil: style = .poster
+        // Fusion Widget Manager: `presentation.aspectRatio` `wide` = landscape cards; `poster`/`square` stay posters.
+        case "row.classic", nil: style = w.presentation?.aspectRatio?.lowercased() == "wide" ? .landscape : .poster
         case let t?: ctx.warn("Reihentyp \(t) als Poster-Reihe"); style = .poster
         }
         guard var s = source(ds, id: id, title: title, ctx: ctx) else { return nil }
@@ -291,10 +315,39 @@ public enum FusionImport {
             let series = ["shows", "show", "tv", "series"].contains(p?.type?.lowercased() ?? "")
             return CatalogSource(id: id, title: title, kind: .trakt(user: nil, list: series ? "recommendations/shows" : "recommendations/movies"),
                                  mediaType: series ? .series : .movie, limit: p?.limit)
+        case "addonCatalog":
+            // Fusion Widget Manager: a catalog of an addon (mostly AIOMetadata), `catalogId` as `<type>::<id>`.
+            guard let ref = addonCatalog(p) else { ctx.warn("Addon-Katalog ohne ID"); return nil }
+            let mt: MediaType = ref.type == "movie" ? .movie : ref.type == "series" ? .series : .both
+            return CatalogSource(id: id, title: title, kind: .addon(addonId: ref.addon, catalogId: ref.catalog, type: ref.type), mediaType: mt)
+        case "anilistCatalog":
+            // Needs the manager's own AniList bridge; the app has no AniList source.
+            ctx.warn("AniList-Katalog übersprungen"); return nil
         case let k?:
             ctx.warn("Quelle \(k) übersprungen"); return nil
         case nil:
             ctx.warn("Quelle ohne Art"); return nil
+        }
+    }
+
+    /// `addonCatalog` payload → stored addon reference, catalog id without the type prefix, catalog type.
+    /// The type comes from `type`, then `catalogType` (editor state), then the `<type>::` prefix of the id.
+    static func addonCatalog(_ p: RawPayload?) -> (addon: String, catalog: String, type: String)? {
+        guard let raw = p?.catalogId?.trimmingCharacters(in: .whitespaces), !raw.isEmpty else { return nil }
+        var prefix: String?
+        var catalog = raw
+        if let r = raw.range(of: "::") { prefix = String(raw[..<r.lowerBound]); catalog = String(raw[r.upperBound...]) }
+        guard !catalog.isEmpty else { return nil }
+        let type = catalogType(p?.type) ?? catalogType(p?.catalogType) ?? catalogType(prefix) ?? "movie"
+        return (AddonCatalogResolver.storedID(p?.addonId), catalog, type)
+    }
+
+    static func catalogType(_ s: String?) -> String? {
+        guard let t = s?.trimmingCharacters(in: .whitespaces).lowercased(), !t.isEmpty else { return nil }
+        switch t {
+        case "movies": return "movie"
+        case "shows", "show", "tv": return "series"
+        default: return t
         }
     }
 
@@ -357,13 +410,29 @@ public enum FusionImport {
             do { widgets = try c.decodeIfPresent(LossyList<RawWidget>.self, forKey: .widgets) } catch { widgetsUnreadable = true }
         }
     }
-    struct RawWidget: Decodable { var id: String?; var title: String?; var type: String?; var limit: Int?; var dataSource: RawSource? }
+    struct RawWidget: Decodable {
+        var id: String?; var title: String?; var type: String?; var limit: Int?; var dataSource: RawSource?
+        var presentation: RawPresentation?
+    }
+    /// Fusion Widget Manager row look; only the aspect ratio is used (card size and badges are the app's own).
+    struct RawPresentation: Decodable {
+        var aspectRatio: String?
+        enum CodingKeys: String, CodingKey { case aspectRatio }
+        init(from decoder: Decoder) throws {
+            // Display only: an unreadable look never costs the row.
+            guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { aspectRatio = nil; return }
+            aspectRatio = (try? c.decodeIfPresent(String.self, forKey: .aspectRatio)) ?? nil
+        }
+    }
     struct RawSource: Decodable { var kind: String?; var payload: RawPayload? }
+    /// A field of the wrong type makes the source unreadable ("Quelle unlesbar"), never a source with a dropped filter.
     struct RawPayload: Decodable {
         var username: String?; var listSlug: String?; var listName: String?
         var type: String?; var includeGenres: [Int]?; var excludeGenres: [Int]?; var sortBy: String?
         var releaseChannel: String?; var releaseStatus: String?; var limit: Int?
         var items: LossyList<RawItem>?
+        // Fusion Widget Manager `addonCatalog` (export: `type`; editor state: `catalogType`).
+        var addonId: String?; var catalogId: String?; var catalogType: String?
     }
     struct RawItem: Decodable {
         var id: String?; var title: String?; var name: String?
