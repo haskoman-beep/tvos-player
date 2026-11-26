@@ -175,7 +175,6 @@ struct RootView: View {
         if !closed.isEmpty { RemoteLog.info("nav", "Profil-Epoche neu: Seiten geschlossen in \(closed.joined(separator: ", "))") }
     }
 
-    /// Gepushte Seiten im Pfad eines Tabs (ohne NavigationLink-/navigationDestination(item:)-Seiten).
     /// Task 5.6 (review minor): a page is pushed on the visible tab (a settings subpage counts too). In the sidebar
     /// the clock then goes, as it does with the top bar, which tvOS hides on pushed pages: grids (genre, person)
     /// scroll under the top right corner.
@@ -183,6 +182,7 @@ struct RootView: View {
         depth(tab) > 0 || (tab == .settings && !settingsRootVisible)
     }
 
+    /// Gepushte Seiten im Pfad eines Tabs (ohne NavigationLink-/navigationDestination(item:)-Seiten).
     private func depth(_ t: AppTab) -> Int {
         switch t {
         case .home: path.count
