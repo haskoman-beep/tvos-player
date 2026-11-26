@@ -131,25 +131,28 @@ extension Profile {
     }
 
     /// Integration build 5 (user decision 26.11.): the old rows „Plaketten-Stil“ (Aussehen) and „Titelbild oben“
-    /// (Startseite) are gone, only the look rows `badgeStyle` and `heroStyle` remain. An old value that differs from
-    /// its default and that the stored look does not map to moves into the look (runs on every load, a no-op once
-    /// moved). The old fields stay as they are, so the profile JSON keeps its format. Returns the moved look keys.
+    /// (Startseite) are gone, only the look rows `badgeStyle` and `heroStyle` remain. An old value that the stored look
+    /// does not map to moves into the look, in both directions (review L3: the old field is the truth; runs on every
+    /// load, a no-op once moved; `look.version` is kept). The old fields stay as they are, so the profile JSON keeps its format. Returns the moved look keys.
     @discardableResult
     public mutating func adoptOldLookRows() -> [String] {
         var v = look.resolved()
         let stored = LookMigration.oldValues(for: v)
-        let d = Appearance()
+        let preset = LookPreset.values(look.preset)
         var keys: [String] = []
-        if appearance.heroEnabled != d.heroEnabled, stored.heroEnabled != appearance.heroEnabled {
-            v.home.heroStyle = .aus   // the default is on, so only „off“ can differ
+        // Review L3: the old field is the truth in both directions.
+        // Hero on + stored aus → the preset's style, as `themeLook` shows it.
+        let hero: LookHeroStyle = appearance.heroEnabled ? preset.home.heroStyle : .aus
+        if stored.heroEnabled != appearance.heroEnabled, v.home.heroStyle != hero {
+            v.home.heroStyle = hero
             keys.append("heroStyle")
         }
-        if appearance.badges.style != d.badges.style, stored.badgeStyle != appearance.badges.style {
+        if stored.badgeStyle != appearance.badges.style {
             v.detail.badgeStyle = appearance.badges.style == .logo ? .logos : .text
             keys.append("badgeStyle")
         }
         guard !keys.isEmpty else { return [] }
-        look = Look(preset: look.preset, overrides: LookOverrides.difference(v, from: LookPreset.values(look.preset)))
+        look.overrides = LookOverrides.difference(v, from: preset)   // review L4: keeps `look.version`
         return keys
     }
 }

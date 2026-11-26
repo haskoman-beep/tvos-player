@@ -3,8 +3,8 @@ import Testing
 @testable import PlayerCore
 
 // Integration build 5 (user decision 26.11.): the old rows „Plaketten-Stil“ (Aussehen) and „Titelbild oben“
-// (Startseite) are gone; only the look rows `badgeStyle` and `heroStyle` remain. A non-default old value that the
-// stored look does not map to moves into the look once, on load. The JSON format stays: the old fields still
+// (Startseite) are gone; only the look rows `badgeStyle` and `heroStyle` remain. An old value that the stored look
+// does not map to moves into the look once, on load, in both directions (review L3: the old field is the truth). The JSON format stays: the old fields still
 // decode and are still written.
 
 private func roundTrip(_ p: Profile) throws -> Profile {
@@ -60,6 +60,38 @@ private func storedLookProfile() -> Profile {
     old.appearance.badges.style = .text
     #expect(old.adoptOldLookRows().isEmpty)
     #expect(try roundTrip(old).themeLook.detail.badgeStyle == .text)
+}
+
+@Test func oldLogoBadgeFieldOverridesStoredOutlineLook() throws {
+    // Review L3: old field logo + stored umriss → logos (the old field is the truth).
+    var p = storedLookProfile()
+    p.setLook("badgeStyle", to: "umriss")
+    p.appearance.badges.style = .logo
+    #expect(p.adoptOldLookRows() == ["badgeStyle"])
+    #expect(p.look.resolved().detail.badgeStyle == .logos)
+    #expect(try roundTrip(p).themeLook.detail.badgeStyle == .logos)
+}
+
+@Test func oldHeroToggleOnOverridesStoredHeroOff() throws {
+    // Review L3: old field on + stored aus → the preset's hero style, as `themeLook` shows it.
+    var p = storedLookProfile()
+    p.setLook("heroStyle", to: "aus")
+    p.appearance.heroEnabled = true
+    #expect(p.adoptOldLookRows() == ["heroStyle"])
+    let preset = LookPreset.values(p.look.preset).home.heroStyle
+    #expect(p.look.resolved().home.heroStyle == preset)
+    #expect(p.themeLook.home.heroStyle == preset)
+    #expect(try roundTrip(p).look.resolved().home.heroStyle == preset)
+}
+
+@Test func oldLookRowsMigrationKeepsLookVersion() {
+    // Review L4: the migration replaces only the overrides.
+    var p = storedLookProfile()
+    p.look.version = 99
+    p.appearance.badges.style = .text
+    #expect(p.adoptOldLookRows() == ["badgeStyle"])
+    #expect(p.look.version == 99)
+    #expect(p.look.resolved().home.cardShape == .poster)
 }
 
 @Test func oldTextBadgeFieldKeepsOutlineLook() throws {
