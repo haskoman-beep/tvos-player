@@ -251,7 +251,7 @@ struct HomeRowView: View {
                     ForEach(displayedEntries) { e in
                         let m = e.item
                         let r = routes[m.id] ?? .detail(m)
-                        listCard(r, item: m, rank: row.style == .top10 ? e.rank : nil, titles: titles) {
+                        listCard(r, item: m, rank: row.style == .top10 ? e.rank : nil, titles: titles, kind: kind) {
                             cardContent(e, kind: kind, titled: titles != nil)
                         }
                     }
@@ -489,16 +489,23 @@ struct HomeRowView: View {
     /// identity when an option changes while a card holds the focus; the options only change values. (Glow vs. the
     /// look's own focus effect stays a button style switch, `CardButtonStyleModifier`: the system card style has no
     /// value form.)
+    /// b5r: an equatable `HomeRowCard`, so a focus move runs only the cards whose focus flag changed.
     private func listCard<L: View>(_ route: Route, item m: MetaPreview, rank: Int?, titles: CardTitleSlot?,
-                                   @ViewBuilder label: () -> L) -> some View {
-        let st = model.progress.cardState(itemID: m.id)
-        let value = CardLayout.accessibilityValue(year: m.releaseInfo, fraction: st?.fraction,
-                                                  watched: st?.watched == true)
+                                   kind: TileKind, @ViewBuilder label: () -> L) -> some View {
+        let st: CardState? = model.progress.cardState(itemID: m.id)
+        let value: String = CardLayout.accessibilityValue(year: m.releaseInfo, fraction: st?.fraction,
+                                                          watched: st?.watched == true)
         // Review m6: Top 10 cards keep their rank in the label.
-        let name = rank.map { "Platz \($0), \(m.name)" } ?? m.name
-        let link = card(route, label: label).accessibilityLabel(name).accessibilityValue(value)
-        return ThemeCard(title: m.name, titleMode: titles?.mode ?? .aus, focused: focusedRoute == route,
-                         width: titles?.width ?? 0, shift: titles?.shift ?? 0) { link }
+        let name: String = rank.map { "Platz \($0), \(m.name)" } ?? m.name
+        let key = HomeRowCardKey(item: m, rank: rank, kind: kind, titled: titles != nil, style: row.style,
+                                 upcoming: row.content == .list(.upcoming))
+        let focused: Bool = focusedRoute == route
+        return HomeRowCard(route: route, name: name, accessibilityText: value, titles: titles, focused: focused,
+                           inContinueRow: row.content == .list(.continueWatching),
+                           inWatchlistRow: row.content == .list(.watchlist), labelKey: key, focus: $focusedRoute,
+                           onActivate: onActivate, menu: menu, onLeave: { focusNeighbour(of: route) },
+                           label: label())
+            .equatable()
     }
 
     private func card<L: View>(_ route: Route, @ViewBuilder label: () -> L) -> some View {

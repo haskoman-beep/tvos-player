@@ -58,3 +58,18 @@ import Testing
 @Test func homeRowBodyMetricLine() {
     #expect(Metric.line(.homeRowBody, ms: 240, fields: ["fokus": "18"]) == "home.rowBody 240 · fokus 18")
 }
+
+// b5r: body passes of the equatable home row cards (`HomeRowCard`, field `zellen`): with the equatable cell a focus
+// move should run about two of them (the card losing and the card gaining the focus), not every built card.
+@Test func bodyPassCounterCountsCellPassesInTheSameWindow() {
+    var c = BodyPassCounter()
+    let first = c.cellPass()       // a cell pass may open the window
+    let second = c.cellPass()
+    #expect(first && !second)
+    _ = c.pass()
+    _ = c.focusMoved()
+    let w = c.close()
+    #expect(w?.cells == 2 && w?.passes == 1 && w?.cards == 0 && w?.focusMoves == 1)
+    _ = c.focusMoved()
+    #expect(c.close()?.cells == 0)  // counters start from zero again
+}
