@@ -142,14 +142,18 @@ enum Theme {
         static func cardRowPadding(height: CGFloat, minimum: CGFloat) -> CGFloat {
             FocusHeadroom.rowPadding(height: height, scale: cardLiftScale, shadow: cardLiftShadow, minimum: minimum)
         }
+        /// Lift of the system card style as a `FocusHeadroom.CardLift` (same as `FocusHeadroom.lift` with glow).
+        static let systemLift = FocusHeadroom.CardLift(scale: cardLiftScale, reach: cardLiftShadow,
+                                                       side: FocusHeadroom.sideClearance)
         /// Wave F-k: band above the home list's top edge in which a lifted card may draw (lift room + fade).
-        static func listEdgeBand(height: CGFloat) -> CGFloat {
-            FocusHeadroom.edgeBand(height: height, scale: cardLiftScale, shadow: cardLiftShadow, fade: listFade)
+        /// `lift`: how the focused card grows (Task 5.1 `FocusHeadroom.lift` of the look; system card style by default).
+        static func listEdgeBand(height: CGFloat, lift: FocusHeadroom.CardLift = Theme.Focus.systemLift) -> CGFloat {
+            FocusHeadroom.edgeBand(height: height, scale: lift.scale, shadow: lift.reach, fade: listFade)
         }
         /// Wave F-m: room between the bottom of the home list and the screen edge for the lift of its tallest tile
-        /// (PlayerCore `FocusHeadroom.listBottomRoom`); the list draws into it.
-        static func listBottomRoom(height: CGFloat) -> CGFloat {
-            FocusHeadroom.listBottomRoom(height: height, scale: cardLiftScale, shadow: cardLiftShadow)
+        /// (PlayerCore `FocusHeadroom.listBottomRoom`); the list draws into it. `lift` as in `listEdgeBand`.
+        static func listBottomRoom(height: CGFloat, lift: FocusHeadroom.CardLift = Theme.Focus.systemLift) -> CGFloat {
+            FocusHeadroom.listBottomRoom(height: height, scale: lift.scale, shadow: lift.reach)
         }
         static let pressedScale: CGFloat = 0.98
         /// Schatten der fokussierten Zeile.

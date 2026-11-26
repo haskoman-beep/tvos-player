@@ -208,7 +208,8 @@ struct HomeView: View {
         let a = model.profile.appearance
         let strip = a.titles.posterBadges == .bottom ? PosterQualityBadges.bandHeight : 0
         let kinds = tileKinds(rows)
-        return Theme.Focus.listEdgeBand(height: FocusHeadroom.tallest(kinds, cardScale: a.cardSize.scale, posterExtra: strip))
+        return Theme.Focus.listEdgeBand(height: FocusHeadroom.tallest(kinds, cardScale: a.cardSize.scale, posterExtra: strip),
+                                        lift: listLift)
     }
 
     /// Integration build 5 (review b5a1 m3/n2): row ↔ row gap of `rowSpacing` as the list spacing, so a row's frame is
@@ -220,6 +221,12 @@ struct HomeView: View {
         CardLayout.homeTileKinds(rows, home: theme.cards.home, oldCard: oldCard)
     }
 
+    /// Review b5i M1: how a focused home card grows, from the look (Task 5.1 `FocusHeadroom.lift`: glow = system card
+    /// style, otherwise focusScale, border and shadow); „alte Karte“ draws the system card style (`CardStyle.legacyStyle`).
+    private var listLift: FocusHeadroom.CardLift {
+        oldCard ? Theme.Focus.systemLift : FocusHeadroom.lift(theme.cards.home)
+    }
+
     /// tvOS bottom safe area (the list ended there before wave F-m).
     private static let bottomSafeArea: CGFloat = 60
 
@@ -228,7 +235,8 @@ struct HomeView: View {
         let a = model.profile.appearance
         let strip = a.titles.posterBadges == .bottom ? PosterQualityBadges.bandHeight : 0
         let kinds = tileKinds(rows)
-        return Theme.Focus.listBottomRoom(height: FocusHeadroom.tallest(kinds, cardScale: a.cardSize.scale, posterExtra: strip))
+        return Theme.Focus.listBottomRoom(height: FocusHeadroom.tallest(kinds, cardScale: a.cardSize.scale, posterExtra: strip),
+                                          lift: listLift)
     }
 
     /// Build 2 device test: focus scrolling only keeps the focused card's frame inside the list, so a row entered
