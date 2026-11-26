@@ -15,10 +15,10 @@ public enum CollectionImportFormat: Equatable, Sendable {
     case previewPack
     /// Public collection export `[{"title","folders":[…]}]`.
     case collections
+    /// Build 5 (b5f): Omni/UME snapshot (`{"values":{…}}`), converted like the Fusion Widget Manager does (`OmniImport`).
+    case omniSnapshot
     /// Recognised but not importable here.
     case backup
-    /// Build 5 (b5f): Omni/UME snapshot (`{"values":{…}}`); the Fusion Widget Manager converts it to a widget export.
-    case omniSnapshot
     /// Build 5 (b5f): AIOMetadata configuration or catalog export (`{"catalogs":[…]}`) – belongs into the addon.
     case addonConfig
     case iconPack
@@ -30,7 +30,7 @@ public enum CollectionImportFormat: Equatable, Sendable {
         if let d = o as? [String: Any] {
             if d["profiles"] != nil { return .backup }
             if d["exportType"] as? String == "fusionWidgets" || d["widgets"] is [Any] { return .widgets }
-            if d["values"] is [String: Any] { return .omniSnapshot }
+            if d["values"] is [String: Any] { return .omniSnapshot }   // `widgets` was checked first
             // An addon manifest (`id`, `resources`) also has `catalogs`; it stays unknown here.
             if d["resources"] == nil, d["id"] == nil,
                d["catalogs"] is [Any] || (d["config"] as? [String: Any])?["catalogs"] is [Any] { return .addonConfig }
@@ -51,9 +51,8 @@ public enum CollectionImportFormat: Equatable, Sendable {
     /// German text for a format that cannot be imported, else nil.
     public var problem: String? {
         switch self {
-        case .widgets, .collectionList, .previewPack, .collections: nil
+        case .widgets, .collectionList, .omniSnapshot, .previewPack, .collections: nil
         case .backup: "Das ist eine Sicherung – bitte „Sicherung wiederherstellen“ nutzen."
-        case .omniSnapshot: "Das ist ein Omni-Snapshot – bitte im Fusion Widget Manager öffnen und den Widget-Export (Export → JSON) importieren."
         case .addonConfig: "Das ist eine AIOMetadata-Konfiguration – sie gehört ins AIOMetadata-Addon. Hier den Widget-Export importieren."
         case .iconPack: "Das ist ein Bewertungs-Icon-Satz – bitte das Feld „Eigener Bewertungs-Icon-Satz“ nutzen."
         case .invalidJSON: "Kein gültiges JSON (abgeschnitten oder kein Text-Export?)."

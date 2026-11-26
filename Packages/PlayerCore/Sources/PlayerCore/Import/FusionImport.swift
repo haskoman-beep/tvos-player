@@ -145,6 +145,11 @@ public enum FusionImport {
         var rows: [FusionKitRow] = []
 
         if let obj = any as? [String: Any] {
+            // b5f: Omni/UME snapshot → widget export (as the Fusion Widget Manager converts it), then as usual.
+            if OmniImport.claims(obj) {
+                let converted = try JSONSerialization.data(withJSONObject: OmniImport.widgets(obj))
+                return try parse(converted, sourceKey: sourceKey, title: title, now: now)
+            }
             guard obj["exportType"] as? String == "fusionWidgets" || obj["widgets"] != nil else { throw FusionImportError.unknownFormat }
             if let v = obj["exportVersion"] as? Int, v != 1 { warn("exportVersion \(v) unbekannt") }
             // Reihe für Reihe: eine kaputte Reihe kostet nur sich selbst, nie die ganze Datei.

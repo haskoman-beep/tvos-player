@@ -294,14 +294,14 @@ final class CollectionLinkStore: ObservableObject {
         let format = CollectionImportFormat.detect(data)
         let r = Result<Parsed, Error> {
             switch format {
-            case .widgets, .collectionList:
+            case .widgets, .collectionList, .omniSnapshot:
                 let src = FusionKitStore.source(link: link, data: data)
                 return .widgets(try FusionImport.parse(data, sourceKey: src.id, title: src.title), src)
             case .collections: return .collections(try NuvioImport.parse(data))
             case .previewPack:
                 let (entries, skipped) = try PreviewPack.parse(data)
                 return .pack(entries, skipped: skipped)
-            case .backup, .iconPack, .omniSnapshot, .addonConfig, .invalidJSON, .unknown: throw LinkError.http(0)
+            case .backup, .iconPack, .addonConfig, .invalidJSON, .unknown: throw LinkError.http(0)
             }
         }
         return (format, r)

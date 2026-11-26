@@ -144,11 +144,11 @@ private func addon(_ id: String, _ url: String, _ catalogs: [(String, String)]) 
 @Test func managerOtherFormatsAreNamed() {
     let omni = #"{"values":{"main_group_order":["g1"],"main_catalog_groups":{"g1":{"name":"A"}}}}"#
     #expect(CollectionImportFormat.detect(Data(omni.utf8)) == .omniSnapshot)
-    #expect(CollectionImportFormat.omniSnapshot.problem?.contains("Omni") == true)
+    #expect(CollectionImportFormat.omniSnapshot.problem == nil && CollectionImportFormat.omniSnapshot.name == "Omni-Snapshot")
     let catalogs = #"{"version":1,"exportedAt":"2026-01-01T00:00:00Z","catalogs":[{"id":"trakt.list.1","type":"movie","name":"L","enabled":true,"source":"trakt"}]}"#
     #expect(CollectionImportFormat.detect(Data(catalogs.utf8)) == .addonConfig)
     #expect(CollectionImportFormat.addonConfig.problem?.contains("AIOMetadata") == true)
-    #expect(PhoneImportDetect.detect(omni) == .refused(.omniSnapshot))
+    #expect(PhoneImportDetect.detect(omni) == .command(.importCollectionCode(Data(omni.utf8))))
     #expect(PhoneImportDetect.detect(catalogs) == .refused(.addonConfig))
     // A widget export stays a widget export.
     #expect(CollectionImportFormat.detect(Data(managerExport.utf8)) == .widgets)
@@ -166,3 +166,53 @@ private func addon(_ id: String, _ url: String, _ catalogs: [(String, String)]) 
             == " · Hinweise: AniList-Katalog übersprungen ×3, Kachel ohne Quellen ×1")
 }
 
+
+// MARK: Omni/UME snapshot (converted like the manager's convertOmniToFusion)
+
+private func omniSnapshot() -> String {
+    // Omni wraps values as base64 JSON in `_data`; one wrapped value is enough to cover the decoding.
+    let groups = Data(#"{"Service A":["movie:streaming.a","series:streaming.a"],"Empty":[]}"#.utf8).base64EncodedString()
+    return #"""
+    {"values":{
+      "main_group_order":["g1","g2"],
+      "main_catalog_groups":{"g1":{"name":"Streaming","posterType":"landscape","subgroupNames":["Service A","❗️Header","Empty"]},
+                             "g2":{"name":"❗️[Discover]","subgroupNames":["Service A"]}},
+      "catalog_groups":{"_data":"\#(groups)"},
+      "subgroup_order":{"g1":["Empty","Service A"]},
+      "catalog_group_image_urls":{"Service A":"https://img.example.invalid/a.png"},
+      "catalog_ordering":["movie:mdblist.1","series:aisearch.home.1.series"],
+      "selected_catalogs":["movie:mdblist.1","all:trakt.list.5","movie:hdr"],
+      "disabled_shelves":["movie:hdr"],
+      "custom_catalog_names":{"movie:mdblist.1":"Top Movies","all:trakt.list.5":"My List"}
+    }}
+    """#
+}
+
+@Test func omniSnapshotBecomesRows() throws {
+    let data = Data(omniSnapshot().utf8)
+    #expect(CollectionImportFormat.detect(data) == .omniSnapshot)
+    let c = try FusionImport.parse(data, sourceKey: "o")
+    #expect(c.rows.map(\.title) == ["Streaming", "Top Movies", "My List"])
+    #expect(c.rows[0].id == "fusion.o.omni.group.g1" && c.rows[0].style == .collectionTiles && c.rows[0].imageAspect == "wide")
+    guard case .collection(let col) = c.rows[0].body else { Issue.record("keine Collection"); return }
+    #expect(col.folders.map(\.title) == ["Service A"] && col.folders[0].coverImage == "https://img.example.invalid/a.png")
+    #expect(col.folders[0].sources.map(\.kind) == [
+        .addon(addonId: AddonCatalogResolver.anyAddon, catalogId: "streaming.a", type: "movie"),
+        .addon(addonId: AddonCatalogResolver.anyAddon, catalogId: "streaming.a", type: "series"),
+    ])
+    guard case .list(let top) = c.rows[1].body, case .list(let mine) = c.rows[2].body else { Issue.record("keine Liste"); return }
+    #expect(top.kind == .addon(addonId: AddonCatalogResolver.anyAddon, catalogId: "mdblist.1", type: "movie") && top.limit == 20)
+    #expect(mine.kind == .addon(addonId: AddonCatalogResolver.anyAddon, catalogId: "trakt.list.5", type: "series"))
+    #expect(c.warnings.isEmpty)
+    // Same snapshot, same IDs (the manager uses random ones).
+    #expect(try FusionImport.parse(data, sourceKey: "o").rows.map(\.id) == c.rows.map(\.id))
+}
+
+@Test func omniOddSnapshotNeverThrows() throws {
+    let odd = #"{"values":{"main_catalog_groups":{"g":{"name":5}},"catalog_groups":{"_data":"not base64!"},"selected_catalogs":[1,"movie:x"]}}"#
+    let c = try FusionImport.parse(Data(odd.utf8), sourceKey: "o")
+    #expect(c.rows.map(\.title) == ["x"])
+    #expect(OmniImport.normalizedID("Movie:a.b") == "movie::a.b" && OmniImport.normalizedID("series::c") == "series::c")
+    #expect(OmniImport.catalogType("tmdb.top.shows") == "series"
+            && OmniImport.catalogType("tmdb.top_shows") == "movie" && OmniImport.catalogType("all::x") == "all")
+}
