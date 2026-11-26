@@ -247,7 +247,7 @@ private actor Updates {
 @Test func searchTimeoutAndStatusPerAddon() async {
     let http = ScriptedHTTP(routes: [
         "fast": (0.05, #"{"streams":[{"name":"F","url":"https://f/1"}]}"#, 200),
-        "slow": (5, #"{"streams":[{"name":"S","url":"https://s/1"}]}"#, 200),
+        "slow": (10, #"{"streams":[{"name":"S","url":"https://s/1"}]}"#, 200),
         "bad": (0.1, nil, 503),
     ])
     let addons = [streamAddon("slow", "Langsam"), streamAddon("fast", "Schnell"), streamAddon("bad", "Kaputt")]
@@ -255,7 +255,9 @@ private actor Updates {
     let clock = ContinuousClock.now
     let result = await AddonClient(http: http).streams(from: addons, type: "movie", id: "tt1", timeout: 3) { await updates.add($0) }
     let elapsed = ContinuousClock.now - clock
-    #expect(elapsed < .seconds(4.9))   // timeout 3 s vs. slow addon 5 s; 4.5 was too tight for CI runners
+    // Timeout 3 s vs. slow addon 10 s: far enough apart that "the timeout cancelled" and "waited for the slow
+    // addon" cannot be confused on a slow CI runner (4.9 s against a 5 s addon failed at 4.936 s).
+    #expect(elapsed < .seconds(6))
     #expect(result.map(\.addon.manifest.name) == ["Schnell"])
     let list = await updates.list
     #expect(list.count == 4)   // Anfang + je Addon
