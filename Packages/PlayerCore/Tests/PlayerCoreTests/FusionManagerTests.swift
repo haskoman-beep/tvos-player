@@ -245,3 +245,20 @@ private func omniSnapshot() -> String {
     r = FusionKitSync.apply(layout: &layout, settings: &st, contents: ["m": c], traktID: true, traktLogin: true, addons: [aio])
     #expect(r.added == ["fusion.m.catalog.r1"] && layout.rows.count == 1)
 }
+
+@Test func rowCatalogHidesKitRowsWithoutServingAddon() throws {
+    let c = try FusionImport.parse(Data(managerExport.utf8), sourceKey: "m")
+    let src = FusionKitSource(id: "m", title: "M", url: "https://example.invalid/m.json", custom: true)
+    let none = try #require(RowCatalog(layout: HomeLayout(), kitSources: [src], kitContents: ["m": c],
+                                       traktID: true, traktLogin: true).group("kit"))
+    // Both addon list rows hidden; the tile row keeps its Trakt tile (2 tiles parsed, 1 left).
+    #expect(none.hiddenCount == 2 && none.hint == "Kein Addon mit den Katalogen (z. B. AIOMetadata) – 2 Reihen ausgeblendet")
+    let tiles = try #require(none.sections.flatMap(\.entries).first { $0.title == "Streaming" })
+    #expect(tiles.subtitle.hasPrefix("1 von 2 Kacheln (ohne passendes Addon)"))
+
+    let aio = addon("com.example.aio", "https://aio.example.invalid/manifest.json",
+                    [("movie", "mdblist.123"), ("all", "trakt.list.42"), ("movie", "streaming.a"), ("series", "streaming.a")])
+    let all = try #require(RowCatalog(layout: HomeLayout(), addons: [aio], kitSources: [src], kitContents: ["m": c],
+                                      traktID: true, traktLogin: true).group("kit"))
+    #expect(all.hiddenCount == 0 && all.hint == nil)
+}

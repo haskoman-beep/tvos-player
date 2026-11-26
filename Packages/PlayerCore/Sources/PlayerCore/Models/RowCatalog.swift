@@ -63,7 +63,7 @@ public struct RowCatalog: Sendable {
         groups.append(.fixed(.collections, entries: ownEntries))
 
         // 3. Fusion-Kit, nach Thema gruppiert; der Ersteller steht im Untertitel.
-        groups.append(RowCatalog.kitGroup(sources: kitSources, contents: kitContents, traktID: traktID,
+        groups.append(RowCatalog.kitGroup(sources: kitSources, contents: kitContents, addons: addons, traktID: traktID,
                                           traktLogin: traktLogin, tmdb: tmdb, errors: kitErrors, status: status))
 
         // 4. Trakt.
@@ -189,12 +189,14 @@ public struct RowCatalog: Sendable {
 
     static func kitTopicRank(_ topic: String) -> Int { kitTopicRanks[fold(topic)] ?? 5 }
 
-    static func kitGroup(sources: [FusionKitSource], contents: [String: FusionKitContent], traktID: Bool, traktLogin: Bool,
+    /// b5f: `addons` = installed addons; kit addon catalog sources without a serving addon are left out (nil = no check).
+    static func kitGroup(sources: [FusionKitSource], contents: [String: FusionKitContent], addons: [InstalledAddon]? = nil,
+                         traktID: Bool, traktLogin: Bool,
                          tmdb: Bool = true, errors: [String: String] = [:],
                          status: (String) -> RowCatalogEntry.Status) -> RowCatalogGroup {
         let kind = RowCatalogGroup.Kind.kit
         var sections: [(topic: String, entries: [RowCatalogEntry])] = []
-        var hidden = 0, hiddenNeedsID = false, pending = 0
+        var hidden = 0, hiddenNeedsID = false, hiddenByTrakt = false, pending = 0
         var seen = Set<String>()
         var failures: [String] = []
         for src in sources where seen.insert(src.id).inserted {
@@ -204,8 +206,11 @@ public struct RowCatalog: Sendable {
             }
             let (topic, creator) = kitTopic(src.title)
             for row in content.rows {
-                guard let shown = row.available(traktID: traktID, traktLogin: traktLogin) else {
+                // Without the addon check: what Trakt alone leaves (tells the reason apart).
+                let byTrakt = row.available(traktID: traktID, traktLogin: traktLogin)
+                guard let shown = addons == nil ? byTrakt : row.available(traktID: traktID, traktLogin: traktLogin, addons: addons) else {
                     hidden += 1
+                    if byTrakt == nil { hiddenByTrakt = true }
                     if row.needs.contains(.traktID) && !traktID { hiddenNeedsID = true }
                     continue
                 }
@@ -215,9 +220,11 @@ public struct RowCatalog: Sendable {
                 }
                 // Was fehlt, kurz im Untertitel (vorher in den Kit-Einstellungen, F-b2-Review M4).
                 if case .collection(let full) = row.body, case .collection(let v) = shown.body, v.folders.count < full.folders.count {
-                    // Mit Client ID fehlt nur noch die Anmeldung (F-b2-Review m1).
+                    // Mit Client ID fehlt nur noch die Anmeldung (F-b2-Review m1). b5f: nothing lost to Trakt → the addon.
+                    var lostToTrakt = true
+                    if case .collection(let t)? = byTrakt?.body { lostToTrakt = t.folders.count < full.folders.count }
                     kindText = "\(v.folders.count) von \(full.folders.count) Kacheln ("
-                        + (traktID ? "ohne Trakt-Anmeldung" : "ohne Trakt Client ID") + ")"
+                        + (!lostToTrakt ? "ohne passendes Addon" : traktID ? "ohne Trakt-Anmeldung" : "ohne Trakt Client ID") + ")"
                 }
                 let lacksTMDB = row.needs.contains(.tmdb) && !tmdb
                 let key = row.content.key
@@ -233,7 +240,8 @@ public struct RowCatalog: Sendable {
         var hint: String?
         if hidden > 0 {
             let what = hidden == 1 ? "1 Reihe ausgeblendet" : "\(hidden) Reihen ausgeblendet"
-            hint = (hiddenNeedsID ? "Trakt Client ID fehlt – " : "Trakt-Anmeldung fehlt – ") + what
+            hint = (hiddenNeedsID ? "Trakt Client ID fehlt – "
+                    : hiddenByTrakt ? "Trakt-Anmeldung fehlt – " : "Kein Addon mit den Katalogen (z. B. AIOMetadata) – ") + what
         }
         return RowCatalogGroup(id: kind.rawValue, kind: kind, title: kind.title,
                                sections: sections.sorted { l, r in
