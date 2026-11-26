@@ -44,6 +44,8 @@ struct PersonView: View {
         }
         .tint(Color?.none)
         .sheet(isPresented: $showBio) { FullTextSheet(title: person?.name ?? name, text: person?.biography ?? "") }
+        // Build 5 device test 1 (item 4): the way back from this page (the app closed there once).
+        .onDisappear { RemoteLog.info("person", "\(personID) verlassen · \(person?.credits.count ?? 0) Titel") }
         .task {
             guard person == nil else { return }
             guard let tmdb = model.tmdb else { failed = true; RemoteLog.info("person", "kein TMDB-Key"); return }

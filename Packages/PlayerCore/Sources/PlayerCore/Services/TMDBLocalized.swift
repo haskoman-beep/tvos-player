@@ -16,6 +16,8 @@ public struct LocalizedMeta: Sendable, Equatable {
     public var creators: [String] = []
     public var writers: [String] = []
     public var studios: [String] = []
+    /// Build 5 device test 1 (item 5): the same studios with their TMDB logos (nil: name only), for the detail row.
+    public var studioLogos: [StudioLogo] = []
     public var countries: [String] = []
     public var originalTitle: String?
     public var releaseDate: String?
@@ -37,6 +39,13 @@ public struct CastMember: Sendable, Equatable, Identifiable {
     public var name: String
     public var role: String?
     public var photo: String?
+}
+
+/// A studio or network of a title with its TMDB logo (transparent PNG, w300), if TMDB has one.
+public struct StudioLogo: Sendable, Equatable, Hashable {
+    public var name: String
+    public var logo: String?
+    public init(name: String, logo: String?) { self.name = name; self.logo = logo }
 }
 
 public struct LocalizedEpisode: Sendable, Equatable {
@@ -73,6 +82,7 @@ extension TMDBClient {
     static let logoBase = "https://image.tmdb.org/t/p/w500"
     static let stillBase = "https://image.tmdb.org/t/p/w500"
     static let profileBase = "https://image.tmdb.org/t/p/w185"
+    static let studioLogoBase = "https://image.tmdb.org/t/p/w300"
 
     static func parseLocalized(_ data: Data, lang: String, region: String, series: Bool) -> LocalizedMeta? {
         guard let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let id = o["id"] as? Int else { return nil }
@@ -100,16 +110,30 @@ extension TMDBClient {
         if region == "DE", let c = m.certification, Int(c) != nil { m.certification = "FSK \(c)" }
 
         let credits = (o[series ? "aggregate_credits" : "credits"] as? [String: Any]) ?? [:]
-        m.cast = ((credits["cast"] as? [[String: Any]]) ?? []).prefix(20).compactMap { c in
-            guard let id = c["id"] as? Int, let name = nonEmpty(c["name"]) else { return nil }
+        // Build 5 device test 1 (item 4): TMDB lists an actor once per role; each person once, roles joined (the
+        // cast row identifies portraits by person ID).
+        var cast: [CastMember] = []
+        for c in (credits["cast"] as? [[String: Any]]) ?? [] {
+            guard let id = c["id"] as? Int, let name = nonEmpty(c["name"]) else { continue }
             let role = nonEmpty(c["character"]) ?? ((c["roles"] as? [[String: Any]])?.first.flatMap { nonEmpty($0["character"]) })
-            return CastMember(id: id, name: name, role: role, photo: nonEmpty(c["profile_path"]).map { profileBase + $0 })
+            if let i = cast.firstIndex(where: { $0.id == id }) {
+                if let role, cast[i].role != role { cast[i].role = cast[i].role.map { "\($0) / \(role)" } ?? role }
+                continue
+            }
+            guard cast.count < 20 else { continue }
+            cast.append(CastMember(id: id, name: name, role: role, photo: nonEmpty(c["profile_path"]).map { profileBase + $0 }))
+        }
+        m.cast = cast
+        func studios(_ key: String) -> [StudioLogo] {
+            ((o[key] as? [[String: Any]]) ?? []).compactMap { e in
+                nonEmpty(e["name"]).map { StudioLogo(name: $0, logo: nonEmpty(e["logo_path"]).map { studioLogoBase + $0 }) }
+            }
         }
         let crew = (credits["crew"] as? [[String: Any]]) ?? []
         if series {
             m.creators = ((o["created_by"] as? [[String: Any]]) ?? []).compactMap { nonEmpty($0["name"]) }
-            m.studios = ((o["networks"] as? [[String: Any]]) ?? []).compactMap { nonEmpty($0["name"]) }
-                + ((o["production_companies"] as? [[String: Any]]) ?? []).prefix(2).compactMap { nonEmpty($0["name"]) }
+            m.studioLogos = studios("networks") + studios("production_companies").prefix(2)
+            m.studios = m.studioLogos.map(\.name)
             m.seasons = o["number_of_seasons"] as? Int
             m.episodes = o["number_of_episodes"] as? Int
             m.releaseDate = nonEmpty(o["first_air_date"])
@@ -117,7 +141,8 @@ extension TMDBClient {
         } else {
             m.creators = crew.filter { ($0["job"] as? String) == "Director" }.compactMap { nonEmpty($0["name"]) }
             m.writers = Array(Set(crew.filter { ["Screenplay", "Writer"].contains($0["job"] as? String ?? "") }.compactMap { nonEmpty($0["name"]) })).sorted()
-            m.studios = ((o["production_companies"] as? [[String: Any]]) ?? []).prefix(3).compactMap { nonEmpty($0["name"]) }
+            m.studioLogos = Array(studios("production_companies").prefix(3))
+            m.studios = m.studioLogos.map(\.name)
             m.budget = (o["budget"] as? Int).flatMap { $0 > 0 ? $0 : nil }
             m.revenue = (o["revenue"] as? Int).flatMap { $0 > 0 ? $0 : nil }
             m.releaseDate = nonEmpty(o["release_date"])
