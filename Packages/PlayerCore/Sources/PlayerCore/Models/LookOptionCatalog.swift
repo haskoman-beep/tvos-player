@@ -75,7 +75,7 @@ public enum LookOptionCatalog {
     public static func isExtra(_ key: String) -> Bool { extras.contains { $0.key == key } }
 
     /// Task 5.3: options of a later build that this code already draws; their rows are active although
-    /// `LookBuild.current` stays `.b4` (the 5a/5c rows stay dimmed until their builds land).
+    /// `LookBuild.current` stays `.b4`.
     /// Task 5.1: the card and row options of 5a (cardSize and expandPosters are Build 4 options); Task 5.2: the hero
     /// options of 5a; Task 5.4: the five player options of 5c (trackPanel is a Build 4 option already); Task 5.6:
     /// clock and settings layout (navigation is a Build 4 option already). `availableFrom` keeps the appendix value.
