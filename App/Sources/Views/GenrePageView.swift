@@ -248,8 +248,11 @@ struct GenrePageView: View {
     private func fetch(_ src: CatalogSource, _ r: GenrePageRequest) async throws -> ([MetaPreview], Int?) {
         switch (src.kind, r) {
         case (.addon(let addonId, let catalogId, let type), .addonSkip(let skip)):
-            guard let a = model.profile.addons.first(where: { $0.manifest.id == addonId }) else { return ([], nil) }
-            let items = try await model.addons.catalog(a, type: type, id: catalogId, extra: skip > 0 ? ["skip": String(skip)] : [:])
+            guard let hit = AddonCatalogResolver.resolve(model.profile.addons, addonId: addonId, catalogId: catalogId, type: type) else {
+                return ([], nil)
+            }
+            let items = try await model.addons.catalog(hit.addon, type: hit.type, id: catalogId,
+                                                       extra: skip > 0 ? ["skip": String(skip)] : [:])
             return (items, nil)
         case (_, .tmdbPage(let page)):
             guard let tmdb = model.tmdb else { return ([], nil) }

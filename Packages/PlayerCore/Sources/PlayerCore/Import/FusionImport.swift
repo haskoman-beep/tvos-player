@@ -197,7 +197,8 @@ public enum FusionImport {
         let style: RowStyle
         switch w.type {
         case "row.classic.numbered": style = .top10
-        case "row.classic", nil: style = .poster
+        // Fusion Widget Manager: `presentation.aspectRatio` `wide` = landscape cards; `poster`/`square` stay posters.
+        case "row.classic", nil: style = w.presentation?.aspectRatio?.lowercased() == "wide" ? .landscape : .poster
         case let t?: ctx.warn("Reihentyp \(t) als Poster-Reihe"); style = .poster
         }
         guard var s = source(ds, id: id, title: title, ctx: ctx) else { return nil }
@@ -291,10 +292,39 @@ public enum FusionImport {
             let series = ["shows", "show", "tv", "series"].contains(p?.type?.lowercased() ?? "")
             return CatalogSource(id: id, title: title, kind: .trakt(user: nil, list: series ? "recommendations/shows" : "recommendations/movies"),
                                  mediaType: series ? .series : .movie, limit: p?.limit)
+        case "addonCatalog":
+            // Fusion Widget Manager: a catalog of an addon (mostly AIOMetadata), `catalogId` as `<type>::<id>`.
+            guard let ref = addonCatalog(p) else { ctx.warn("Addon-Katalog ohne ID"); return nil }
+            let mt: MediaType = ref.type == "movie" ? .movie : ref.type == "series" ? .series : .both
+            return CatalogSource(id: id, title: title, kind: .addon(addonId: ref.addon, catalogId: ref.catalog, type: ref.type), mediaType: mt)
+        case "anilistCatalog":
+            // Needs the manager's own AniList bridge; the app has no AniList source.
+            ctx.warn("AniList-Katalog übersprungen"); return nil
         case let k?:
             ctx.warn("Quelle \(k) übersprungen"); return nil
         case nil:
             ctx.warn("Quelle ohne Art"); return nil
+        }
+    }
+
+    /// `addonCatalog` payload → stored addon reference, catalog id without the type prefix, catalog type.
+    /// The type comes from `type`, then `catalogType` (editor state), then the `<type>::` prefix of the id.
+    static func addonCatalog(_ p: RawPayload?) -> (addon: String, catalog: String, type: String)? {
+        guard let raw = p?.catalogId?.trimmingCharacters(in: .whitespaces), !raw.isEmpty else { return nil }
+        var prefix: String?
+        var catalog = raw
+        if let r = raw.range(of: "::") { prefix = String(raw[..<r.lowerBound]); catalog = String(raw[r.upperBound...]) }
+        guard !catalog.isEmpty else { return nil }
+        let type = catalogType(p?.type) ?? catalogType(p?.catalogType) ?? catalogType(prefix) ?? "movie"
+        return (AddonCatalogResolver.storedID(p?.addonId), catalog, type)
+    }
+
+    static func catalogType(_ s: String?) -> String? {
+        guard let t = s?.trimmingCharacters(in: .whitespaces).lowercased(), !t.isEmpty else { return nil }
+        switch t {
+        case "movies": return "movie"
+        case "shows", "show", "tv": return "series"
+        default: return t
         }
     }
 
@@ -357,13 +387,29 @@ public enum FusionImport {
             do { widgets = try c.decodeIfPresent(LossyList<RawWidget>.self, forKey: .widgets) } catch { widgetsUnreadable = true }
         }
     }
-    struct RawWidget: Decodable { var id: String?; var title: String?; var type: String?; var limit: Int?; var dataSource: RawSource? }
+    struct RawWidget: Decodable {
+        var id: String?; var title: String?; var type: String?; var limit: Int?; var dataSource: RawSource?
+        var presentation: RawPresentation?
+    }
+    /// Fusion Widget Manager row look; only the aspect ratio is used (card size and badges are the app's own).
+    struct RawPresentation: Decodable {
+        var aspectRatio: String?
+        enum CodingKeys: String, CodingKey { case aspectRatio }
+        init(from decoder: Decoder) throws {
+            // Display only: an unreadable look never costs the row.
+            guard let c = try? decoder.container(keyedBy: CodingKeys.self) else { aspectRatio = nil; return }
+            aspectRatio = (try? c.decodeIfPresent(String.self, forKey: .aspectRatio)) ?? nil
+        }
+    }
     struct RawSource: Decodable { var kind: String?; var payload: RawPayload? }
+    /// A field of the wrong type makes the source unreadable ("Quelle unlesbar"), never a source with a dropped filter.
     struct RawPayload: Decodable {
         var username: String?; var listSlug: String?; var listName: String?
         var type: String?; var includeGenres: [Int]?; var excludeGenres: [Int]?; var sortBy: String?
         var releaseChannel: String?; var releaseStatus: String?; var limit: Int?
         var items: LossyList<RawItem>?
+        // Fusion Widget Manager `addonCatalog` (export: `type`; editor state: `catalogType`).
+        var addonId: String?; var catalogId: String?; var catalogType: String?
     }
     struct RawItem: Decodable {
         var id: String?; var title: String?; var name: String?
