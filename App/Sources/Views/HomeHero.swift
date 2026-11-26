@@ -4,7 +4,8 @@ import PlayerCore
 
 // Startseiten-Hero (Spec §2.2, §7a.1/§7a.2): gemeinsame Hintergrund- und Info-Ebene hinter dem ScrollView.
 // Die Info zeigt die aktuelle Folie oder, solange der Fokus in den Reihen liegt, die fokussierte Kachel
-// (nach 350 ms Ruhe; Quellen vorladen erst nach 1 s Ruhe, P3). Die Diashow pausiert, solange der Fokus in den Reihen liegt.
+// (b5r: nach mindestens 800 ms Ruhe, im Drück-Takt länger als der Takt, `BackdropRest`; Quellen vorladen danach, P3).
+// Die Diashow pausiert, solange der Fokus in den Reihen liegt.
 
 /// Fokus der Startseite. Kacheln melden sich über `set`, die Hero-Knöpfe über `leaveRows`.
 @MainActor @Observable
@@ -24,12 +25,15 @@ final class HomeFocus {
     @ObservationIgnored var followsBackdrop = false
     /// Task 5.2: at most one backdrop request per rest (PlayerCore `HeroBackdropFollow`).
     @ObservationIgnored private var follow = HeroBackdropFollow()
+    /// Build 5 (b5r): rest before the backdrop follows (800 ms, longer while the user presses in a rhythm).
+    @ObservationIgnored private var rest = BackdropRest()
 
-    /// Kachel hat den Fokus: Diashow sofort anhalten, Hintergrund erst nach 350 ms Ruhe wechseln.
+    /// Kachel hat den Fokus: Diashow sofort anhalten, Hintergrund erst nach der Ruhe von `BackdropRest` wechseln
+    /// (b5r, device test 2: with 350 ms it swapped every 1–1.5 s while the user kept pressing right).
     /// Ein neuer Fokus bricht die Wartezeit ab; pro Ruhepause höchstens eine Log-Zeile.
     /// Build 4 follow-up 2 (P3): `onRest` (Quellen vorladen, Task 7) runs only after `FocusRest.prefetchMilliseconds`
-    /// (1 s) of rest: after the backdrop crossfade (350 ms + 0.6 s), and not for the short stops while browsing (the
-    /// device log showed stops 0.5–0.8 s apart, each starting a search). Also when the backdrop already shows this tile
+    /// (1 s) of rest, b5r: never before the backdrop crossfade is over (rest + 0.6 s); and not for the short stops
+    /// while browsing (the device log showed stops 0.5–0.8 s apart, each starting a search). Also when the backdrop already shows this tile
     /// (focus came back before its prefetch). A new focus or leaving the rows cancels both steps.
     /// Intended (P3 review M4): every return to the shown tile requests again after 1 s, so `keepStream` also promotes
     /// an entry that was prefetched already; harmless, do not skip the shown tile here.
@@ -39,7 +43,9 @@ final class HomeFocus {
         pending = nil
         // Task 5.2: no token = nothing to show (option off, or this card is shown already): prefetch only.
         let token = follow.focus(m.id, follows: followsBackdrop)
-        let stop = FocusRest.stop(alreadyShown: token == nil)
+        let restMs: Int = rest.moved(at: ProcessInfo.processInfo.systemUptime)
+        let stop = FocusRest.stop(alreadyShown: token == nil, backdropRest: restMs,
+                                  fadeMilliseconds: HeroMetrics.backdropFadeMilliseconds)
         guard stop.backdropWait != nil || onRest != nil else { return }
         pending = Task { [weak self] in
             if let wait = stop.backdropWait, let token {
@@ -47,7 +53,10 @@ final class HomeFocus {
                 guard !Task.isCancelled, let self else { return }
                 if self.follow.rested(token) != nil {
                     self.item = m
-                    RemoteLog.info("hero", "Fokus-Hintergrund \(m.id)")
+                    // b5r: rest waited and how many cards of the burst got no swap (next device test).
+                    let skipped: Int = self.rest.swapped()
+                    let burst: String = skipped > 0 ? " · \(skipped) Karten davor ohne Wechsel" : ""
+                    RemoteLog.info("hero", "Fokus-Hintergrund \(m.id) nach \(wait) ms Ruhe\(burst)")
                 }
             }
             guard let onRest else { self?.pending = nil; return }
@@ -106,6 +115,7 @@ final class HomeFocus {
         pending?.cancel()
         pending = nil
         follow.leave()
+        rest.reset()
         if inRows { inRows = false }
     }
 }
@@ -201,8 +211,10 @@ enum HeroMetrics {
     /// Top padding of the hero list content above the button row (`HomeView.heroHome`).
     static let listPadding: CGFloat = 24
     /// Longest backdrop crossfade (today's 0.6 s; `motion.backdrop` standard is 0.7). The P3 prefetch rest (1 s)
-    /// starts after the backdrop rest (350 ms) plus this fade.
+    /// starts after the backdrop rest (b5r: `BackdropRest`, at least 800 ms) plus this fade.
     static let backdropFade: Double = 0.6
+    /// The same fade in ms for `FocusRest.stop(alreadyShown:backdropRest:fadeMilliseconds:)`.
+    static let backdropFadeMilliseconds: Int = 600
 }
 
 extension Route {
