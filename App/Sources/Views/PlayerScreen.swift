@@ -327,26 +327,26 @@ struct PlayerControls<E: PlaybackEngine>: View {
                                      noPicture: !engine.loadActivity.hasFirstFrame || restorePending))   // Wave P-b
             if blackCover { Color.black.ignoresSafeArea() }
         }
-        // Steht der Überspringen-Knopf, bekommt er den Fokus; Befehle unten erreichen die Fläche weiterhin.
-        .focusable(!skip.holdsFocus)
+        // Steht der Überspringen-Knopf oder die Up-next-Karte (Knöpfe, Entscheidung 26.11.), bekommt sie den Fokus;
+        // Befehle unten erreichen die Fläche weiterhin.
+        .focusable(!skip.holdsFocus && !upNextHoldsFocus)
         .focused($surfaceFocused)
-        .onChange(of: skip.holdsFocus) { _, held in if !held { surfaceFocused = true } }
+        .onChange(of: skip.holdsFocus) { _, held in if !held && !upNextHoldsFocus { surfaceFocused = true } }
+        .onChange(of: upNextHoldsFocus) { _, held in if !held && !skip.holdsFocus { surfaceFocused = true } }
         .onPlayPauseCommand { guard !leaving else { return }; onUserInput(); skip.noteKey(); if scrub.isActive { lastToggle = Date(); confirmScrub(); return }; togglePlay() }   // G-a R1: Doppel als MP-Toggle fällt in den 350-ms-Filter
         .onTapGesture {   // Klick auf das Touchpad (Mitte) pausiert ebenfalls
             guard !leaving else { return }   // geordneter Ausstieg läuft (schwarz): keine Eingaben mehr
             if scrub.isActive { onUserInput(); confirmScrub(); return }   // Select bestätigt das Spulen
-            // Select auf dem Überspringen-Knopf überspringt nur, kein zusätzliches Pausieren.
-            guard !skip.holdsFocus else { return }
+            // Select auf dem Überspringen-Knopf überspringt nur, kein zusätzliches Pausieren; ebenso die Up-next-Knöpfe.
+            guard !skip.holdsFocus, !upNextHoldsFocus else { return }
             onUserInput(); togglePlay()
         }
         .onMoveCommand { dir in
             guard !leaving else { return }
             onUserInput()
             if skip.noteKey() { return }   // wave P-a: stops a skip countdown; the card after a movie takes the arrows
-            if upNext != nil {
-                withAnimation { upNext = nil }; upNextCancelled = true
-                RemoteLog.info("player", "Up-next abgebrochen"); return
-            }
+            // Decision 26.11.: the arrows move between „Jetzt abspielen“ and „Abbrechen“ (no cancel by arrow).
+            if upNextHoldsFocus { return }
             // Beim Spulen verschieben ◀/▶ das Ziel; kurz nach einer Wischbewegung zählen sie nicht als Sprung.
             if scrub.isActive { if dir == .left { scrub.nudge(-10) } else if dir == .right { scrub.nudge(10) }; poke(); return }
             if dir == .left || dir == .right, scrub.suppressesMove() { return }
@@ -626,8 +626,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
         onLeaving()
     }
 
-    /// Up-next: Karte mit 10-s-Countdown ab Abspannbeginn (`skip.upNextAt`, Welle B-b), sonst 20 s vor Ende;
-    /// 2 min vor Ende bzw. 100 s vor der Karte vorladen, dann nächste Folge.
+    /// Up-next: Karte mit 20-s-Countdown (`UpNextCountdown`, Entscheidung 26.11.) ab Abspannbeginn (`skip.upNextAt`,
+    /// Welle B-b), sonst 20 s vor Ende; 2 min vor Ende bzw. 100 s vor der Karte vorladen, dann nächste Folge.
     private func upNextTick() {
         guard nextTitle != nil, engine.duration > 300, engine.errorText == nil else { return }
         let now = engine.currentTime, rem = engine.duration - now
@@ -643,7 +643,7 @@ struct PlayerControls<E: PlaybackEngine>: View {
         } else if now >= cardAt, rem > 0, engine.isPlaying, !upNextCancelled, !showTracks {
             let fromCredits = cardAt < engine.duration - 20 ? " · ab Abspann \(Int(cardAt))s" : ""
             RemoteLog.info("player", "Up-next: \(nextTitle ?? "")\(fromCredits) · Stil \(profile.themeLook.player.upNext.rawValue)")
-            withAnimation { upNext = 10 }
+            withAnimation { upNext = UpNextCountdown.seconds }
         }
     }
 
@@ -659,7 +659,13 @@ struct PlayerControls<E: PlaybackEngine>: View {
     /// Task 5.4: up-next in the layout of `player.upNext` (PlayerUpNext.swift).
     private func upNextCard(_ n: Int) -> some View {
         let style = profile.themeLook.player.upNext
-        return PlayerUpNextView(style: style, seconds: n, info: upNextInfo)
+        return PlayerUpNextView(style: style, seconds: n, info: upNextInfo,
+                                onPlay: { onUserInput(); RemoteLog.info("player", "Up-next: Jetzt abspielen"); startNext() },
+                                onCancel: {
+                                    onUserInput()
+                                    withAnimation { upNext = nil }; upNextCancelled = true
+                                    RemoteLog.info("player", "Up-next abgebrochen (Knopf)")
+                                })
             .transition(style == .karte ? .move(edge: .trailing).combined(with: .opacity) : .opacity)
     }
 
@@ -686,6 +692,8 @@ struct PlayerControls<E: PlaybackEngine>: View {
         onUserInput(); queueSeek(by); poke()
     }
 
+    /// The up-next card stands with its buttons: the surface gives up its focus (decision 26.11.).
+    private var upNextHoldsFocus: Bool { upNext != nil && nextTitle != nil }
     /// Task 5.4: up-next fills the screen (`vollbild`): the video shrinks, the control bar and subtitles step aside.
     private var upNextFullScreen: Bool { upNext != nil && nextTitle != nil && profile.themeLook.player.upNext == .vollbild }
 

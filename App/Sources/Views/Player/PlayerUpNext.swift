@@ -10,7 +10,7 @@ struct UpNextInfo {
     /// Spoiler protection of unwatched stills (like the side panel).
     var blur: Bool
 
-    func line(seconds: Int) -> String { "Nächste Folge in \(seconds) s · \(episodeLine)" }
+    func line(seconds: Int) -> String { "\(UpNextCountdown.line(seconds: seconds)) · \(episodeLine)" }
 }
 
 /// Task 5.4 (`player.upNext`): the up-next countdown in three layouts.
@@ -18,19 +18,35 @@ struct UpNextInfo {
 /// - `leiste`: a bar 80 from the left/right and 60 from the bottom, one line plus the buttons.
 /// - `vollbild`: the next episode's still fills the screen (the player shrinks the video to 420 × 236 at the top
 ///   left, `PlayerUpNextFullScreen.videoScale`), the info sits bottom left.
-/// Nothing here takes focus: as before (Build 198), a click on the play surface starts the next episode and an
-/// arrow or swipe cancels. The buttons are labels that name those two ways.
+/// User decision 26.11. (back to the plan): „Jetzt abspielen“ (`ThemeButton(.primary)`, first focus) and
+/// „Abbrechen“ are real buttons; the player surface gives up its focus while the card stands. Menu, the vertical
+/// swipe of the track style and Play/Pause keep working as before (cancel, cancel, play now).
 struct PlayerUpNextView: View {
     let style: LookUpNext
     let seconds: Int
     let info: UpNextInfo
+    let onPlay: () -> Void
+    let onCancel: () -> Void
     @Environment(\.theme) private var theme
+    @FocusState private var focus: Target?
+
+    private enum Target: Hashable { case play, cancel }
 
     var body: some View {
-        switch style {
-        case .karte: card
-        case .leiste: bar
-        case .vollbild: fullScreen
+        Group {
+            switch style {
+            case .karte: card
+            case .leiste: bar
+            case .vollbild: fullScreen
+            }
+        }
+        .defaultFocus($focus, .play)
+        .task {
+            // Focus at once (the surface is no longer focusable), again one round later in case the tree was not ready
+            // (as `PostPlayCard`).
+            focus = .play
+            try? await Task.sleep(for: .milliseconds(50))
+            if focus == nil { focus = .play }
         }
     }
 
@@ -38,7 +54,7 @@ struct PlayerUpNextView: View {
         VStack(alignment: .leading, spacing: 0) {
             still.frame(width: 640, height: 200).clipped()
             VStack(alignment: .leading, spacing: theme.space.s) {
-                Text("Nächste Folge in \(seconds) s").textRole(.rowTitleEmphasis).monospacedDigit()
+                Text(UpNextCountdown.line(seconds: seconds)).textRole(.rowTitleEmphasis).monospacedDigit()
                 Text(info.episodeLine).textRole(.rowDetail).lineLimit(1)
                 buttons
             }
@@ -70,7 +86,7 @@ struct PlayerUpNextView: View {
             LinearGradient(colors: [.black.opacity(0.85), .clear], startPoint: .bottom, endPoint: .top)
                 .frame(height: 520).frame(maxHeight: .infinity, alignment: .bottom)
             VStack(alignment: .leading, spacing: theme.space.s) {
-                Text("Nächste Folge in \(seconds) s").textRole(.sectionTitle).monospacedDigit()
+                Text(UpNextCountdown.line(seconds: seconds)).textRole(.sectionTitle).monospacedDigit()
                 Text(info.episodeLine).textRole(.rowTitle).lineLimit(2)
                 buttons
             }
@@ -96,35 +112,15 @@ struct PlayerUpNextView: View {
 
     private var buttons: some View {
         HStack(spacing: theme.space.s) {
-            // Label only (a click on the surface starts): the resting face of ThemeButton(.primary) / (.secondary).
-            UpNextButtonLabel(text: "Jetzt abspielen", symbol: "play.fill", primary: true)
-            UpNextButtonLabel(text: "Abbrechen", symbol: nil, primary: false)
+            Button { onPlay() } label: { ThemeButtonLabel("Jetzt abspielen", symbol: "play.fill") }
+                .buttonStyle(ThemeButton(.primary))
+                .focused($focus, equals: .play)
+            Button { onCancel() } label: { ThemeButtonLabel("Abbrechen", symbol: "xmark") }
+                .buttonStyle(ThemeButton(.secondary))
+                .focused($focus, equals: .cancel)
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Klicken: jetzt abspielen. Wischen: abbrechen.")
-    }
-}
-
-/// A button face without focus (see `PlayerUpNextView`): primary = the resting `ThemeButton(.primary)` (accent,
-/// `onAccent` text), otherwise `badgeFill`.
-private struct UpNextButtonLabel: View {
-    let text: String
-    let symbol: String?
-    let primary: Bool
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        HStack(spacing: theme.space.xs) {
-            if let symbol { Image(systemName: symbol) }
-            Text(text)
-        }
-        .font(theme.type.font(.rowTitleEmphasis))
-        .foregroundStyle(primary ? theme.color.onAccent : theme.color.primary)
-        .padding(.horizontal, theme.space.m).padding(.vertical, theme.space.xs)
-        .background(primary ? theme.color.accent.opacity(ThemeButton.primaryRestOpacity) : theme.color.badgeFill,
-                    in: RoundedRectangle(cornerRadius: theme.radius.row, style: .continuous))
-        .lineLimit(1)
         .fixedSize()
+        .focusSection()
     }
 }
 

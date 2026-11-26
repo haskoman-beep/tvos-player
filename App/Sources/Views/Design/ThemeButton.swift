@@ -16,8 +16,7 @@ struct ThemeButton: ButtonStyle {
     var selected = false
 
     /// Review: a light accent (weiß, champagner) at rest must not look like the focused (white) button, so the
-    /// resting primary is a step quieter; the focus brings full white plus lift and shadow. Also the resting face of
-    /// the up-next „Jetzt abspielen“ label (`PlayerUpNext`).
+    /// resting primary is a step quieter; the focus brings full white plus lift and shadow.
     static let primaryRestOpacity: Double = 0.8
 
     init(_ role: Role, selected: Bool = false) {
