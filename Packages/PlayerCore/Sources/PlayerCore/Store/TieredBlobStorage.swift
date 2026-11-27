@@ -14,7 +14,7 @@ public protocol KeyValueBlobs: Sendable {
 ///
 /// Regeln:
 /// - Jeder Schreibvorgang landet als Datei in JEDEM beschreibbaren Ordner (`directories`, z. B.
-///   Application Support und Caches); beim Lesen gewinnt die jüngste Kopie (Änderungsdatum).
+///   Application Support und Caches); beim Lesen gewinnt die jüngste Kopie (Phase 0a.1: by sequence number, below).
 /// - Profile (`profiles.json`) haben in UserDefaults einen festen Vorbehalt von `profileLimit`:
 ///   sie passen immer, solange sie darunter bleiben – Caches darf tvOS leeren, Profile dürfen nie nur dort liegen.
 /// - Wave S round 3: the device settings (`device-settings.json`, under 1 KB) get the same treatment with a reserve
@@ -26,8 +26,20 @@ public protocol KeyValueBlobs: Sendable {
 ///   the files (same file rules as every block).
 /// - Andere Blöcke nur bis `smallLimit` je Block und zusammen höchstens `budget - profileLimit - deviceLimit`.
 /// - Nach dem Schreiben in UserDefaults wird gegengelesen; weicht der Wert ab, wird der Eintrag gelöscht.
-/// - Lesen: Defaults-Eintrag nur, solange keine Datei jünger ist als seine Revision (`rev.<Schlüssel>`), sonst die
-///   jüngste Datei. Phase 0a: ein Defaults-Schreibvorgang kann verloren gehen, obwohl das Gegenlesen stimmte.
+/// - Phase 0a.1: which copy is current no longer depends on the clock. Every write of a blob gets a sequence number
+///   one above the highest one known for it. Each folder keeps a sidecar file `<name>.seq`, UserDefaults a record
+///   `seq.<key>`; both hold stamps "sequence number + fingerprint (length, FNV-1a) of the payload". Sidecar/record are
+///   written BEFORE the payload, with the stamp of the payload being replaced as a second entry, so an interrupted
+///   write still ranks the old payload correctly. Rules (`rank`, `beats`):
+///   1. A copy (file or UserDefaults entry) whose fingerprint matches any stamp of the blob anywhere ranks as the
+///      highest such stamp (verified). Equal bytes are the same state, wherever the stamp lies.
+///   2. A copy that matches no stamp but lies next to a sidecar/record was written by someone who did not stamp it
+///      (an older build after a downgrade, or the record write was lost): it ranks one above its own stamps.
+///   3. A copy without any stamp is a legacy copy: rank 0.
+///   4. The highest rank wins. On equal rank between verified copies the UserDefaults entry wins, then the folder
+///      order. On equal rank with an unverified copy involved the dates decide (UserDefaults: `rev.<key>`, file:
+///      modification date; equal dates → same order): for rank 0 this is exactly the Phase 0a rule.
+///   Phase 0a's date revision `rev.<key>` is still written (older builds read it) but only rule 4 uses it.
 public struct TieredBlobStorage: BlobStorage {
     public static let prefix = "blob."
     public static let profileName = "profiles.json"
@@ -100,6 +112,7 @@ public struct TieredBlobStorage: BlobStorage {
     func storeKey(_ name: String) -> String { Self.generationKeys[name] ?? key(name) }
 
     /// Phase 0a: revision of the UserDefaults copy = date of the newest file at the moment that copy was written.
+    /// Phase 0a.1: kept for older builds and as the tie-break of rule 4 only.
     func revisionKey(_ name: String) -> String { "rev." + storeKey(name) }
 
     func revision(_ name: String) -> Date? {
@@ -112,24 +125,163 @@ public struct TieredBlobStorage: BlobStorage {
         withUnsafeBytes(of: date.timeIntervalSinceReferenceDate.bitPattern) { defaults.set(Data($0), forKey: revisionKey(name)) }
     }
 
-    /// Removes the UserDefaults copy together with its revision.
+    /// Removes the UserDefaults copy together with its revision. Phase 0a.1: the sequence record stays (it keeps the
+    /// highest sequence number known and still vouches for file copies with the same bytes).
     func dropDefaults(_ name: String) {
         defaults.remove(forKey: storeKey(name))
         defaults.remove(forKey: revisionKey(name))
     }
 
-    /// The UserDefaults copy, but only while no file is newer than it. A UserDefaults write can pass the read-back
-    /// check and still never reach the disk (app killed, cfprefsd refusing); the entry found at the next start is
-    /// then older than the files. An entry without a revision (older app version) proves nothing and gives way too.
+    // MARK: Phase 0a.1: sequence numbers instead of dates
+
+    /// Suffix of the sidecar file next to each payload file (`progress-x.json.seq`). It does not end in `.json` or
+    /// `.bak`, so `ProfileBlocks.belongs` never takes it for a profile block.
+    public static let sidecarSuffix = ".seq"
+    /// Prefix of the sequence record in UserDefaults (`seq.blob.<name>`, `seq.profilegen.1`): no `blob.` prefix, so
+    /// `migrate()`, `defaultsSizes()` and the budget never see it. 25 or 49 bytes per blob.
+    public static let sequencePrefix = "seq."
+    static func sidecarName(_ name: String) -> String { name + sidecarSuffix }
+    func sequenceKey(_ name: String) -> String { Self.sequencePrefix + storeKey(name) }
+
+    /// Length plus 64-bit FNV-1a of a payload. Not cryptographic: it only tells whether the bytes next to a stamp are
+    /// the ones the stamp was written for.
+    struct Fingerprint: Equatable, Sendable {
+        let count: UInt64
+        let hash: UInt64
+    }
+
+    /// "The payload with this fingerprint is the state with sequence number `seq`."
+    struct Stamp: Equatable, Sendable {
+        let seq: UInt64
+        let print: Fingerprint
+    }
+
+    static func fingerprint(_ data: Data) -> Fingerprint {
+        var h: UInt64 = 0xcbf2_9ce4_8422_2325
+        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            for b in raw { h = (h ^ UInt64(b)) &* 0x0000_0100_0000_01b3 }
+        }
+        return Fingerprint(count: UInt64(data.count), hash: h)
+    }
+
+    static let stampFormat: UInt8 = 1
+
+    /// Format byte, then 24 bytes per stamp (seq, length, hash; little endian). First stamp = the write it belongs to.
+    static func encodeStamps(_ stamps: [Stamp]) -> Data {
+        var out: [UInt8] = [stampFormat]
+        for s in stamps {
+            for v in [s.seq, s.print.count, s.print.hash] {
+                for i in 0..<8 { out.append(UInt8(truncatingIfNeeded: v >> UInt64(8 * i))) }
+            }
+        }
+        return Data(out)
+    }
+
+    /// nil for a missing or unreadable sidecar/record (treated as absent).
+    static func decodeStamps(_ data: Data?) -> [Stamp]? {
+        guard let data else { return nil }
+        let b = [UInt8](data)
+        guard b.count >= 25, (b.count - 1) % 24 == 0, b[0] == stampFormat else { return nil }
+        func word(_ at: Int) -> UInt64 {
+            var v: UInt64 = 0
+            for i in 0..<8 { v |= UInt64(b[at + i]) << UInt64(8 * i) }
+            return v
+        }
+        return stride(from: 1, to: b.count, by: 24).map { o in
+            Stamp(seq: word(o), print: Fingerprint(count: word(o + 8), hash: word(o + 16)))
+        }
+    }
+
+    static func next(_ seq: UInt64) -> UInt64 { seq == .max ? seq : seq + 1 }
+
+    /// One readable copy of a blob, ranked.
+    struct Candidate {
+        enum Place: Equatable { case defaults, folder(Int) }
+        let place: Place
+        let data: Data
+        /// `seq` = rank (rules 1–3), `print` = fingerprint of `data`.
+        let stamp: Stamp
+        /// Rule 1 with a rank above 0.
+        let verified: Bool
+        /// UserDefaults: `rev.<key>`; file: modification date; `.distantPast` when missing.
+        let date: Date
+    }
+
+    /// Everything stored for one blob name, ranked.
+    struct Snapshot {
+        /// UserDefaults copy first (if decodable), then the folders in order.
+        var candidates: [Candidate] = []
+        /// Highest sequence number known for the name (stamps and ranks); the next write gets one more.
+        var highest: UInt64 = 0
+        /// Any sidecar or record exists (the name is no longer pure legacy).
+        var hasStamps = false
+        var winner: Candidate? { TieredBlobStorage.best(candidates) }
+        var bestFile: Candidate? { TieredBlobStorage.best(candidates.filter { $0.place != .defaults }) }
+        var defaultsCopy: Candidate? { candidates.first { $0.place == .defaults } }
+    }
+
+    /// Rule 4: `a` is strictly better than `b` (on a full tie the earlier one, UserDefaults then folder order, stays).
+    static func beats(_ a: Candidate, _ b: Candidate) -> Bool {
+        if a.stamp.seq != b.stamp.seq { return a.stamp.seq > b.stamp.seq }
+        if !(a.verified && b.verified), a.date != b.date { return a.date > b.date }
+        return false
+    }
+
+    static func best(_ candidates: [Candidate]) -> Candidate? {
+        var top: Candidate?
+        for c in candidates {
+            if let t = top { if beats(c, t) { top = c } } else { top = c }
+        }
+        return top
+    }
+
+    /// Rules 1–3 for one copy. `own` = the sidecar next to it (record for the UserDefaults copy), `known` = all stamps.
+    func rank(_ data: Data, own: [Stamp]?, known: [Stamp], place: Candidate.Place, date: Date) -> Candidate {
+        let p = Self.fingerprint(data)
+        let seq: UInt64
+        let verified: Bool
+        if let s = known.filter({ $0.print == p }).map(\.seq).max() {
+            seq = s; verified = s > 0
+        } else if let top = own?.map(\.seq).max() {
+            seq = Self.next(top); verified = false
+        } else {
+            seq = 0; verified = false
+        }
+        return Candidate(place: place, data: data, stamp: Stamp(seq: seq, print: p), verified: verified, date: date)
+    }
+
+    /// Reads every copy, sidecar and the record of `name` (all `directories`, also one that is not writable now).
+    func evaluate(_ name: String) -> Snapshot {
+        let record = Self.decodeStamps(defaults.data(forKey: sequenceKey(name)))
+        let payloads = directories.map { $0.read(name) }
+        let sidecars = directories.map { Self.decodeStamps($0.read(Self.sidecarName(name))) }
+        let known = (record ?? []) + sidecars.compactMap { $0 }.flatMap { $0 }
+        var snap = Snapshot()
+        snap.hasStamps = !known.isEmpty
+        if let z = defaults.data(forKey: storeKey(name)), let d = decompress(z) {
+            snap.candidates.append(rank(d, own: record, known: known, place: .defaults, date: revision(name) ?? .distantPast))
+        }
+        for (i, dir) in directories.enumerated() {
+            guard let d = payloads[i] else { continue }
+            snap.candidates.append(rank(d, own: sidecars[i], known: known, place: .folder(i),
+                                        date: dir.modificationDate(name) ?? .distantPast))
+        }
+        snap.highest = max(known.map(\.seq).max() ?? 0, snap.candidates.map(\.stamp.seq).max() ?? 0)
+        return snap
+    }
+
+    /// The UserDefaults copy, but only while it is the winning copy (Phase 0a.1 rules). A UserDefaults write can pass
+    /// the read-back check and still never reach the disk (app killed, cfprefsd refusing); the entry found at the next
+    /// start then carries an older sequence number than the files.
     func currentDefaults(_ name: String) -> Data? {
-        guard let z = defaults.data(forKey: storeKey(name)), let d = decompress(z) else { return nil }
-        guard let fileDate = newestFileDate(name) else { return d }
-        guard let rev = revision(name), rev >= fileDate else { return nil }
-        return d
+        guard let w = evaluate(name).winner, w.place == .defaults else { return nil }
+        return w.data
     }
 
     public func read(_ name: String) -> Data? {
-        currentDefaults(name) ?? newestFile(name)
+        Self.storeLock.lock()
+        defer { Self.storeLock.unlock() }
+        return evaluate(name).winner?.data
     }
 
     /// Diagnosis for the device log: blocks whose UserDefaults copy a newer file has overtaken AND that differ from
@@ -137,45 +289,65 @@ public struct TieredBlobStorage: BlobStorage {
     /// Review of Phase 0a: set once the entries written by older builds (no revision) were taken over.
     public static let adoptedKey = "rev.adopted"
 
-    /// First start after the update: until now the UserDefaults copy always won, and no entry has a revision. They
-    /// are taken over once as the current state (an old file in Application Support must not win over them). After
-    /// that, an entry without a revision gives way to a file. Called by `migrate()` and `overtakenDefaults()`.
+    /// First start after the update from a build without revisions: until then the UserDefaults copy always won. Such
+    /// entries are taken over once as the current state (an old file in Application Support must not win over them).
+    /// After that, an entry without a revision gives way to a file. Called by `migrate()` and `overtakenDefaults()`.
+    ///
+    /// Phase 0a.1: taking over = a sequence record with number 1 for the entry's bytes (above every legacy file, rank
+    /// 0), no longer a date from the clock. Only names without any stamp are touched (pure legacy); a name this build
+    /// wrote already is decided by its sequence numbers. That makes it repeatable: an interrupted run leaves names with
+    /// a record (skipped next time) and names without (taken over next time); a second run or a lost flag finds no
+    /// pure-legacy entry left that this build had seen. The flag is written last. The date revision is still set for
+    /// older builds (a downgrade then keeps the entry too).
     func adoptLegacyDefaults() {
         guard defaults.data(forKey: Self.adoptedKey) == nil else { return }
         let names = defaults.keys(withPrefix: Self.prefix).map { String($0.dropFirst(Self.prefix.count)) }
             + Self.generationKeys.keys
-        for n in names where defaults.data(forKey: storeKey(n)) != nil && revision(n) == nil {
+        for n in names where revision(n) == nil {
+            guard let z = defaults.data(forKey: storeKey(n)), let d = decompress(z), !evaluate(n).hasStamps else { continue }
+            defaults.set(Self.encodeStamps([Stamp(seq: 1, print: Self.fingerprint(d))]), forKey: sequenceKey(n))
             setRevision(n, max(Date(), (newestFileDate(n) ?? .distantPast).addingTimeInterval(0.001)))
         }
         defaults.set(Data([1]), forKey: Self.adoptedKey)
     }
 
     public func overtakenDefaults() -> [String] {
+        Self.storeLock.lock()
+        defer { Self.storeLock.unlock() }
         adoptLegacyDefaults()
         let names = defaults.keys(withPrefix: Self.prefix).map { String($0.dropFirst(Self.prefix.count)) }
             + Self.generationKeys.keys
         return names.filter { n in
-            guard let z = defaults.data(forKey: storeKey(n)), let d = decompress(z) else { return false }
-            return currentDefaults(n) == nil && newestFile(n) != d
+            let s = evaluate(n)
+            guard let copy = s.defaultsCopy, let w = s.winner, w.place != .defaults else { return false }
+            return s.bestFile?.data != copy.data
         }.sorted()
     }
 
-    private static let defaultsLock = NSLock()
+    /// Phase 0b: writes come from the save queue's thread and from the main thread. Phase 0a.1: one lock for the whole
+    /// process around read, write, remove and migrate. A write evaluates the stamps, takes the next sequence number
+    /// and writes sidecars, files and UserDefaults in one step: two interleaved writes of one name could otherwise
+    /// both take the same number, or write payload and sidecar crosswise (the older data would then rank as foreign,
+    /// i.e. newer). It also keeps budget check and set together (two blocks passing the check at once). Never held
+    /// while calling back into public API (not recursive).
+    private static let storeLock = NSLock()
 
     public func write(_ name: String, _ data: Data) throws {
-        let fileOK = writeFile(name, data)
         let z = compress(data)
         let k = storeKey(name)
-        let family = Self.profileFamily.contains(name)
-        defer { if family { trimProfileFamily() } }
-        // Phase 0b: writes come from the save queue's thread and from the main thread. Budget check and set are one
-        // step for the whole process, else two blocks could both pass the check and exceed the budget together.
-        Self.defaultsLock.lock()
+        Self.storeLock.lock()
+        let snap = evaluate(name)
+        let stamp = Stamp(seq: Self.next(snap.highest), print: Self.fingerprint(data))
+        let fileOK = writeFiles(name, data, stamp: stamp, snapshot: snap)
         var kept = false
         if let z, fitsDefaults(name, bytes: z.count) {
+            // Record first, copy second: if the copy never lands, the old copy still matches the record's second stamp.
+            let old = snap.defaultsCopy.map { [$0.stamp] } ?? []
+            defaults.set(Self.encodeStamps([stamp] + old), forKey: sequenceKey(name))
             defaults.set(z, forKey: k)
             if defaults.data(forKey: k) == z {
-                // No file took this write: the copy must still rank above every older file.
+                // Date revision only for older builds (and rule 4): no file took this write, the copy must still rank
+                // above every older file there.
                 let newest = newestFileDate(name)
                 setRevision(name, fileOK ? newest ?? Date() : max(Date(), (newest ?? .distantPast).addingTimeInterval(0.001)))
                 kept = true
@@ -184,8 +356,11 @@ public struct TieredBlobStorage: BlobStorage {
             }
         } else {
             dropDefaults(name)
+            // The record also vouches for the file copies (a sidecar tvOS removed from Caches, a folder that missed it).
+            defaults.set(Self.encodeStamps([stamp]), forKey: sequenceKey(name))
         }
-        Self.defaultsLock.unlock()
+        if Self.profileFamily.contains(name) { trimProfileFamily() }
+        Self.storeLock.unlock()
         if kept { return }
         if name == Self.profileName { onProfilesFileOnly?(z?.count ?? data.count) }
         // Only when a file really holds it (otherwise nothing was saved and StorageFull follows).
@@ -194,27 +369,48 @@ public struct TieredBlobStorage: BlobStorage {
     }
 
     public func remove(_ name: String) {
+        Self.storeLock.lock()
+        defer { Self.storeLock.unlock() }
         dropDefaults(name)
+        // Payloads before their sidecars: an interrupted remove leaves stamped copies or stamps without copies, never
+        // an unstamped (legacy) copy of a blob that has stamps elsewhere.
         for dir in directories { dir.remove(name) }
+        for dir in directories { dir.remove(Self.sidecarName(name)) }
+        defaults.remove(forKey: sequenceKey(name))
     }
 
-    /// In jeden Ordner schreiben, der es annimmt (Caches als zweite Kopie); true, wenn mindestens einer klappte.
-    @discardableResult
-    func writeFile(_ name: String, _ data: Data) -> Bool {
+    /// Phase 0a.1: into every folder that takes it, sidecar first (new stamp plus the stamp of the payload it
+    /// replaces), payload second. A folder whose sidecar cannot be written gets no payload either (it keeps its old,
+    /// correctly ranked state). True when at least one folder holds the payload.
+    func writeFiles(_ name: String, _ data: Data, stamp: Stamp, snapshot: Snapshot) -> Bool {
         var ok = false
-        for dir in writeDirectories where (try? dir.write(name, data)) != nil { ok = true }
+        for dir in writeDirectories {
+            var stamps = [stamp]
+            if let i = directories.firstIndex(where: { $0.directory == dir.directory }),
+               let old = snapshot.candidates.first(where: { $0.place == .folder(i) }) {
+                stamps.append(old.stamp)
+            }
+            guard (try? dir.write(Self.sidecarName(name), Self.encodeStamps(stamps))) != nil else { continue }
+            if (try? dir.write(name, data)) != nil { ok = true }
+        }
         return ok
     }
 
-    /// Jüngste Kopie über alle Ordner (Änderungsdatum); bei Gleichstand der erste Ordner.
+    /// In jeden Ordner schreiben, der es annimmt (Caches als zweite Kopie); true, wenn mindestens einer klappte.
+    /// Phase 0a.1: with the next sequence number (for `migrate()` and `trimProfileFamily()`; the caller holds the lock).
+    @discardableResult
+    func writeFile(_ name: String, _ data: Data) -> Bool {
+        let snap = evaluate(name)
+        let stamp = Stamp(seq: Self.next(snap.highest), print: Self.fingerprint(data))
+        let ok = writeFiles(name, data, stamp: stamp, snapshot: snap)
+        let old = snap.defaultsCopy.map { [$0.stamp] } ?? []
+        defaults.set(Self.encodeStamps([stamp] + old), forKey: sequenceKey(name))
+        return ok
+    }
+
+    /// Best file copy over all folders (rules 1–4 among the files only).
     func newestFile(_ name: String) -> Data? {
-        var best: (data: Data, date: Date)?
-        for dir in directories {
-            guard let d = dir.read(name) else { continue }
-            let date = dir.modificationDate(name) ?? .distantPast
-            if best == nil || date > best!.date { best = (d, date) }
-        }
-        return best?.data
+        evaluate(name).bestFile?.data
     }
 
     /// Date of the newest file copy over all folders; nil when no folder has the blob.
@@ -258,7 +454,10 @@ public struct TieredBlobStorage: BlobStorage {
                 all += z.count; gens += z.count; continue
             }
             // Phase 0a: a copy that a newer file has overtaken is dropped, never written over that file.
-            if let d = currentDefaults(n), !directories.contains(where: { $0.read(n) == d }) { writeFile(n, d) }
+            // Phase 0a.1: a current copy goes to the files unless the best file holds it already (a file with equal
+            // bytes but a lower rank than another file would lose once the copy is gone).
+            let s = evaluate(n)
+            if let w = s.winner, w.place == .defaults, s.bestFile?.data != w.data { writeFile(n, w.data) }
             dropDefaults(n)
         }
     }
@@ -282,6 +481,8 @@ public struct TieredBlobStorage: BlobStorage {
     /// Vorbehalt liegen; von den übrigen werden die kleinsten zuerst behalten.
     @discardableResult
     public func migrate() -> Migration {
+        Self.storeLock.lock()
+        defer { Self.storeLock.unlock() }
         adoptLegacyDefaults()
         var m = Migration()
         let sizes = defaultsSizes()
