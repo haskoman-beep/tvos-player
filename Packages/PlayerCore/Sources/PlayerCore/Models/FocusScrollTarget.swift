@@ -33,15 +33,31 @@ public enum FocusScrollTarget {
     /// this row: a programmatic scroll or a move to another row), or when the focused element would leave the
     /// visible part (rows taller than the list).
     /// - `focused`: the focused element's frame in the same content coordinates (nil: unknown, no change).
+    /// b7 review 3: the focused frame must lie inside the proposed visible part too; a stale focused element (the
+    /// previous row, before the focus engine moved on) is not what this scroll shows, so it never snaps back to it.
     public static func rowTop(proposed: Double, viewport: Double, row: HomeRowSpan, focused: HomeRowSpan?,
                               maxOffset: Double) -> Double {
         guard let focused, viewport > 0 else { return proposed }
+        guard contains(focused, top: proposed, height: viewport) else { return proposed }
         let target = min(max(row.minY, 0), max(0, maxOffset))
         guard abs(target - proposed) <= viewport / 2 else { return proposed }
-        guard focused.minY >= target - directionSlack, focused.maxY <= target + viewport + directionSlack else {
-            return proposed
-        }
+        guard contains(focused, top: target, height: viewport) else { return proposed }
         return target
+    }
+
+    private static func contains(_ span: HomeRowSpan, top: Double, height: Double) -> Bool {
+        span.minY >= top - directionSlack && span.maxY <= top + height + directionSlack
+    }
+
+    /// b7 review 5: after a rescued up/down press (`HomeMoveRescue`: scroll to a row, the action button or the very
+    /// top) the home list leaves scroll targets alone this long (seconds), so a later target update cannot pull the
+    /// list back to the old row while the rescue's own scroll runs.
+    public static let rescueQuiet: Double = 1
+
+    /// May the vertical target be moved? `lastRescue`: uptime of the last rescue (nil: none).
+    public static func mayRetarget(now: Double, lastRescue: Double?) -> Bool {
+        guard let lastRescue else { return true }
+        return now - lastRescue >= rescueQuiet || now < lastRescue
     }
 
     // MARK: Log lines ("nav")
@@ -51,9 +67,13 @@ public enum FocusScrollTarget {
         "Fokus-Scroll auf Reihenoberkante: Ziel \(pt(proposed)) → \(pt(adjusted)) (Reihe \(pt(row.minY))…\(pt(row.maxY)))"
     }
 
-    /// "Fokus-Scroll links mit Rand: Ziel 412 → 332 (vorher 700)".
-    public static func leadingLine(proposed: Double, adjusted: Double, current: Double) -> String {
-        "Fokus-Scroll links mit Rand: Ziel \(pt(proposed)) → \(pt(adjusted)) (vorher \(pt(current)))"
+    /// "Fokus-Scroll links mit Rand: Ziel 412 → 332 (vorher 700, Versatz 700, Start −80)". b7 review 1: `current` is
+    /// the behaviour's original target, `offset` the strip's content offset (ScrollGeometry) at that moment; at rest
+    /// both should match, which confirms the coordinate space on the device.
+    public static func leadingLine(proposed: Double, adjusted: Double, current: Double, offset: Double?,
+                                   start: Double) -> String {
+        let o = offset.map { pt($0) } ?? "?"
+        return "Fokus-Scroll links mit Rand: Ziel \(pt(proposed)) → \(pt(adjusted)) (vorher \(pt(current)), Versatz \(o), Start \(pt(start)))"
     }
 
     private static func pt(_ v: Double) -> String { "\(Int(v.rounded()))" }

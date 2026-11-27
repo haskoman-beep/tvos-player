@@ -246,6 +246,8 @@ struct HomeView: View {
     /// to the very top), other presses to the neighbour row (remembered or first card, `HomeFocusTarget`); review N2:
     /// down from the last row to the „Reihen & Collections“ button.
     private func rescueFailedMove(up: Bool, from row: UUID) {
+        // b7 review 5: the rescue's own scroll wins; the focus scroll target stays as proposed for a moment.
+        topWatch.noteRescue()
         let rows = model.profile.home.rowsBelowHero(model.profile.appearance)
         let look = model.profile.themeLook.home
         let hasHero = HomeTopEdge.showsHero(look.heroStyle, hasHeroSource: model.profile.home.heroSource(model.profile.appearance) != nil)
@@ -465,7 +467,7 @@ private struct HomeFocusScroll: ScrollTargetBehavior {
     let watch: HomeTopEdgeWatch
 
     func updateTarget(_ target: inout ScrollTarget, context: TargetContext) {
-        guard context.axes.contains(.vertical) else { return }
+        guard context.axes.contains(.vertical), Thread.isMainThread else { return }   // b7 review 4
         let y = Double(target.rect.minY)
         let height = Double(target.rect.height)
         let watch = self.watch

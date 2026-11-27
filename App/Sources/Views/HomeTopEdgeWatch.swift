@@ -89,6 +89,7 @@ import PlayerCore
     /// instead of where the focus engine centred the card; nil: leave the target as proposed (top edge focused, no
     /// focused element in the list, no row under it, or no change worth a scroll).
     func focusScrollTarget(rawY: Double, height: Double) -> Double? {
+        guard FocusScrollTarget.mayRetarget(now: Self.now, lastRescue: lastRescue) else { return nil }
         guard !focus.atTop, let scroll = listScroll, let sv = TabBarGuard.shared.knownScrollView, sv.window != nil,
               let view = Self.focusedItem() as? UIView, view.window != nil, view.isDescendant(of: sv) else { return nil }
         let f = view.convert(view.bounds, to: sv)
@@ -104,6 +105,13 @@ import PlayerCore
         }
         return adjusted - scroll.insetTop
     }
+
+    /// b7 review 5: uptime of the last rescued up/down press (`HomeView.rescueFailedMove`).
+    @ObservationIgnored private var lastRescue: Double?
+
+    /// b7 review 5: a rescue scrolls the list itself; `focusScrollTarget` keeps out of its way for
+    /// `FocusScrollTarget.rescueQuiet`.
+    func noteRescue() { lastRescue = Self.now }
 
     /// S5: the home list's scroll view as UIKit sees it (read only): raw offset and its end, frame in the window,
     /// adjusted insets, and the safe area top of the page's view controller (cause 2 of the brief: differs it

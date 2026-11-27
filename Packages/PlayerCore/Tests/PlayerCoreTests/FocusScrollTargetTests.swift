@@ -17,7 +17,7 @@ import Testing
 
 @Test func rowTopStopsAtTheContentEnd() {
     let row = HomeRowSpan(minY: 7042, maxY: 7669)
-    let card = HomeRowSpan(minY: 7120, maxY: 7640)
+    let card = HomeRowSpan(minY: 7120, maxY: 7600)
     #expect(FocusScrollTarget.rowTop(proposed: 6950, viewport: 676, row: row, focused: card, maxOffset: 7000) == 7000)
     // A row at the very top cannot go above 0.
     let first = HomeRowSpan(minY: -10, maxY: 600)
@@ -54,6 +54,36 @@ import Testing
 @Test func focusScrollLogLines() {
     #expect(FocusScrollTarget.rowLine(proposed: 3545, adjusted: 3628, row: HomeRowSpan(minY: 3628, maxY: 4060))
             == "Fokus-Scroll auf Reihenoberkante: Ziel 3545 → 3628 (Reihe 3628…4060)")
-    #expect(FocusScrollTarget.leadingLine(proposed: 412, adjusted: 332, current: 700)
-            == "Fokus-Scroll links mit Rand: Ziel 412 → 332 (vorher 700)")
+    #expect(FocusScrollTarget.leadingLine(proposed: 412, adjusted: 332, current: 700, offset: 700, start: -80)
+            == "Fokus-Scroll links mit Rand: Ziel 412 → 332 (vorher 700, Versatz 700, Start -80)")
+    #expect(FocusScrollTarget.leadingLine(proposed: 0, adjusted: 0, current: 300, offset: nil, start: 0)
+            == "Fokus-Scroll links mit Rand: Ziel 0 → 0 (vorher 300, Versatz ?, Start 0)")
+}
+
+@Test func staleFocusedElementOutsideTheProposedRectIsIgnored() {
+    // b7 review 3: the focus engine scrolls to the next row while the focused element is still the previous row's
+    // card: that card is not inside the proposed visible part, so no snap back to it.
+    let row = HomeRowSpan(minY: 3628, maxY: 4060)
+    let oldCard = HomeRowSpan(minY: 3710, maxY: 4040)
+    #expect(FocusScrollTarget.rowTop(proposed: 3800, viewport: 676, row: row, focused: oldCard, maxOffset: 7160) == 3800)
+    // Partly visible counts as outside too.
+    #expect(FocusScrollTarget.rowTop(proposed: 3330, viewport: 676, row: row, focused: oldCard, maxOffset: 7160) == 3330)
+}
+
+@Test func retargetWaitsAfterARescue() {
+    // b7 review 5: one second after a rescued press the list keeps the proposed targets.
+    #expect(FocusScrollTarget.mayRetarget(now: 100, lastRescue: nil))
+    #expect(!FocusScrollTarget.mayRetarget(now: 100.4, lastRescue: 100))
+    #expect(!FocusScrollTarget.mayRetarget(now: 100.99, lastRescue: 100))
+    #expect(FocusScrollTarget.mayRetarget(now: 101, lastRescue: 100))
+    // Clock went backwards (other uptime source): no lock-out.
+    #expect(FocusScrollTarget.mayRetarget(now: 50, lastRescue: 100))
+}
+
+@Test func startClampUsesTheRealLeadingInset() {
+    // b7 review 2: with no leading inset the start is 0; a left move to the first card never overscrolls.
+    #expect(FocusScrollTarget.leading(proposed: 0, current: 300, clearance: 80, minimum: 0) == 0)
+    #expect(FocusScrollTarget.leading(proposed: 40, current: 300, clearance: 80, minimum: 0) == 0)
+    // Right move counted from the original target: unchanged.
+    #expect(FocusScrollTarget.leading(proposed: 340, current: 300, clearance: 80, minimum: -80) == 340)
 }

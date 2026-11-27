@@ -1183,7 +1183,8 @@ struct CardAnchorAction: Equatable {
 
     static func == (a: CardAnchorAction, b: CardAnchorAction) -> Bool { a.box === b.box }
 }
-/// Build 7 device test: last horizontal scroll state of one strip (main thread only, like `CardAnchorAction.Box`).
+/// Build 7 device test: last horizontal scroll state of one strip (main thread only, like `CardAnchorAction.Box`):
+/// the leading inset for the start clamp and the offset for the log line.
 final class StripScrollBox: @unchecked Sendable {
     struct Geometry: Equatable {
         var offsetX: Double
@@ -1202,16 +1203,21 @@ struct StripFocusScroll: ScrollTargetBehavior {
     let clearance: Double
 
     func updateTarget(_ target: inout ScrollTarget, context: TargetContext) {
-        guard context.axes.contains(.horizontal) else { return }
+        guard context.axes.contains(.horizontal), Thread.isMainThread else { return }   // b7 review 4
         let proposed = Double(target.rect.minX)
+        // b7 review 1: the direction comes from the behaviour's own original target (same coordinate space as
+        // `target`), so a right move or a resize can never count as a left move.
+        let current = Double(context.originalTarget.rect.minX)
         let box = self.box
         let clearance = self.clearance
         let adjusted: Double = MainActor.assumeIsolated {
+            // b7 review 2: the start is the real leading inset (0 without one: no overscroll).
             guard let g = box.geometry else { return proposed }
-            let start = -max(g.insetLeading, clearance)
-            let x = FocusScrollTarget.leading(proposed: proposed, current: g.offsetX, clearance: clearance, minimum: start)
+            let start = -g.insetLeading
+            let x = FocusScrollTarget.leading(proposed: proposed, current: current, clearance: clearance, minimum: start)
             if x != proposed, StripFocusScrollLog.allow() {
-                RemoteLog.info("nav", FocusScrollTarget.leadingLine(proposed: proposed, adjusted: x, current: g.offsetX))
+                RemoteLog.info("nav", FocusScrollTarget.leadingLine(proposed: proposed, adjusted: x, current: current,
+                                                                    offset: g.offsetX, start: start))
             }
             return x
         }
