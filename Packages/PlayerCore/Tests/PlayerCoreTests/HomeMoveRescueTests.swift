@@ -16,10 +16,17 @@ import Foundation
     #expect(HomeMoveRescue.decide(up: true, focusedRow: 3, rowCount: 9, edge: .firstRow) == .row(2))
 }
 
-@Test func noRescueAtTheBottomOrOutsideTheRows() {
-    #expect(HomeMoveRescue.decide(up: false, focusedRow: 8, rowCount: 9, edge: .heroButtons) == nil)
+@Test func noRescueOutsideTheRows() {
     #expect(HomeMoveRescue.decide(up: true, focusedRow: nil, rowCount: 9, edge: .heroButtons) == nil)
     #expect(HomeMoveRescue.decide(up: false, focusedRow: 9, rowCount: 9, edge: .heroButtons) == nil)
+}
+
+// Review N2: down from the last row reaches the „Reihen & Collections“ button the lazy list had not built yet.
+@Test func downFromTheLastRowGoesToTheActionButton() {
+    #expect(HomeMoveRescue.decide(up: false, focusedRow: 8, rowCount: 9, edge: .heroButtons) == .actionButton)
+    #expect(HomeMoveRescue.decide(up: false, focusedRow: 0, rowCount: 1, edge: .firstRow) == .actionButton)
+    #expect(HomeMoveRescue.actionButton.line(up: false, from: 8, fromTitle: "Genres", toTitle: nil)
+            == "Runter verschluckt in Reihe 9 (Genres) → Knopf „Reihen & Collections“ fokussiert")
 }
 
 @Test func rescueLineNamesBothEnds() {

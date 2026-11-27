@@ -11,6 +11,8 @@ import PlayerCore
 @MainActor @Observable final class HomeTopEdgeWatch {
     /// ID of the whole scroll content (scroll target "very top").
     static let topID = "home.top"
+    /// Review N2: ID of the „Reihen & Collections“ button below the rows (scroll target of a rescued down press).
+    static let actionButtonID = "home.actionButton"
 
     private(set) var barRequest: HomeTopRules.BarRequest = .automatic
 
@@ -30,6 +32,8 @@ import PlayerCore
     @ObservationIgnored var scrollToTop: (() -> Void)?
     /// Set by the scroll view (ScrollViewReader): scrolls a home row (heading included) to the list's top edge.
     @ObservationIgnored var scrollToRow: ((UUID) -> Void)?
+    /// Review N2: set by the scroll view (ScrollViewReader): scrolls the „Reihen & Collections“ button into view.
+    @ObservationIgnored var scrollToActionButton: (() -> Void)?
     /// Build 5 device test 1 (items 2, 7): an up (true) or down (false) press the focus engine dropped on the home
     /// page; `HomeView` moves the focus itself (`HomeMoveRescue`).
     /// Review W2/M1: with the row that kept the focus (from the focused element's frame, never from the row presence).

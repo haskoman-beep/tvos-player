@@ -243,7 +243,8 @@ struct HomeView: View {
 
     /// Build 5 device test 1 (items 2, 7): the focus engine dropped an up/down press in the rows (target not built
     /// by the lazy list or outside it after the heading snap). Up from the first row goes to „Abspielen“ (scrolled
-    /// to the very top), other presses to the neighbour row (remembered or first card, `HomeFocusTarget`).
+    /// to the very top), other presses to the neighbour row (remembered or first card, `HomeFocusTarget`); review N2:
+    /// down from the last row to the „Reihen & Collections“ button.
     private func rescueFailedMove(up: Bool, from row: UUID) {
         let rows = model.profile.home.rowsBelowHero(model.profile.appearance)
         let look = model.profile.themeLook.home
@@ -256,12 +257,20 @@ struct HomeView: View {
         if case .row(let i) = rescue { target = rows[i] }
         RemoteLog.info("nav", rescue.line(up: up, from: index, fromTitle: model.homeRowTitle(rows[index].content),
                                           toTitle: target.map { model.homeRowTitle($0.content) }))
-        if let target {
+        switch rescue {
+        case .row:
+            guard let target else { return }
             focusTarget.request(.row(target.id))
             if let scroll = topWatch.scrollToRow {
                 DispatchQueue.main.async { withAnimation(.easeOut(duration: 0.25)) { scroll(target.id) } }
             }
-        } else {
+        case .actionButton:
+            // Review N2: the button claims `.add` when the lazy list builds it after the scroll.
+            focusTarget.request(.add)
+            if let scroll = topWatch.scrollToActionButton {
+                DispatchQueue.main.async { withAnimation(.easeOut(duration: 0.25)) { scroll() } }
+            }
+        case .heroButtons:
             // Review M2: no heading check of the first row may scroll against the way to the top.
             topWatch.headingChecks?.cancel()
             topWatch.headingChecks = nil
@@ -360,6 +369,7 @@ struct HomeView: View {
             // Keine Akzentfarbe (RootView .tint) auf der Startseite; Welle F-i: Token-Knopf wie Abspielen/Details.
             FocusReportingButton(title: "Reihen & Collections", action: { manager = ManagerTarget() },
                                  onFocus: { topWatch.report(.actionButton, $0) }, focusTarget: focusTarget)
+                .id(HomeTopEdgeWatch.actionButtonID)   // review N2: scroll target of a rescued down press
                 .padding(.top, 20)
                 .padding(.leading, Theme.Space.edge)
         }
@@ -436,6 +446,7 @@ private struct TopEdgeScroll: ViewModifier {
             .onAppear {
                 watch.scrollToTop = { proxy.scrollTo(HomeTopEdgeWatch.topID, anchor: .top) }
                 watch.scrollToRow = { proxy.scrollTo($0, anchor: .top) }
+                watch.scrollToActionButton = { proxy.scrollTo(HomeTopEdgeWatch.actionButtonID, anchor: .bottom) }
             }
     }
 }
