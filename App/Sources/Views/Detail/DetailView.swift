@@ -783,7 +783,7 @@ struct DetailView: View {
         }
     }
 
-    /// Task 5.3: „Abspielen“ is the one primary button (accent), the others secondary; SF Symbols, no Unicode.
+    /// Task 5.3: „Abspielen“ is the one primary button (light, never the accent since b7), the others secondary; SF Symbols, no Unicode.
     private func movieButtons(_ imdb: String) -> some View {
         let resume = model.progress.resumePosition(for: imdb)
         let title = resume.map { "Fortsetzen ab \(timeText($0))" } ?? "Abspielen"

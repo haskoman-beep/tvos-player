@@ -5,7 +5,10 @@ import PlayerCore
 /// `.buttonStyle(ThemeButton(.primary))`. One main button per screen is `.primary` („Abspielen“); every other
 /// action is `.secondary`. Labels use SF Symbols (`ThemeButtonLabel`), no Unicode signs.
 ///
-/// - `primary`: resting in the accent (`color.accent`, text `color.onAccent`; the accent marks the main button).
+/// - `primary`: resting light (`color.rowFocused` at `primaryRestOpacity`, text `color.primaryOnFocus`). b7 device test
+///   („der Abspielen Button ist blau wieder“): the accent fill showed the default accent blau (#3B82F6, the old
+///   `AccentChoice.blue`) as a blue „Abspielen“, the system blue the user ruled out in wave F-i. The main button no
+///   longer takes the accent in any state; the accent still marks chosen values (settings rows, card border).
 /// - `secondary`: resting on `bg.row`; `selected` (e.g. the chosen season) on `badgeFill`.
 /// - Focused: both white with dark text (the focus never depends on the accent), lifted by `focus.tileScale`
 ///   with the focus shadow. All values from the runtime theme.
@@ -15,8 +18,8 @@ struct ThemeButton: ButtonStyle {
     let role: Role
     var selected = false
 
-    /// Review: a light accent (weiß, champagner) at rest must not look like the focused (white) button, so the
-    /// resting primary is a step quieter; the focus brings full white plus lift and shadow.
+    /// Review: the light resting primary must not look like the focused (white) button, so it is a step quieter;
+    /// the focus brings full white plus lift and shadow.
     static let primaryRestOpacity: Double = 0.8
 
     init(_ role: Role, selected: Bool = false) {
@@ -39,14 +42,14 @@ private struct ThemeButtonBody: View {
     private var fill: Color {
         if focused { return theme.color.rowFocused }
         switch role {
-        case .primary: return theme.color.accent.opacity(ThemeButton.primaryRestOpacity)
+        case .primary: return theme.color.rowFocused.opacity(ThemeButton.primaryRestOpacity)   // b7: never the accent
         case .secondary: return selected ? theme.color.badgeFill : theme.color.row
         }
     }
 
     private var foreground: Color {
         if focused { return theme.color.primaryOnFocus }
-        return role == .primary ? theme.color.onAccent : theme.color.primary
+        return role == .primary ? theme.color.primaryOnFocus : theme.color.primary
     }
 
     private var scale: CGFloat {
