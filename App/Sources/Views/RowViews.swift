@@ -32,6 +32,16 @@ struct HomeRowView: View {
     /// Device test 1 (Build 4 follow-up 2): filters the row's raw focus state for `onFocusInside` (a gap between two
     /// cards is no leave). A reference held in `@State`: changes do not re-render the row.
     @State private var presence = RowFocusPresenceBox()
+    /// Build 6 (redraw): the row's focus as reported by its cards and placeholders (`RowFocusTracker`). A reference
+    /// held in `@State`, observed by nobody: the row body never reads its `@FocusState`s, so a focus move does not
+    /// run it. The `@FocusState`s stay for `.focused`, `.defaultFocus` and the programmatic moves (written only).
+    @State private var focusBox = RowFocusBox()
+    /// Build 6: bumped with every programmatic focus write (`focusCard`, `focusPlaceholder`). Read in the body and
+    /// part of the cards' `==`, so such a write runs the row and its cards once, as the body read did before.
+    @State private var focusSerial = 0
+    /// Build 6: bumped when the focus really left the row; the one row pass it causes refreshes `rememberedRoute`
+    /// for `.defaultFocus` (before, every focus move ran the body and kept it current).
+    @State private var leavePass = 0
     /// Startseite mit Hero: fokussierte Kachel meldet sich (nil außerhalb der Startseite).
     @Environment(HomeFocus.self) private var homeFocus: HomeFocus?
     @FocusState private var focusedRoute: Route?
@@ -62,6 +72,12 @@ struct HomeRowView: View {
     var body: some View {
         // Build 4 follow-up S4: `metric: home.rowBody` counts these passes (two integer adds, a log line per 5 s).
         let _ = RowBodyMeter.pass(onHome: focusMemory != nil)
+        // Build 6 (redraw): the only focus-related reads at body time (see the two `@State`s).
+        let _ = focusSerial
+        let _ = leavePass
+        // Points the box at this pass's handlers (a plain store, like `CardAnchorAction.bind`); only while the row is
+        // on screen (third review L2: a pass while covered would bring the retain cycle back).
+        let _ = bindFocusBox()
         VStack(alignment: .leading, spacing: Theme.Space.s) {
             if row.style != .hero {
                 // P2 fix round (review M1): one line, the collapsed hero list fits a row with a one-line heading.
@@ -80,7 +96,9 @@ struct HomeRowView: View {
             // Welle F-f: geteilte Ladung (AppModel+HomeRows), läuft beim Wegscrollen weiter.
             let r = await model.homeRowItems(s)
             guard !Task.isCancelled else { return }   // abgebrochen (neue Ladung folgt): kein „Keine Einträge“-Flackern
-            let placeholder = focusedPlaceholder
+            // Build 6 re-review H1: the box, not the FocusState; third review M1: or the slot a programmatic write
+            // (retry tile) is still waiting for.
+            let placeholder = focusBox.placeholderSlot ?? focusBox.pendingSlot
             // Task 4.1a (F-A-5): a catalog may list a title twice; one card per (type, id), the first wins.
             list = RowList(loaded: r.items); failed = r.failed; loaded = true
             // Fokus lag auf einem Platzhalter: an dieselbe Stelle der fertigen Reihe (bzw. auf die Statuskachel).
@@ -101,21 +119,30 @@ struct HomeRowView: View {
                         if onFocusInside != nil { RemoteLog.info("nav", HeadingSnap.handoverSkippedLine(title: title)) }
                         return
                     }
-                    if let target { handOver(to: target) } else { focusedPlaceholder = slot }
+                    focusBox.clearPending()   // third review M1: the hand-over consumes the latched slot
+                    if let target { handOver(to: target) } else { focusPlaceholder(slot) }
                 }
             }
         }
-        // Review M1: focus left the row: a pending hand-over ends here (no stale restart on a later visit).
-        .onChange(of: focusedRoute != nil || focusedPlaceholder != nil) { _, f in
-            if !f, handoverTarget != nil { handoverTarget = nil }
-            reportInside(f)
+        // Build 6 (redraw): no `onChange(of: focusedRoute)` here any more. Before, the row read its focus state at body
+        // time (these handlers, the cards' focus flags) and every focus move (old card → nil → new card) ran the whole
+        // row body twice (`metric: home.rowBody` ≈ 2 × `fokus`). The cards report instead (`focusBox`).
+        .onAppear {
+            // Build 6 re-review M2: `onDisappear` dropped the handlers; the body may not run again.
+            focusBox.appear()
+            bindFocusBox()
+            // Third review L3: a probe that appeared before the row reported its card to unbound handlers: replay it.
+            // (Probes after this point report through the handlers, so nothing runs twice.)
+            if let r = focusBox.card { routeChanged(from: nil, to: r) }
+            if focusBox.inside { reportInside(true) }
         }
-        .onAppear { if focusedRoute != nil || focusedPlaceholder != nil { reportInside(true) } }
         // Task 4.1a (F-A-2): collection rows hand over like list rows: a focused placeholder (or status tile) goes to
         // the tile at the same place when the kit file arrives, else to the status tile.
         .onChange(of: collectionLoadPhase) { _, p in
             // Review minor 1: the change into `.loading` (OK on the status tile) is no hand-over.
-            guard let p, p != .loading, let placeholder = focusedPlaceholder, case .collection(let id) = row.content
+            // Third review M1: the placeholders' `onDisappear` may have run first; their slot is latched then.
+            guard let p, p != .loading, let placeholder = focusBox.placeholderSlot ?? focusBox.pendingSlot,
+                  case .collection(let id) = row.content
             else { return }
             let slot = p.focusAfterLoad(placeholder: placeholder)
             var target: Route?
@@ -129,40 +156,55 @@ struct HomeRowView: View {
                     RemoteLog.info("fokus", "Collection \(title): Übergabe entfällt, Fokus nicht mehr in der Reihe")
                     return
                 }
+                focusBox.clearPending()   // third review M1
                 // S5: the heading snap restarts once the tile holds the focus (the F-A-2 line above is the log).
-                if let target { handOver(to: target) } else { focusedPlaceholder = slot }
+                if let target { handOver(to: target) } else { focusPlaceholder(slot) }
             }
         }
         // Task 4.1a (F-A-3): `initial` also claims a target when the lazy list builds this row after the scroll.
         .onChange(of: focusTarget?.serial, initial: true) { _, _ in claimFocusTarget() }
         .onDisappear {
             presence.disappear()
+            // Build 6 re-review M2: drop the handlers (they capture the row, the box lives in the row's state: a
+            // cycle for every row the lazy stack unloads). L3: the focus itself is not reset; the probes report false
+            // when they leave and their focus again when they appear.
+            focusBox.unbind()
+            focusBox.clearPending()   // third review M1: no hand-over for a row that left the screen
             onFocusInside?(false)
             if handoverTarget != nil { handoverTarget = nil }   // Review M1
             // Wave F-p R1: page left with focus in this row before its prefetch rest ended: no stale request.
-            if let r = focusedRoute { StreamPrefetcher.shared.cancelRest(r) }
+            if let r = focusBox.card { StreamPrefetcher.shared.cancelRest(r) }
         }
-        .onChange(of: focusedRoute) { old, r in
-            if r != nil { RowBodyMeter.focusMoved(onHome: focusMemory != nil) }   // S4: `fokus` field of `metric: home.rowBody`
-            if r != nil { StreamPrefetcher.shared.focusMoved() }   // P3: visible-tile prefetch waits for 1 s focus quiet
-            // Wave F-p: focus left this row's tile: its rest prefetch (pages without hero) does not start.
-            if r == nil, let old { StreamPrefetcher.shared.cancelRest(old) }
-            // S5: the hand-over landed: restart the heading snap (home page). Focus on any other tile ends the wait.
-            if let r, let h = handoverTarget {
-                handoverTarget = nil
-                if r == h { onFocusInside?(true) }
-            }
-            guard let r, focusMemory?.state.covered != true else { return }   // verdeckte Startseite: nichts merken
-            focusMemory?.state.record(row: row.id.uuidString, item: r.heroPreview.id)
-            MainThreadWatchdog.note("Fokus \(r.heroPreview.id)")
-            if focusMemory != nil { FrameMeter.focusMoved() }   // S1: home rows only (the meter checks the page too)
-            if let homeFocus {
-                homeFocus.set(r.heroPreview) { StreamPrefetcher.shared.request(r, model: model) }
-            } else {
-                // Wave F-p: folder pages and Library rows have no hero, so nothing fetched the sources of a resting
-                // tile there; the detail page then waited 2–4 s for its tech badges (build 214 log).
-                StreamPrefetcher.shared.requestAfterRest(r, model: model)
-            }
+    }
+
+    /// Review M1: focus left the row: a pending hand-over ends here (no stale restart on a later visit).
+    /// Build 6: called through `focusBox` (was `onChange` on the row).
+    private func insideChanged(_ f: Bool) {
+        if !f, handoverTarget != nil { handoverTarget = nil }
+        reportInside(f)
+    }
+
+    /// The row's focused card changed (`old` → `r`; nil between two cards). Build 6: called through `focusBox`.
+    private func routeChanged(from old: Route?, to r: Route?) {
+        if r != nil { RowBodyMeter.focusMoved(onHome: focusMemory != nil) }   // S4: `fokus` field of `metric: home.rowBody`
+        if r != nil { StreamPrefetcher.shared.focusMoved() }   // P3: visible-tile prefetch waits for 1 s focus quiet
+        // Wave F-p: focus left this row's tile: its rest prefetch (pages without hero) does not start.
+        if r == nil, let old { StreamPrefetcher.shared.cancelRest(old) }
+        // S5: the hand-over landed: restart the heading snap (home page). Focus on any other tile ends the wait.
+        if let r, let h = handoverTarget {
+            handoverTarget = nil
+            if r == h { onFocusInside?(true) }
+        }
+        guard let r, focusMemory?.state.covered != true else { return }   // verdeckte Startseite: nichts merken
+        focusMemory?.state.record(row: row.id.uuidString, item: r.heroPreview.id)
+        MainThreadWatchdog.note("Fokus \(r.heroPreview.id)")
+        if focusMemory != nil { FrameMeter.focusMoved() }   // S1: home rows only (the meter checks the page too)
+        if let homeFocus {
+            homeFocus.set(r.heroPreview) { StreamPrefetcher.shared.request(r, model: model) }
+        } else {
+            // Wave F-p: folder pages and Library rows have no hero, so nothing fetched the sources of a resting
+            // tile there; the detail page then waited 2–4 s for its tech badges (build 214 log).
+            StreamPrefetcher.shared.requestAfterRest(r, model: model)
         }
     }
 
@@ -229,7 +271,7 @@ struct HomeRowView: View {
                 // Welle F-g: Kit-Datei schlug fehl: erreichbare Statuskachel statt ewiger Platzhalter; OK lädt neu.
                 Strip(kind: tileKind) {
                     statusTile(p.statusText ?? "", retry: true) {
-                        focusedPlaceholder = 0
+                        focusPlaceholder(0)
                         Task { await FusionKitStore.shared.retry(sourceKey: key) }
                     }
                 }
@@ -355,10 +397,18 @@ struct HomeRowView: View {
         let kind = tileKind
         // Task 5.1: same title room as the loaded cards, so the row does not grow when they arrive.
         let strip = titleSlot(kind)?.strip ?? 0
+        let box = focusBox
         return Strip(expands: rowExpands(kind), kind: kind) {
             ForEach(0..<n, id: \.self) { i in
                 VStack(spacing: 0) {
-                    Button {} label: { TilePlaceholder(kind: kind, rank: row.style == .top10 ? i + 1 : nil) }
+                    Button {} label: {
+                        TilePlaceholder(kind: kind, rank: row.style == .top10 ? i + 1 : nil)
+                            // Build 6; third review M1: removed while focused (row loaded) = latched for the hand-over.
+                            .background {
+                                ButtonFocusProbe(report: { f in box.placeholder(i, focused: f) },
+                                                 gone: { box.placeholderGone(i) })
+                            }
+                    }
                         .modifier(CardButtonStyleModifier())
                         .focused($focusedPlaceholder, equals: i)
                         .homeRowMenu(menu)
@@ -373,14 +423,21 @@ struct HomeRowView: View {
     /// bei Fehlschlag lädt OK neu.
     /// `action`: eigener Neuversuch (Kit-Collection, Welle F-g); sonst lädt die Listen-Reihe neu.
     private func statusTile(_ text: String, retry canRetry: Bool, action: (() -> Void)? = nil) -> some View {
-        Button {
+        let box = focusBox
+        return Button {
             guard canRetry else { return }
             RemoteLog.info("home", "Reihe erneut laden: \(title)")
             if let action { action(); return }
             loaded = false; failed = false; retry += 1
-            focusedPlaceholder = 0
+            focusPlaceholder(0)
         } label: {
             TileStatus(kind: tileKind, text: text, symbol: canRetry ? "arrow.clockwise" : nil)
+                // Build 6 re-review L4: own tracker slot (its `.focused` value stays 0, like the first placeholder).
+                .background {
+                    let slot: Int = RowFocusTracker<Route>.statusSlot
+                    ButtonFocusProbe(report: { f in box.placeholder(slot, focused: f) },
+                                     gone: { box.placeholderGone(slot) })
+                }
         }
         .modifier(CardButtonStyleModifier())
         .focused($focusedPlaceholder, equals: 0)
@@ -392,7 +449,11 @@ struct HomeRowView: View {
     /// Review M2 (S5): focus is still on a placeholder or a card of this row. Not the placeholder alone: the
     /// placeholders are another `switch` branch, so the loaded row removes them, and the focus engine may already
     /// have moved the focus to a card of this row (placeholder nil) when the hand-over runs.
-    private var rowHoldsFocus: Bool { focusedRoute != nil || focusedPlaceholder != nil }
+    /// Build 6 re-review H1: from the cards' reports (`focusBox`); the `@FocusState`s are written only, never read,
+    /// so the row never becomes a dependent of them.
+    /// Third review M1: or a placeholder slot still latched for the hand-over (the old focus state kept its value
+    /// until the focus engine moved, the probe reports the removal at once).
+    private var rowHoldsFocus: Bool { focusBox.inside || focusBox.pendingSlot != nil }
 
     /// Device test 1 (Build 4 follow-up 2): moving right, the raw state passed through "nothing focused" between two
     /// cards, so the row reported leave + enter on every step and the heading snap scrolled again each time (the
@@ -416,7 +477,9 @@ struct HomeRowView: View {
                 try? await Task.sleep(for: .milliseconds(RowFocusPresence.leaveDelayMs))
                 guard !Task.isCancelled else { return }
                 box.leave = nil
-                guard let leave = box.state.leaveDue(serial: serial, inside: rowHoldsFocus) else { return }
+                // Third review M1: the reported focus, not `rowHoldsFocus`: a latched slot that never lands must not
+                // hold the row "inside" for good.
+                guard let leave = box.state.leaveDue(serial: serial, inside: focusBox.inside) else { return }
                 if let line = leave.line(title: name) { RemoteLog.info("nav", line) }
                 onFocusInside(false)
             }
@@ -424,11 +487,33 @@ struct HomeRowView: View {
     }
 
     /// S5 (Build 4 follow-up): focus goes from a placeholder to the loaded card. The home page's heading snap
-    /// restarts once the card holds the focus (`onChange(of: focusedRoute)`), or right away when it already does.
+    /// restarts once the card holds the focus (`routeChanged`), or right away when it already does.
     private func handOver(to target: Route) {
-        if focusedRoute == target { onFocusInside?(true); return }
+        if focusBox.card == target { onFocusInside?(true); return }
         handoverTarget = target
-        focusedRoute = target
+        focusCard(target)
+    }
+
+    /// Build 6: points `focusBox` at this row's handlers (every body pass and `onAppear`).
+    private func bindFocusBox() {
+        guard focusBox.onScreen else { return }
+        focusBox.bind(onRoute: { old, r in routeChanged(from: old, to: r) },
+                      onInside: { f in insideChanged(f) },
+                      onLeftRow: { leavePass &+= 1 })
+    }
+
+    /// Build 6 (redraw): programmatic focus moves. The row body does not read the `@FocusState`s, so a plain write
+    /// would not run it; the serial does (row pass + every card, `HomeRowCard ==`), as the body read did before, so
+    /// the `.focused` modifiers of skipped cards and placeholders see the write in the same update.
+    private func focusCard(_ r: Route) {
+        focusSerial &+= 1
+        focusedRoute = r
+    }
+
+    private func focusPlaceholder(_ slot: Int) {
+        focusSerial &+= 1
+        focusBox.expectPlaceholder(slot)   // third review M1: pending until a placeholder reports the focus
+        focusedPlaceholder = slot
     }
 
     /// Task 4.1a (F-A-3): this row is the home page's focus target: remembered tile, else the first tile, else
@@ -437,7 +522,7 @@ struct HomeRowView: View {
         guard let focusTarget, focusTarget.claim(.row(row.id)) else { return }
         let target = rememberedRoute ?? firstRoute
         DispatchQueue.main.async {
-            if let target { focusedRoute = target } else { focusedPlaceholder = 0 }
+            if let target { focusCard(target) } else { focusPlaceholder(0) }
         }
     }
 
@@ -502,17 +587,23 @@ struct HomeRowView: View {
         let name: String = rank.map { "Platz \($0), \(m.name)" } ?? m.name
         let key = HomeRowCardKey(item: m, rank: rank, kind: kind, titled: titles != nil, style: row.style,
                                  upcoming: row.content == .list(.upcoming), row: row)
-        let focused: Bool = focusedRoute == route
-        return HomeRowCard(route: route, name: name, accessibilityText: value, titles: titles, focused: focused,
+        // Build 6 (redraw): no focus flag from here; the card follows its own button focus and reports it to
+        // `focusBox` (the row body must not read `focusedRoute`).
+        let box = focusBox
+        return HomeRowCard(route: route, name: name, accessibilityText: value, titles: titles, focusSerial: focusSerial,
                            inContinueRow: row.content == .list(.continueWatching),
                            inWatchlistRow: row.content == .list(.watchlist), labelKey: key, focus: $focusedRoute,
                            onActivate: onActivate, menu: menu, onLeave: { focusNeighbour(of: route) },
+                           onFocus: { f in box.card(route, focused: f) },
                            label: label())
             .equatable()
     }
 
     private func card<L: View>(_ route: Route, @ViewBuilder label: () -> L) -> some View {
-        NavigationLinkish(route: route, onActivate: onActivate, label: label())
+        let box = focusBox
+        // Build 6: the folder tile reports its focus like the list cards (`focusBox`).
+        let probed = label().background { ButtonFocusProbe { f in box.card(route, focused: f) } }
+        return NavigationLinkish(route: route, onActivate: onActivate, label: probed)
             .focused($focusedRoute, equals: route)
             .tileMenu(route.tileItem, inContinueRow: row.content == .list(.continueWatching),
                       inWatchlistRow: row.content == .list(.watchlist), row: menu) { focusNeighbour(of: route) }   // Wave L
@@ -528,8 +619,74 @@ struct HomeRowView: View {
         Task { @MainActor in
             for _ in 0..<3 {
                 try? await Task.sleep(for: .milliseconds(100))
-                if focusedRoute == target { return }
-                focusedRoute = target
+                if focusBox.card == target { return }
+                focusCard(target)
+            }
+        }
+    }
+}
+
+/// Build 6 (redraw): the focus of one `HomeRowView` from its cards' and placeholders' own reports
+/// (`ButtonFocusProbe` → `RowFocusTracker`), and the row handlers it runs. Not observable: the row never re-renders
+/// for it. The handlers are stored on every row pass (`bind`); they reach the row's state through its storage.
+@MainActor
+final class RowFocusBox {
+    private var tracker = RowFocusTracker<Route>()
+    private var onRoute: (Route?, Route?) -> Void = { _, _ in }
+    private var onInside: (Bool) -> Void = { _ in }
+    private var onLeftRow: () -> Void = {}
+
+    var inside: Bool { tracker.inside }
+    /// The focused card of the row, nil without one.
+    var card: Route? { tracker.card }
+    /// The focused placeholder as the row's `focusedPlaceholder` value (status tile → 0).
+    var placeholderSlot: Int? { tracker.focusStateSlot }
+    /// Third review M1: the latched placeholder (focus state value), see `RowFocusTracker.pendingSlot`.
+    var pendingSlot: Int? { tracker.pendingSlot }
+    /// Third review L2: between the row's `onAppear` and `onDisappear`; handlers are bound only then.
+    private(set) var onScreen = false
+
+    func appear() { onScreen = true }
+
+    func placeholderGone(_ slot: Int) { run(tracker.placeholderGone(slot)) }
+
+    func expectPlaceholder(_ slot: Int) { tracker.expectPlaceholder(slot) }
+
+    func clearPending() { tracker.clearPending() }
+
+    func bind(onRoute: @escaping (Route?, Route?) -> Void, onInside: @escaping (Bool) -> Void,
+              onLeftRow: @escaping () -> Void) {
+        self.onRoute = onRoute
+        self.onInside = onInside
+        self.onLeftRow = onLeftRow
+    }
+
+    func card(_ r: Route, focused: Bool) { run(tracker.card(r, focused: focused)) }
+
+    func placeholder(_ slot: Int, focused: Bool) { run(tracker.placeholder(slot, focused: focused)) }
+
+    /// The row left the screen: drop the handlers (they capture the row; see `HomeRowView.onDisappear`). Reports
+    /// still update the focus, without running anything.
+    func unbind() {
+        onScreen = false
+        onRoute = { _, _ in }
+        onInside = { _ in }
+        onLeftRow = {}
+    }
+
+    private func run(_ events: [RowFocusTracker<Route>.Event]) {
+        for e in events {
+            switch e {
+            case .route(let old, let new):
+                onRoute(old, new)
+            case .inside(let f):
+                onInside(f)
+                // Both reports of a move arrive in one update; still outside afterwards = a real leave.
+                guard !f else { break }
+                Task { @MainActor [weak self] in
+                    guard let self, !self.inside else { return }
+                    self.onLeftRow()
+                }
             }
         }
     }
