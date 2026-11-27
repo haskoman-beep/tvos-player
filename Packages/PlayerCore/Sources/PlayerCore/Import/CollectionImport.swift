@@ -165,6 +165,7 @@ public enum PreviewPack {
     /// Fills the gaps of matching tiles: focus video where there is none, still where there is none. The tile's own
     /// fields always win.
     public static func apply(_ index: Index, to c: MediaCollection) -> MediaCollection {
+        if TileMotion.isStillRow(c) { return TileMotion.stillRowStripped(c) }
         guard !index.isEmpty else { return c }
         var out = c
         for i in out.folders.indices {
@@ -177,7 +178,7 @@ public enum PreviewPack {
 
     /// Tiles of the collections whose title has an entry in the pack.
     public static func matches(_ index: Index, in collections: [MediaCollection]) -> Int {
-        collections.reduce(0) { n, c in n + c.folders.filter { index.entry(for: $0) != nil }.count }
+        collections.reduce(0) { n, c in TileMotion.isStillRow(c) ? n : n + c.folders.filter { index.entry(for: $0) != nil }.count }
     }
 
     struct RawEntry: Decodable { var title: String?; var videoURL: String?; var backgroundURL: String? }

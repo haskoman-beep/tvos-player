@@ -62,7 +62,7 @@ import Testing
 @Test func previewPackFillsBuiltInPackageTiles() {
     let pack = PreviewPack.Index([PreviewPackEntry(title: "Netflix", video: "https://v.example/netflix.mp4"),
                                   PreviewPackEntry(title: "action", video: "https://v.example/action.mp4")])
-    #expect(PreviewPack.matches(pack, in: ReadyPackages.all) == 2)
+    #expect(PreviewPack.matches(pack, in: ReadyPackages.all) == 1)   // Genres keep their stills (27.11.)
     let streaming = PreviewPack.apply(pack, to: ReadyPackages.streamingDE)
     let netflix = streaming.folders.first { $0.title == "Netflix" }
     #expect(netflix?.focusVideo == "https://v.example/netflix.mp4")
@@ -79,9 +79,10 @@ import Testing
 // Review M3: English pack titles reach the German genre tiles through the package art aliases.
 @Test func previewPackUsesThePackageAliases() {
     let pack = PreviewPack.Index([PreviewPackEntry(title: "Comedy", video: "https://v.example/comedy.mp4")])
-    let genres = PreviewPack.apply(pack, to: ReadyPackages.genreCollection)
-    #expect(genres.folders.first { $0.title == "Komödie" }?.focusVideo == "https://v.example/comedy.mp4")
-    #expect(PreviewPack.matches(pack, in: [ReadyPackages.genreCollection]) == 1)
+    let komoedie = ReadyPackages.genreCollection.folders.first { $0.title == "Komödie" }
+    #expect(komoedie.flatMap { pack.entry(for: $0) }?.video == "https://v.example/comedy.mp4")
+    // User decision 27.11.: the Genres row itself keeps its stills, so its tiles are not counted as matched.
+    #expect(PreviewPack.matches(pack, in: [ReadyPackages.genreCollection]) == 0)
 }
 
 // Review N6/N8: a series names the same company as network and producer; a person's role repeats; a

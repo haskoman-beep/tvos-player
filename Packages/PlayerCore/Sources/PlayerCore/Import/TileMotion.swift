@@ -36,6 +36,19 @@ public enum TileMotion: Equatable, Sendable {
         if let g = f.focusGif, !g.isEmpty { return .gif(g) }
         return .still
     }
+
+    /// User decision 27.11.: the Genres row keeps its stills (no focus video, no GIF), built in or imported.
+    public static func isStillRow(_ c: MediaCollection) -> Bool {
+        c.id == "pkg.genres" || ["genres", "genre"].contains(PreviewPack.key(c.title))
+    }
+
+    /// The collection with focus video and GIF removed from every tile when it is a still row, else unchanged.
+    public static func stillRowStripped(_ c: MediaCollection) -> MediaCollection {
+        guard isStillRow(c) else { return c }
+        var out = c
+        for i in out.folders.indices { out.folders[i].focusVideo = nil; out.folders[i].focusGif = nil }
+        return out
+    }
 }
 
 /// Sound of a focus video (setting "Ton bei Kachel-Animation", default off).

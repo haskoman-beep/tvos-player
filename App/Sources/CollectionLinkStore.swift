@@ -190,7 +190,7 @@ final class CollectionLinkStore: ObservableObject {
     /// A profile collection with the preview packs applied (memoised per collection).
     /// `kitRevision`: package tiles also change with the kit's art (build 5 device test 1, item 6).
     func enriched(_ c: MediaCollection, profileRevision: Int, kitRevision: Int = 0) -> MediaCollection {
-        guard !packIndex.isEmpty else { return c }
+        guard !packIndex.isEmpty else { return TileMotion.stillRowStripped(c) }
         let stamp = [profileRevision, packRevision, kitRevision]
         if let m = memo[c.id], m.stamp == stamp { return m.c }
         let out = PreviewPack.apply(packIndex, to: c)

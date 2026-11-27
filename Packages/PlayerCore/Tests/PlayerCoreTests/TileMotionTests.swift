@@ -348,3 +348,17 @@ private func boxes(_ handlers: [String]) -> [UInt8] {
     // A plain first import still only fills gaps.
     #expect(NuvioImport.mergeFolders(current, fresh)[0].focusVideo == "https://example.invalid/n.focus.mp4?v=7")
 }
+
+// User decision 27.11.: the Genres row keeps its stills, built in or imported; other rows keep their motion.
+@Test func genresRowHasNoTileMotion() {
+    let pack = PreviewPack.Index([PreviewPackEntry(title: "Action", video: "https://example.invalid/a.mp4"),
+                                  PreviewPackEntry(title: "Netflix", video: "https://example.invalid/n.mp4")])
+    let builtIn = PreviewPack.apply(pack, to: ReadyPackages.genreCollection)
+    #expect(builtIn.folders.allSatisfy { TileMotion.of($0) == .still })
+    let imported = MediaCollection(id: "x", title: " Genres ", folders: [
+        Folder(id: "g1", title: "Action", sources: [], focusGif: "https://example.invalid/a.gif", focusVideo: "https://example.invalid/b.mp4")])
+    #expect(TileMotion.of(PreviewPack.apply(PreviewPack.Index([]), to: imported).folders[0]) == .still)
+    let streaming = PreviewPack.apply(pack, to: MediaCollection(id: "s", title: "Streaming", folders: [
+        Folder(id: "n", title: "Netflix", sources: [])]))
+    #expect(TileMotion.of(streaming.folders[0]) == .video("https://example.invalid/n.mp4"))
+}
