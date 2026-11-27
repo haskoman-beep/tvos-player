@@ -455,13 +455,22 @@ final class AppModel {
             RemoteLog.info("speicher", "Speichern übersprungen: Profile nicht lesbar, Auswahl offen")
             return
         }
+        // In the background the app may be suspended right after this call: written and mirrored at once, as
+        // before Phase 0b (a late scrobble answer, a renewed token).
+        if savesInBackground {
+            do {
+                try saver.runNow(SaveQueue.profilesKey) { try store.save(stored) }
+                noteDirectProfileWrite()
+                mirrorSecrets()
+            } catch { lastError = "Speichern fehlgeschlagen: \(error)" }
+            return
+        }
         // Phase 0b: a snapshot goes to the save queue; encoding, rotation and writing leave the main thread.
         profileSaveSerial &+= 1
         let serial = profileSaveSerial, snapshot = stored, store = self.store
         saver.submit(SaveQueue.profilesKey, { try store.save(snapshot) }, done: { [weak self] result in
             Task { @MainActor in self?.profilesSaved(snapshot, serial: serial, result) }
         })
-        settleIfInBackground(SaveQueue.profilesKey)
     }
 
     /// Phase 0b: the profiles were written directly (not through a queued save); completions of older queued saves
@@ -471,8 +480,8 @@ final class AppModel {
         profileDirectSerial = profileSaveSerial
     }
 
-    /// Phase 0b: a save that comes after the app went to the background (a late scrobble answer, a renewed token)
-    /// is written before the call returns, as before Phase 0b: the app may be suspended right after it.
+    /// Phase 0b: a progress save that comes after the app went to the background (a late scrobble answer) is
+    /// written before the call returns, as before Phase 0b: the app may be suspended right after it.
     private func settleIfInBackground(_ key: String) {
         if savesInBackground { saver.settle(key) }
     }

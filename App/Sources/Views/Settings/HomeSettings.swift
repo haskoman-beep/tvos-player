@@ -5,6 +5,8 @@ import PlayerCore
 /// Reihen ordnen, hinzufügen und ausblenden passiert im Verwalter (Welle F-b2); Importe laufen über die Handy-Seite.
 struct HomeSettings: View {
     @Environment(AppModel.self) var model
+    /// Phase 0b: the link count below follows the store (the model no longer re-renders this page for it).
+    @ObservedObject private var linkStore = CollectionLinkStore.shared
 
     var body: some View {
         let n = model.profile.home.rows.count
@@ -24,7 +26,7 @@ struct HomeSettings: View {
         .buttonStyle(ThemeRowButtonStyle())
         .settingsRowAccessibility(title: "Collections importieren", detail: "Am Handy", accessory: .chevron)
         // Wave F-o round 2: collection link in the app (fetch, detect, import; "Aktualisieren" later).
-        let links = CollectionLinkStore.shared.links.count
+        let links = linkStore.links.count
         NavigationLink { CollectionLinksPage() } label: {
             SettingsRowLabel(symbol: "link", tint: Theme.CategoryTint.home.color, title: "Collection-Link hinzufügen",
                              detail: "Widget-Export, Preview Pack oder Collection-Export als Link – mit Videos und Ton der Kacheln",

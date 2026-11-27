@@ -66,6 +66,7 @@ extension AppModel {
             return
         }
         let n = snap.restore(into: &cache, generation: catalogDisk.pendingGeneration)
+        watchlistChanged()   // the cache is not observed: the tile menus read the watchlist from it
         // Task 1.8: first snapshot of this start (a later profile switch does not count).
         RemoteLog.metric(.startCatalog, ms: RemoteLog.msSinceLaunch(),
                          fields: ["reihen": "\(n)", "warten": "\(Metric.ms(waitStart.duration(to: ContinuousClock.now)))"], once: true)
@@ -78,6 +79,7 @@ extension AppModel {
     /// Stand beim nächsten Start zurück (eine schon geladene Reihe fragt nicht neu an, schreibt also nichts).
     func clearCatalogCache() {
         cache.removeAll()
+        watchlistChanged()
         catalogDisk.saveTask?.cancel()
         catalogDisk.saveTask = nil
         catalogDisk.pending = nil
