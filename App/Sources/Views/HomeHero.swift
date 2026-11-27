@@ -359,6 +359,8 @@ struct HeroButtons: View {
     /// Task 5.2: when the focus last moved inside the row; a move command right after it was that focus move, not a
     /// carousel step at the row's end (the order of focus update and move command is not guaranteed).
     @State private var fieldMoved = ContinuousClock.now
+    /// Review N4: the running claim of a hero focus request (re-asserts „Abspielen“ for a short while).
+    @State private var heroClaim: Task<Void, Never>?
 
     enum Field: Hashable { case play, details }
 
@@ -410,7 +412,11 @@ struct HeroButtons: View {
             claimHeroFocusRequest()
         }
         .onChange(of: focus.heroFocusRequest) { claimHeroFocusRequest() }
-        .onDisappear { onFocusChange?(false) }
+        .onDisappear {
+            onFocusChange?(false)
+            heroClaim?.cancel()   // review N4: no late claim on a page that went away
+            heroClaim = nil
+        }
         .task { await claimLaunchFocus() }
     }
 
@@ -451,10 +457,34 @@ struct HeroButtons: View {
     }
 
     /// Build 5 device test 1 (item 2): a dropped up press in the first row hands the focus to „Abspielen“.
+    /// Review N4: on a button row built (or scrolled into view) in the same pass the focus engine can drop the
+    /// assignment, so it is repeated one hop later and then every 100 ms until a button holds the focus, for at most
+    /// `heroClaimTries` steps (half a second); after that the claim ends and never pulls the focus later.
     private func claimHeroFocusRequest() {
         guard focus.takeHeroFocusRequest() else { return }
-        DispatchQueue.main.async { field = .play }
+        heroClaim?.cancel()
+        heroClaim = Task { @MainActor in
+            for attempt in 0...Self.heroClaimTries {
+                if attempt == 0 {
+                    // One main-queue hop, as before: the button row of this pass is in the hierarchy then.
+                    await withCheckedContinuation { c in DispatchQueue.main.async { c.resume() } }
+                } else {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                guard !Task.isCancelled else { return }
+                if field != nil {   // a button holds the focus (the user may already be on „Details“)
+                    if attempt > 1 { RemoteLog.info("fokus", "Abspielen nach \(attempt) Versuchen fokussiert") }
+                    return
+                }
+                guard attempt < Self.heroClaimTries else { break }
+                field = .play
+            }
+            RemoteLog.info("fokus", "Abspielen: Fokus nach \(Self.heroClaimTries) Versuchen nicht übernommen")
+        }
     }
+
+    /// Review N4: assignments of a hero focus claim (one hop, then every 100 ms; the last check at 500 ms).
+    private static let heroClaimTries = 5
 
     /// Task 5.2: only the carousel listens to left/right (other styles keep the plain focus moves).
     private var moveAction: ((MoveCommandDirection) -> Void)? {
