@@ -33,6 +33,15 @@ final class AppModel: ObservableObject {
     @Published private(set) var device: DeviceSettings
     let deviceStore: DeviceSettingsStore
     let progressStore: ProgressStore
+    /// Phase 0b: encoding and writing of the profiles and the progress book run on its background thread
+    /// (`SaveQueue`); saves of the same block during a slow write become one. Direct writes of these two blocks go
+    /// through `saver.runNow`, reads of a progress block through `load(profile:settling:)`.
+    let saver = SaveQueue(onError: { key, error in
+        Task { @MainActor in RemoteLog.error("speicher", "Hintergrund-Speichern fehlgeschlagen (\(key)): \(error)") }
+    })
+    /// Phase 0b: number of the last profile save (queued or direct). The result of an older queued save no longer
+    /// touches the Keychain: a newer save, a restore or a profile delete came after it.
+    private var profileSaveSerial = 0
     /// Fortschritt des aktiven Profils.
     @Published private(set) var progress = ProgressBook()
     /// Task 1.3 (S-11): the progress file was unreadable (kept as .bak). The sync pull then merges in memory only;
@@ -114,6 +123,25 @@ final class AppModel: ObservableObject {
         observeCatalogWake()
         restoreCatalogSnapshot()
         syncRemoteLog()
+        observeSaveDrain()
+    }
+
+    /// Phase 0b: tvOS may end a suspended app without notice. On the way into the background (and at the end) the
+    /// main thread waits until the queued saves are on disk, at most 3 s.
+    private func observeSaveDrain() {
+        let saver = self.saver
+        for name in [UIApplication.didEnterBackgroundNotification, UIApplication.willTerminateNotification] {
+            _ = NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
+                let start = ContinuousClock.now
+                let waiting = saver.waitingKeys.count
+                let done = saver.drain(timeout: 3)
+                MainActor.assumeIsolated {
+                    let ms = Metric.ms(start.duration(to: ContinuousClock.now))
+                    if !done { RemoteLog.error("speicher", "Hintergrund-Speichern nach 3 s nicht fertig · wartend \(saver.waitingKeys)") }
+                    else if waiting > 0 { RemoteLog.info("speicher", "Hintergrund-Speichern abgeschlossen · \(waiting) wartend · \(ms) ms") }
+                }
+            }
+        }
     }
 
     // MARK: Fortschritt
@@ -392,8 +420,21 @@ final class AppModel: ObservableObject {
             RemoteLog.info("speicher", "Speichern übersprungen: Profile nicht lesbar, Auswahl offen")
             return
         }
-        do { try store.save(stored) } catch { lastError = "Speichern fehlgeschlagen: \(error)"; return }
-        mirrorSecrets()   // only after the file was written, so the Keychain never holds what the profile lacks
+        // Phase 0b: a snapshot goes to the save queue; encoding, rotation and writing leave the main thread.
+        profileSaveSerial &+= 1
+        let serial = profileSaveSerial, snapshot = stored, store = self.store
+        saver.submit(SaveQueue.profilesKey, { try store.save(snapshot) }, done: { [weak self] result in
+            Task { @MainActor in self?.profilesSaved(snapshot, serial: serial, result) }
+        })
+    }
+
+    /// Phase 0b: back on the main thread after a queued profile save.
+    private func profilesSaved(_ saved: StoredProfiles, serial: Int, _ result: Result<Void, Error>) {
+        if case .failure(let error) = result { lastError = "Speichern fehlgeschlagen: \(error)"; return }
+        // Stale: a newer save is on its way (it mirrors), or a restore or delete wrote the profiles directly.
+        guard serial == profileSaveSerial else { return }
+        // Only after the file was written, and only what it holds: the Keychain never holds what the profile lacks.
+        mirrorSecrets(saved.profiles)
         noteProfileSizes(load: false)
     }
 
@@ -455,8 +496,8 @@ final class AppModel: ObservableObject {
     }
 
     /// Write rule: changed secrets of every profile into the Keychain, removed ones and deleted profiles out.
-    private func mirrorSecrets() {
-        do { secretSnapshot = try SecretMigration.mirror(from: secretSnapshot, to: stored.profiles, store: secrets) }
+    private func mirrorSecrets(_ profiles: [Profile]? = nil) {
+        do { secretSnapshot = try SecretMigration.mirror(from: secretSnapshot, to: profiles ?? stored.profiles, store: secrets) }
         catch { RemoteLog.error("speicher", "Schlüsselbund nicht aktualisiert: \(error) · Profil hält die Werte weiter") }
     }
 
@@ -467,7 +508,11 @@ final class AppModel: ObservableObject {
     func saveProgressBook() throws {
         let small = progressStore.prune(progress)
         if small.entries.count != progress.entries.count { progress = small }
-        try progressStore.save(progress, profile: profile.id)
+        // Phase 0b: the book goes to the save queue as a snapshot (every 10 s while playing); a failure comes back
+        // later. The function still `throws` for its callers, it no longer does.
+        progressStore.save(progress, profile: profile.id, on: saver) { [weak self] error in
+            Task { @MainActor in self?.lastError = "Fortschritt nicht gespeichert: \(error)" }
+        }
     }
 
     /// Progress of a profile; an unreadable file is kept as `.bak` by ProgressStore and the book starts empty
@@ -475,7 +520,7 @@ final class AppModel: ObservableObject {
     func loadProgress(_ id: UUID) -> ProgressBook {
         progressSaveHeld = false
         // Task 2.6: pruned (and logged) by the same step as every save, so the in-memory book matches the file.
-        if let b = progressStore.load(profile: id) { return progressStore.prune(b) }
+        if let b = progressStore.load(profile: id, settling: saver) { return progressStore.prune(b) }
         progressSaveHeld = true
         RemoteLog.error("speicher", "Fortschritt unlesbar, als .bak beiseitegelegt · leeres Buch bis zum nächsten Fortschritt")
         return ProgressBook()
@@ -582,6 +627,7 @@ final class AppModel: ObservableObject {
     func removeProfileData(_ id: UUID) {
         removeCatalogFile(profile: id)
         removeSyncQueue(profile: id)   // Welle L
+        saver.settle(SaveQueue.progressKey(id))   // Phase 0b: no queued write may bring the block back
         let removed = ProfileBlocks.remove(profile: id, from: progressStore.storage)
         FusionKitStore.setStoredSettings(nil, for: id)
         CollectionLinkStore.setStoredLinks(nil, for: id)
@@ -603,7 +649,15 @@ final class AppModel: ObservableObject {
         // Phase 0a (finding 5): the profiles without it are saved first; its data goes only after that went through.
         // A failed save leaves the profile and its data as they were.
         let remaining: [Profile]
-        do { remaining = try store.delete(profile: id, from: stored, blocks: progressStore.storage).profiles.profiles }
+        // Phase 0b: its queued progress write lands first (else it would bring the block back); the delete writes
+        // the profiles directly, in the queue's order, and replaces a queued profile save that is older.
+        saver.settle(SaveQueue.progressKey(id))
+        profileSaveSerial &+= 1
+        do {
+            remaining = try saver.runNow(SaveQueue.profilesKey) {
+                try store.delete(profile: id, from: stored, blocks: progressStore.storage).profiles.profiles
+            }
+        }
         catch { lastError = "Profil nicht gelöscht, Speichern fehlgeschlagen: \(error)"; return }
         stored.profiles = remaining
         removeProfileData(id)
@@ -954,7 +1008,7 @@ final class AppModel: ObservableObject {
         let s = stored
         var b = Backup(profiles: s, device: device)
         for p in s.profiles {
-            let book: ProgressBook? = p.id == profile.id ? progress : progressStore.load(profile: p.id)
+            let book: ProgressBook? = p.id == profile.id ? progress : progressStore.load(profile: p.id, settling: saver)
             if let book, !book.entries.isEmpty {
                 b.progress[p.id] = book
             }
@@ -1051,7 +1105,7 @@ final class AppModel: ObservableObject {
                     // (pictures and last sources of progress entries, custom kit sources, links that are not public).
                     var localBooks: [UUID: ProgressBook] = [:], localKits: [UUID: Data] = [:], localLinks: [UUID: Data] = [:]
                     for p in stored.profiles {
-                        localBooks[p.id] = p.id == profile.id ? progress : progressStore.load(profile: p.id)
+                        localBooks[p.id] = p.id == profile.id ? progress : progressStore.load(profile: p.id, settling: saver)
                         localKits[p.id] = FusionKitStore.storedSettings(p.id)
                         localLinks[p.id] = CollectionLinkStore.storedLinks(p.id)
                     }
@@ -1071,7 +1125,9 @@ final class AppModel: ObservableObject {
                     let keptProfiles = imported.profiles.count - restored.profiles.count
                     // Fix round 2: saved directly, so the cleanup below runs only after the restored profiles are
                     // stored (a failed save ends in the catch: nothing is removed).
-                    try store.save(imported)
+                    // Phase 0b: directly, in the save queue's order; a queued profile save is older and is dropped.
+                    profileSaveSerial &+= 1
+                    try saver.runNow(SaveQueue.profilesKey) { try store.save(imported) }
                     stored = imported
                     if keptKeys > 0 { RemoteLog.info("speicher", "Sicherung ohne Schlüssel: \(keptKeys) Profil(e) behalten ihre Schlüssel oder Addon-Adressen") }
                     if keptProfiles > 0 { RemoteLog.info("speicher", "Sicherung: \(keptProfiles) Profil(e) dieses Geräts fehlen in der Sicherung und bleiben") }
@@ -1081,7 +1137,7 @@ final class AppModel: ObservableObject {
                     }
                     // Parts of version 2 overwrite only what the backup contains; a version 1 file leaves them as they are.
                     for (id, book) in backup.progress where backup.profileIDs.contains(id) {
-                        do { try progressStore.save(book, profile: id) }
+                        do { try saver.runNow(SaveQueue.progressKey(id)) { _ = try progressStore.save(book, profile: id) } }
                         catch { RemoteLog.error("speicher", "Sicherung: Fortschritt eines Profils nicht gespeichert: \(error)") }
                     }
                     for (id, k) in backup.fusionKits where backup.profileIDs.contains(id) { FusionKitStore.setStoredSettings(k, for: id) }
