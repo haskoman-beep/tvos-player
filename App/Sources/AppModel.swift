@@ -113,6 +113,7 @@ final class AppModel: ObservableObject {
         RemoteLog.info("start", "App \(v) · \(stored.profiles.count) Profil(e) · Addons \(profile.addons.map(\.manifest.name)) · Reihen \(profile.home.rows.count) · Quelle \(profile.progressSource.rawValue)")
         observeCatalogWake()
         restoreCatalogSnapshot()
+        AddonMetaCache.loadPosterMap()   // Build 8 (poster): tile poster addresses from disk
         syncRemoteLog()
     }
 

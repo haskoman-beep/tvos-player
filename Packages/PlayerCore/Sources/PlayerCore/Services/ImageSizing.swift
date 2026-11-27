@@ -16,9 +16,18 @@ public struct ImageTarget: Hashable, Sendable {
     }
 
     /// nil, solange die Größe noch nicht bekannt ist (erster Layout-Durchlauf mit 0): nicht winzig dekodieren.
-    public init?(points width: Double, _ height: Double, scale: Double, fit: Bool) {
+    /// Build 8 (poster): `stepped: false` keeps the drawn size exactly (grid and row poster tiles: every tile of one
+    /// card size has the same size anyway, so steps share nothing there). A 300×450 pt tile on a 4K TV then decodes a
+    /// 2:3 poster at 600×900 px (2.1 MB) instead of 683×1024 (2.8 MB): device test b7-1 held 65 studio posters at
+    /// 174 MB against a 160 MB budget.
+    public init?(points width: Double, _ height: Double, scale: Double, fit: Bool, stepped: Bool = true) {
         guard width.isFinite, height.isFinite, scale.isFinite, width >= 1, height >= 1, scale > 0 else { return nil }
-        self.init(width: Self.step(Int((width * scale).rounded(.up))), height: Self.step(Int((height * scale).rounded(.up))), fit: fit)
+        let w = Int((width * scale).rounded(.up)), h = Int((height * scale).rounded(.up))
+        if stepped {
+            self.init(width: Self.step(w), height: Self.step(h), fit: fit)
+        } else {
+            self.init(width: min(w, Self.steps[Self.steps.count - 1]), height: min(h, Self.steps[Self.steps.count - 1]), fit: fit)
+        }
     }
 
     /// Quadrat mit fester Kantenlänge (alte Aufrufe mit `maxPixels`): Ergebnis wie bisher höchstens `maxPixels` lang.

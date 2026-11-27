@@ -318,6 +318,23 @@ actor ImagePipeline {
         for u in urls { Task { _ = await image(u, target: target) } }
     }
 
+    /// Build 8 (poster): at most 3 disk warm-ups at once (visible pictures keep the connections).
+    static let diskWarm = AsyncLimiter(limit: 3)
+
+    /// Build 8 (poster): puts a picture into the disk cache only (no decode, no memory bitmap), so a tile of a warmed
+    /// block shows it from disk when it comes on screen. The size variant is the one a tile with `neededWidth` asks
+    /// for. Skipped when the picture is in memory or already on disk. Counts in the `Ladungen` of the cache line.
+    func warmDisk(_ url: URL, neededWidth: Int) async {
+        if cachedAnySize(url) != nil { return }
+        let candidates = ImageURLVariant.candidates(for: url.absoluteString, neededWidth: neededWidth)
+        guard let first = candidates.first, let u = URL(string: first) else { return }
+        let r = URLRequest(url: u, cachePolicy: .returnCacheDataElseLoad)
+        if urlCache.cachedResponse(for: r) != nil { return }
+        guard await Self.diskWarm.acquire() else { return }
+        _ = try? await http.data(r, limits: Self.limits, fresh: false)
+        await Self.diskWarm.release()
+    }
+
     /// Task 2.3: one picture download with the image limits; the session's cache rule stays in charge.
     private func load(_ url: URL) async throws -> (Data, URLResponse) {
         stats.fetched()   // P3: disk or network comes from the task metrics (`ImageLoadMetrics`)
@@ -549,6 +566,9 @@ struct RemoteImage: View {
     var keepsPreviousWhileLoading = false
     /// Wave F-k: called with the address when it cannot be loaded (not on cancel); poster tiles then try the next one.
     var onFailure: (@MainActor (String) -> Void)? = nil
+    /// Build 8 (poster): decode at the drawn size exactly instead of the next size step (poster tiles, see
+    /// `ImageTarget.init(points:stepped:)`).
+    var exactSize = false
     @Environment(\.displayScale) private var displayScale
     /// A-B-3: bumped when the network comes back while this view has no picture for its address (part of `LoadKey`).
     /// Build 4 follow-up S2: a local counter instead of observing `NetworkReturn`, so views showing their picture
@@ -622,7 +642,7 @@ struct RemoteImage: View {
                 if w < 1 { w = capPoints }
                 if h < 1 { h = capPoints }
             }
-            guard var t = ImageTarget(points: w, h, scale: displayScale, fit: fit) else { return }
+            guard var t = ImageTarget(points: w, h, scale: displayScale, fit: fit, stepped: !exactSize) else { return }
             if let cap = maxPixels { t.width = min(t.width, cap); t.height = min(t.height, cap) }
             // b4n2: once the logo shows, the view shrinks from its room to the fitted picture; the picture decoded for
             // the room stays (no second decode). More room than it was decoded for loads again.
