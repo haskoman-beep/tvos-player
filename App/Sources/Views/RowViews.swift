@@ -105,10 +105,12 @@ struct HomeRowView: View {
                 }
             }
         }
-        // Review M1: focus left the row: a pending hand-over ends here (no stale restart on a later visit).
-        .onChange(of: focusedRoute != nil || focusedPlaceholder != nil) { _, f in
-            if !f, handoverTarget != nil { handoverTarget = nil }
-            reportInside(f)
+        // Build 6 (redraw): the focus handlers sit in a child view (`RowFocusWatch`), so the row body never reads its
+        // focus state. Before, the row read `focusedRoute` (onChange, card focus flags) and every focus move
+        // (old card → nil → new card) ran the whole row body twice (`metric: home.rowBody` ≈ 2 × `fokus`).
+        .background {
+            RowFocusWatch(route: $focusedRoute, placeholder: $focusedPlaceholder,
+                          onInside: { f in insideChanged(f) }, onRoute: { old, r in routeChanged(from: old, to: r) })
         }
         .onAppear { if focusedRoute != nil || focusedPlaceholder != nil { reportInside(true) } }
         // Task 4.1a (F-A-2): collection rows hand over like list rows: a focused placeholder (or status tile) goes to
@@ -142,27 +144,36 @@ struct HomeRowView: View {
             // Wave F-p R1: page left with focus in this row before its prefetch rest ended: no stale request.
             if let r = focusedRoute { StreamPrefetcher.shared.cancelRest(r) }
         }
-        .onChange(of: focusedRoute) { old, r in
-            if r != nil { RowBodyMeter.focusMoved(onHome: focusMemory != nil) }   // S4: `fokus` field of `metric: home.rowBody`
-            if r != nil { StreamPrefetcher.shared.focusMoved() }   // P3: visible-tile prefetch waits for 1 s focus quiet
-            // Wave F-p: focus left this row's tile: its rest prefetch (pages without hero) does not start.
-            if r == nil, let old { StreamPrefetcher.shared.cancelRest(old) }
-            // S5: the hand-over landed: restart the heading snap (home page). Focus on any other tile ends the wait.
-            if let r, let h = handoverTarget {
-                handoverTarget = nil
-                if r == h { onFocusInside?(true) }
-            }
-            guard let r, focusMemory?.state.covered != true else { return }   // verdeckte Startseite: nichts merken
-            focusMemory?.state.record(row: row.id.uuidString, item: r.heroPreview.id)
-            MainThreadWatchdog.note("Fokus \(r.heroPreview.id)")
-            if focusMemory != nil { FrameMeter.focusMoved() }   // S1: home rows only (the meter checks the page too)
-            if let homeFocus {
-                homeFocus.set(r.heroPreview) { StreamPrefetcher.shared.request(r, model: model) }
-            } else {
-                // Wave F-p: folder pages and Library rows have no hero, so nothing fetched the sources of a resting
-                // tile there; the detail page then waited 2–4 s for its tech badges (build 214 log).
-                StreamPrefetcher.shared.requestAfterRest(r, model: model)
-            }
+    }
+
+    /// Review M1: focus left the row: a pending hand-over ends here (no stale restart on a later visit).
+    /// Build 6: called by `RowFocusWatch` (was `onChange` on the row).
+    private func insideChanged(_ f: Bool) {
+        if !f, handoverTarget != nil { handoverTarget = nil }
+        reportInside(f)
+    }
+
+    /// The row's focused card changed (`old` → `r`; nil between two cards). Build 6: called by `RowFocusWatch`.
+    private func routeChanged(from old: Route?, to r: Route?) {
+        if r != nil { RowBodyMeter.focusMoved(onHome: focusMemory != nil) }   // S4: `fokus` field of `metric: home.rowBody`
+        if r != nil { StreamPrefetcher.shared.focusMoved() }   // P3: visible-tile prefetch waits for 1 s focus quiet
+        // Wave F-p: focus left this row's tile: its rest prefetch (pages without hero) does not start.
+        if r == nil, let old { StreamPrefetcher.shared.cancelRest(old) }
+        // S5: the hand-over landed: restart the heading snap (home page). Focus on any other tile ends the wait.
+        if let r, let h = handoverTarget {
+            handoverTarget = nil
+            if r == h { onFocusInside?(true) }
+        }
+        guard let r, focusMemory?.state.covered != true else { return }   // verdeckte Startseite: nichts merken
+        focusMemory?.state.record(row: row.id.uuidString, item: r.heroPreview.id)
+        MainThreadWatchdog.note("Fokus \(r.heroPreview.id)")
+        if focusMemory != nil { FrameMeter.focusMoved() }   // S1: home rows only (the meter checks the page too)
+        if let homeFocus {
+            homeFocus.set(r.heroPreview) { StreamPrefetcher.shared.request(r, model: model) }
+        } else {
+            // Wave F-p: folder pages and Library rows have no hero, so nothing fetched the sources of a resting
+            // tile there; the detail page then waited 2–4 s for its tech badges (build 214 log).
+            StreamPrefetcher.shared.requestAfterRest(r, model: model)
         }
     }
 
@@ -421,7 +432,7 @@ struct HomeRowView: View {
     }
 
     /// S5 (Build 4 follow-up): focus goes from a placeholder to the loaded card. The home page's heading snap
-    /// restarts once the card holds the focus (`onChange(of: focusedRoute)`), or right away when it already does.
+    /// restarts once the card holds the focus (`routeChanged`), or right away when it already does.
     private func handOver(to target: Route) {
         if focusedRoute == target { onFocusInside?(true); return }
         handoverTarget = target
@@ -499,8 +510,9 @@ struct HomeRowView: View {
         let name: String = rank.map { "Platz \($0), \(m.name)" } ?? m.name
         let key = HomeRowCardKey(item: m, rank: rank, kind: kind, titled: titles != nil, style: row.style,
                                  upcoming: row.content == .list(.upcoming), row: row)
-        let focused: Bool = focusedRoute == route
-        return HomeRowCard(route: route, name: name, accessibilityText: value, titles: titles, focused: focused,
+        // Build 6 (redraw): no focus flag from here; the card follows its own button focus (the row body must not
+        // read `focusedRoute`, see `RowFocusWatch`).
+        return HomeRowCard(route: route, name: name, accessibilityText: value, titles: titles,
                            inContinueRow: row.content == .list(.continueWatching),
                            inWatchlistRow: row.content == .list(.watchlist), labelKey: key, focus: $focusedRoute,
                            onActivate: onActivate, menu: menu, onLeave: { focusNeighbour(of: route) },
@@ -529,6 +541,27 @@ struct HomeRowView: View {
                 focusedRoute = target
             }
         }
+    }
+}
+
+/// Build 6 (redraw): the focus handlers of `HomeRowView`. The row owns the `@FocusState`s (`.defaultFocus`, the
+/// cards' `.focused` and the hand-overs need them there) but never reads them in its body, so a focus move does not
+/// run the row body; only this empty view reads them and runs (twice per move: old card → nil → new card).
+/// Same order and semantics as the two `onChange` handlers on the row before (no `initial`).
+private struct RowFocusWatch: View {
+    let route: FocusState<Route?>.Binding
+    let placeholder: FocusState<Int?>.Binding
+    let onInside: (Bool) -> Void
+    let onRoute: (Route?, Route?) -> Void
+
+    var body: some View {
+        let r: Route? = route.wrappedValue
+        let p: Int? = placeholder.wrappedValue
+        let inside: Bool = r != nil || p != nil
+        Color.clear
+            .accessibilityHidden(true)
+            .onChange(of: inside) { _, f in onInside(f) }
+            .onChange(of: r) { old, new in onRoute(old, new) }
     }
 }
 

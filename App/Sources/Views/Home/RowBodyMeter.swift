@@ -4,7 +4,8 @@ import PlayerCore
 /// Build 4 follow-up S4: one line `metric: home.rowBody <n> · karten <k> · fokus <m>` per 5 s window in which focus
 /// moved between home row tiles (home page only): n = body passes of `HomeRowView` (all rows together), k = body passes of `PosterCard`
 /// (the cards the stable anchor action lets `.equatable()` skip), m = focus moves onto a row tile; b5r: `zellen` = body
-/// passes of the equatable `HomeRowCard` (about two per focus move expected).
+/// passes of the equatable `HomeRowCard` (about two per focus move expected). Build 6 (redraw): the row body no longer
+/// reads its focus state, so n should stay well below m (row passes only for data changes, not per focus move).
 /// Silent while nothing moves. Counting is integer adds; a window costs one sleeping task and one log line.
 @MainActor
 enum RowBodyMeter {

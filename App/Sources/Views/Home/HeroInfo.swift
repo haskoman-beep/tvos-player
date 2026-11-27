@@ -69,6 +69,10 @@ struct HeroInfo: View {
                 HeroQualityBadges(item: item)
             }
         }
+        // Build 6 (redraw): one flattened layer, one shadow. Without the group SwiftUI draws the shadow for every
+        // part of the stack (logo, meta line, badges, overview) as its own offscreen blur, again on every frame of
+        // the 0.3 s hero crossfade. Same look: the parts do not overlap, so their shadows only meet in the gaps.
+        .compositingGroup()
         .shadow(color: .black.opacity(0.6), radius: 8)
         .animation(.easeInOut(duration: 0.3), value: item.id)
         .animation(.easeInOut(duration: 0.3), value: detailsID)
