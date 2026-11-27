@@ -366,3 +366,20 @@ private func boxes(_ handlers: [String]) -> [UInt8] {
         Folder(id: "n", title: "Netflix", sources: [])]))
     #expect(TileMotion.of(streaming.folders[0]) == .video("https://example.invalid/n.mp4"))
 }
+
+// Build 6 (review of 576a588): the log counts of a genre row name no motion, even from tiles that still carry a
+// focus video or GIF (the row shows none).
+@Test func stillRowStatsCountNoMotion() {
+    var genres = ReadyPackages.genreCollection
+    genres.folders[0].coverImage = "https://example.invalid/c.jpg"
+    genres.folders[0].focusGif = "https://example.invalid/a.gif"
+    genres.folders[1].focusVideo = "https://example.invalid/b.mp4"
+    let still = TileMotion.isStillRow(genres)
+    #expect(still)
+    let pkg = PackageArtStats(folders: genres.folders, stillRow: still)
+    #expect(pkg?.images == 1 && pkg?.gifs == 0 && pkg?.videos == 0)
+    #expect(PackageArtStats(folders: genres.folders)?.videos == 1)   // a non-genre row counts what it carries
+    let tiles = CollectionArtStats(folders: genres.folders, logoStyle: false, stillRow: still)
+    #expect(tiles.gifs == 0 && tiles.images == 1)
+    #expect(CollectionArtStats(folders: genres.folders, logoStyle: false).gifs == 1)
+}
