@@ -237,11 +237,15 @@ public struct ProgressBook: Codable, Sendable, Equatable {
     /// Phase 0a.1: the entries come out repaired (`WatchProgress.normalized`).
     public func continueWatching(limit: Int = 30) -> [WatchProgress] {
         var seen = Set<String>()
-        return entries.values.map { $0.normalized() }
-            .filter { !$0.finished && ($0.position >= Self.minimumSeconds || $0.nextUp == true || ($0.remoteFraction ?? 0) > 0) }
-            .sorted { $0.updated > $1.updated }
-            .filter { seen.insert($0.item.id).inserted }
-            .prefix(limit).map { $0 }
+        // Split into typed steps: as one chain the compiler gave up type-checking it (CI run 46083510692).
+        let repaired: [WatchProgress] = entries.values.map { (e: WatchProgress) -> WatchProgress in e.normalized() }
+        let open: [WatchProgress] = repaired.filter { (e: WatchProgress) -> Bool in
+            if e.finished { return false }
+            return e.position >= Self.minimumSeconds || e.nextUp == true || (e.remoteFraction ?? 0) > 0
+        }
+        let newestFirst: [WatchProgress] = open.sorted { (a: WatchProgress, b: WatchProgress) -> Bool in a.updated > b.updated }
+        let onePerItem: [WatchProgress] = newestFirst.filter { (e: WatchProgress) -> Bool in seen.insert(e.item.id).inserted }
+        return Array(onePerItem.prefix(limit))
     }
 
     /// Task 3.8 ([04 §6.5]): play targets of the continue row in one pass: item id → its entry in
