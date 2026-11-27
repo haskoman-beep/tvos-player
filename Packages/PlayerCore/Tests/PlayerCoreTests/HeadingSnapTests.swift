@@ -112,3 +112,22 @@ import Testing
     #expect(HeadingSnap.handoverLine(title: "Neu", placeholder: 0, card: nil) == "Reihe Neu: Platzhalter 0 → Statuskachel")
     #expect(HeadingSnap.handoverSkippedLine(title: "Neu") == "Reihe Neu: Übergabe entfällt, Fokus nicht mehr in der Reihe")
 }
+
+@Test func snapsUnderSixPointsAndInFlightAreSkipped() {
+    // b7-1 17:55:23.1: −2 pt was snapped (animated); with the snap minimum it is in place.
+    let row = HomeRowSpan(minY: 1557, maxY: 2183)
+    let near = HomeListScroll(offset: 1559, maxOffset: 7406)
+    #expect(HeadingSnap.decide(row: row, scroll: near, tolerance: HeadingSnap.snapMinimum) == .inPlace)
+    #expect(HeadingSnap.decide(row: row, scroll: HomeListScroll(offset: 1550, maxOffset: 7406),
+                               tolerance: HeadingSnap.snapMinimum) == .snap(deviation: 7))
+    // A scroll still on its way: no snap at any check.
+    #expect(!HeadingSnap.shouldSnap(.snap(deviation: 71), check: 0, inFlight: true))
+    #expect(!HeadingSnap.shouldSnap(.snap(deviation: 71), check: 2, inFlight: true))
+    #expect(HeadingSnap.shouldSnap(.snap(deviation: 71), check: 0, inFlight: false))
+}
+
+@Test func flightLogLine() {
+    let s = HeadingSnapSample(row: HomeRowSpan(minY: 2938, maxY: 3370), scroll: HomeListScroll(offset: 2923, maxOffset: 7326), list: nil)
+    #expect(HeadingSnap.flightLine(title: "Preise", ms: 400, target: 2857, sample: s)
+            == "Reihe Preise nach 0,4 s: Scroll läuft noch (Ziel 2857), kein Rasten · keine Liste · Reihe 2938…3370 (Abstand +15)")
+}

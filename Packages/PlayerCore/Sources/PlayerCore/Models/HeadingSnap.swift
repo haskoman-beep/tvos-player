@@ -111,8 +111,15 @@ public enum HeadingSnap {
     /// `check`: index in `checksMs`. Without a measurement only the first check snaps (the Build 3 behaviour: one
     /// blind re-snap), so a missing frame never makes the list move three times. Build 7: later checks only snap a
     /// row that is at least `lateMinimum` off.
-    public static func shouldSnap(_ decision: Decision, check: Int) -> Bool {
-        switch decision {
+    /// Build 8 (b7-1 log 17:55:23.1: an animated snap of −2 pt): the heading checks leave a row closer than this
+    /// alone (`decide(…, tolerance: snapMinimum)`), points.
+    public static let snapMinimum: Double = 6
+
+    /// Build 8: `inFlight` (`FocusScrollFlight.inFlight`): a scroll of the list is still on its way; a snap now
+    /// would fight it, the next check looks again.
+    public static func shouldSnap(_ decision: Decision, check: Int, inFlight: Bool = false) -> Bool {
+        if inFlight, case .snap = decision { return false }
+        return switch decision {
         case .snap(let d): check == 0 || abs(d) >= lateMinimum
         case .unknown: check == 0
         case .inPlace: false
@@ -135,6 +142,11 @@ public enum HeadingSnap {
         case .snap(let d): state = "weicht ab \(signed(d))"
         }
         return "Reihe \(title) nach \(seconds(ms)): \(state) · \(text(sample))"
+    }
+
+    /// Build 8: a check skipped because the list is still scrolling to `target` (offset terms).
+    public static func flightLine(title: String, ms: Int, target: Double, sample: HeadingSnapSample) -> String {
+        "Reihe \(title) nach \(seconds(ms)): Scroll läuft noch (Ziel \(pt(target))), kein Rasten · \(text(sample))"
     }
 
     /// Focus moved from a placeholder of the loading row to the card at the same place (or to the status tile).
