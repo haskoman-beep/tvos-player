@@ -225,8 +225,10 @@ private let film = MetaPreview(id: "tt1", type: "movie", name: "Film")
     q.submit("a", { j.add("a") }, done: { _ in j.add("done a") })
     q.submit("b", { j.add("b") }, done: { _ in j.add("done b") })
     DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) { gate.open.signal() }
-    q.runNow("a") { j.add("direct a") }
+    // "b" is discarded while "hold" still blocks the worker: after `runNow` the worker could take it first
+    // (CI run 46083172301 saw "b" run before the discard).
     q.discard("b")
+    q.runNow("a") { j.add("direct a") }
     #expect(q.drain(timeout: 5))
     #expect(j.all == ["direct a"])
 }
