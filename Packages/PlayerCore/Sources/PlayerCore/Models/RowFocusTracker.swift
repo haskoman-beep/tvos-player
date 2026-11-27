@@ -18,6 +18,12 @@ public struct RowFocusTracker<Card: Equatable> {
 
     public private(set) var card: Card?
     public private(set) var placeholder: Int?
+    /// Third review M1: a placeholder slot the focus is still meant to be on although no view reports it (tracker
+    /// slot). The row's focus state kept its placeholder value until the focus engine moved; the probe's "false" from
+    /// `onDisappear` comes at once. Set when the focused placeholder leaves the screen or by a programmatic write;
+    /// cleared by the next "true" report in the row, `takePending()` (the hand-over) or `clearPending()`.
+    /// Not part of `inside` (no stuck "inside" when the focus never comes back).
+    private var pending: Int?
     private var reportedInside = false
 
     public init() {}
@@ -30,15 +36,37 @@ public struct RowFocusTracker<Card: Equatable> {
     public static var statusSlot: Int { -1 }
 
     /// The focused placeholder as the row's focus state value (status tile → 0), nil without one.
-    public var focusStateSlot: Int? {
-        guard let p = placeholder else { return nil }
-        return p == Self.statusSlot ? 0 : p
+    public var focusStateSlot: Int? { placeholder.map(Self.focusStateValue) }
+
+    /// The pending placeholder as the row's focus state value (status tile → 0), nil without one.
+    public var pendingSlot: Int? { pending.map(Self.focusStateValue) }
+
+    /// A programmatic write of the row's placeholder focus state (`slot` = its value): pending until a report lands.
+    public mutating func expectPlaceholder(_ slot: Int) { pending = slot }
+
+    /// The hand-over consumes the pending slot.
+    public mutating func takePending() -> Int? {
+        defer { pending = nil }
+        return pendingSlot
     }
+
+    public mutating func clearPending() { pending = nil }
+
+    /// The focused placeholder (`slot`) left the screen: it is no longer focused, but stays pending for the hand-over.
+    public mutating func placeholderGone(_ slot: Int) -> [Event] {
+        guard placeholder == slot else { return [] }
+        placeholder = nil
+        pending = slot
+        return insideEvent()
+    }
+
+    private static func focusStateValue(_ slot: Int) -> Int { slot == statusSlot ? 0 : slot }
 
     /// A card's button focus changed (also its first report when built).
     public mutating func card(_ c: Card, focused: Bool) -> [Event] {
         var out: [Event] = []
         if focused {
+            pending = nil
             guard card != c else { return [] }
             if let old = card {
                 card = nil
@@ -57,6 +85,7 @@ public struct RowFocusTracker<Card: Equatable> {
     /// A placeholder's (or the status tile's, `statusSlot`) focus changed.
     public mutating func placeholder(_ slot: Int, focused: Bool) -> [Event] {
         if focused {
+            pending = nil
             guard placeholder != slot else { return [] }
             placeholder = slot
         } else {

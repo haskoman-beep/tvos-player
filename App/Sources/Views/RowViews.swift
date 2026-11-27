@@ -75,7 +75,8 @@ struct HomeRowView: View {
         // Build 6 (redraw): the only focus-related reads at body time (see the two `@State`s).
         let _ = focusSerial
         let _ = leavePass
-        // Points the box at this pass's handlers (a plain store, like `CardAnchorAction.bind`).
+        // Points the box at this pass's handlers (a plain store, like `CardAnchorAction.bind`); only while the row is
+        // on screen (third review L2: a pass while covered would bring the retain cycle back).
         let _ = bindFocusBox()
         VStack(alignment: .leading, spacing: Theme.Space.s) {
             if row.style != .hero {
@@ -95,7 +96,9 @@ struct HomeRowView: View {
             // Welle F-f: geteilte Ladung (AppModel+HomeRows), läuft beim Wegscrollen weiter.
             let r = await model.homeRowItems(s)
             guard !Task.isCancelled else { return }   // abgebrochen (neue Ladung folgt): kein „Keine Einträge“-Flackern
-            let placeholder = focusBox.placeholderSlot   // Build 6 re-review H1: the box, not the FocusState
+            // Build 6 re-review H1: the box, not the FocusState; third review M1: or the slot a programmatic write
+            // (retry tile) is still waiting for.
+            let placeholder = focusBox.placeholderSlot ?? focusBox.pendingSlot
             // Task 4.1a (F-A-5): a catalog may list a title twice; one card per (type, id), the first wins.
             list = RowList(loaded: r.items); failed = r.failed; loaded = true
             // Fokus lag auf einem Platzhalter: an dieselbe Stelle der fertigen Reihe (bzw. auf die Statuskachel).
@@ -116,6 +119,7 @@ struct HomeRowView: View {
                         if onFocusInside != nil { RemoteLog.info("nav", HeadingSnap.handoverSkippedLine(title: title)) }
                         return
                     }
+                    focusBox.clearPending()   // third review M1: the hand-over consumes the latched slot
                     if let target { handOver(to: target) } else { focusPlaceholder(slot) }
                 }
             }
@@ -124,14 +128,21 @@ struct HomeRowView: View {
         // time (these handlers, the cards' focus flags) and every focus move (old card → nil → new card) ran the whole
         // row body twice (`metric: home.rowBody` ≈ 2 × `fokus`). The cards report instead (`focusBox`).
         .onAppear {
-            bindFocusBox()   // Build 6 re-review M2: `onDisappear` dropped the handlers; the body may not run again
+            // Build 6 re-review M2: `onDisappear` dropped the handlers; the body may not run again.
+            focusBox.appear()
+            bindFocusBox()
+            // Third review L3: a probe that appeared before the row reported its card to unbound handlers: replay it.
+            // (Probes after this point report through the handlers, so nothing runs twice.)
+            if let r = focusBox.card { routeChanged(from: nil, to: r) }
             if focusBox.inside { reportInside(true) }
         }
         // Task 4.1a (F-A-2): collection rows hand over like list rows: a focused placeholder (or status tile) goes to
         // the tile at the same place when the kit file arrives, else to the status tile.
         .onChange(of: collectionLoadPhase) { _, p in
             // Review minor 1: the change into `.loading` (OK on the status tile) is no hand-over.
-            guard let p, p != .loading, let placeholder = focusBox.placeholderSlot, case .collection(let id) = row.content
+            // Third review M1: the placeholders' `onDisappear` may have run first; their slot is latched then.
+            guard let p, p != .loading, let placeholder = focusBox.placeholderSlot ?? focusBox.pendingSlot,
+                  case .collection(let id) = row.content
             else { return }
             let slot = p.focusAfterLoad(placeholder: placeholder)
             var target: Route?
@@ -145,6 +156,7 @@ struct HomeRowView: View {
                     RemoteLog.info("fokus", "Collection \(title): Übergabe entfällt, Fokus nicht mehr in der Reihe")
                     return
                 }
+                focusBox.clearPending()   // third review M1
                 // S5: the heading snap restarts once the tile holds the focus (the F-A-2 line above is the log).
                 if let target { handOver(to: target) } else { focusPlaceholder(slot) }
             }
@@ -157,6 +169,7 @@ struct HomeRowView: View {
             // cycle for every row the lazy stack unloads). L3: the focus itself is not reset; the probes report false
             // when they leave and their focus again when they appear.
             focusBox.unbind()
+            focusBox.clearPending()   // third review M1: no hand-over for a row that left the screen
             onFocusInside?(false)
             if handoverTarget != nil { handoverTarget = nil }   // Review M1
             // Wave F-p R1: page left with focus in this row before its prefetch rest ended: no stale request.
@@ -387,7 +400,11 @@ struct HomeRowView: View {
                 VStack(spacing: 0) {
                     Button {} label: {
                         TilePlaceholder(kind: kind, rank: row.style == .top10 ? i + 1 : nil)
-                            .background { ButtonFocusProbe { f in box.placeholder(i, focused: f) } }   // Build 6
+                            // Build 6; third review M1: removed while focused (row loaded) = latched for the hand-over.
+                            .background {
+                                ButtonFocusProbe(report: { f in box.placeholder(i, focused: f) },
+                                                 gone: { box.placeholderGone(i) })
+                            }
                     }
                         .modifier(CardButtonStyleModifier())
                         .focused($focusedPlaceholder, equals: i)
@@ -413,7 +430,11 @@ struct HomeRowView: View {
         } label: {
             TileStatus(kind: tileKind, text: text, symbol: canRetry ? "arrow.clockwise" : nil)
                 // Build 6 re-review L4: own tracker slot (its `.focused` value stays 0, like the first placeholder).
-                .background { ButtonFocusProbe { f in box.placeholder(RowFocusTracker<Route>.statusSlot, focused: f) } }
+                .background {
+                    let slot: Int = RowFocusTracker<Route>.statusSlot
+                    ButtonFocusProbe(report: { f in box.placeholder(slot, focused: f) },
+                                     gone: { box.placeholderGone(slot) })
+                }
         }
         .modifier(CardButtonStyleModifier())
         .focused($focusedPlaceholder, equals: 0)
@@ -427,7 +448,9 @@ struct HomeRowView: View {
     /// have moved the focus to a card of this row (placeholder nil) when the hand-over runs.
     /// Build 6 re-review H1: from the cards' reports (`focusBox`); the `@FocusState`s are written only, never read,
     /// so the row never becomes a dependent of them.
-    private var rowHoldsFocus: Bool { focusBox.inside }
+    /// Third review M1: or a placeholder slot still latched for the hand-over (the old focus state kept its value
+    /// until the focus engine moved, the probe reports the removal at once).
+    private var rowHoldsFocus: Bool { focusBox.inside || focusBox.pendingSlot != nil }
 
     /// Device test 1 (Build 4 follow-up 2): moving right, the raw state passed through "nothing focused" between two
     /// cards, so the row reported leave + enter on every step and the heading snap scrolled again each time (the
@@ -451,7 +474,9 @@ struct HomeRowView: View {
                 try? await Task.sleep(for: .milliseconds(RowFocusPresence.leaveDelayMs))
                 guard !Task.isCancelled else { return }
                 box.leave = nil
-                guard let leave = box.state.leaveDue(serial: serial, inside: rowHoldsFocus) else { return }
+                // Third review M1: the reported focus, not `rowHoldsFocus`: a latched slot that never lands must not
+                // hold the row "inside" for good.
+                guard let leave = box.state.leaveDue(serial: serial, inside: focusBox.inside) else { return }
                 if let line = leave.line(title: name) { RemoteLog.info("nav", line) }
                 onFocusInside(false)
             }
@@ -468,6 +493,7 @@ struct HomeRowView: View {
 
     /// Build 6: points `focusBox` at this row's handlers (every body pass and `onAppear`).
     private func bindFocusBox() {
+        guard focusBox.onScreen else { return }
         focusBox.bind(onRoute: { old, r in routeChanged(from: old, to: r) },
                       onInside: { f in insideChanged(f) },
                       onLeftRow: { leavePass &+= 1 })
@@ -483,6 +509,7 @@ struct HomeRowView: View {
 
     private func focusPlaceholder(_ slot: Int) {
         focusSerial &+= 1
+        focusBox.expectPlaceholder(slot)   // third review M1: pending until a placeholder reports the focus
         focusedPlaceholder = slot
     }
 
@@ -611,6 +638,18 @@ final class RowFocusBox {
     var card: Route? { tracker.card }
     /// The focused placeholder as the row's `focusedPlaceholder` value (status tile → 0).
     var placeholderSlot: Int? { tracker.focusStateSlot }
+    /// Third review M1: the latched placeholder (focus state value), see `RowFocusTracker.pendingSlot`.
+    var pendingSlot: Int? { tracker.pendingSlot }
+    /// Third review L2: between the row's `onAppear` and `onDisappear`; handlers are bound only then.
+    private(set) var onScreen = false
+
+    func appear() { onScreen = true }
+
+    func placeholderGone(_ slot: Int) { run(tracker.placeholderGone(slot)) }
+
+    func expectPlaceholder(_ slot: Int) { tracker.expectPlaceholder(slot) }
+
+    func clearPending() { tracker.clearPending() }
 
     func bind(onRoute: @escaping (Route?, Route?) -> Void, onInside: @escaping (Bool) -> Void,
               onLeftRow: @escaping () -> Void) {
@@ -626,6 +665,7 @@ final class RowFocusBox {
     /// The row left the screen: drop the handlers (they capture the row; see `HomeRowView.onDisappear`). Reports
     /// still update the focus, without running anything.
     func unbind() {
+        onScreen = false
         onRoute = { _, _ in }
         onInside = { _ in }
         onLeftRow = {}

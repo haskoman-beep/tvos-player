@@ -81,3 +81,49 @@ import Testing
     _ = t.placeholder(3, focused: true)
     #expect(t.focusStateSlot == 3)
 }
+
+// MARK: Third review M1: placeholder latch for the hand-over
+
+@Test func trackerFocusedPlaceholderLeavingTheScreenStaysPending() {
+    var t = RowFocusTracker<String>()
+    _ = t.placeholder(2, focused: true)
+    // The loaded row removes the placeholders: not inside any more, but the slot waits for the hand-over.
+    #expect(t.placeholderGone(2) == [.inside(false)])
+    #expect(!t.inside)
+    #expect(t.pendingSlot == 2)
+    #expect(t.takePending() == 2)
+    #expect(t.pendingSlot == nil)
+}
+
+@Test func trackerUnfocusedPlaceholderLeavingIsNoLatch() {
+    var t = RowFocusTracker<String>()
+    _ = t.placeholder(1, focused: true)
+    #expect(t.placeholderGone(0) == [])
+    #expect(t.pendingSlot == nil)
+    // Focus left by the user (onChange false, not a disappear): nothing pending, the hand-over is skipped.
+    _ = t.placeholder(1, focused: false)
+    #expect(t.pendingSlot == nil)
+}
+
+@Test func trackerAnyTrueReportClearsThePending() {
+    var t = RowFocusTracker<String>()
+    _ = t.placeholder(0, focused: true)
+    _ = t.placeholderGone(0)
+    #expect(t.card("c", focused: true) == [.route(old: nil, new: "c"), .inside(true)])
+    #expect(t.pendingSlot == nil)
+    t.expectPlaceholder(0)
+    #expect(t.pendingSlot == 0)
+    _ = t.placeholder(0, focused: true)
+    #expect(t.pendingSlot == nil)
+}
+
+@Test func trackerProgrammaticWriteIsPendingUntilItLands() {
+    // Retry tile: `focusPlaceholder(0)`; a fast failure must still hand over to the status tile.
+    var t = RowFocusTracker<String>()
+    _ = t.placeholder(RowFocusTracker<String>.statusSlot, focused: true)
+    t.expectPlaceholder(0)
+    _ = t.placeholderGone(RowFocusTracker<String>.statusSlot)
+    #expect(t.pendingSlot == 0)   // status tile slot maps to focus state value 0
+    t.clearPending()
+    #expect(t.pendingSlot == nil)
+}

@@ -73,6 +73,8 @@ struct HomeRowCard<Label: View>: View, Equatable {
 /// placeholder removed by the loaded row, a removed card), as the row's focus state went nil then.
 struct ButtonFocusProbe: View {
     let report: (Bool) -> Void
+    /// Third review M1: called instead of `report(false)` when the probe leaves the screen (placeholders latch it).
+    var gone: (() -> Void)? = nil
     @Environment(\.isFocused) private var isFocused
 
     var body: some View {
@@ -82,7 +84,9 @@ struct ButtonFocusProbe: View {
             // Re-review L3: on every appearance (not only the first, as `onChange(initial:)`), so a row that comes
             // back with this button still focused learns it again after the false of `onDisappear`.
             .onAppear { report(isFocused) }
-            .onDisappear { report(false) }
+            .onDisappear {
+                if let gone { gone() } else { report(false) }
+            }
     }
 }
 
