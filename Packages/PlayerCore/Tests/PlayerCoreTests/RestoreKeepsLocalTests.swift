@@ -254,3 +254,25 @@ private struct ReadOnlyStorage: BlobStorage {
     let dir = FileBlobStorage(directory: tempDir())
     #expect(throws: StoreError.self) { try ProfileStore(storage: dir).delete(profile: s.profiles[0].id, from: s, blocks: dir) }
 }
+
+// MARK: Finding 7
+
+/// A stream without a known length reports an infinite duration. Stored once, JSON cannot encode the book any more
+/// and every later save of it fails.
+@Test func progressWithInfiniteDurationIsNotRecorded() throws {
+    var b = ProgressBook()
+    let item = MetaPreview(id: "tt1", type: "movie", name: "Film")
+    b.record(id: "tt1", item: item, position: 100, duration: 1000)
+    b.record(id: "tt2", item: MetaPreview(id: "tt2", type: "movie", name: "Live"), position: 100, duration: .infinity)
+    b.record(id: "tt3", item: MetaPreview(id: "tt3", type: "movie", name: "Rückwärts"), position: -5, duration: 1000)
+    #expect(Set(b.entries.keys) == ["tt1"])
+    #expect(throws: Never.self) { try JSONEncoder().encode(b) }
+}
+
+@Test func fileProgressWithInfiniteDurationIsNotRecorded() throws {
+    var b = FileProgressBook()
+    b.record("torbox:1:1", position: 100, duration: 1000)
+    b.record("torbox:1:2", position: 100, duration: .infinity)
+    #expect(Set(b.entries.keys) == ["torbox:1:1"])
+    #expect(throws: Never.self) { try JSONEncoder().encode(b) }
+}

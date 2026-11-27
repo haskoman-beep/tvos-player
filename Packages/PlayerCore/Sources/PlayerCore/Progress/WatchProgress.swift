@@ -120,7 +120,9 @@ public struct ProgressBook: Codable, Sendable, Equatable {
     /// - the next-episode hint stays until the episode itself ran more than 120 s;
     /// - `remoteFraction`, title and artwork of the old entry stay when the new one does not bring them.
     public mutating func record(_ new: WatchProgress, now: Date = Date(), finishedAt: Double = ProgressBook.finishedAt) {
-        guard new.duration > 0, new.position.isFinite else { return }
+        // Phase 0a (finding 7): a stream without a known length reports an infinite duration; JSON cannot encode it,
+        // so every later save of the book would fail.
+        guard new.duration.isFinite, new.duration > 0, new.position.isFinite, new.position >= 0 else { return }
         let old = entries[new.id]
         let done = new.position / new.duration >= finishedAt
         let ranLong = new.position > Self.markerSeconds

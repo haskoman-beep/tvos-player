@@ -225,10 +225,10 @@ private func ids(_ l: HomeLayout) -> [String] { l.rows.map { FusionImport.kitID(
     #expect(r.deselected == ["fusion.s.trakt.A"] && r.added.isEmpty && st.selected == ["fusion.s.collection.D"])
     #expect(st.placed == ["fusion.s.collection.D"])
 
-    // Reihe verschwindet aus dem Kit → von der Startseite entfernt.
+    // Reihe verschwindet aus dem Kit → von der Startseite, aber mit Platz und Stil gemerkt (Phase 0a, finding 6).
     let empty = #"{"exportType":"fusionWidgets","widgets":[]}"#
     r = FusionKitSync.apply(layout: &layout, settings: &st, contents: ["s": try kit("s", empty)], traktID: true, traktLogin: true)
-    #expect(r.removed == ["fusion.s.collection.D"] && layout.rows.isEmpty)
+    #expect(r.removed.isEmpty && r.parked == ["fusion.s.collection.D"] && layout.rows.isEmpty)
 
     // Eigene Quelle entfernen nimmt ihre Auswahl mit.
     st.removeSource("s")
@@ -424,11 +424,15 @@ private func placedLayout(_ st: inout FusionKitSettings, _ contents: [String: Fu
     st.enabled = false
     _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true)
     #expect(st.parked.isEmpty && ids(layout) == ["list:builtin.continue", "list:u.b"])
-    // Row gone from the kit file while it waits: forgotten.
+    // Row gone from the kit file while it waits: stays parked while it is chosen (Phase 0a, finding 6: the file may
+    // only be shortened for a while); the shown row of that file is parked too. Deselected, both are forgotten.
     var st2 = FusionKitSettings()
     var l2 = placedLayout(&st2, contents)
     _ = FusionKitSync.apply(layout: &l2, settings: &st2, contents: contents, traktID: false, traktLogin: false)
     let empty = #"{"exportType":"fusionWidgets","widgets":[]}"#
+    _ = FusionKitSync.apply(layout: &l2, settings: &st2, contents: ["s": try kit("s", empty)], traktID: true, traktLogin: true)
+    #expect(st2.parked.map(\.kitID) == ["fusion.s.trakt.A", "fusion.s.collection.D"])
+    st2.selected = []
     _ = FusionKitSync.apply(layout: &l2, settings: &st2, contents: ["s": try kit("s", empty)], traktID: true, traktLogin: true)
     #expect(st2.parked.isEmpty)
 }
@@ -644,4 +648,46 @@ private func names(_ l: HomeLayout) -> [String] {
         + #","style":"logoTiles"},"above":["list:u.A"],"index":3}"#
     let back = try JSONDecoder().decode(FusionKitParkedRow.self, from: Data(old.utf8))
     #expect(back.below.isEmpty && back.row == good.row && back.index == 3)
+}
+
+/// Phase 0a (finding 6): a kit file that delivers fewer rows (shortened upstream, half a file) must not cost the
+/// start page rows their place and style. They wait parked and come back when the file has them again.
+@Test func fusionSyncKeepsPlaceAndStyleWhenTheKitFileLosesARow() throws {
+    let src = FusionKitSource(id: "s", title: "S", url: "https://x", custom: true)
+    let own = HomeRow(content: .list(.continueWatching), style: .landscape)
+    var layout = HomeLayout(rows: [own])
+    var st = FusionKitSettings(enabled: true)
+    st.setSelected("fusion.s.collection.D", true, source: src)
+    st.setSelected("fusion.s.trakt.A", true, source: src)
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: ["s": try kit("s")], traktID: true, traktLogin: true)
+    layout.rows.swapAt(0, 2)          // trakt.A to the top, in the user's style
+    layout.rows[0].style = .poster
+    let rowID = layout.rows[0].id
+
+    let shorter = widgetsJSON.replacingOccurrences(of: #""id":"trakt.A""#, with: #""id":"trakt.Anders""#)
+    var r = FusionKitSync.apply(layout: &layout, settings: &st, contents: ["s": try kit("s", shorter)], traktID: true, traktLogin: true)
+    #expect(r.removed.isEmpty && r.parked == ["fusion.s.trakt.A"])
+    #expect(ids(layout) == ["fusion.s.collection.D", "list:builtin.continue"])
+    #expect(st.isSelected("fusion.s.trakt.A") && st.parked.map(\.kitID) == ["fusion.s.trakt.A"])
+
+    // Still missing on the next sync: stays parked, nothing is reported again.
+    r = FusionKitSync.apply(layout: &layout, settings: &st, contents: ["s": try kit("s", shorter)], traktID: true, traktLogin: true)
+    #expect(r.removed.isEmpty && r.parked.isEmpty && st.parked.count == 1 && !r.layoutChanged)
+
+    r = FusionKitSync.apply(layout: &layout, settings: &st, contents: ["s": try kit("s")], traktID: true, traktLogin: true)
+    #expect(r.restored == ["fusion.s.trakt.A"] && st.parked.isEmpty)
+    #expect(ids(layout) == ["fusion.s.trakt.A", "fusion.s.collection.D", "list:builtin.continue"])
+    #expect(layout.rows[0].style == .poster && layout.rows[0].id == rowID)
+}
+
+@Test func fusionSyncDropsARowTheUserDeselected() throws {
+    // Deselecting stays the way to remove a kit row for good.
+    let src = FusionKitSource(id: "s", title: "S", url: "https://x", custom: true)
+    var layout = HomeLayout()
+    var st = FusionKitSettings(enabled: true)
+    st.setSelected("fusion.s.trakt.A", true, source: src)
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: ["s": try kit("s")], traktID: true, traktLogin: true)
+    st.setSelected("fusion.s.trakt.A", false, source: src)
+    let r = FusionKitSync.apply(layout: &layout, settings: &st, contents: ["s": try kit("s")], traktID: true, traktLogin: true)
+    #expect(r.removed == ["fusion.s.trakt.A"] && layout.rows.isEmpty && st.parked.isEmpty)
 }

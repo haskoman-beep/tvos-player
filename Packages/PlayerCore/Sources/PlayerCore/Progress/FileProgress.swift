@@ -19,7 +19,7 @@ public struct FileProgressBook: Codable, Sendable, Equatable {
 
     /// Gleiche Regeln wie `ProgressBook.record`: ab 92 % gesehen (Position 0).
     public mutating func record(_ key: String, position: Double, duration: Double, now: Date = Date()) {
-        guard duration > 0, position.isFinite, position >= 0 else { return }
+        guard duration.isFinite, duration > 0, position.isFinite, position >= 0 else { return }
         let done = position / duration >= ProgressBook.finishedAt
         entries[key] = Entry(position: done ? 0 : position, duration: duration, updated: now, finished: done)
         prune()

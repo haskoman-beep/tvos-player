@@ -248,11 +248,14 @@ public enum FusionKitSync {
         var want: [String: FusionKitRow] = [:]
         var order: [String] = []
         var unknown = Set<String>()
+        // Phase 0a (finding 6): chosen, file loaded, row not in it. Before, such a row was dropped with place and
+        // style, also when the file was only shortened for a while. Now it waits parked like a row without login.
+        var missing = Set<String>()
         if settings.enabled {
             for id in settings.selected {
                 guard let key = FusionImport.sourceKey(ofID: id) else { continue }
                 guard let content = contents[key] else { unknown.insert(id); continue }
-                guard let row = content.row(id) else { continue }   // nicht mehr im Kit
+                guard let row = content.row(id) else { missing.insert(id); continue }   // nicht mehr im Kit
                 if let r = row.available(traktID: traktID, traktLogin: traktLogin, catalogs: index) { want[id] = r; order.append(id) }
                 else { res.hidden.append(id) }
             }
@@ -292,7 +295,7 @@ public enum FusionKitSync {
                 }
             } else if unknown.contains(id) {
                 if p != nil { park.insert(i) }   // file not loaded: a parked row stays parked, a shown one stays shown
-            } else if waiting.contains(id) {
+            } else if waiting.contains(id) || missing.contains(id) {
                 park.insert(i)
                 if p == nil { res.parked.append(id) }
             } else if p != nil, !selected.contains(id) {
