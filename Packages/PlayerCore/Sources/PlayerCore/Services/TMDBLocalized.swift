@@ -42,10 +42,28 @@ public struct CastMember: Sendable, Equatable, Identifiable {
 }
 
 /// A studio or network of a title with its TMDB logo (transparent PNG, w300), if TMDB has one.
+/// Build 7: with its TMDB ID and kind (production company or TV network, two ID spaces), so the plate opens the
+/// studio page and a missing logo can be looked up (`/company/{id}/images`, `/network/{id}/images`).
 public struct StudioLogo: Sendable, Equatable, Hashable {
+    public enum Kind: String, Sendable, Hashable { case company, network }
+
     public var name: String
     public var logo: String?
-    public init(name: String, logo: String?) { self.name = name; self.logo = logo }
+    public var id: Int?
+    public var kind: Kind
+    public init(name: String, logo: String?, id: Int? = nil, kind: Kind = .company) {
+        self.name = name; self.logo = logo; self.id = id; self.kind = kind
+    }
+
+    /// Build 7 review: the name for matching („HBO“ = „hbo “ = „HBÖ“): trimmed, case and diacritics folded.
+    public var foldedName: String { Self.foldedName(name) }
+
+    static func foldedName(_ s: String) -> String {
+        s.trimmingCharacters(in: .whitespaces).folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+    }
+
+    /// Key of this studio across titles ("company:2", "network:49"); nil without a TMDB ID.
+    public var key: String? { id.map { "\(kind.rawValue):\($0)" } }
 }
 
 public struct LocalizedEpisode: Sendable, Equatable {
@@ -127,8 +145,14 @@ extension TMDBClient {
         }
         m.cast = cast
         func studios(_ key: String) -> [StudioLogo] {
-            ((o[key] as? [[String: Any]]) ?? []).compactMap { e in
-                nonEmpty(e["name"]).map { StudioLogo(name: $0, logo: nonEmpty(e["logo_path"]).map { studioLogoBase + $0 }) }
+            let kind: StudioLogo.Kind = key == "networks" ? .network : .company
+            // Build 7: each studio once (by ID, else by name): the plates are focus targets now.
+            var seen = Set<String>()
+            return ((o[key] as? [[String: Any]]) ?? []).compactMap { e in
+                guard let name = nonEmpty(e["name"]) else { return nil }
+                let id = (e["id"] as? Int) ?? (e["id"] as? Double).flatMap(SafeNumber.int)
+                guard seen.insert(id.map { "id:\($0)" } ?? "name:\(StudioLogo.foldedName(name))").inserted else { return nil }
+                return StudioLogo(name: name, logo: nonEmpty(e["logo_path"]).map { studioLogoBase + $0 }, id: id, kind: kind)
             }
         }
         let crew = (credits["crew"] as? [[String: Any]]) ?? []
@@ -137,7 +161,7 @@ extension TMDBClient {
             // Review N6: a company that is network and producer once (by name); then two producers at most.
             let networks = studios("networks")
             m.studioLogos = networks + studios("production_companies")
-                .filter { p in !networks.contains { $0.name == p.name } }.prefix(2)
+                .filter { p in !networks.contains { $0.foldedName == p.foldedName } }.prefix(2)   // Build 7 review: folded
             m.studios = m.studioLogos.map(\.name)
             m.seasons = o["number_of_seasons"] as? Int
             m.episodes = o["number_of_episodes"] as? Int

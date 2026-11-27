@@ -98,6 +98,8 @@ public enum GenrePageRule {
     /// or kit); the parent is the candidate that really lists this folder.
     public static func sources(for folder: Folder, collection: (String) -> MediaCollection?) -> GenrePageSources? {
         if folder.id.hasPrefix(packagePrefix) { return GenrePageSources.of(folder) }
+        // Build 7: the studio page (a studio plate of the detail page) is a genre page too (reserved IDs only).
+        if StudioPage.isStudio(folder) { return GenrePageSources.of(folder) }
         for c in parentCandidates(ofFolderID: folder.id) {
             guard let parent = collection(c), parent.folders.contains(where: { $0.id == folder.id }) else { continue }
             return isGenreCollection(id: parent.id, title: parent.title) ? GenrePageSources.of(folder) : nil
@@ -223,15 +225,17 @@ public struct GenrePaging: Equatable, Sendable {
     public enum Footer: Equatable, Sendable { case none, loading, retry }
 
     /// Log line: „Genre: Action Filme Seite 3, +20 Titel (gesamt 60)“ (Seite = block number, also for addons).
-    public func logLine(genre: String, filter: GenreFilter, added: Int) -> String {
-        var s = "Genre: \(genre) \(filter.title) Seite \(pagesLoaded), +\(added) Titel (gesamt \(items.count))"
+    /// Build 7: `label` „Studio“ on the studio page.
+    public func logLine(genre: String, filter: GenreFilter, added: Int, label: String = "Genre") -> String {
+        var s = "\(label): \(genre) \(filter.title) Seite \(pagesLoaded), +\(added) Titel (gesamt \(items.count))"
         if reachedEnd { s += ", Ende" }
         return s
     }
 
     /// Log line of a failed block.
-    public func failLine(genre: String, filter: GenreFilter, request: GenrePageRequest, error: String) -> String {
-        "Genre: \(genre) \(filter.title) Seite \(Self.blockNumber(request, loaded: pagesLoaded)) fehlgeschlagen: \(error)"
+    public func failLine(genre: String, filter: GenreFilter, request: GenrePageRequest, error: String,
+                         label: String = "Genre") -> String {
+        "\(label): \(genre) \(filter.title) Seite \(Self.blockNumber(request, loaded: pagesLoaded)) fehlgeschlagen: \(error)"
     }
 
     static func blockNumber(_ r: GenrePageRequest, loaded: Int) -> Int {
