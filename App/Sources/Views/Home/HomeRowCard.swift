@@ -7,8 +7,9 @@ import PlayerCore
 /// ran its link, tile menu, accessibility and title line again. Equatable over the values it draws: on a focus move
 /// only the cards whose `focused` flag changed run their body, the others are skipped (`.equatable()`).
 /// Build 6 (redraw): the card no longer gets its focus flag from the row (the row body read `focusedRoute` for it and
-/// ran twice per focus move). It follows its own button focus (`CardFocusProbe` inside the label reads
-/// `isFocused`), so a focus move runs only the two cards whose focus changed and no row body.
+/// ran twice per focus move). It follows its own button focus (`ButtonFocusProbe` inside the label reads
+/// `isFocused`) and reports it to the row (`onFocus` → `RowFocusBox`), so a focus move runs only the two cards whose
+/// focus changed and no row body. `focusSerial` (compared) runs every card once on a programmatic focus write.
 /// The closures (activation, row menu actions, neighbour focus) are not compared: they reach the row's and the page's
 /// state through its storage, so an older copy acts the same; `menu.canMoveUp` is compared, and the row value (which the
 /// hide/delete closures capture) is part of `labelKey`.
@@ -18,6 +19,8 @@ struct HomeRowCard<Label: View>: View, Equatable {
     let name: String
     let accessibilityText: String
     let titles: CardTitleSlot?
+    /// Build 6: the row's programmatic focus serial (`HomeRowView.focusCard`).
+    let focusSerial: Int
     let inContinueRow: Bool
     let inWatchlistRow: Bool
     /// What decides `label` (item, rank, card form, title room, row style, upcoming row) and the row.
@@ -26,15 +29,17 @@ struct HomeRowCard<Label: View>: View, Equatable {
     let onActivate: (Route) -> Route?
     let menu: HomeRowMenu?
     let onLeave: () -> Void
+    /// Build 6: this card's focus changed (to the row's `RowFocusBox`).
+    let onFocus: (Bool) -> Void
     let label: Label
     /// Home page only (`metric: home.rowBody` field `zellen`).
     @Environment(\.homeRowFocusMemory) private var homeMemory
-    /// Build 6: focus of this card's button (title line below: fade, shift), set by `CardFocusProbe`.
+    /// Build 6: focus of this card's button (title line below: fade, shift), set by `ButtonFocusProbe`.
     @State private var focused = false
 
     nonisolated static func == (a: HomeRowCard, b: HomeRowCard) -> Bool {
         // Split into single checks (CI type checker: keep each expression short).
-        guard a.route == b.route, a.labelKey == b.labelKey else { return false }
+        guard a.focusSerial == b.focusSerial, a.route == b.route, a.labelKey == b.labelKey else { return false }
         guard a.name == b.name, a.accessibilityText == b.accessibilityText, a.titles == b.titles else { return false }
         guard a.inContinueRow == b.inContinueRow, a.inWatchlistRow == b.inWatchlistRow else { return false }
         let moveA: Bool? = a.menu?.canMoveUp
@@ -45,7 +50,13 @@ struct HomeRowCard<Label: View>: View, Equatable {
     var body: some View {
         let _ = RowBodyMeter.cellPass(onHome: homeMemory != nil)
         // Same modifiers in the same order as `HomeRowView.card` + `listCard` before (focus, Wave L menu, VoiceOver).
-        let probed = label.background { CardFocusProbe { f in if focused != f { focused = f } } }
+        let report: (Bool) -> Void = onFocus
+        let probed = label.background {
+            ButtonFocusProbe { f in
+                if focused != f { focused = f }
+                report(f)
+            }
+        }
         let link = NavigationLinkish(route: route, onActivate: onActivate, label: probed)
             .focused(focus, equals: route)
             .tileMenu(route.tileItem, inContinueRow: inContinueRow, inWatchlistRow: inWatchlistRow, row: menu,
@@ -57,9 +68,10 @@ struct HomeRowCard<Label: View>: View, Equatable {
     }
 }
 
-/// Build 6 (redraw): reports the focus of the button it sits in (`isFocused` reaches the button's label only).
-/// Empty and hidden; runs only when that focus changes.
-private struct CardFocusProbe: View {
+/// Build 6 (redraw): reports the focus of the button whose label it sits in (`isFocused` reaches the label only).
+/// Empty and hidden; runs only when that focus changes. Reports "false" when it leaves the screen (a focused
+/// placeholder removed by the loaded row, a removed card), as the row's focus state went nil then.
+struct ButtonFocusProbe: View {
     let report: (Bool) -> Void
     @Environment(\.isFocused) private var isFocused
 
@@ -67,6 +79,7 @@ private struct CardFocusProbe: View {
         Color.clear
             .accessibilityHidden(true)
             .onChange(of: isFocused, initial: true) { _, f in report(f) }
+            .onDisappear { report(false) }
     }
 }
 
