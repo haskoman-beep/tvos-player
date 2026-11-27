@@ -39,7 +39,10 @@ struct GenrePageView: View {
 
     init(folder: Folder, sources: GenrePageSources) {
         self.folder = folder; self.sources = sources
-        _filter = State(initialValue: GenreFilter.initial(available: sources.available))
+        // Build 7 review: the studio page opens on Serien when it came from a series (or is a network).
+        let start = StudioPage.initialFilter(folder, available: sources.available)
+            ?? GenreFilter.initial(available: sources.available)
+        _filter = State(initialValue: start)
     }
 
     var body: some View {
@@ -75,7 +78,7 @@ struct GenrePageView: View {
         .padding(.bottom, bottom)
         .ignoresSafeArea(edges: .bottom)
         .environment(\.cardScale, s)
-        .environment(\.prefetchRow, PrefetchRow(key: "genre|\(folder.id)|\(filter.rawValue)", title: "Genre \(folder.title) \(filter.title)"))
+        .environment(\.prefetchRow, PrefetchRow(key: "genre|\(folder.id)|\(filter.rawValue)", title: "\(logLabel) \(folder.title) \(filter.title)"))
         .task(id: filter) {
             if paging[filter] == nil { startFirst(filter) }
         }

@@ -13,6 +13,8 @@ struct StudioRow: View {
     let studios: [StudioLogo]
     /// TMDB ID of the title (log line once per title and app run).
     let titleID: Int
+    /// Build 7 review: opened from a series, the studio page opens on Serien.
+    var fromSeries = false
     @EnvironmentObject var model: AppModel
     @Environment(\.navigate) private var navigate
     /// The shown plates with the missing logos filled in, once the lookups answered.
@@ -22,10 +24,15 @@ struct StudioRow: View {
 
     private var shown: [StudioLogo] { filled ?? Array(studios.prefix(Self.maxShown)) }
 
+    private var entries: [StudioRowEntry] {
+        let list = shown
+        return zip(StudioLogoFill.rowIDs(list), list).map { StudioRowEntry(id: $0, studio: $1) }
+    }
+
     var body: some View {
         ScrollView(.horizontal) {
             HStack(spacing: Theme.Space.m) {
-                ForEach(shown, id: \.rowID) { s in plate(s) }
+                ForEach(entries) { e in plate(e.studio) }
             }
             // Tile style lifts by `focus.tileScale` (as `CastRow`); the vertical room keeps tile and shadow clear.
             .padding(.vertical, Theme.Focus.tileRowPadding)
@@ -34,16 +41,17 @@ struct StudioRow: View {
         .task(id: studios) {
             let first = Array(studios.prefix(Self.maxShown))
             // Other studios (same view, new title): no plates of the previous title meanwhile.
-            if let f = filled, f.map(\.rowID) != first.map(\.rowID) { filled = nil }
-            let result = await StudioLogoLookup.fill(first, tmdb: model.tmdb)
+            if let f = filled, StudioLogoFill.rowIDs(f) != StudioLogoFill.rowIDs(first) { filled = nil }
+            let result = await StudioLogoLookup.fill(first, tmdb: model.tmdb) { now in
+                if !Task.isCancelled { filled = now }
+            }
             guard !Task.isCancelled else { return }
-            filled = result
             StudioRowLog.note(titleID: titleID, studios: result)
         }
     }
 
     @ViewBuilder private func plate(_ s: StudioLogo) -> some View {
-        if let folder = StudioPage.folder(for: s) {
+        if let folder = StudioPage.folder(for: s, preferSeries: fromSeries) {
             Button {
                 RemoteLog.info("detail", "Studio: \(s.name) (\(s.kind.rawValue) \(s.id ?? 0)) gewählt")
                 navigate(.folder(folder))
@@ -100,46 +108,40 @@ private struct StudioPlate: View {
     }
 }
 
-private extension StudioLogo {
-    /// Identity in the row: stays the same when the logo gets filled in (the focus stays on the plate).
-    var rowID: String { key ?? "name:\(name)" }
+/// One plate of the row with its unique ForEach ID (`StudioLogoFill.rowIDs`: stays the same when the logo gets
+/// filled in, so the focus stays on the plate).
+private struct StudioRowEntry: Identifiable {
+    let id: String
+    let studio: StudioLogo
 }
 
 /// Build 7: logos for plates without `logo_path` (`/company|network/{id}/images`), at most once per studio and app
-/// run (a found logo and "none" are kept; a failed request is tried again on the next detail page).
+/// run (a found logo and "none" are kept). Review: a failed request waits `retryAfter` before it is tried again;
+/// each answer is applied as it arrives (`update`).
 @MainActor enum StudioLogoLookup {
     private static var known: [String: String?] = [:]
+    private static var failedAt: [String: Date] = [:]
+    static let retryAfter: TimeInterval = 600
 
-    static func fill(_ studios: [StudioLogo], tmdb: TMDBClient?) async -> [StudioLogo] {
+    static func fill(_ studios: [StudioLogo], tmdb: TMDBClient?,
+                     update: @MainActor ([StudioLogo]) -> Void) async -> [StudioLogo] {
         var found: [String: String] = [:]
         var open: [StudioLogo] = []
+        let now = Date()
         for s in StudioLogoFill.lookups(studios) {
             guard let k = s.key else { continue }
             if let hit = known[k] {
                 if let l = hit { found[k] = l }
+            } else if let t = failedAt[k], now.timeIntervalSince(t) < retryAfter {
+                continue   // failed a moment ago: text plate for now
             } else {
                 open.append(s)
             }
         }
-        if let tmdb, !open.isEmpty {
-            let answers = await lookUp(open, tmdb: tmdb)
-            for a in answers {
-                guard a.ok else { continue }   // request failed: not remembered
-                known.updateValue(a.logo, forKey: a.key)
-                if let l = a.logo { found[a.key] = l }
-            }
-        }
-        return StudioLogoFill.apply(studios, found: found)
-    }
-
-    private struct Answer: Sendable {
-        var key: String
-        var logo: String?
-        var ok: Bool
-    }
-
-    private static func lookUp(_ open: [StudioLogo], tmdb: TMDBClient) async -> [Answer] {
-        await withTaskGroup(of: Answer.self) { group -> [Answer] in
+        var current = StudioLogoFill.apply(studios, found: found)
+        update(current)
+        guard let tmdb, !open.isEmpty else { return current }
+        await withTaskGroup(of: Answer.self) { group in
             for s in open {
                 guard let k = s.key else { continue }
                 group.addTask {
@@ -151,10 +153,23 @@ private extension StudioLogo {
                     }
                 }
             }
-            var out: [Answer] = []
-            for await a in group { out.append(a) }
-            return out
+            for await a in group {
+                guard a.ok else { failedAt[a.key] = Date(); continue }
+                failedAt[a.key] = nil
+                known.updateValue(a.logo, forKey: a.key)
+                guard let l = a.logo else { continue }
+                found[a.key] = l
+                current = StudioLogoFill.apply(studios, found: found)
+                update(current)
+            }
         }
+        return current
+    }
+
+    private struct Answer: Sendable {
+        var key: String
+        var logo: String?
+        var ok: Bool
     }
 }
 

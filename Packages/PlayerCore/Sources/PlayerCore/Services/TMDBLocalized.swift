@@ -55,6 +55,13 @@ public struct StudioLogo: Sendable, Equatable, Hashable {
         self.name = name; self.logo = logo; self.id = id; self.kind = kind
     }
 
+    /// Build 7 review: the name for matching („HBO“ = „hbo “ = „HBÖ“): trimmed, case and diacritics folded.
+    public var foldedName: String { Self.foldedName(name) }
+
+    static func foldedName(_ s: String) -> String {
+        s.trimmingCharacters(in: .whitespaces).folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+    }
+
     /// Key of this studio across titles ("company:2", "network:49"); nil without a TMDB ID.
     public var key: String? { id.map { "\(kind.rawValue):\($0)" } }
 }
@@ -144,7 +151,7 @@ extension TMDBClient {
             return ((o[key] as? [[String: Any]]) ?? []).compactMap { e in
                 guard let name = nonEmpty(e["name"]) else { return nil }
                 let id = (e["id"] as? Int) ?? (e["id"] as? Double).flatMap(SafeNumber.int)
-                guard seen.insert(id.map { "id:\($0)" } ?? "name:\(name)").inserted else { return nil }
+                guard seen.insert(id.map { "id:\($0)" } ?? "name:\(StudioLogo.foldedName(name))").inserted else { return nil }
                 return StudioLogo(name: name, logo: nonEmpty(e["logo_path"]).map { studioLogoBase + $0 }, id: id, kind: kind)
             }
         }
@@ -154,7 +161,7 @@ extension TMDBClient {
             // Review N6: a company that is network and producer once (by name); then two producers at most.
             let networks = studios("networks")
             m.studioLogos = networks + studios("production_companies")
-                .filter { p in !networks.contains { $0.name == p.name } }.prefix(2)
+                .filter { p in !networks.contains { $0.foldedName == p.foldedName } }.prefix(2)   // Build 7 review: folded
             m.studios = m.studioLogos.map(\.name)
             m.seasons = o["number_of_seasons"] as? Int
             m.episodes = o["number_of_episodes"] as? Int

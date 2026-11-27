@@ -109,3 +109,51 @@ import Testing
     #expect(try await client.studioLogo(c) == "https://image.tmdb.org/t/p/w300/n.png")
     #expect(try await client.studioLogo(d) == nil)
 }
+
+// Review 2: a company that is the network too (folded name: „HBO“ / „hbo “) is one plate, the network wins; the row
+// IDs are unique even for two plates without ID and the same name.
+@Test func studiosDedupeAcrossKindsAndRowIDsAreUnique() {
+    let series = #"""
+    {"id":9,"name":"S","networks":[{"id":49,"name":"HBO","logo_path":"/hbo.png"}],
+     "production_companies":[{"id":3268,"name":"hbo ","logo_path":"/c.png"},{"id":7,"name":"Pathé"},{"name":"PATHE"}]}
+    """#
+    let s = TMDBClient.parseLocalized(Data(series.utf8), lang: "de", region: "DE", series: true)
+    #expect(s?.studioLogos.map(\.name) == ["HBO", "Pathé", "PATHE"])
+    #expect(s?.studioLogos.first?.kind == .network)
+    let noID = #"{"id":1,"title":"A","production_companies":[{"name":"X"},{"name":"x"},{"name":"Y"}]}"#
+    let m = TMDBClient.parseLocalized(Data(noID.utf8), lang: "de", region: "DE", series: false)
+    #expect(m?.studioLogos.map(\.name) == ["X", "Y"])
+    let twins = [StudioLogo(name: "A", logo: nil), StudioLogo(name: "a", logo: nil),
+                 StudioLogo(name: "B", logo: nil, id: 1), StudioLogo(name: "B", logo: nil, id: 1, kind: .network)]
+    let ids = StudioLogoFill.rowIDs(twins)
+    #expect(ids == ["name:a", "name:a#2", "company:1", "network:1"])
+    #expect(Set(ids).count == ids.count)
+}
+
+// Review 1: opened from a series (or a network) the studio page opens on Serien; genre pages keep Filme.
+@Test func studioPageOpensOnSeriesFromASeries() {
+    let pixar = StudioLogo(name: "Pixar", logo: nil, id: 3, kind: .company)
+    let fromSeries = StudioPage.folder(for: pixar, preferSeries: true)!
+    let all: [GenreFilter] = [.movies, .series]
+    #expect(StudioPage.initialFilter(fromSeries, available: all) == .series)
+    #expect(GenrePageRule.sources(for: fromSeries, collection: { _ in nil })?.available == all)
+    #expect(StudioPage.initialFilter(StudioPage.folder(for: pixar)!, available: all) == .movies)
+    let hbo = StudioPage.folder(for: StudioLogo(name: "HBO", logo: nil, id: 49, kind: .network))!
+    #expect(StudioPage.initialFilter(hbo, available: [.series]) == .series)
+    let genre = Folder(id: "pkg.genres.action", title: "Action", sources: [
+        CatalogSource(id: "s", title: "S", kind: .tmdbDiscover(filters: [:]), mediaType: .series)])
+    #expect(StudioPage.initialFilter(genre, available: all) == nil)
+}
+
+// Review 3: only `studio.(company|network).<digits>` is a studio page; an imported „studio.x“ stays a folder.
+@Test func studioPrefixIsReserved() {
+    let src = CatalogSource(id: "s", title: "S", kind: .tmdbDiscover(filters: [:]), mediaType: .movie)
+    for id in ["studio.x", "studio.company.", "studio.company.12a", "studio.label.3", "studio.company.3.extra", "studio."] {
+        let f = Folder(id: id, title: "X", logo: "https://example.invalid/x.png", sources: [src])
+        #expect(!StudioPage.isStudio(f), "\(id)")
+        #expect(GenrePageRule.sources(for: f, collection: { _ in nil }) == nil, "\(id)")
+        #expect(StudioPage.headerLogo(f) == nil)
+    }
+    #expect(StudioPage.isStudioID("studio.company.3"))
+    #expect(StudioPage.isStudioID("studio.network.49"))
+}
