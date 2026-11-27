@@ -79,7 +79,7 @@ final class RatingIconStore: ObservableObject {
 
 /// Bewertungs-Quelle als Icon aus dem Satz; solange das Bild nicht geladen ist oder scheitert, der eingebaute Text.
 struct RatingIconLabel<Fallback: View>: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @ObservedObject private var store = RatingIconStore.shared
     let source: String
     @ViewBuilder let fallback: Fallback

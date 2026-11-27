@@ -5,7 +5,7 @@ import PlayerCore
 /// Abspielen über einen frischen `requestdl`-Link; ohne Weiterschauen/Scrobble (keine IMDb-ID). Welle D-a: eigener
 /// Fortschritt je TorBox-Datei (PlayerMemory), „Fortsetzen ab …“ auf der Kachel, Kontextmenü „Von vorn abspielen“.
 struct TorBoxFilesRow: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @State private var files: [TorBoxFile]?
     @State private var failed = false
     @State private var playing: TorBoxPlay?
@@ -88,7 +88,7 @@ struct TorBoxFilesRow: View {
                              ownProgress: OwnProgress(start: p.start) { [profile = model.profile.id] pos, dur in
                                  PlayerMemory.shared.recordFile(profile: profile, key: Self.progressKey(p.file), position: pos, duration: dur)
                              })
-                    .environmentObject(model)
+                    .environment(model)
             }
         }
     }

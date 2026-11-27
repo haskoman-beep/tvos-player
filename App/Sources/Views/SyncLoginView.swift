@@ -3,7 +3,7 @@ import PlayerCore
 
 /// Geräte-Login für Trakt/Simkl: Code am Handy eingeben, der Fernseher fragt nach.
 struct SyncLoginView: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     let service: String
     @Environment(\.dismiss) private var dismiss
     @State private var code: DeviceCode?

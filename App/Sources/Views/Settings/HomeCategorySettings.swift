@@ -5,7 +5,7 @@ import PlayerCore
 /// hier nur eingehängt), Titelbild, Kalender. Task 4.5: card size is the catalog row „Kartengröße“ under Aussehen;
 /// integration build 5: hero on/off is the catalog row „Hero-Stil“ there too.
 struct HomeCategorySettings: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @ObservedObject private var kit = FusionKitStore.shared
 
     private let tint = SettingsCategory.home.tint

@@ -9,7 +9,7 @@ import PlayerCore
 /// decision 26.11.): the old row „Plaketten-Stil“ is gone too; the look row `badgeStyle` sets the style
 /// (`Profile.adoptOldLookRows` moves an old value into the look once).
 struct AppearanceSettings: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @ObservedObject private var icons = RatingIconStore.shared
 
     private let tint = SettingsCategory.appearance.tint
@@ -53,7 +53,7 @@ struct AppearanceSettings: View {
 
 /// Unterseite „Plaketten im Detail“: die 9 Typ-Schalter (Quellenliste, Detailseite, Poster).
 struct BadgeDetailPage: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
 
     /// Einzeln abschaltbare Plaketten-Typen.
     static let types: [(String, WritableKeyPath<BadgeSettings, Bool>)] = [

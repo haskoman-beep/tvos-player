@@ -12,7 +12,7 @@ import PlayerCore
 /// - `ausfuehrlich`: „Sofort verfügbar · Name · Größe“ as the head line, the full addon text below (meta, wrapping).
 /// - `karten`: head (name, size right), the badge row and the text kept apart.
 struct StreamRow: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     let addon: String?
     let stream: StreamItem
     /// Fokussierte Zeile ist weiß: Texte über `textRoleInRow` dunkel, Plaketten auf der Fokus-Tönung.

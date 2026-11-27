@@ -173,7 +173,7 @@ extension StreamListView {
 
 /// Einstellung „Zeitgrenze je Addon“ (Einstellungen › Addons › Suche, wave S).
 struct AddonTimeoutPicker: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
 
     var body: some View {
         // Alte/fremde Werte auf die nächstliegende Auswahl abbilden (Welle F-a: Auswahlzeile statt Picker).

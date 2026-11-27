@@ -4,7 +4,7 @@ import PlayerCore
 
 /// Suche über TMDB (Filme + Serien).
 struct SearchView: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @State private var query = ""
     @State private var results: [MetaPreview] = []
     @State private var searching = false

@@ -21,7 +21,6 @@ final class FusionKitStore: ObservableObject {
     @Published private(set) var listingError: String?
 
     private weak var model: AppModel?
-    private var watch: AnyCancellable?
     private var syncQueued = false
     private var settingsProfile: UUID?
     /// Task 2.4: false while no settings are stored for the profile (e.g. a restored backup without kit settings):
@@ -50,11 +49,6 @@ final class FusionKitStore: ObservableObject {
         self.model = model
         blobs = storage
         CollectionLinkStore.shared.ensure(model)   // wave F-o round 2: preview packs before the first sync
-        // Profiländerung (Schlüssel, Layout, Profilwechsel) → abgleichen; erst danach, denn @Published meldet vor dem Setzen.
-        watch = model.$stored.dropFirst().sink { [weak self] _ in
-            guard let self else { return }
-            Task { @MainActor in self.scheduleSync() }
-        }
         for f in FusionKitCatalog.folders {
             if let d = disk.read(listingFile(f)) { listing += FusionKitCatalog.parseListing(d) }
         }
@@ -376,6 +370,13 @@ final class FusionKitStore: ObservableObject {
 
     // MARK: Abgleich mit der Startseite
 
+    /// Profiländerung (Schlüssel, Layout, Profilwechsel) → abgleichen. Called by `AppModel.stored` after every
+    /// change; one turn later, so a run of changes in one action is seen as a whole. Nothing before `attach`.
+    func storedChanged() {
+        guard model != nil else { return }
+        Task { @MainActor in self.scheduleSync() }
+    }
+
     private func scheduleSync() {
         guard !syncQueued else { return }
         syncQueued = true
@@ -420,7 +421,7 @@ final class FusionKitStore: ObservableObject {
             visible = vis
             artSources = art
             revision &+= 1
-            model.objectWillChange.send()   // Startseite liest die Kacheln über model.collection(_:)
+            model.collectionsChanged()   // Startseite liest die Kacheln über model.collection(_:)
         }
         if !artRequested, layout.rows.contains(where: { row in
             if case .collection(let id) = row.content { return id.hasPrefix("pkg.") }

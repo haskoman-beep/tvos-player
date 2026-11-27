@@ -5,7 +5,7 @@ import PlayerCore
 /// Wave S: all keys in one place, TorBox included (was under Addons & Quellen › TorBox).
 /// E7: Schlüssel und Client IDs nur noch am Handy; hier Status und Sprung auf die Handy-Seite (#keys).
 struct AccountSettingsRows: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @State private var logout: String?
     /// F-B-3: page opened from an account row. It lives outside the state switch, so the success of the page itself
     /// (keys saved, login done) only changes the row's value, never removes the link behind the open page.

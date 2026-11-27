@@ -8,7 +8,7 @@ import PlayerCore
 /// (`Theme.Focus`, `FocusHeadroom`).
 /// Wave G2 R1: genre folders open the genre page, every other folder the row page (PlayerCore `GenrePageRule`).
 struct FolderRouteView: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     let folder: Folder
     var body: some View {
         if let g = GenrePageRule.sources(for: folder, collection: { model.collection($0) }) {
@@ -20,7 +20,7 @@ struct FolderRouteView: View {
 }
 
 struct GenrePageView: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     let folder: Folder
     let sources: GenrePageSources
     /// New on every open of the page (pushed view), so the page always starts on Filme.

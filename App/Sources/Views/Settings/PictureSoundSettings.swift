@@ -6,7 +6,7 @@ import PlayerCore
 /// System › Erweitert › Bild, Ton & Untertitel, System › Gerätecheck). Round 2: stored per device
 /// (`AppModel.device`), the page says so (`SettingsCategory.scope`).
 struct PictureSoundSettings: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
 
     private let tint = SettingsCategory.picture.tint
 

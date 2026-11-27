@@ -9,7 +9,7 @@ import PlayerCore
 /// Welle E-a: Lage nach „Qualität auf Postern“ (Standard aus). Nie unten auf dem Bild: dort tragen viele Poster
 /// (Bewertungs-Poster) eine Genre-/Bewertungszeile. „Unten“ = eigener Streifen unter dem Bild (`PosterBadgeBand`).
 struct PosterQualityBadges: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     let item: MetaPreview
     var scale: CGFloat = 1
     /// Task 5.1: on a landscape card (no band below): always at the top trailing corner, never on the picture's
@@ -88,7 +88,7 @@ struct PosterQualityBadges: View {
 /// gilt (auch ohne Plaketten), damit alle Karten einer Reihe gleich hoch bleiben. Eigene View, damit nur sie
 /// (nicht die ganze Karte) auf Profiländerungen reagiert.
 struct PosterBadgeBand: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     /// Breite des Bildes darüber (in Reihen ist die angebotene Breite unbegrenzt).
     let width: CGFloat
 

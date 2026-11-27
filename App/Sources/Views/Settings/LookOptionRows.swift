@@ -10,7 +10,7 @@ import PlayerCore
 /// All writes go through `Profile.setLook` / `resetLook`, so the old fields follow and the theme changes at once.
 /// Rows are keyed by `entry.id` and keep their view type when the value changes, so focus stays on the row.
 struct LookOptionRows: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     /// Review b5i N3: reduce motion as the theme reads it (`ThemeValues.system`), one source for rows and drawing.
     @Environment(\.theme) private var theme
 
@@ -115,7 +115,7 @@ private struct LookOptionRow: View {
     let overridden: Bool
     let enabled: Bool
     let reason: String?
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
 
     private var value: String { raw.flatMap { entry.choiceLabel($0) } ?? "" }
     /// Review M6: a disabled row shows only its reason, so it stays one line high; an enabled row keeps the help
@@ -163,7 +163,7 @@ private struct LookOptionRow: View {
 /// Focus starts on the current value. Accent and background values show their colour field.
 struct LookChoicePage: View {
     let entry: LookOptionEntry
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @Environment(\.dismiss) private var dismiss
     @FocusState private var focus: String?
 

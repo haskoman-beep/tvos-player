@@ -3,7 +3,7 @@ import PlayerCore
 
 /// Welle E-a: „Qualität auf Postern“; Welle F-a: Zeile im Abschnitt „Karten“ der Kategorie Aussehen.
 struct PosterQualitySettingRow: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
 
     var body: some View {
         SettingsChoiceRow(symbol: "4k.tv", tint: SettingsCategory.appearance.tint, title: "Qualität auf Postern",
@@ -25,7 +25,7 @@ struct PosterQualitySettingRow: View {
 /// Welle E-a: gezeigte Bewertungsquellen (Schalter je Quelle), Standard IMDb, Rotten Tomatoes, Trakt.
 /// Welle F-a: auf der Unterseite „Bewertungen“ (Aussehen › Detailseite).
 struct RatingChoiceSettingRow: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
 
     /// Wert der Zeile „Bewertungen ›“: „IMDb, Trakt“ bzw. „3 Quellen“ / „Keine“.
     static func summary(_ t: TitleDisplaySettings) -> String {
@@ -55,7 +55,7 @@ struct RatingChoiceSettingRow: View {
 
 /// Unterseite „Bewertungen“ (§2.2 Aussehen › Detailseite).
 struct RatingsSettingsPage: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
 
     var body: some View {
         SettingsSubpage(title: "Bewertungen", summary: "Auf Detailseite und Startseite · " + RatingChoiceSettingRow.summary(model.profile.appearance.titles)) {
@@ -66,7 +66,7 @@ struct RatingsSettingsPage: View {
 
 /// Welle E-a: „Bilder vom Metadaten-Addon“, Standard an; ohne Metadaten-Addon gesperrt.
 struct MetadataAddonImagesSettingRow: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
 
     var body: some View {
         if model.hasMetadataAddon {

@@ -3,11 +3,11 @@ import PlayerCore
 
 @main
 struct PlayerApp: App {
-    @StateObject private var model = AppModel()
+    @State private var model = AppModel()
 
     var body: some Scene {
         WindowGroup {
-            RootView().environmentObject(model).task { DiskCacheProxy.cleanupAtLaunch(); MainThreadWatchdog.apply(); await model.syncRemoteProgress() }
+            RootView().environment(model).task { DiskCacheProxy.cleanupAtLaunch(); MainThreadWatchdog.apply(); await model.syncRemoteProgress() }
         }
     }
 }
@@ -58,7 +58,7 @@ struct PlayRequest: Hashable {
 }
 
 struct RootView: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @State private var tab: AppTab = .home
     @State private var path = NavigationPath()
     @State private var searchPath = NavigationPath()
@@ -249,7 +249,7 @@ struct RouteView: View {
 }
 
 struct ProfilePickerView: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @Environment(\.theme) private var theme
     let done: () -> Void
     var body: some View {

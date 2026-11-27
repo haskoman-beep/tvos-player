@@ -5,7 +5,7 @@ import PlayerCore
 /// (App aktualisieren ›, Lizenzen ›), Diagnose and Zwischenspeicher (wave S: inline, „Erweitert ›“ is dissolved).
 /// Gerätecheck moved to Bild & Ton.
 struct SystemSettings: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @ObservedObject private var updater = AppUpdater.shared
 
     private let tint = SettingsCategory.system.tint

@@ -4,7 +4,7 @@ import PlayerCore
 /// Kategorie „Profil & Konten“ (§2.2): Statuskarte, Profile wechseln/anlegen/löschen, Konten, Schlüssel (wave S:
 /// TMDB, MDBList and TorBox), Fortschritt.
 struct ProfileSettings: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @State private var naming = false
     @State private var newName = ""
     @State private var confirmDelete = false

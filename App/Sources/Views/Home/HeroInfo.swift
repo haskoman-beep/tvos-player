@@ -39,7 +39,7 @@ struct HeroInfoStyle: Equatable {
 /// Logo (sonst Name) und je nach `heroInfo` Metazeile Jahr · Laufzeit · FSK · Genre, Bewertungen, Beschreibung in
 /// 2 Zeilen und Plaketten.
 struct HeroInfo: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     let item: MetaPreview
     let style: HeroInfoStyle
     @State private var details: HeroDetails?
@@ -142,7 +142,7 @@ private struct HeroTitle: View {
 /// 26.11.): drawn in the theme's badge style (`detail.badgeStyle`, `logos` = wordmark logos), the shown badge types
 /// from `appearance.badges`.
 private struct HeroQualityBadges: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @Environment(\.theme) private var theme
     let item: MetaPreview
     @State private var best: BestQuality?

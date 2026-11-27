@@ -3,7 +3,7 @@ import PlayerCore
 
 /// Welle C-d: Spoilerschutz für Folgenbilder (Aussehen › Karten).
 struct SpoilerSettingsRow: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
 
     var body: some View {
         SettingsToggleRow(symbol: "eye.slash", tint: SettingsCategory.appearance.tint,
@@ -17,7 +17,7 @@ struct SpoilerSettingsRow: View {
 /// E7: Die Adresse kommt nur noch von der Handy-Seite (Feld „icon_set“, Abschnitt System); hier Status und
 /// „Eingebaute Plaketten verwenden“. Erreichbar über Aussehen › Plaketten (wave S: only there).
 struct RatingIconSettingsPage: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @ObservedObject private var store = RatingIconStore.shared
 
     private let tint = SettingsCategory.appearance.tint

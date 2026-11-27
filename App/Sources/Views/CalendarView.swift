@@ -3,7 +3,7 @@ import PlayerCore
 
 /// Kalender (Spec §7a.3): Folgen der Serien aus Weiterschauen und Merkliste, gestern bis 14 Tage voraus, nach Tag.
 struct CalendarView: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @State private var episodes: [UpcomingEpisode] = []
     @ObservedObject private var revision = UpcomingRevision.shared   // Sendezeiten kommen nachträglich (Welle C-d)
     @State private var loaded = false

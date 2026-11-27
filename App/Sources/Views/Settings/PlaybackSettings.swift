@@ -5,7 +5,7 @@ import PlayerCore
 /// (was „iPhone & Kontrollzentrum“, plus „Ton & Untertitel öffnen“ and the screensaver), Zwischenspeichern.
 /// Moved out: Spur-Wahl merken → Sprache & Untertitel, HDMI-Modus → Bild & Ton, Sofort abspielen → Quellen.
 struct PlaybackSettings: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
 
     private let tint = SettingsCategory.playback.tint
 

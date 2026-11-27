@@ -5,7 +5,7 @@ import PlayerCore
 /// (Katalog-Zwischenspeicher leeren, mit Rückfrage, E6). Was the subpage „System › Erweitert“, which is dissolved:
 /// Zeitgrenze je Addon → Addons, Dolby Vision fest/FEL → Bild & Ton, Icon-Satz only under Aussehen › Plaketten.
 struct SystemMaintenanceRows: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @AppStorage(MainThreadWatchdog.settingKey) private var hitchLog = true
     @AppStorage(XRayProbe.settingKey) private var xrayProbe = false
     /// Task 5.1: Build 4 cards on the home page (one build, for telling focus problems of the new cards apart).
@@ -70,7 +70,7 @@ struct SystemMaintenanceRows: View {
 /// Task 1.5 (SEC-2): Unterseite „Fern-Log“. Aus per Standard; beim Einschalten erscheinen die gefundenen Empfänger
 /// zur Auswahl. Gesendet wird nur an den gewählten Dienstnamen und nur mit dem Schlüssel von der Handy-Seite.
 struct RemoteLogPage: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @State private var found = RemoteLog.shared.foundReceivers
     @State private var status = RemoteLog.shared.status
 

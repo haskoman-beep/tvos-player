@@ -282,7 +282,7 @@ final class PhoneServer: ObservableObject {
 struct PhoneInputView: View {
     /// Welle F-e: Abschnitt, bei dem die Handy-Seite aufgeht (Anker in der QR-Adresse); nil = Seitenanfang.
     var section: PhoneSection? = nil
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var server = PhoneServer()

@@ -51,7 +51,7 @@ extension SettingsCategory {
 /// - `liste`: one centred list, each category under its header (`SettingsListView`).
 /// Subpages live in the NavigationStack and close themselves first.
 struct SettingsView: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @Binding var selected: SettingsCategory
     /// Zurück in der obersten Ebene: verlässt die Einstellungen (RootView wechselt zum Start-Tab, N2).
     /// Ohne Standardwert (fix-einstellungen Minor 1): ein vergessener Aufrufer fiele sonst still in ein No-op.

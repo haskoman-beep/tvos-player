@@ -6,7 +6,7 @@ import PlayerCore
 /// Mit Hero (Spec §7a.1): hinten Hintergrund + Info des angezeigten Titels, darüber der ScrollView mit
 /// Knopfzeile und Reihen. Angezeigt wird die Diashow-Folie oder, solange der Fokus in den Reihen liegt, die Kachel.
 struct HomeView: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @State private var focus = HomeFocus()
     /// Verwalter öffnen (Kontextmenü, Knopf unten, leere Startseite).
     @State private var manager: ManagerTarget?

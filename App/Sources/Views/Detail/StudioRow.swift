@@ -15,7 +15,7 @@ struct StudioRow: View {
     let titleID: Int
     /// Build 7 review: opened from a series, the studio page opens on Serien.
     var fromSeries = false
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @Environment(\.navigate) private var navigate
     /// The shown plates with the missing logos filled in, once the lookups answered.
     @State private var filled: [StudioLogo]?

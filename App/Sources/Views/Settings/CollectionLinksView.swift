@@ -4,7 +4,7 @@ import PlayerCore
 /// Wave F-o round 2: Settings › Startseite › "Collection-Link hinzufügen". A link to a widget export, preview pack
 /// or collection export is fetched, detected and imported; stored links can be fetched again ("Aktualisieren").
 struct CollectionLinksPage: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @ObservedObject private var store = CollectionLinkStore.shared
     @State private var link = ""
 

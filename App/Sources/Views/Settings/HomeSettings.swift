@@ -4,7 +4,7 @@ import PlayerCore
 /// Kategorie „Startseite“ (Plan §2.2): Verwalter „Reihen & Collections“, Fusion-Kit, Import am Handy.
 /// Reihen ordnen, hinzufügen und ausblenden passiert im Verwalter (Welle F-b2); Importe laufen über die Handy-Seite.
 struct HomeSettings: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
 
     var body: some View {
         let n = model.profile.home.rows.count

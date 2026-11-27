@@ -4,7 +4,7 @@ import PlayerCore
 /// Wave P-a: section „Überspringen“: action per segment type (Aus / Knopf / Automatisch) and the card after a movie.
 /// Self-contained component; since the wave S merge it sits in Wiedergabe › „Überspringen“ (after „Folgen“), stored per profile.
 struct SkipSettingsRows: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
 
     private let tint = SettingsCategory.playback.tint
 

@@ -5,7 +5,7 @@ import PlayerCore
 /// Rows unchanged, only moved: sorting, badges and prefetch were „Addons & Quellen › Quellenliste“,
 /// „Sofort abspielen anzeigen“ was „Wiedergabe & Bild › Detailseite“ (wave F-n). TorBox key: Profil & Konten.
 struct SourceCategorySettings: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
 
     private let tint = SettingsCategory.sources.tint
 

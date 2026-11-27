@@ -12,7 +12,7 @@ struct TilePosterImage: View {
     /// Title under the picture, visible until the picture covers it (off while the card is expanded: it shows logo or
     /// title itself).
     var showsTitle = true
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     /// Ergebnis samt Schlüssel: nach Profil- oder Addon-Wechsel gilt ein altes Ergebnis nicht mehr.
     @State private var loaded: Loaded?
     /// Wave F-k: addresses of this tile that failed to load (with the item they belong to).

@@ -4,7 +4,7 @@ import PlayerCore
 
 /// Quellenliste aller Addons (Reihenfolge von AIOStreams), mit Plaketten.
 struct StreamListView: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     /// Task 5.3: `detail.sourceList` for the log line (the rows read it themselves).
     @Environment(\.theme) private var theme
     let request: PlayRequest
@@ -279,7 +279,7 @@ struct StreamListView: View {
                                                                              onSourceVerdict: { [id = (current ?? request).id] in PlaybackStability.shared.apply($0, stream: s, title: id) },
                                                                              releaseName: s.behaviorHints?.filename,
                                                                              sideLinks: sidePanelLinks(for: s),
-                                                                             startOverride: sideStart?.id == s.id ? sideStart?.at : nil).environmentObject(model) }   // Wave P-b
+                                                                             startOverride: sideStart?.id == s.id ? sideStart?.at : nil).environment(model) }   // Wave P-b
         }
         .modifier(StillWatchingAlert(state: $autoNext, note: $nextNote) { startNext($0.next, after: $0.stream, auto: false) })
     }

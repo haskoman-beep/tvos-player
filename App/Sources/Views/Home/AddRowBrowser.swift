@@ -16,7 +16,7 @@ struct KeyedRowSection {
 
 struct AddRowBrowser: View {
     let session: HomeRowsSession
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @ObservedObject private var kit = FusionKitStore.shared
     @Environment(\.dismiss) private var dismiss
 
@@ -217,7 +217,7 @@ struct AddRowBrowser: View {
 /// Suchseite des Browsers (Rückfallweg §6.4): `.searchable` über alle Quellen, Treffer mit Quelle im Untertitel.
 private struct AddRowSearch: View {
     let session: HomeRowsSession
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @State private var query = ""
     @State private var hideCandidate: HomeRow?
 

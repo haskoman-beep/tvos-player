@@ -3,7 +3,7 @@ import PlayerCore
 
 /// Bibliothek (Spec §5, §7a.5): Weiterschauen, Merkliste, Verlauf.
 struct LibraryView: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @State private var continueRow = HomeRow(content: .list(.continueWatching), style: .landscape)
     @State private var watchlistRow = HomeRow(content: .list(.watchlist), style: .poster)
     /// Fokus-Entprellung wie auf der Startseite (ohne Hero): treibt das Vorladen der Quellen.
@@ -36,7 +36,7 @@ struct LibraryView: View {
 
 /// Verlauf: lokal zu Ende gesehene Titel, neueste zuerst (Trakt/Simkl-Verlauf folgt später).
 private struct HistoryRow: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
 
     var body: some View {
         let items = model.progress.history().map(\.item)

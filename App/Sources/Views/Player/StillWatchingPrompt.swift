@@ -40,7 +40,7 @@ struct StillWatchingAlert: ViewModifier {
     @Binding var state: AutoNextState
     @Binding var note: String?
     let onContinue: (StillWatchingAsk) -> Void
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @Environment(\.theme) private var theme
     /// „Weiterschauen“ answered: started only once the cover is gone (onDismiss), so the player's cover on the same
     /// view does not arrive while this one is still tearing down.

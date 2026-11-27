@@ -20,7 +20,7 @@ extension AppModel {
     /// Queue of the active profile (loaded on first use and after a profile switch).
     var syncQueue: SyncQueue {
         get { ensureSyncQueue(); return SyncQueueHolder.shared.queue }
-        set { ensureSyncQueue(); SyncQueueHolder.shared.queue = newValue }
+        set { ensureSyncQueue(); SyncQueueHolder.shared.queue = newValue; watchlistChanged() }
     }
 
     private func ensureSyncQueue() {
@@ -46,6 +46,7 @@ extension AppModel {
 
     /// Watchlist state for the menu: last pull plus pending local changes.
     func isOnWatchlist(_ m: MetaPreview) -> Bool {
+        _ = watchlistRevision   // observed: the cache and the queue are not
         let imdb = cachedIMDbID(for: m)
         let remote = cache[CatalogSource.watchlist.id]?.contains { $0.id == m.id || (imdb != nil && $0.id == imdb) } ?? false
         let q = syncQueue, byTile = q.isOnWatchlist(m.id, remote: remote)

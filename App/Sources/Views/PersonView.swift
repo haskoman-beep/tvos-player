@@ -3,7 +3,7 @@ import PlayerCore
 
 /// Personenseite (aus der Besetzung): Foto, Name, Biografie, darunter die Filmografie nach Beliebtheit.
 struct PersonView: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     let personID: Int
     let name: String
     @State private var person: PersonCredits?

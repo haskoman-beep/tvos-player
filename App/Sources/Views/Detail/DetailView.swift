@@ -4,7 +4,7 @@ import PlayerCore
 
 /// Detailseite: Hintergrund, Beschreibung, Abspielen (Film) bzw. Staffeln/Folgen (Serie).
 struct DetailView: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @Environment(\.navigate) private var navigate
     /// Task 5.3: the detail options (`theme.detail`: layout, description, cast, badges, ratings).
     @Environment(\.theme) private var theme
@@ -266,7 +266,7 @@ struct DetailView: View {
                              }
                          },
                          isTrailer: true, remoteHLS: t.stream.isHLS)
-                .environmentObject(model)
+                .environment(model)
         }
     }
 

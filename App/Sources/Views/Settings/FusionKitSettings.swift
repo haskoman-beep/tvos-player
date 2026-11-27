@@ -6,7 +6,7 @@ import PlayerCore
 /// an der Startseite und lassen sich im Verwalter wie jede Reihe ordnen oder ausblenden.
 /// Kit-Dateien kommen zur Laufzeit von GitHub (kit.betterer.cc).
 struct FusionKitSettingsView: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @ObservedObject private var kit = FusionKitStore.shared
     @State private var removeCandidate: FusionKitSource?
     /// F-B-3: phone page opened from the Trakt row; outside the row so saving the ID does not close it.

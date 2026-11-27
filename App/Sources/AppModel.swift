@@ -4,33 +4,56 @@ import PlayerCore
 
 /// App-Zustand: Profile (persistiert), Clients, Katalog-Cache.
 @MainActor
-final class AppModel: ObservableObject {
-    @Published private(set) var stored: StoredProfiles { didSet { profileRevision &+= 1; syncRemoteLog() } }
+@Observable
+final class AppModel {
+    /// Phase 0b: the model is `@Observable`, a view re-renders only for the properties its body read. `stored` and
+    /// `lastError` are computed over an observed value so their side effects do not depend on the macro.
+    private(set) var stored: StoredProfiles {
+        get { storedValue }
+        set {
+            storedValue = newValue
+            profileRevision &+= 1
+            syncRemoteLog()
+            FusionKitStore.shared.storedChanged()
+        }
+    }
+    private var storedValue: StoredProfiles
     /// Zählt Profiländerungen (Merker der Paket-Kachelbilder, Welle F-g).
-    private var profileRevision = 0
-    private var packageArt = PackageArtMemo()
-    @Published var lastError: String? { didSet { if let e = lastError { RemoteLog.error("fehler", e) } } }
-    @Published var notice: String?
+    @ObservationIgnored private var profileRevision = 0
+    @ObservationIgnored private var packageArt = PackageArtMemo()
+    var lastError: String? {
+        get { lastErrorValue }
+        set { lastErrorValue = newValue; if let e = newValue { RemoteLog.error("fehler", e) } }
+    }
+    private var lastErrorValue: String?
+    /// Phase 0b: counts changes of the kit and link stores (their state is not observed); `collection(_:)` reads
+    /// it, so every view that shows a collection follows. Replaces `objectWillChange.send()`.
+    private(set) var collectionsRevision = 0
+    /// Phase 0b: counts changes of the watchlist state (`isOnWatchlist` reads it: the tile menu follows).
+    private(set) var watchlistRevision = 0
+    func collectionsChanged() { collectionsRevision &+= 1 }
+    func watchlistChanged() { watchlistRevision &+= 1 }
+    var notice: String?
     let store: ProfileStore
     /// Task 2.2 (SEC-14): keys and sync logins also in the Keychain (stage 1: profiles keep them, format unchanged).
     /// Write rule: both (`save()`). At a normal start the profile wins; the Keychain fills gaps only on recovery.
     let secrets: SecretStore = KeychainSecretStore()
     /// What the Keychain holds per profile after the last save; `save()` writes only the differences.
-    private var secretSnapshot: SecretSnapshot = [:]
+    @ObservationIgnored private var secretSnapshot: SecretSnapshot = [:]
     /// Build 5 device test 1: bytes per profile part at the last load or save (`noteProfileSizes`).
-    private var profileSizes: [UUID: [String: Int]] = [:]
+    @ObservationIgnored private var profileSizes: [UUID: [String: Int]] = [:]
     /// Review N7: the running size check (encoding off the main thread; saves during an encode collapse into one).
-    private var profileSizeTask: Task<Void, Never>?
-    private var profileSizeTaskIsSave = false
+    @ObservationIgnored private var profileSizeTask: Task<Void, Never>?
+    @ObservationIgnored private var profileSizeTaskIsSave = false
     /// Task 1.3: `.unreadable` while the stored profiles cannot be read; RootView then shows ProfileRecoveryView and
     /// `save()` writes nothing until the user restores a version or starts again.
-    @Published private(set) var storeState: StoreState = .ready
+    private(set) var storeState: StoreState = .ready
     enum StoreState: Equatable {
         case ready
         case unreadable(reason: String, candidates: [RecoveryCandidate])
     }
     /// Wave S round 2: „Bild & Ton“ per device (TV, HDMI, sound system); profile export and sync leave it out.
-    @Published private(set) var device: DeviceSettings
+    private(set) var device: DeviceSettings
     let deviceStore: DeviceSettingsStore
     let progressStore: ProgressStore
     /// Phase 0b: encoding and writing of the profiles and the progress book run on its background thread
@@ -41,42 +64,42 @@ final class AppModel: ObservableObject {
     })
     /// Phase 0b: number of the last profile save (queued or direct). The result of an older queued save no longer
     /// touches the Keychain: a newer save, a restore or a profile delete came after it.
-    private var profileSaveSerial = 0
+    @ObservationIgnored private var profileSaveSerial = 0
     /// True between "entered background" and "will enter foreground".
-    private var savesInBackground = false
+    @ObservationIgnored private var savesInBackground = false
     /// Serial of the last direct profile write (delete, restore): queued saves from before it never mirror.
-    private var profileDirectSerial = 0
+    @ObservationIgnored private var profileDirectSerial = 0
     /// Serial of the newest queued save whose secrets were mirrored.
-    private var profileMirroredSerial = 0
+    @ObservationIgnored private var profileMirroredSerial = 0
     /// Fortschritt des aktiven Profils.
-    @Published private(set) var progress = ProgressBook()
+    private(set) var progress = ProgressBook()
     /// Task 1.3 (S-11): the progress file was unreadable (kept as .bak). The sync pull then merges in memory only;
     /// the book is saved again with the next real progress (play, tile action, chosen source).
-    private var progressSaveHeld = false
+    @ObservationIgnored private var progressSaveHeld = false
     /// Wave W-a: PlayerCore reports skipped catalog items, addon notices and error subtitles through `log`.
     let addons = AddonClient(log: { cat, msg in Task { @MainActor in RemoteLog.info(cat, msg) } })
     /// Katalog-Cache: 24 h frisch, danach alter Stand sichtbar + Erneuerung im Hintergrund (AppModel+CatalogCache).
-    var cache = TimedCache<[MetaPreview]>()
-    var catalogRefreshing: Set<String> = []
+    @ObservationIgnored var cache = TimedCache<[MetaPreview]>()
+    @ObservationIgnored var catalogRefreshing: Set<String> = []
     /// Zähler je Quelle nach einer Hintergrund-Erneuerung; Reihen laden dann neu.
-    @Published var catalogRevisions: [String: Int] = [:]
+    var catalogRevisions: [String: Int] = [:]
     /// Erhöht beim Zurückkehren in die App, wenn Kataloge abgelaufen sind.
-    @Published var catalogWake = 0
+    var catalogWake = 0
     /// Welle C-b: Plattenstand der Kataloge (AppModel+CatalogDisk).
     let catalogDisk = CatalogDiskStore()
     /// Welle F-f: laufende Reihen-Ladungen je Profil und Quelle (AppModel+HomeRows); Reihe und Vorladen teilen sie.
-    var homeRowLoads: [String: Task<CatalogLoad, Never>] = [:]
+    @ObservationIgnored var homeRowLoads: [String: Task<CatalogLoad, Never>] = [:]
     /// Build 7 (folder): folder id → sources started ahead when its tile rested in focus (page log line) and when
     /// (at most one warm-up per folder a minute, so a failing catalog is not asked on every rest).
-    var folderPrefetches: [String: (count: Int, at: Date)] = [:]
+    @ObservationIgnored var folderPrefetches: [String: (count: Int, at: Date)] = [:]
     /// Build 7 review (L4): sources whose last row load failed (30 s, `homeRowItems`).
-    var recentLoadFailures = RecentLoadFailures()
+    @ObservationIgnored var recentLoadFailures = RecentLoadFailures()
     /// Build 7 review (M3): every finished row load and background refresh (source id, result), for the folder page.
     /// A subject, not `@Published`: no view of the model re-renders for it.
     let homeRowLoadDone = PassthroughSubject<(id: String, load: CatalogLoad), Never>()
     /// Task 3.1: profile epoch. `advance` on a profile switch or backup import, `bump` on a language or addon set
     /// change. A task that awaits and then writes profile data remembers `scopes.current` and checks it afterwards.
-    @Published private(set) var scopes = ScopeClock(profile: UUID())
+    private(set) var scopes = ScopeClock(profile: UUID())
 
     /// Cinemeta liefert Metadaten/Folgenlisten für IMDb-IDs (kostenlos, ohne Key).
     static let cinemeta = InstalledAddon(
@@ -106,8 +129,8 @@ final class AppModel: ObservableObject {
         let profilesStart = ContinuousClock.now
         let loaded = store.loadResult()
         switch loaded {
-        case .loaded(let s, _), .fresh(let s): stored = s
-        case .unreadable: stored = .makeDefault()   // only shown behind ProfileRecoveryView, never saved
+        case .loaded(let s, _), .fresh(let s): storedValue = s
+        case .unreadable: storedValue = .makeDefault()   // only shown behind ProfileRecoveryView, never saved
         }
         progressStore = ProgressStore(storage: storage, onPruned: { n in
             Task { @MainActor in RemoteLog.info("fortschritt", "beschnitten \(n)") }
@@ -199,11 +222,11 @@ final class AppModel: ObservableObject {
     // MARK: Trakt / Simkl
 
     static let syncServices = ["trakt", "simkl"]
-    private var scrobbler = ScrobbleTracker<PlayRequest>(finishedAt: ProgressBook.finishedAt)
+    @ObservationIgnored private var scrobbler = ScrobbleTracker<PlayRequest>(finishedAt: ProgressBook.finishedAt)
     /// Scrobbles laufen nacheinander, damit stop/start/pause in der richtigen Reihenfolge ankommen.
-    private var scrobbleChain: Task<Void, Never>?
+    @ObservationIgnored private var scrobbleChain: Task<Void, Never>?
     /// Laufende Trakt-Erneuerung; gleichzeitige Aufrufer warten auf dieselbe.
-    private var traktRefresh = TaskSlots<SyncToken?>()   // Task 3.1: key = profile ID
+    @ObservationIgnored private var traktRefresh = TaskSlots<SyncToken?>()   // Task 3.1: key = profile ID
 
     var trakt: TraktClient? { traktClient(for: profile) }
 
@@ -760,6 +783,7 @@ final class AppModel: ObservableObject {
     /// den Kachel-Dateien des Startseiten-Kits (zur Laufzeit geladen); Zuordnung nach Anbieter/Genre bzw. Name
     /// (`ReadyPackages.withArt`). Ohne Treffer bleibt die Symbol-Kachel. Keine Bilder aus dem Repo.
     func collection(_ id: String) -> MediaCollection? {
+        _ = collectionsRevision   // observed: kit and link stores report their changes through it
         guard let c = profile.collections.first(where: { $0.id == id }) else { return FusionKitStore.shared.collection(id) }
         // Wave F-o round 2: imported preview packs fill video and still of imported tiles with the same title.
         guard id.hasPrefix("pkg.") else { return CollectionLinkStore.shared.enriched(c, profileRevision: profileRevision) }
@@ -825,6 +849,7 @@ final class AppModel: ObservableObject {
         let keepFilled = refresh && !isWatchlist
         let stored = keepFilled ? cache.storeRefreshed(out, for: source.id, generation: generation)
                              : cache.store(out, for: source.id, generation: generation)
+        if source.id == CatalogSource.watchlist.id { watchlistChanged() }
         scheduleCatalogSave()
         if stored, isWatchlist { noteWatchlistPull(startedAt: started) }   // Welle L
         return CatalogLoad(items: applySyncQueue(source, out))
@@ -842,7 +867,7 @@ final class AppModel: ObservableObject {
     }
 
     /// TMDB-ID → IMDb-ID (ändert sich nicht; spart die Nachfrage bei jedem Vorladen/Öffnen).
-    private var imdbCache: [String: String] = [:]
+    @ObservationIgnored private var imdbCache: [String: String] = [:]
 
     /// Welle E-a: IMDb-ID ohne Netzabfrage (IMDb-ID selbst oder schon nachgeschlagen), sonst nil.
     func cachedIMDbID(for m: MetaPreview) -> String? {
@@ -856,9 +881,9 @@ final class AppModel: ObservableObject {
 
     /// Task 3.1 (A-A-12, A-B-2): keyed by (IMDb ID, language), bounded, bound to the scope (a profile switch,
     /// language or addon change starts empty; a late answer of an older scope is not stored).
-    private var localizedCache = ScopedCache<TextCacheKey, LocalizedMeta>(limit: 300)
-    private var localizedFlights: [String: Task<SharedLookup<LocalizedMeta>, Never>] = [:]
-    private var seasonCache = ScopedCache<TextCacheKey, [Int: LocalizedEpisode]>(limit: 100)
+    @ObservationIgnored private var localizedCache = ScopedCache<TextCacheKey, LocalizedMeta>(limit: 300)
+    @ObservationIgnored private var localizedFlights: [String: Task<SharedLookup<LocalizedMeta>, Never>] = [:]
+    @ObservationIgnored private var seasonCache = ScopedCache<TextCacheKey, [Int: LocalizedEpisode]>(limit: 100)
 
     /// TMDB in Profilsprache (Titel, Text, Poster, Logo, FSK); nil ohne TMDB-Key.
     func localized(imdb: String, series: Bool) async -> LocalizedMeta? {
@@ -989,22 +1014,22 @@ final class AppModel: ObservableObject {
     }
 
     /// Welle C-b: nicht privat, damit AppModel+StreamRevalidate den Stand lesen kann.
-    var streamCache: [String: (at: Date, list: [(addon: String, stream: StreamItem)])] = [:]
+    @ObservationIgnored var streamCache: [String: (at: Date, list: [(addon: String, stream: StreamItem)])] = [:]
     /// Welle D-b (M1): laufende Abfragen je ID; `reset()` beim Profilwechsel.
-    var streamTasks = TaskSlots<[(addon: String, stream: StreamItem)]>()
+    @ObservationIgnored var streamTasks = TaskSlots<[(addon: String, stream: StreamItem)]>()
     /// Welle D-b (M3): IDs, deren Stand lückenhaft abgelegt wurde (ein Addon ohne Antwort).
-    var streamPartial: Set<String> = []
+    @ObservationIgnored var streamPartial: Set<String> = []
     /// Welle C-b: Abrufzeitpunkt je Addon im Stand von `streamCache[id]` (behaltene Einträge laufen nach ihm ab).
-    var streamAddonFetchedAt: [String: [String: Date]] = [:]
+    @ObservationIgnored var streamAddonFetchedAt: [String: [String: Date]] = [:]
     /// Build 4 follow-up S3: rate-limited log line for slow stores of a search result on the main thread.
-    private var streamStoreCost = StreamStoreCost()
+    @ObservationIgnored private var streamStoreCost = StreamStoreCost()
     /// Wave F-k R2: cache entries from the visible-tile prefetch (weak tier, evicted first) and running searches
     /// started by it that no page or focus prefetch has joined yet (`StreamCacheTierMarks`).
-    private(set) var streamTiers = StreamCacheTierMarks()
+    @ObservationIgnored private(set) var streamTiers = StreamCacheTierMarks()
     /// Leeres/fehlgeschlagenes Ergebnis: bis dahin kein Vorladen dieser ID (die Detailseite fragt trotzdem).
-    private(set) var streamEmptyUntil: [String: Date] = [:]
+    @ObservationIgnored private(set) var streamEmptyUntil: [String: Date] = [:]
     /// Task 3.7 (A-A-4): empty searches of different titles in a row; from 3 in 60 s the prefetch pauses.
-    private(set) var emptyPause = EmptyPause()
+    @ObservationIgnored private(set) var emptyPause = EmptyPause()
     /// Start of the prefetch pause after „alle Addons leer“ (vermutlich Ratenbegrenzung), nil = none. Only the
     /// prefetch consults it (`StreamPrefetcher.allowed`, renewals started by it), never the search of an open page.
     var streamsAllEmptyAt: Date? { emptyPause.pausedAt }

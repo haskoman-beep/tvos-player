@@ -343,7 +343,7 @@ struct HeroPicture: View {
 /// Erste Zeile im ScrollView: [▶ Abspielen] [Details] und die Diashow-Punkte.
 /// Fokus von den Reihen nach oben landet immer auf „Abspielen“ (eigene Fokus-Sektion mit Vorgabe).
 struct HeroButtons: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @Environment(\.navigate) private var navigate
     @Environment(HomeFocus.self) private var focus
     @Environment(\.theme) private var theme

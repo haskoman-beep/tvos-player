@@ -4,7 +4,7 @@ import PlayerCore
 /// Kategorie „Sprache & Untertitel“ (wave S, was „Ton & Untertitel“): preferences only. Sprache (Presets, E5) and
 /// Merken (Spur-Wahl je Serie, was Wiedergabe & Bild › Folgen). Anlage, Klang and Versatz moved to „Bild & Ton“.
 struct AudioSettings: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
 
     private let tint = SettingsCategory.audio.tint
 
@@ -44,7 +44,7 @@ struct AudioSettings: View {
 
 /// Anlage, Klang und Ton-Versatz (Welle C-c, F-a neu gegliedert; wave S: Bild & Ton). Gilt ab dem nächsten Start.
 struct AudioShapingSettingsRows: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
 
     private let tint = SettingsCategory.picture.tint
 
@@ -94,7 +94,7 @@ struct DisplayModeSettingsRows: View {
 
     var part: Part
     var tint: Color
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
 
     var body: some View {
         switch part {

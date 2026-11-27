@@ -4,7 +4,7 @@ import PlayerCore
 /// Wave U: entry row for the subtitle look (one self-contained component; since the wave S merge in „Sprache & Untertitel“,
 /// between „Sprache“ and „Merken“). Stored in the profile (`Profile.subtitleStyle`) and synced with it.
 struct SubtitleStyleSettingsRows: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
 
     private let tint = SettingsCategory.audio.tint
 
@@ -23,7 +23,7 @@ struct SubtitleStyleSettingsRows: View {
 /// Subpage with a live preview on top (dark and bright sample picture) and one row per setting.
 /// Every row switches on OK to the next value, so the preview stays visible while choosing.
 struct SubtitleStyleSettingsPage: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @FocusState private var focus: Field?
 
     private let tint = SettingsCategory.audio.tint

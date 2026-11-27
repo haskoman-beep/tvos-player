@@ -5,7 +5,7 @@ import PlayerCore
 /// Eine Startseiten-Reihe im gewählten Stil.
 /// `onActivate` bekommt das Ziel und gibt zurück, ob navigiert werden soll (nil = Klick verschlucken).
 struct HomeRowView: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     let row: HomeRow
     let onActivate: (Route) -> Route?
     /// Task 4.1a (F-A-3): home page focus target after a context-menu action (nil elsewhere).
@@ -769,7 +769,7 @@ extension EnvironmentValues {
 }
 
 struct Strip<C: View>: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     /// Nur Posterreihen klappen auf (und bekommen den Platz am Reihenende).
     var expands = false
     /// Wave F-k: tile form of the row; sets the room for the focus lift (same for placeholders, status tile and
@@ -1114,7 +1114,7 @@ struct TileStatus: View {
     let kind: TileKind
     let text: String
     var symbol: String? = nil
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @Environment(\.cardScale) private var scale
 
     var body: some View {
@@ -1134,26 +1134,37 @@ struct TileStatus: View {
 }
 
 /// Kachelzustand: Haken (gesehen), Folge + Restzeit oben, Fortschrittsbalken unten.
+/// Phase 0b: this view only looks the state up; the marks get it as a plain value and are redrawn only when it
+/// differs (the progress book changes every 10 s during playback, the state of most tiles does not).
 struct CardStateOverlay: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     let itemID: String
+
+    var body: some View {
+        if let st = model.progress.cardState(itemID: itemID) { CardStateMarks(state: st).equatable() }
+    }
+}
+
+private struct CardStateMarks: View, Equatable {
+    let state: CardState
     /// „Heute neu“ zeigt oben links sein eigenes Folgen-Label; dann entfällt hier die obere Kapsel.
     @Environment(\.hidesCardTopLabel) private var hidesTopLabel
 
+    nonisolated static func == (a: CardStateMarks, b: CardStateMarks) -> Bool { a.state == b.state }
+
     var body: some View {
-        if let st = model.progress.cardState(itemID: itemID) {
-            ZStack {
-                // Task 5.1 (D-23): shared marks of every card (same look as before).
-                if st.watched { WatchedMark() }
-                let top = DesignText.metaLine([st.episode, st.remainingSeconds.map { "noch \(max(1, Int($0 / 60))) min" }])
-                if !top.isEmpty && !hidesTopLabel {
-                    ThemeBadge(kind: .status(nil, onImage: true), text: top).padding(Theme.Space.xs)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                }
-                if let f = st.fraction, f > 0 { ThemeProgressBar(fraction: f) }
+        let st = state
+        ZStack {
+            // Task 5.1 (D-23): shared marks of every card (same look as before).
+            if st.watched { WatchedMark() }
+            let top = DesignText.metaLine([st.episode, st.remainingSeconds.map { "noch \(max(1, Int($0 / 60))) min" }])
+            if !top.isEmpty && !hidesTopLabel {
+                ThemeBadge(kind: .status(nil, onImage: true), text: top).padding(Theme.Space.xs)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-            .allowsHitTesting(false)
+            if let f = st.fraction, f > 0 { ThemeProgressBar(fraction: f) }
         }
+        .allowsHitTesting(false)
     }
 }
 

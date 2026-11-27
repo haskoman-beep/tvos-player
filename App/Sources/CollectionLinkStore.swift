@@ -184,7 +184,7 @@ final class CollectionLinkStore: ObservableObject {
         packRevision &+= 1
         memo = [:]
         FusionKitStore.shared.packChanged()
-        model?.objectWillChange.send()
+        model?.collectionsChanged()
     }
 
     /// A profile collection with the preview packs applied (memoised per collection).

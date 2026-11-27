@@ -5,7 +5,7 @@ import PlayerCore
 /// (`SettingsSummary.lookValue`). There is no preset choice; OK asks first and then resets every option
 /// (`Profile.resetLook`, which also writes the old fields).
 struct LookHeaderRow: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @State private var confirming = false
 
     static let title = "Mein Look"

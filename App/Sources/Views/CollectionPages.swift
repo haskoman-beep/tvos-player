@@ -9,7 +9,7 @@ import PlayerCore
 /// Review b7 M2: the load state lives in `FolderPageLoad`, owned here (the header inside the `LazyVStack` is dropped
 /// when it scrolls off; its state went with it: spinner again, second log line, new requests).
 struct FolderView: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     let folder: Folder
     private let rows: [CatalogSource]
     @StateObject private var load = FolderPageLoad()
@@ -45,7 +45,7 @@ struct FolderView: View {
 /// Build 7 (folder): the page line (phase from `FolderLoadState`, the cache read synchronously for rows without a
 /// recorded result, so a cached folder shows no spinner).
 private struct FolderLoadStatus: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @ObservedObject var load: FolderPageLoad
     let rows: [CatalogSource]
 
@@ -134,7 +134,7 @@ final class FolderPageLoad: ObservableObject {
 }
 
 struct CollectionView: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     let collectionID: String
     /// Fehlende Collection erst nach kurzer Ladezeit als fehlend werten (Fusion-Kit lädt nach; kein „Zurück“-Flackern).
     @State private var missingSettled = false

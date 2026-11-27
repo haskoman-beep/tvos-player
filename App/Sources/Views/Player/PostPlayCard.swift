@@ -13,7 +13,7 @@ struct PostPlayCard: View {
     let sceneFollows: Bool
     let onKeepWatching: () -> Void
     let onLeave: () -> Void
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @Environment(\.navigate) private var navigate
     @State private var recs: [MetaPreview] = []
     @State private var loaded = false

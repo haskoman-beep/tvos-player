@@ -5,7 +5,7 @@ import PlayerCore
 
 /// Vollbild-Player. Kennt nur `PlaybackEngine`; das Backend ist austauschbar.
 struct PlayerScreen: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     let url: URL
     let request: PlayRequest
     var headers: [String: String] = [:]

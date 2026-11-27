@@ -5,7 +5,7 @@ import PlayerCore
 /// E-b M1 (Entscheidung F-a: Hinweis statt Verhaltensänderung): Weiterschauen, automatischer Wechsel und nächste
 /// Folge wählen auch bei „Wie Addon“ nach den App-Vorlieben. Bei „Wie Addon“ steht das darum immer sichtbar da.
 struct StreamOrderSettingsRow: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
 
     var body: some View {
         let mode = model.profile.sources.order
@@ -23,7 +23,7 @@ struct StreamOrderSettingsRow: View {
 
 /// Welle E-b: Einstellung „App-Plaketten in der Quellenliste“ (Aus / Kompakt).
 struct StreamListBadgeSettingsRow: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
 
     var body: some View {
         SettingsChoiceRow(symbol: "tag", tint: SettingsCategory.sources.tint, title: "App-Plaketten in der Liste",

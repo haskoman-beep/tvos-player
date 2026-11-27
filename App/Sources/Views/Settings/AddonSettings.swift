@@ -4,7 +4,7 @@ import PlayerCore
 /// Kategorie „Addons“ (wave S, from „Addons & Quellen“): installierte Addons (Unterseite je Addon), Hinzufügen am
 /// Handy (#addon), Zeitgrenze je Addon (was System › Erweitert). Source rules: „Quellen“; TorBox key: Profil & Konten.
 struct AddonSettings: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
 
     private let tint = SettingsCategory.addons.tint
 
@@ -38,7 +38,7 @@ struct AddonSettings: View {
 /// Unterseite eines Addons (§2.2/§2.4): Kataloge, Reihenfolge, „Addon entfernen …“ mit Rückfrage (E6).
 struct AddonDetailPage: View {
     let manifestURL: String
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @Environment(\.dismiss) private var dismiss
     @State private var confirm = false
 

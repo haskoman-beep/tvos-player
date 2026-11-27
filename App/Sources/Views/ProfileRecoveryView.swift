@@ -4,7 +4,7 @@ import PlayerCore
 /// Task 1.3 (S-1): start screen when the stored profiles cannot be read. Until the user picks a way out, the app
 /// saves nothing (`AppModel.save()` is a no-op), so the unreadable state is never overwritten.
 struct ProfileRecoveryView: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     let reason: String
     let candidates: [RecoveryCandidate]
     @State private var selected: String?

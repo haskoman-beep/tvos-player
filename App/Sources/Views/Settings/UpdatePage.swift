@@ -4,7 +4,7 @@ import PlayerCore
 /// Unterseite „App aktualisieren“ (System): neueste veröffentlichte Version suchen und über atvloadly am Pi installieren.
 /// E7: Die Adresse kommt von der Bonjour-Suche oder der Handy-Seite (#system), kein Textfeld am Fernseher.
 struct UpdatePage: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @ObservedObject private var updater = AppUpdater.shared
     /// Ergebnis der letzten Suche; gespeichert wird erst, wenn eine Zeile gewählt wird (SEC-11).
     @State private var choice: AtvloadlyAddress.CandidateChoice?

@@ -11,7 +11,7 @@ struct TileContextMenu: ViewModifier {
     var row: HomeRowMenu?
     /// Called before an action takes the tile out of its row (the row moves focus to a neighbour).
     var onLeave: (() -> Void)?
-    @EnvironmentObject private var model: AppModel
+    @Environment(AppModel.self) private var model
     @Environment(\.navigate) private var navigate
 
     @ViewBuilder func body(content: Content) -> some View {

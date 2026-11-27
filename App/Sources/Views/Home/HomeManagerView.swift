@@ -15,7 +15,7 @@ struct HomeManagerView: View {
     var focusRow: UUID? = nil
     /// Gleich den Browser öffnen (leere Startseite „Reihen hinzufügen“); zurück landet man hier auf der neuen Reihe.
     var openBrowser = false
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @State private var session: HomeRowsSession?
     @Environment(\.theme) private var theme
 
@@ -33,7 +33,7 @@ private struct HomeManagerContent: View {
     let session: HomeRowsSession
     let focusRow: UUID?
     let openBrowser: Bool
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @Environment(\.dismiss) private var dismiss
     @Environment(\.theme) private var theme
 

@@ -5,7 +5,7 @@ import PlayerCore
 /// Besetzung, ähnliche Titel und „Über“ (alles aus dem einen TMDB-Abruf).
 struct DetailExtras: View {
     @Environment(\.navigate) private var navigate
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     let info: LocalizedMeta
     let isSeries: Bool
     /// Task 5.3: width of the cast row (layout „zentriert“: 860), nil = the page width.
@@ -127,7 +127,7 @@ struct DetailExtras: View {
 /// Wave F-p: a resting tile outside the home page („Ähnliche Titel“) fetches its sources like a home tile, so its
 /// detail page shows the tech badges from the source cache at once.
 private struct RestPrefetch: ViewModifier {
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     let route: Route
     @FocusState private var focused: Bool
 

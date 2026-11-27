@@ -262,7 +262,7 @@ struct PlayerComfortSettingsRows: View {
     enum Part { case tracks, panelStyle, screensaver, remote }
 
     var part: Part
-    @EnvironmentObject var model: AppModel
+    @Environment(AppModel.self) var model
     @State private var cleared = false
     @State private var confirmClear = false
 
