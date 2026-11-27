@@ -9,8 +9,8 @@ public actor AsyncLimiter {
     private var running = 0
     private var urgent: [(id: UUID, c: CheckedContinuation<Bool, Never>)] = []
     private var normal: [(id: UUID, c: CheckedContinuation<Bool, Never>)] = []
-    /// Promotions that arrived before their ticket queued (kept small).
-    private var early: Set<UUID> = []
+    /// Promotions that arrived before their ticket queued (kept small, oldest dropped first).
+    private var early: [UUID] = []
 
     public init(limit: Int) { self.limit = max(1, limit) }
 
@@ -23,7 +23,7 @@ public actor AsyncLimiter {
 
     /// Build 8: `urgent` waiters go first; a ticket promoted before it got here counts as urgent.
     public func acquire(ticket: UUID, urgent isUrgent: Bool) async -> Bool {
-        let wasPromoted = early.remove(ticket) != nil
+        let wasPromoted = early.firstIndex(of: ticket).map { early.remove(at: $0) } != nil
         if Task.isCancelled { return false }
         if running < limit { running += 1; return true }
         let first = isUrgent || wasPromoted
@@ -36,15 +36,27 @@ public actor AsyncLimiter {
         }
     }
 
-    /// Build 8: a waiting ticket moves to the urgent queue (end of it); unknown tickets are remembered briefly.
+    /// Build 8: a waiting ticket moves to the front of the urgent queue (review: the newest visible tile first, never
+    /// behind titles promoted earlier and scrolled past since); unknown tickets are remembered briefly.
     public func promote(_ ticket: UUID) {
         if let i = normal.firstIndex(where: { $0.id == ticket }) {
-            urgent.append(normal.remove(at: i))
+            urgent.insert(normal.remove(at: i), at: 0)
             return
         }
-        guard !urgent.contains(where: { $0.id == ticket }) else { return }
-        if early.count >= 256 { early.removeAll() }
-        early.insert(ticket)
+        if let i = urgent.firstIndex(where: { $0.id == ticket }) {
+            if i > 0 { urgent.insert(urgent.remove(at: i), at: 0) }
+            return
+        }
+        guard !early.contains(ticket) else { return }
+        if early.count >= 256 { early.removeFirst() }
+        early.append(ticket)
+    }
+
+    /// Build 8 review: the last tile of a promoted title left before it was sent: back to the end of the warm-up queue.
+    public func demote(_ ticket: UUID) {
+        early.removeAll { $0 == ticket }
+        guard let i = urgent.firstIndex(where: { $0.id == ticket }) else { return }
+        normal.append(urgent.remove(at: i))
     }
 
     /// Platz freigeben; der nächste Wartende (dringende zuerst) übernimmt ihn direkt.

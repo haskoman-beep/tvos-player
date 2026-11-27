@@ -80,12 +80,14 @@ public struct PosterURLMap: Sendable, Equatable {
         var entries: [String: Entry]
     }
 
-    /// JSON for the disk file; clears `dirty`. Aged entries are left out.
-    public mutating func encoded(now: Date = Date()) -> Data? {
-        dirty = false
+    /// JSON for the disk file (review: callable on a copy off the main thread). Aged entries are left out.
+    public func encoded(now: Date = Date()) -> Data? {
         let live = entries.filter { Self.isFresh($0.value, now: now) }
         return try? JSONEncoder().encode(File(version: Self.version, entries: live))
     }
+
+    /// The current state is being written (the copy carries it).
+    public mutating func markClean() { dirty = false }
 
     /// Reads a disk file: aged entries dropped, over the limit the least recently used go. nil = unreadable or an
     /// older version (the app then removes the file).

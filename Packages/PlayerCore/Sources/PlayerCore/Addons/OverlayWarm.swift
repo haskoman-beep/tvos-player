@@ -44,3 +44,41 @@ public struct OverlayWarmTally: Sendable, Equatable {
         return "Overlays \(found)/\(total) in \(ms) ms (Cache \(cache), Netz \(network))\(miss)"
     }
 }
+
+/// Build 8 review: failures of the tile/warm-up requests (429, timeouts during a burst). The warm-up waits after a
+/// failure (15 s, then 30 s, at most 60 s while failures go on; one answer resets it), and a failed title counts as
+/// "no poster" for `tileRetry` only (not the 10 min of the detail page), so the next tile or warm-up asks again.
+public struct OverlayBackoff: Sendable, Equatable {
+    public static let steps: [TimeInterval] = [15, 30, 60]
+    public static let tileRetry: TimeInterval = 45
+
+    public private(set) var failures = 0
+    public private(set) var until: Date?
+
+    public init() {}
+
+    public mutating func noteFailure(now: Date = Date()) {
+        let wait = Self.steps[min(failures, Self.steps.count - 1)]
+        failures += 1
+        until = now.addingTimeInterval(wait)
+    }
+
+    public mutating func noteSuccess() { failures = 0; until = nil }
+
+    /// Seconds the warm-up still waits (0 = go).
+    public func wait(now: Date = Date()) -> TimeInterval {
+        guard let until else { return 0 }
+        return max(0, until.timeIntervalSince(now))
+    }
+}
+
+extension OverlayWarmPlan {
+    /// Build 8 review: whether a poster address carries the title id as a whole path or query part
+    /// (`…/imdb/poster-default/tt123.jpg`, `?id=123`), not inside a longer number.
+    public static func urlCarriesID(_ url: String, id: String) -> Bool {
+        let bare = id.hasPrefix("tmdb:") ? String(id.dropFirst(5)) : id
+        guard !bare.isEmpty else { return false }
+        let parts = url.split(whereSeparator: { "/?&=.:".contains($0) })
+        return parts.contains { $0 == bare[...] }
+    }
+}

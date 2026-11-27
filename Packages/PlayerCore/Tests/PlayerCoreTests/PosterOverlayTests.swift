@@ -150,9 +150,10 @@ private actor Order {
     m.store("a", poster: "p-a", now: t0)
     m.store("none", poster: nil, now: t0)
     #expect(m.dirty)
-    let encoded = m.encoded(now: t0)
-    let data = try #require(encoded)
-    #expect(!m.dirty)
+    let copy = m
+    m.markClean()
+    let data = try #require(copy.encoded(now: t0))
+    #expect(!m.dirty && copy.dirty)
     let back = try #require(PosterURLMap.decode(data, limit: 100, now: t0))
     #expect(back.count == 2)
     #expect(back.peek("a", now: t0) == .poster("p-a"))
@@ -199,4 +200,64 @@ private actor Order {
     #expect(ImageTarget(points: 0, 450, scale: 2, fit: false, stepped: false) == nil)
     let huge = try #require(ImageTarget(points: 5000, 5000, scale: 1, fit: false, stepped: false))
     #expect(huge.width == 3840)
+}
+
+@Test func limiterNewestPromotionFirstAndDemote() async {
+    let limiter = AsyncLimiter(limit: 1)
+    #expect(await limiter.acquire())
+    let order = Order()
+    let a = UUID(), b = UUID(), c = UUID()
+    var tasks: [Task<Void, Never>] = []
+    for (n, t) in [("a", a), ("b", b), ("c", c)] {
+        let before = await limiter.queued
+        tasks.append(Task { if await limiter.acquire(ticket: t, urgent: false) { await order.add(n); await limiter.release() } })
+        while await limiter.queued == before { await Task.yield() }
+    }
+    await limiter.promote(a)
+    await limiter.promote(b)   // newest promotion goes in front of a
+    await limiter.demote(a)    // a's last tile left: back behind c
+    await limiter.release()
+    for t in tasks { await t.value }
+    #expect(await order.names == ["b", "c", "a"])
+}
+
+@Test func limiterEarlyPromotionsKeepNewest() async {
+    let limiter = AsyncLimiter(limit: 1)
+    #expect(await limiter.acquire())
+    let keep = UUID()
+    for _ in 0..<255 { await limiter.promote(UUID()) }
+    await limiter.promote(keep)
+    for _ in 0..<100 { await limiter.promote(UUID()) }   // only the oldest drop, `keep` stays
+    let order = Order()
+    let warm = Task { if await limiter.acquire(ticket: UUID(), urgent: false) { await order.add("warm"); await limiter.release() } }
+    while await limiter.queued < 1 { await Task.yield() }
+    let tile = Task { if await limiter.acquire(ticket: keep, urgent: false) { await order.add("tile"); await limiter.release() } }
+    while await limiter.queued < 2 { await Task.yield() }
+    await limiter.release()
+    _ = await (warm.value, tile.value)
+    #expect(await order.names == ["tile", "warm"])
+}
+
+@Test func overlayBackoffSteps() {
+    let t0 = Date(timeIntervalSince1970: 5_000_000)
+    var b = OverlayBackoff()
+    #expect(b.wait(now: t0) == 0)
+    b.noteFailure(now: t0)
+    #expect(b.wait(now: t0) == 15)
+    b.noteFailure(now: t0)
+    #expect(b.wait(now: t0) == 30)
+    b.noteFailure(now: t0)
+    b.noteFailure(now: t0)
+    #expect(b.wait(now: t0) == 60)
+    #expect(b.wait(now: t0.addingTimeInterval(61)) == 0)
+    b.noteSuccess()
+    #expect(b.wait(now: t0) == 0 && b.failures == 0)
+}
+
+@Test func posterURLCarriesIDAsWholePart() {
+    #expect(OverlayWarmPlan.urlCarriesID("https://example.invalid/k/imdb/poster-default/tt123.jpg", id: "tt123"))
+    #expect(OverlayWarmPlan.urlCarriesID("https://example.invalid/poster?id=550&x=1", id: "tmdb:550"))
+    #expect(!OverlayWarmPlan.urlCarriesID("https://example.invalid/p/15501.jpg", id: "tmdb:550"))
+    #expect(!OverlayWarmPlan.urlCarriesID("https://example.invalid/p/tt1234.jpg", id: "tt123"))
+    #expect(!OverlayWarmPlan.urlCarriesID("https://example.invalid/p.jpg", id: "tmdb:"))
 }

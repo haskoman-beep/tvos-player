@@ -320,23 +320,41 @@ actor ImagePipeline {
 
     /// Build 8 (poster): at most 3 disk warm-ups at once (visible pictures keep the connections).
     static let diskWarm = AsyncLimiter(limit: 3)
+    /// Build 8 review: running disk warm-ups per download address; a tile load of the same address waits for it and
+    /// then reads the disk cache (no second download).
+    private var warming: [String: Task<Void, Never>] = [:]
 
     /// Build 8 (poster): puts a picture into the disk cache only (no decode, no memory bitmap), so a tile of a warmed
     /// block shows it from disk when it comes on screen. The size variant is the one a tile with `neededWidth` asks
-    /// for. Skipped when the picture is in memory or already on disk. Counts in the `Ladungen` of the cache line.
+    /// for. Skipped when the picture is in memory, on disk, already loading for a view or already warming (checked
+    /// again once the slot is taken). Counts in the `Ladungen` of the cache line.
     func warmDisk(_ url: URL, neededWidth: Int) async {
-        if cachedAnySize(url) != nil { return }
         let candidates = ImageURLVariant.candidates(for: url.absoluteString, neededWidth: neededWidth)
         guard let first = candidates.first, let u = URL(string: first) else { return }
         let r = URLRequest(url: u, cachePolicy: .returnCacheDataElseLoad)
-        if urlCache.cachedResponse(for: r) != nil { return }
+        guard !warmNotNeeded(url, request: r) else { return }
         guard await Self.diskWarm.acquire() else { return }
-        _ = try? await http.data(r, limits: Self.limits, fresh: false)
+        if warmNotNeeded(url, request: r) { await Self.diskWarm.release(); return }
+        let http = self.http
+        let task = Task<Void, Never> { _ = try? await http.data(r, limits: Self.limits, fresh: false) }
+        warming[first] = task
+        await task.value
+        warming[first] = nil
         await Self.diskWarm.release()
+    }
+
+    private func warmNotNeeded(_ url: URL, request: URLRequest) -> Bool {
+        if cachedAnySize(url) != nil { return true }
+        if let u = request.url, warming[u.absoluteString] != nil { return true }
+        let prefix = url.absoluteString + "#"
+        if inFlight.keys.contains(where: { $0.hasPrefix(prefix) }) { return true }
+        return urlCache.cachedResponse(for: request) != nil
     }
 
     /// Task 2.3: one picture download with the image limits; the session's cache rule stays in charge.
     private func load(_ url: URL) async throws -> (Data, URLResponse) {
+        // Build 8 review: a disk warm-up of this address is running: let it finish, then this reads the disk cache.
+        if let w = warming[url.absoluteString] { await w.value }
         stats.fetched()   // P3: disk or network comes from the task metrics (`ImageLoadMetrics`)
         let r = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad)
         let (d, resp) = try await http.data(r, limits: Self.limits, fresh: false)
