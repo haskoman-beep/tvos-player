@@ -112,6 +112,8 @@ final class StreamPrefetcher {
     /// Ruhe-Kachel: Ziel bestimmen und einreihen. Ohne IMDb-ID oder bei Serien ohne bekannte Folge: nichts.
     func request(_ route: Route, model: AppModel) {
         generation += 1
+        // Build 7 (folder): a resting folder tile warms its catalogs (not streams; independent of the stream switch).
+        if case .folder(let f) = route { model.prefetchFolder(f); return }
         guard allowed(model) else { return }
         switch route {
         case .streams(let r):

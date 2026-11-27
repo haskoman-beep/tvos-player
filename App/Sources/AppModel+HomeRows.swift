@@ -51,4 +51,24 @@ extension AppModel {
         }
         RemoteLog.info("home", "Vorladen: \(sources.count) Reihen in \(Int(Date().timeIntervalSince(t0) * 1000)) ms")
     }
+
+    /// Build 7 (folder): a folder tile rested in focus (home rows: after the hero's rest, folder pages after
+    /// `FocusRest.prefetchMilliseconds`): its first rows start loading now, through the shared `homeRowItems`, so the
+    /// page joins the running loads. Device test b6-1: AIOMetadata catalogs took 3–11 s on the first open, and the
+    /// tile rested 1–5 s before the click. Cached sources (memory or disk) are skipped.
+    func prefetchFolder(_ f: Folder) {
+        let key = profile.id.uuidString
+        if let last = folderPrefetches[f.id]?.at, Date().timeIntervalSince(last) < 60 { return }
+        Task { @MainActor in
+            await awaitCatalogSnapshot()
+            guard key == profile.id.uuidString else { return }
+            let picked = FolderPage.prefetchSources(f.sources, isCached: { id in
+                self.cache[id] != nil || self.homeRowLoads["\(key)|\(id)"] != nil
+            })
+            guard !picked.isEmpty else { return }
+            folderPrefetches[f.id] = (count: picked.count, at: Date())
+            RemoteLog.info("katalog", "Ordner \(f.title): \(picked.count) \(picked.count == 1 ? "Quelle" : "Quellen") beim Fokus vorgeladen")
+            for s in picked { Task { @MainActor in _ = await self.homeRowItems(s) } }
+        }
+    }
 }

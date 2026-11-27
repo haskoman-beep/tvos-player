@@ -50,6 +50,9 @@ final class AppModel: ObservableObject {
     let catalogDisk = CatalogDiskStore()
     /// Welle F-f: laufende Reihen-Ladungen je Profil und Quelle (AppModel+HomeRows); Reihe und Vorladen teilen sie.
     var homeRowLoads: [String: Task<CatalogLoad, Never>] = [:]
+    /// Build 7 (folder): folder id → sources started ahead when its tile rested in focus (page log line) and when
+    /// (at most one warm-up per folder a minute, so a failing catalog is not asked on every rest).
+    var folderPrefetches: [String: (count: Int, at: Date)] = [:]
     /// Task 3.1: profile epoch. `advance` on a profile switch or backup import, `bump` on a language or addon set
     /// change. A task that awaits and then writes profile data remembers `scopes.current` and checks it afterwards.
     @Published private(set) var scopes = ScopeClock(profile: UUID())
