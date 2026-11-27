@@ -410,12 +410,16 @@ private func placedLayout(_ st: inout FusionKitSettings, _ contents: [String: Fu
     var copy = st
     copy.removeSource("s")
     #expect(copy.parked.isEmpty)
-    // Deselected while it waits: forgotten, it does not come back.
+    // Review 4: deselected while it waits: not shown, but kept; chosen again it comes back at its place.
     copy = st
     var l = layout
     copy.setSelected("fusion.s.trakt.A", false, source: traktSrc)
     _ = FusionKitSync.apply(layout: &l, settings: &copy, contents: contents, traktID: true, traktLogin: true)
-    #expect(copy.parked.isEmpty && !ids(l).contains("fusion.s.trakt.A"))
+    #expect(copy.parked.count == 1 && !ids(l).contains("fusion.s.trakt.A"))
+    copy.setSelected("fusion.s.trakt.A", true, source: traktSrc)
+    _ = FusionKitSync.apply(layout: &l, settings: &copy, contents: contents, traktID: true, traktLogin: true)
+    #expect(copy.parked.isEmpty && ids(l) == ["list:builtin.continue", "fusion.s.trakt.A", "fusion.s.collection.D", "list:u.b"])
+    #expect(l.rows[1].style == .landscape)
     // Kit off: forgotten as well; turned on again it is a new row at the end.
     st.enabled = false
     _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true)
@@ -460,4 +464,184 @@ private func placedLayout(_ st: inout FusionKitSettings, _ contents: [String: Fu
     // Older settings without `parked` (and an unreadable value) decode to none.
     let bad = try JSONDecoder().decode(FusionKitSettings.self, from: Data(#"{"enabled":true,"parked":7}"#.utf8))
     #expect(bad.parked.isEmpty && bad.enabled)
+}
+
+// MARK: Build 6 review: parked rows (addon rows switched on and off one by one)
+
+/// Kit with list rows p1…pN (catalog `movie::cK`) and one tile row `collection.Q` (catalog `movie::cq`).
+private func addonKit(_ n: Int) throws -> [String: FusionKitContent] {
+    func src(_ c: String) -> String {
+        #"{"kind":"addonCatalog","payload":{"addonId":"YOUR_AIOMETADATA","catalogId":"movie::\#(c)","type":"movie"}}"#
+    }
+    var w = (1...n).map { #"{"id":"p\#($0)","title":"P\#($0)","type":"row.classic","dataSource":\#(src("c\($0)"))}"# }
+    w.append(#"{"id":"collection.Q","title":"Q","type":"collection.row","dataSource":{"kind":"collection","payload":{"items":[{"id":"Q1","title":"Q1","imageURL":"https://img.example.invalid/q.jpg","imageAspect":"wide","dataSources":[\#(src("cq"))]}]}}}"#)
+    let json = #"{"exportType":"fusionWidgets","widgets":["# + w.joined(separator: ",") + "]}"
+    return ["s": try FusionImport.parse(Data(json.utf8), sourceKey: "s")]
+}
+
+/// AIOMetadata serving the catalogs of the given rows (`1` = p1, `"q"` = collection.Q).
+private func serving(_ rows: [String]) -> [InstalledAddon] {
+    [InstalledAddon(manifestURL: "https://aio.example.invalid/manifest.json",
+                    manifest: AddonManifest(id: "com.example.aio", name: "AIOMetadata", version: "1", resources: [], types: [],
+                                            catalogs: rows.map { CatalogDescriptor(type: "movie", id: "c" + $0) }))]
+}
+
+private func pid(_ k: Int) -> String { "fusion.s.p\(k)" }
+private func user(_ name: String) -> HomeRow {
+    HomeRow(content: .list(CatalogSource(id: "u." + name, title: name, kind: .tmdbList(id: name), mediaType: .movie)))
+}
+
+/// Layout [user rows…, kit rows…] rearranged to `arrangement` (kit row numbers or user names), all kit rows shown.
+private func addonLayout(_ n: Int, _ arrangement: [String], _ st: inout FusionKitSettings,
+                         _ contents: [String: FusionKitContent]) -> HomeLayout {
+    st = FusionKitSettings(enabled: true)
+    for k in 1...n { st.setSelected(pid(k), true, source: traktSrc) }
+    var layout = HomeLayout()
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true,
+                            addons: serving((1...n).map(String.init)))
+    let kitRows = layout.rows
+    layout.rows = arrangement.map { a in Int(a).map { kitRows[$0 - 1] } ?? user(a) }
+    return layout
+}
+
+private func names(_ l: HomeLayout) -> [String] {
+    l.rows.map { r in
+        if let id = FusionImport.kitID(of: r) { return String(id.dropFirst("fusion.s.p".count)) }
+        if case .list(let s) = r.content { return String(s.id.dropFirst(2)) }
+        return "?"
+    }
+}
+
+@Test func fusionParkedInDifferentSyncsKeepOrder() throws {
+    let contents = try addonKit(2)
+    func run(_ steps: [[String]]) -> [String] {
+        var st = FusionKitSettings()
+        var layout = addonLayout(2, ["X", "1", "2", "Y"], &st, contents)
+        for served in steps {
+            _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true,
+                                    addons: serving(served))
+        }
+        return names(layout)
+    }
+    // A parks, then B parks; they come back in every order.
+    let parkBoth: [[String]] = [["2"], []]
+    #expect(run(parkBoth) == ["X", "Y"])
+    #expect(run(parkBoth + [["1"], ["1", "2"]]) == ["X", "1", "2", "Y"])
+    #expect(run(parkBoth + [["2"], ["1", "2"]]) == ["X", "1", "2", "Y"])
+    #expect(run(parkBoth + [["1", "2"]]) == ["X", "1", "2", "Y"])
+    // B parks first, then A.
+    #expect(run([["1"], [], ["1"], ["1", "2"]]) == ["X", "1", "2", "Y"])
+    #expect(run([["1"], [], ["2"], ["1", "2"]]) == ["X", "1", "2", "Y"])
+}
+
+@Test func fusionMoreThanEightWaitingNeighbours() throws {
+    let n = 10
+    let contents = try addonKit(n)
+    let all = (1...n).map(String.init)
+    let start = ["X"] + all + ["Y"]
+    // Every row parks one by one (top to bottom, and bottom to top), then they come back in several orders.
+    let parkOrders = [all, all.reversed()]
+    let returnOrders: [[String]] = [all, all.reversed(), ["5", "1", "10", "3", "8", "2", "9", "4", "7", "6"]]
+    for parkOrder in parkOrders {
+        for back in returnOrders {
+            var st = FusionKitSettings()
+            var layout = addonLayout(n, start, &st, contents)
+            var served = all
+            for k in parkOrder {
+                served.removeAll { $0 == k }
+                _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true,
+                                        addons: serving(served))
+            }
+            #expect(names(layout) == ["X", "Y"] && st.parked.count == n)
+            for k in back {
+                served.append(k)
+                _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true,
+                                        addons: serving(served))
+            }
+            #expect(names(layout) == start)
+        }
+    }
+}
+
+@Test func fusionParkedRowFallbacks() throws {
+    let contents = try addonKit(1)
+    var st = FusionKitSettings()
+    // No anchor left: its old index, clamped.
+    var layout = addonLayout(1, ["U1", "U2", "1", "U3"], &st, contents)
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true, addons: [])
+    #expect(st.parked.first?.index == 2 && st.parked.first?.below == ["list:u.U3"])
+    layout.rows = [user("U4"), user("U5"), user("U6")]
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true, addons: serving(["1"]))
+    #expect(names(layout) == ["U4", "U5", "1", "U6"])
+    layout = addonLayout(1, ["U1", "U2", "1"], &st, contents)
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true, addons: [])
+    layout.rows = [user("U4")]
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true, addons: serving(["1"]))
+    #expect(names(layout) == ["U4", "1"])
+
+    // First row, the row below it moved: above the remembered row below it (review 3).
+    layout = addonLayout(1, ["1", "X", "Y"], &st, contents)
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true, addons: [])
+    layout.rows.swapAt(0, 1)   // [Y, X]
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true, addons: serving(["1"]))
+    #expect(names(layout) == ["Y", "1", "X"])
+    // First row and no anchor left: at the top.
+    layout = addonLayout(1, ["1", "X"], &st, contents)
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true, addons: [])
+    layout.rows = [user("Z")]
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true, addons: serving(["1"]))
+    #expect(names(layout) == ["1", "Z"])
+}
+
+@Test func fusionParkedCollectionRowKeepsStyle() throws {
+    let contents = try addonKit(1)
+    let q = "fusion.s.collection.Q"
+    var st = FusionKitSettings(enabled: true)
+    st.setSelected(q, true, source: traktSrc)
+    var layout = HomeLayout(rows: [user("A")])
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true, addons: serving(["q"]))
+    #expect(layout.rows.count == 2 && layout.rows[1].style == .collectionTiles)
+    layout.rows[1].style = .logoTiles
+    layout.rows.insert(layout.rows.removeLast(), at: 0)
+    layout.rows.append(user("B"))   // [Q (logo tiles), A, B]
+    let id = layout.rows[0].id
+    var r = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true, addons: [])
+    #expect(r.parked == [q] && layout.rows.count == 2)
+    r = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true, addons: serving(["q"]))
+    #expect(r.restored == [q] && FusionImport.kitID(of: layout.rows[0]) == q)
+    #expect(layout.rows[0].style == .logoTiles && layout.rows[0].id == id)
+}
+
+@Test func fusionParkedEdgeCases() throws {
+    let contents = try addonKit(1)
+    // Stored style not allowed for the content of the kit row: the kit's style.
+    var st = FusionKitSettings(enabled: true)
+    st.setSelected(pid(1), true, source: traktSrc)
+    var odd = HomeRow(content: .collection(id: pid(1)))
+    odd.style = .collectionTiles
+    st.parked = [FusionKitParkedRow(row: odd, above: [], index: 0)]
+    var layout = HomeLayout(rows: [user("A")])
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true, addons: serving(["1"]))
+    #expect(names(layout) == ["1", "A"] && layout.rows[0].style == .poster && layout.rows[0].id == odd.id)
+    if case .list = layout.rows[0].content {} else { Issue.record("list content expected") }
+
+    // A row that is on the start page and parked as well: the start page wins, the entry goes.
+    let shown = layout.rows
+    st.parked = [FusionKitParkedRow(row: HomeRow(content: shown[0].content, style: .hero), above: ["list:u.A"], index: 1)]
+    let r = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true, addons: serving(["1"]))
+    #expect(layout.rows == shown && st.parked.isEmpty && r.restored.isEmpty && r.added.isEmpty)
+}
+
+@Test func fusionSettingsSkipUnreadableParkedEntry() throws {
+    let good = FusionKitParkedRow(row: HomeRow(content: .collection(id: "fusion.s.collection.Q"), style: .logoTiles),
+                                  above: ["list:u.A"], below: ["list:u.B"], index: 3)
+    let goodJSON = String(decoding: try JSONEncoder().encode(good), as: UTF8.self)
+    let json = #"{"enabled":true,"parked":[{"row":5},"#  + goodJSON + #",{"above":[]}]}"#
+    let st = try JSONDecoder().decode(FusionKitSettings.self, from: Data(json.utf8))
+    #expect(st.parked == [good])
+    // An entry of the first b6 commit (without `below`) still reads.
+    let old = #"{"row":{"id":"\#(good.row.id.uuidString)","content":"# + String(decoding: try JSONEncoder().encode(good.row.content), as: UTF8.self)
+        + #","style":"logoTiles"},"above":["list:u.A"],"index":3}"#
+    let back = try JSONDecoder().decode(FusionKitParkedRow.self, from: Data(old.utf8))
+    #expect(back.below.isEmpty && back.row == good.row && back.index == 3)
 }

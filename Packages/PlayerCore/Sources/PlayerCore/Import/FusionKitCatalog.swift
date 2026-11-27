@@ -95,12 +95,27 @@ public enum FusionKitCatalog {
 public struct FusionKitParkedRow: Codable, Sendable, Hashable {
     /// The row as it stood on the start page (id, content, style).
     public var row: HomeRow
-    /// Content keys of the rows above it when it left, nearest first (at most `FusionKitSync.anchorLimit`).
+    /// Content keys of the rows above it, nearest first: other parked rows in between and up to
+    /// `FusionKitSync.anchorLimit` rows that are on the start page (review 2: waiting neighbours do not use up the limit).
     public var above: [String]
-    /// Its index when it left (used only when none of `above` is on the start page any more).
+    /// Same below it (review 3), used when no row of `above` is on the start page any more.
+    public var below: [String]
+    /// Number of start page rows above it (used only when no anchor is on the start page any more).
     public var index: Int
 
-    public init(row: HomeRow, above: [String], index: Int) { self.row = row; self.above = above; self.index = index }
+    public init(row: HomeRow, above: [String], below: [String] = [], index: Int) {
+        self.row = row; self.above = above; self.below = below; self.index = index
+    }
+
+    enum CodingKeys: String, CodingKey { case row, above, below, index }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        row = try c.decode(HomeRow.self, forKey: .row)
+        above = try c.decodeIfPresent([String].self, forKey: .above) ?? []
+        below = try c.decodeIfPresent([String].self, forKey: .below) ?? []
+        index = try c.decodeIfPresent(Int.self, forKey: .index) ?? 0
+    }
 
     public var kitID: String? { FusionImport.kitID(of: row) }
 }
@@ -130,7 +145,9 @@ public struct FusionKitSettings: Codable, Sendable, Equatable {
         selected = try c.decodeIfPresent([String].self, forKey: .selected) ?? []
         placed = try c.decodeIfPresent([String].self, forKey: .placed) ?? []
         sources = try c.decodeIfPresent([FusionKitSource].self, forKey: .sources) ?? []
-        parked = (try? c.decodeIfPresent([FusionKitParkedRow].self, forKey: .parked)) ?? []
+        // Review 5: per entry; an unreadable entry is dropped, not the whole list.
+        parked = (try? c.decodeIfPresent([Salvaged<FusionKitParkedRow>].self, forKey: .parked)).flatMap { $0 }
+            .map { Salvaged.split($0).0 } ?? []
     }
 
     public func isSelected(_ rowID: String) -> Bool { selected.contains(rowID) }
@@ -194,8 +211,10 @@ public struct FusionKitSyncResult: Equatable, Sendable {
 /// vorhandene Kit-Reihen behalten Platz und Stil; neue kommen ans Ende. Build 6 (L3): a placed row that waits for an
 /// addon or a Trakt login leaves the start page but is parked with place and style, and comes back there.
 public enum FusionKitSync {
-    /// Rows above a parked row that are remembered as its anchor.
+    /// Start page rows above (and below) a parked row that are remembered as its anchors.
     public static let anchorLimit = 8
+    /// Review 4: parked rows deselected while they wait, kept so that choosing them again keeps place and style.
+    public static let graceLimit = 16
 
     /// Task 2.4 (S-12): rule for kit rows when the settings may be missing (e.g. right after restoring a backup
     /// without kit settings). `nil` = no settings stored for the profile → the layout stays as it is. Kit rows are
@@ -239,48 +258,82 @@ public enum FusionKitSync {
             }
         }
 
-        // 3. Überzählige Kit-Reihen entfernen, vorhandene Listen aktualisieren, wartende parken, fehlende einsetzen.
+        // 3. Virtual layout: the start page with the parked rows at their remembered places. They are stored in their
+        //    order on this virtual page, so rows parked in different syncs keep their order (review 1).
         let waiting = Set(res.hidden)
+        let selected = Set(settings.selected)
+        var virtual = layout.rows
         var parked: [String: FusionKitParkedRow] = [:]
-        for p in settings.parked { if let id = p.kitID { parked[id] = p } }
-        var rows: [HomeRow] = []
-        for (i, row) in layout.rows.enumerated() {
-            guard let id = FusionImport.kitID(of: row) else { rows.append(row); continue }
+        var grace = 0
+        for p in settings.parked {
+            // A row that is on the start page as well: the start page wins.
+            guard let id = p.kitID, !present.contains(id), parked[id] == nil else { continue }
+            if !selected.contains(id) {
+                // Review 4: deselected while it waits: kept (kit on, row still in its file) for a reselect.
+                guard settings.enabled, grace < graceLimit, let key = FusionImport.sourceKey(ofID: id),
+                      contents[key].map({ $0.row(id) != nil }) ?? true else { continue }
+                grace += 1
+            }
+            parked[id] = p
+            virtual.insert(p.row, at: restoreIndex(p, in: virtual))
+        }
+
+        // 4. Each kit row: show (list updated, parked one restored), park, or drop.
+        var park = Set<Int>(), drop = Set<Int>()
+        for (i, row) in virtual.enumerated() {
+            guard let id = FusionImport.kitID(of: row) else { continue }
+            let p = parked[id]
             if let r = want[id] {
-                var row = row
-                if case .list = r.body, row.content != r.content { row.content = r.content; res.layoutChanged = true }
-                rows.append(row)
+                if let p {
+                    virtual[i] = restoredRow(p, as: r)
+                    res.restored.append(id); res.added.append(id)
+                } else if case .list = r.body, row.content != r.content {
+                    virtual[i].content = r.content; res.layoutChanged = true
+                }
             } else if unknown.contains(id) {
-                rows.append(row)
+                if p != nil { park.insert(i) }   // file not loaded: a parked row stays parked, a shown one stays shown
             } else if waiting.contains(id) {
-                // Anchors from the whole old layout (neighbours that wait too count), so adjacent rows keep their order.
-                let above = layout.rows[..<i].reversed().prefix(anchorLimit).map(\.content.key)
-                parked[id] = FusionKitParkedRow(row: row, above: Array(above), index: i)
-                res.parked.append(id)
+                park.insert(i)
+                if p == nil { res.parked.append(id) }
+            } else if p != nil, !selected.contains(id) {
+                park.insert(i)   // grace (step 3)
             } else {
-                res.removed.append(id)
+                drop.insert(i)
+                if p == nil { res.removed.append(id) }
+            }
+        }
+
+        // 5. Start page rows and parked rows with fresh anchors; new rows at the end.
+        func anchors(from i: Int, step: Int) -> [String] {
+            var out: [String] = [], shown = 0, j = i + step
+            while j >= 0, j < virtual.count, shown < anchorLimit {
+                if !drop.contains(j) {
+                    out.append(virtual[j].content.key)
+                    if !park.contains(j) { shown += 1 }
+                }
+                j += step
+            }
+            return out
+        }
+        var rows: [HomeRow] = []
+        var still: [FusionKitParkedRow] = []
+        for (i, row) in virtual.enumerated() where !drop.contains(i) {
+            if park.contains(i) {
+                still.append(FusionKitParkedRow(row: row, above: anchors(from: i, step: -1), below: anchors(from: i, step: 1),
+                                                index: rows.count))
+            } else {
+                rows.append(row)
             }
         }
         let kept = Set(rows.compactMap { FusionImport.kitID(of: $0) })
         for id in order where !kept.contains(id) {
             guard let r = want[id] else { continue }
-            if let p = parked.removeValue(forKey: id) {
-                rows.insert(restoredRow(p, as: r), at: restoreIndex(p, in: rows))
-                res.restored.append(id)
-            } else {
-                rows.append(HomeRow(content: r.content, style: r.style))
-            }
+            rows.append(HomeRow(content: r.content, style: r.style))
             res.added.append(id)
         }
         if !res.added.isEmpty || !res.removed.isEmpty || !res.parked.isEmpty { res.layoutChanged = true }
         layout.rows = rows
         settings.placed = rows.compactMap { FusionImport.kitID(of: $0) }
-        // Keep only rows that still wait (or whose file is not loaded yet); kit off, deselected or gone → forgotten.
-        let keep = waiting.union(unknown)
-        var still: [FusionKitParkedRow] = []
-        for id in settings.parked.compactMap(\.kitID) + res.parked where keep.contains(id) {
-            if let p = parked.removeValue(forKey: id) { still.append(p) }
-        }
         settings.parked = still
         return res
     }
@@ -293,11 +346,14 @@ public enum FusionKitSync {
         return row
     }
 
-    /// Below the nearest remembered row above it that is still on the start page; at the top if it was the first row;
-    /// otherwise at its old index (clamped).
+    /// Below the nearest remembered row above it that is there; else above the nearest remembered row below it;
+    /// else at the top if it was the first row, otherwise at its old index (clamped).
     static func restoreIndex(_ p: FusionKitParkedRow, in rows: [HomeRow]) -> Int {
         for key in p.above {
             if let j = rows.firstIndex(where: { $0.content.key == key }) { return j + 1 }
+        }
+        for key in p.below {
+            if let j = rows.firstIndex(where: { $0.content.key == key }) { return j }
         }
         return p.above.isEmpty ? 0 : min(p.index, rows.count)
     }
