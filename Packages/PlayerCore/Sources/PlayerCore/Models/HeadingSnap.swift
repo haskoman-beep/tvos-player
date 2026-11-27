@@ -12,16 +12,20 @@ public struct HomeListScroll: Hashable, Sendable {
     public var offset: Double
     /// Largest `offset` (content end); the last rows cannot reach the top edge.
     public var maxOffset: Double
+    /// Build 7: top content inset (raw content offset = `offset − insetTop`, for the focus scroll target).
+    public var insetTop: Double
 
-    public init(offset: Double, maxOffset: Double) {
+    public init(offset: Double, maxOffset: Double, insetTop: Double = 0) {
         self.offset = offset
         self.maxOffset = maxOffset
+        self.insetTop = insetTop
     }
 
     /// From the scroll view's geometry (`ScrollGeometry`): raw content offset, content height, insets, visible height.
     public init(contentOffsetY: Double, contentHeight: Double, insetTop: Double, insetBottom: Double,
                 viewportHeight: Double) {
         offset = contentOffsetY + insetTop
+        self.insetTop = insetTop
         maxOffset = max(0, contentHeight + insetTop + insetBottom - viewportHeight)
     }
 }
@@ -100,11 +104,16 @@ public enum HeadingSnap {
         return .snap(deviation: row.minY - scroll.offset)
     }
 
+    /// Build 7 device test: after the first check a row closer than this stays where it is (points). A late snap
+    /// of 14–20 pt at 1.5 s read as the card "going up a little" after the user stopped.
+    public static let lateMinimum: Double = 20
+
     /// `check`: index in `checksMs`. Without a measurement only the first check snaps (the Build 3 behaviour: one
-    /// blind re-snap), so a missing frame never makes the list move three times.
+    /// blind re-snap), so a missing frame never makes the list move three times. Build 7: later checks only snap a
+    /// row that is at least `lateMinimum` off.
     public static func shouldSnap(_ decision: Decision, check: Int) -> Bool {
         switch decision {
-        case .snap: true
+        case .snap(let d): check == 0 || abs(d) >= lateMinimum
         case .unknown: check == 0
         case .inPlace: false
         }

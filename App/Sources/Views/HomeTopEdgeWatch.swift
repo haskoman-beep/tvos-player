@@ -84,6 +84,27 @@ import PlayerCore
         HeadingSnapSample(row: rowSpans[id], scroll: listScroll, list: Self.listView())
     }
 
+    /// Build 7 device test: target of a focus scroll of the home list (`HomeFocusScroll`), raw content y of the
+    /// visible rect's top. The row under the focused element goes to the list's top edge (`FocusScrollTarget.rowTop`)
+    /// instead of where the focus engine centred the card; nil: leave the target as proposed (top edge focused, no
+    /// focused element in the list, no row under it, or no change worth a scroll).
+    func focusScrollTarget(rawY: Double, height: Double) -> Double? {
+        guard !focus.atTop, let scroll = listScroll, let sv = TabBarGuard.shared.knownScrollView, sv.window != nil,
+              let view = Self.focusedItem() as? UIView, view.window != nil, view.isDescendant(of: sv) else { return nil }
+        let f = view.convert(view.bounds, to: sv)
+        let focused = HomeRowSpan(minY: Double(f.minY), maxY: Double(f.maxY))
+        guard let id = HomeMoveRescue.row(atContentY: Double(f.midY), spans: rowSpans.map { ($0.key, $0.value) }),
+              let row = rowSpans[id] else { return nil }
+        let proposed = rawY + scroll.insetTop
+        let adjusted = FocusScrollTarget.rowTop(proposed: proposed, viewport: height - scroll.insetTop, row: row,
+                                                focused: focused, maxOffset: scroll.maxOffset)
+        guard abs(adjusted - proposed) > HeadingSnap.tolerance else { return nil }
+        if throttle.allow("focus scroll", now: Self.now) {
+            RemoteLog.info("nav", FocusScrollTarget.rowLine(proposed: proposed, adjusted: adjusted, row: row))
+        }
+        return adjusted - scroll.insetTop
+    }
+
     /// S5: the home list's scroll view as UIKit sees it (read only): raw offset and its end, frame in the window,
     /// adjusted insets, and the safe area top of the page's view controller (cause 2 of the brief: differs it
     /// between launch and the return from a detail page?).
