@@ -550,6 +550,8 @@ struct RemoteImage: View {
     /// Wave F-k: called with the address when it cannot be loaded (not on cancel); poster tiles then try the next one.
     var onFailure: (@MainActor (String) -> Void)? = nil
     @Environment(\.displayScale) private var displayScale
+    /// Build 8: upper bound of the decode scale (grid page posters, `GridImageScale`); nil = the screen scale.
+    @Environment(\.imageDecodeScaleCap) private var decodeScaleCap
     /// A-B-3: bumped when the network comes back while this view has no picture for its address (part of `LoadKey`).
     /// Build 4 follow-up S2: a local counter instead of observing `NetworkReturn`, so views showing their picture
     /// neither re-render nor restart their load.
@@ -622,7 +624,8 @@ struct RemoteImage: View {
                 if w < 1 { w = capPoints }
                 if h < 1 { h = capPoints }
             }
-            guard var t = ImageTarget(points: w, h, scale: displayScale, fit: fit) else { return }
+            let decodeScale = decodeScaleCap.map { min(displayScale, $0) } ?? displayScale
+            guard var t = ImageTarget(points: w, h, scale: decodeScale, fit: fit) else { return }
             if let cap = maxPixels { t.width = min(t.width, cap); t.height = min(t.height, cap) }
             // b4n2: once the logo shows, the view shrinks from its room to the fitted picture; the picture decoded for
             // the room stays (no second decode). More room than it was decoded for loads again.
@@ -818,5 +821,15 @@ enum LogoArrivalLog {
             try? await Task.sleep(for: .seconds(PictureArrivalStats.window))
             if let line = stats.take() { RemoteLog.info("bilder", line) }
         }
+    }
+}
+
+private struct ImageDecodeScaleCapKey: EnvironmentKey { static let defaultValue: CGFloat? = nil }
+
+extension EnvironmentValues {
+    /// Build 8: images below decode at most at this scale (grid page posters); nil = the screen scale.
+    var imageDecodeScaleCap: CGFloat? {
+        get { self[ImageDecodeScaleCapKey.self] }
+        set { self[ImageDecodeScaleCapKey.self] = newValue }
     }
 }

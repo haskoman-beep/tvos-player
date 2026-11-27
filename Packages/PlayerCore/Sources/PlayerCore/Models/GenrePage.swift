@@ -194,12 +194,13 @@ public struct GenrePaging: Equatable, Sendable {
 
     /// Should the focus on `index` (0-based, grid with `columns` per row) request the next block? True from about
     /// `prefetchRows` rows before the end, while more can come and nothing is in flight.
-    public func shouldPrefetch(focusedIndex index: Int, columns: Int) -> Bool {
+    /// Build 8: `rows` overrides the threshold (`BrandPage.prefetchRows` on the grid page).
+    public func shouldPrefetch(focusedIndex index: Int, columns: Int, rows: Int = GenrePaging.prefetchRows) -> Bool {
         guard inFlight == nil, !failed, !reachedEnd, !items.isEmpty else { return false }
         let cols = max(1, columns)
         let lastRow = (items.count - 1) / cols
         let row = max(0, index) / cols
-        return lastRow - row <= Self.prefetchRows
+        return lastRow - row <= max(0, rows)
     }
 
     /// What the grid shows.
