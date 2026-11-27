@@ -25,6 +25,7 @@ extension AppModel {
                 return
             }
             catalogRevisions[s.id, default: 0] += 1
+            homeRowLoadDone.send((id: s.id, load: CatalogLoad(items: out)))   // Build 7 review (M3): folder page
             RemoteLog.info("katalog", "\(s.title): im Hintergrund erneuert (\(out.count) Einträge)")
         }
     }

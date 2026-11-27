@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import PlayerCore
 
 /// Ergebnis einer Katalog-Ladung (Welle F-f): Einträge, Fehlschlag (leer wegen Fehler), Stand aus dem Cache.
@@ -20,11 +21,15 @@ extension AppModel {
         if case .continueWatching = s.kind { return await loadItems(s) }   // lokal, sofort
         let key = "\(profile.id.uuidString)|\(s.id)"
         if let running = homeRowLoads[key] { return await running.value }
+        // Build 7 review (L4): failed within 30 s and nothing stored: no new request (a row's retry forgets it first).
+        if cache[s.id] == nil, recentLoadFailures.isRecent(s.id) { return CatalogLoad(items: [], failed: true) }
         let t0 = Date()
         let task = Task { @MainActor in await self.loadItems(s) }
         homeRowLoads[key] = task
         let r = await task.value
         if homeRowLoads[key] == task { homeRowLoads[key] = nil }
+        if r.failed { recentLoadFailures.mark(s.id) } else { recentLoadFailures.forget(s.id) }
+        homeRowLoadDone.send((id: s.id, load: r))
         if !r.fromCache {
             let ms = Int(Date().timeIntervalSince(t0) * 1000)
             RemoteLog.info("home", "Reihe geladen \(s.title) \(ms) ms" + (r.failed ? " (Fehler)" : " (\(r.items.count) Einträge)"))
@@ -50,5 +55,28 @@ extension AppModel {
             }
         }
         RemoteLog.info("home", "Vorladen: \(sources.count) Reihen in \(Int(Date().timeIntervalSince(t0) * 1000)) ms")
+    }
+
+    /// Build 7 (folder): a folder tile rested in focus (home rows: after the hero's rest, folder pages after
+    /// `FocusRest.prefetchMilliseconds`): its first two rows start loading now, through the shared `homeRowItems`, so the
+    /// page joins the running loads. Device test b6-1: AIOMetadata catalogs took 3–11 s on the first open, and the
+    /// tile rested 1–5 s before the click. Cached sources (memory or disk) and recent failures are skipped.
+    func prefetchFolder(_ f: Folder) {
+        let key = profile.id.uuidString
+        if let last = folderPrefetches[f.id]?.at, Date().timeIntervalSince(last) < 60 { return }
+        // Review b7 M1: many row loads running already (home preload …): no warm-up on top.
+        guard FolderPage.mayPrefetch(runningLoads: homeRowLoads.count) else { return }
+        Task { @MainActor in
+            await awaitCatalogSnapshot()
+            guard key == profile.id.uuidString else { return }
+            guard FolderPage.mayPrefetch(runningLoads: homeRowLoads.count) else { return }
+            let picked = FolderPage.prefetchSources(f.sources, isCached: { id in
+                self.cache[id] != nil || self.homeRowLoads["\(key)|\(id)"] != nil || self.recentLoadFailures.isRecent(id)
+            })
+            guard !picked.isEmpty else { return }
+            folderPrefetches[f.id] = (count: picked.count, at: Date())
+            RemoteLog.info("katalog", "Ordner \(f.title): \(picked.count) \(picked.count == 1 ? "Quelle" : "Quellen") beim Fokus vorgeladen")
+            for s in picked { Task { @MainActor in _ = await self.homeRowItems(s) } }
+        }
     }
 }

@@ -428,6 +428,8 @@ struct HomeRowView: View {
             guard canRetry else { return }
             RemoteLog.info("home", "Reihe erneut laden: \(title)")
             if let action { action(); return }
+            // Build 7 review (L4): a retry asks the source again even within the 30 s failure memory.
+            if case .list(let s) = row.content { model.recentLoadFailures.forget(s.id) }
             loaded = false; failed = false; retry += 1
             focusPlaceholder(0)
         } label: {
