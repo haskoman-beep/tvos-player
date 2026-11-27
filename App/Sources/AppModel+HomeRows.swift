@@ -70,7 +70,20 @@ extension AppModel {
             await awaitCatalogSnapshot()
             guard key == profile.id.uuidString else { return }
             guard FolderPage.mayPrefetch(runningLoads: homeRowLoads.count) else { return }
-            let picked = FolderPage.prefetchSources(f.sources, isCached: { id in
+            // Build 8: a studio / streaming tile opens the TMDB grid: warm its first pages (start filter first; the
+            // grid shows the cached page at once), or run the company search of an unknown studio ahead.
+            var candidates = f.sources
+            switch BrandPage.resolve(f, collection: { self.collection($0) }, searched: { CompanySearchStore.shared.lookup($0) }) {
+            case .grid(let g):
+                candidates = BrandPage.warmSources(g)
+            case .search(let query, let searchKey):
+                folderPrefetches[f.id] = (count: 0, at: Date())
+                _ = await CompanySearchStore.shared.search(query, key: searchKey, tmdb: tmdb)
+                return
+            case .rowPage:
+                break
+            }
+            let picked = FolderPage.prefetchSources(candidates, isCached: { id in
                 self.cache[id] != nil || self.homeRowLoads["\(key)|\(id)"] != nil || self.recentLoadFailures.isRecent(id)
             })
             guard !picked.isEmpty else { return }
