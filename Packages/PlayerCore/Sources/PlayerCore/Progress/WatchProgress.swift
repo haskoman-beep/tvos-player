@@ -25,7 +25,64 @@ public struct WatchProgress: Codable, Sendable, Hashable, Identifiable {
         self.nextUp = nextUp; self.remoteFraction = remoteFraction
     }
 
-    public var fraction: Double { duration > 0 ? position / duration : (remoteFraction ?? 0) }
+    /// Phase 0a.1: always in 0…1, also for an entry with bad numbers (see `ProgressNumbers`).
+    public var fraction: Double {
+        let d = ProgressNumbers.storedDuration(duration)
+        if d > 0 { return ProgressNumbers.unit(ProgressNumbers.storedPosition(position, duration: d) / d) }
+        return ProgressNumbers.storedFraction(remoteFraction) ?? 0
+    }
+
+    /// Phase 0a.1: the entry with every number repaired by the stored rules of `ProgressNumbers` (negative or
+    /// non-finite position → 0, negative or non-finite length → 0 = unknown, position beyond the length → the length,
+    /// `remoteFraction` clamped to 0…1 or nil when non-finite, date into `.distantPast`…`.distantFuture`). All other
+    /// fields stay. A good entry comes back unchanged.
+    func normalized() -> WatchProgress {
+        var e = self
+        e.duration = ProgressNumbers.storedDuration(duration)
+        e.position = ProgressNumbers.storedPosition(position, duration: e.duration)
+        e.remoteFraction = ProgressNumbers.storedFraction(remoteFraction)
+        e.updated = ProgressNumbers.date(updated)
+        return e
+    }
+}
+
+/// Phase 0a.1: same keys as the synthesized form (optional fields left out when nil). Decoding repairs bad numbers
+/// field by field instead of failing; encoding writes the repaired entry, so a bad number put into `entries`
+/// directly can never make JSONEncoder fail.
+extension WatchProgress {
+    private enum Keys: String, CodingKey {
+        case id, item, season, episode, position, duration, updated, finished, nextUp, remoteFraction
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        self.init(id: try c.decode(String.self, forKey: .id),
+                  item: try c.decode(MetaPreview.self, forKey: .item),
+                  season: try c.decodeIfPresent(Int.self, forKey: .season),
+                  episode: try c.decodeIfPresent(Int.self, forKey: .episode),
+                  position: try c.decode(Double.self, forKey: .position),
+                  duration: try c.decode(Double.self, forKey: .duration),
+                  updated: try c.decode(Date.self, forKey: .updated),
+                  finished: try c.decode(Bool.self, forKey: .finished),
+                  nextUp: try c.decodeIfPresent(Bool.self, forKey: .nextUp),
+                  remoteFraction: try c.decodeIfPresent(Double.self, forKey: .remoteFraction))
+        self = normalized()
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        let e = normalized()
+        var c = encoder.container(keyedBy: Keys.self)
+        try c.encode(e.id, forKey: .id)
+        try c.encode(e.item, forKey: .item)
+        try c.encodeIfPresent(e.season, forKey: .season)
+        try c.encodeIfPresent(e.episode, forKey: .episode)
+        try c.encode(e.position, forKey: .position)
+        try c.encode(e.duration, forKey: .duration)
+        try c.encode(e.updated, forKey: .updated)
+        try c.encode(e.finished, forKey: .finished)
+        try c.encodeIfPresent(e.nextUp, forKey: .nextUp)
+        try c.encodeIfPresent(e.remoteFraction, forKey: .remoteFraction)
+    }
 }
 
 public struct ProgressBook: Codable, Sendable, Equatable {
@@ -63,7 +120,7 @@ public struct ProgressBook: Codable, Sendable, Equatable {
 
     public mutating func rememberSource(_ stream: StreamItem, addon: String, for id: String, now: Date = Date()) {
         var all = sources ?? [:]
-        all[Self.sourceKey(id)] = LastSource(stream: stream, addon: addon, contentID: id, savedAt: now)
+        all[Self.sourceKey(id)] = LastSource(stream: stream, addon: addon, contentID: id, savedAt: ProgressNumbers.date(now))
         sources = all
     }
 
@@ -122,19 +179,25 @@ public struct ProgressBook: Codable, Sendable, Equatable {
     public mutating func record(_ new: WatchProgress, now: Date = Date(), finishedAt: Double = ProgressBook.finishedAt) {
         // Phase 0a (finding 7): a stream without a known length reports an infinite duration; JSON cannot encode it,
         // so every later save of the book would fail.
-        guard new.duration.isFinite, new.duration > 0, new.position.isFinite, new.position >= 0 else { return }
+        // Phase 0a.1: NaN/±infinity, a length ≤ 0 or a negative position → the report is ignored, the existing entry
+        // stays as it was (no clamp to 0, that would erase real progress on a player glitch).
+        guard ProgressNumbers.isUsableReport(position: new.position, duration: new.duration) else { return }
+        var new = new
+        new.position = min(new.position, new.duration)   // beyond the end (player overshoot): the end, then the 92 % rule
+        new.remoteFraction = ProgressNumbers.storedFraction(new.remoteFraction)
+        let stamp = ProgressNumbers.date(now)
         let old = entries[new.id]
         let done = new.position / new.duration >= finishedAt
         let ranLong = new.position > Self.markerSeconds
         if let old, old.finished, !done, !(ranLong && new.position > Self.unfinishFraction * new.duration) { return }
-        clearSeriesMarker(itemID: new.item.id, episodeID: new.id, updated: now)
+        clearSeriesMarker(itemID: new.item.id, episodeID: new.id, updated: stamp)
         var e = new
         e.item = Self.filled(new.item, from: old?.item)
         e.position = done ? 0 : new.position
-        e.updated = now
+        e.updated = stamp
         e.finished = done
         e.nextUp = !done && (new.nextUp == true || (old?.nextUp == true && !ranLong)) ? true : nil
-        e.remoteFraction = new.remoteFraction ?? old?.remoteFraction
+        e.remoteFraction = new.remoteFraction ?? ProgressNumbers.storedFraction(old?.remoteFraction)
         entries[new.id] = e
     }
 
@@ -160,19 +223,21 @@ public struct ProgressBook: Codable, Sendable, Equatable {
     public mutating func recordNextUp(id: String, item: MetaPreview, season: Int, episode: Int, now: Date = Date()) {
         if let e = entries[id], e.finished || e.position >= Self.minimumSeconds { return }
         entries[id] = WatchProgress(id: id, item: item, season: season, episode: episode,
-                                    position: 0, duration: 0, updated: now, finished: false, nextUp: true)
+                                    position: 0, duration: 0, updated: ProgressNumbers.date(now), finished: false, nextUp: true)
     }
 
     /// Wo weitermachen? nil = von vorn (nie gestartet, < 1 min oder gesehen).
+    /// Phase 0a.1: from the repaired entry, so always finite and inside 0…duration (when the length is known).
     public func resumePosition(for id: String) -> Double? {
-        guard let e = entries[id], !e.finished, e.position >= Self.minimumSeconds else { return nil }
+        guard let e = entries[id]?.normalized(), !e.finished, e.position >= Self.minimumSeconds else { return nil }
         return e.position
     }
 
     /// Weiterschauen: angefangene Titel, neueste zuerst, eine Kachel pro Serie.
+    /// Phase 0a.1: the entries come out repaired (`WatchProgress.normalized`).
     public func continueWatching(limit: Int = 30) -> [WatchProgress] {
         var seen = Set<String>()
-        return entries.values
+        return entries.values.map { $0.normalized() }
             .filter { !$0.finished && ($0.position >= Self.minimumSeconds || $0.nextUp == true || ($0.remoteFraction ?? 0) > 0) }
             .sorted { $0.updated > $1.updated }
             .filter { seen.insert($0.item.id).inserted }
@@ -192,14 +257,15 @@ public struct ProgressBook: Codable, Sendable, Equatable {
     /// Build 4 follow-up S4: answered from the per-item index (three calls per new card on the home page used to
     /// filter all entries each). Same result as the former scan, ties included (see `LatestIndex.build`).
     public func latest(forItem itemID: String) -> WatchProgress? {
-        latestIndex.latest(forItem: itemID, in: entries)
+        latestIndex.latest(forItem: itemID, in: entries)?.normalized()   // Phase 0a.1: repaired, like every way out
     }
 
     public func isWatched(_ id: String) -> Bool { entries[id]?.finished == true }
 
     /// Zustand für eine Kachel: Fortschritt, Restzeit, gesehen, Folge.
     public func cardState(itemID: String) -> CardState? {
-        if let e = entries[itemID], e.season == nil {
+        // Phase 0a.1: from the repaired entry: fraction in 0…1, remaining time ≥ 0 and finite.
+        if let e = entries[itemID]?.normalized(), e.season == nil {
             if e.finished { return CardState(watched: true) }
             guard e.position >= Self.minimumSeconds || (e.remoteFraction ?? 0) > 0 else { return nil }
             return CardState(fraction: e.fraction, remainingSeconds: e.duration > 0 ? max(0, e.duration - e.position) : nil)
@@ -214,17 +280,22 @@ public struct ProgressBook: Codable, Sendable, Equatable {
 
     /// Nur Anteil bekannt (aus Trakt/Simkl): Player springt nach dem Laden dorthin.
     public func resumeFraction(for id: String) -> Double? {
-        guard let e = entries[id], !e.finished, e.duration == 0, let f = e.remoteFraction, f > 0.01, f < Self.finishedAt else { return nil }
+        guard let e = entries[id]?.normalized(), !e.finished, e.duration == 0, let f = e.remoteFraction, f > 0.01, f < Self.finishedAt else { return nil }
         return f
     }
 
     /// Angefangenes aus dem Sync-Dienst übernehmen; neuerer lokaler Stand gewinnt.
+    /// Phase 0a.1: a remote fraction that is non-finite or negative is ignored (the local entry stays); above 1 it
+    /// counts as 1 (watched). A non-finite or absurd remote date is repaired like a stored one (`ProgressNumbers.date`).
     public mutating func merge(remote: [RemoteProgress]) {
-        for r in remote {
-            if let l = entries[r.id], l.updated >= r.updated { continue }
+        for var r in remote {
+            guard ProgressNumbers.isUsableRemoteFraction(r.fraction) else { continue }
+            r.fraction = min(1, r.fraction)
+            r.updated = ProgressNumbers.date(r.updated)
+            if let l = entries[r.id], ProgressNumbers.date(l.updated) >= r.updated { continue }
             // Wave L: an episode paused before the series was marked as watched stays out.
-            if r.id != r.item.id, let m = entries[r.item.id], m.season == nil, m.finished, m.updated >= r.updated { continue }
-            let dur = entries[r.id]?.duration ?? 0
+            if r.id != r.item.id, let m = entries[r.item.id], m.season == nil, m.finished, ProgressNumbers.date(m.updated) >= r.updated { continue }
+            let dur = ProgressNumbers.storedDuration(entries[r.id]?.duration ?? 0)
             let done = r.fraction >= Self.finishedAt
             // Task 2.1 fix round 1 (W-B-1 via sync): the same rules as `record`. A short remote session
             // (the service echoes our own scrobble) neither reopens a watched entry nor drops the next-episode hint.
@@ -241,6 +312,21 @@ public struct ProgressBook: Codable, Sendable, Equatable {
                                           finished: done, nextUp: keepNextUp ? true : nil,
                                           remoteFraction: dur > 0 ? nil : r.fraction)
         }
+    }
+}
+
+extension ProgressBook {
+    /// Phase 0a.1: the stored format of Build 3 (`schemaVersion`, `entries`, optional `sources`), read entry by
+    /// entry: an entry that cannot be read at all (a number JSONDecoder refuses such as `1e400`, a wrong type) is
+    /// dropped and noted in the `DecodeReport`, the other entries stay. Bad but readable numbers are repaired by
+    /// `WatchProgress.init(from:)`. A missing `schemaVersion` or `entries` key still fails, as before.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
+        entries = try c.decode([String: FailableDecodable<WatchProgress>].self, forKey: .entries).compactMapValues(\.value)
+        sources = try c.decodeIfPresent([String: FailableDecodable<LastSource>].self, forKey: .sources)?
+            .compactMapValues(\.value)
     }
 }
 
@@ -300,7 +386,11 @@ public struct ProgressStore: Sendable {
     public func load(profile: UUID) -> ProgressBook? {
         guard let d = storage.read(name(profile)) else { return ProgressBook() }
         let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
-        if let b = try? dec.decode(ProgressBook.self, from: d) { return b }
+        if let r = try? dec.decodeReporting(ProgressBook.self, from: d) {
+            // Phase 0a.1: an entry that could not be read is left out of the book; the file as it was stays as .bak.
+            if !r.report.isEmpty { try? storage.write(name(profile) + ".bak", d) }
+            return r.value
+        }
         try? storage.write(name(profile) + ".bak", d)
         return nil
     }
@@ -353,6 +443,23 @@ public struct LastSource: Codable, Sendable, Hashable {
     }
 }
 
+extension LastSource {
+    /// Same keys as the synthesized form (decoding stays synthesized).
+    private enum EncodeKeys: String, CodingKey { case addon, name, fingerprint, bingeGroup, contentID, savedAt }
+
+    /// Phase 0a.1: the date goes out repaired (`ProgressNumbers.date`), so a bad `savedAt` cannot make the default
+    /// JSONEncoder of the backup fail on a NaN time or the ISO 8601 form of `ProgressStore` become unreadable.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: EncodeKeys.self)
+        try c.encode(addon, forKey: .addon)
+        try c.encodeIfPresent(name, forKey: .name)
+        try c.encode(fingerprint, forKey: .fingerprint)
+        try c.encodeIfPresent(bingeGroup, forKey: .bingeGroup)
+        try c.encode(contentID, forKey: .contentID)
+        try c.encode(ProgressNumbers.date(savedAt), forKey: .savedAt)
+    }
+}
+
 public struct CardState: Sendable, Equatable {
     public var fraction: Double?
     public var remainingSeconds: Double?
@@ -367,7 +474,7 @@ extension ProgressBook {
     /// Verlauf (Spec §7a.5): gesehene Einträge, neueste zuerst, eine Kachel pro Titel.
     public func history(limit: Int = 50) -> [WatchProgress] {
         var seen = Set<String>()
-        return entries.values
+        return entries.values.map { $0.normalized() }   // Phase 0a.1: repaired, sorted by sane dates
             .filter { $0.finished }
             .sorted { $0.updated > $1.updated }
             .filter { seen.insert($0.item.id).inserted }

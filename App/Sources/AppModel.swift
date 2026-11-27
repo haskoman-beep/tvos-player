@@ -351,7 +351,10 @@ final class AppModel {
     }
 
     private func scrobbleProgress(_ r: PlayRequest, fraction: Double) {
-        sendScrobble(scrobbler.progress(r, id: r.id, fraction: fraction))
+        // Phase 0a.1: a stream without a known length reports an infinite duration (inf / inf = NaN). A non-finite
+        // percent must never reach the sync clients (JSONSerialization raises on it); beyond the end counts as the end.
+        guard fraction.isFinite else { return }
+        sendScrobble(scrobbler.progress(r, id: r.id, fraction: min(1, max(0, fraction))))
     }
 
     private func sendScrobble(_ events: [ScrobbleEvent<PlayRequest>]) {
