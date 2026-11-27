@@ -20,33 +20,88 @@ public enum FocusScrollTarget {
 
     /// Horizontal strip, scroll target x (the visible rect's leading edge in content coordinates). Only a target that
     /// moves toward the leading end (`proposed` < `current`) changes: it goes `clearance` further, so the revealed
-    /// card sits `clearance` inside the leading edge; never past `minimum` (the start position, minus the leading
-    /// content margin).
+    /// card sits `clearance` inside the leading edge; never past `minimum` (the start position; Build 8: 0,
+    /// the target rect is inset-adjusted).
     public static func leading(proposed: Double, current: Double, clearance: Double, minimum: Double) -> Double {
         guard proposed < current - directionSlack, clearance > 0 else { return proposed }
         return max(min(minimum, proposed), proposed - clearance)
     }
 
-    /// Vertical home list, scroll target in `HomeListScroll.offset` terms (distance from the very top). The row that
-    /// holds the focus goes to the list's top edge (as far as the content end allows) instead of where the focus
-    /// engine put it. Unchanged when the correction is larger than half the visible height (not a focus scroll of
-    /// this row: a programmatic scroll or a move to another row), or when the focused element would leave the
-    /// visible part (rows taller than the list).
-    /// - `focused`: the focused element's frame in the same content coordinates (nil: unknown, no change).
-    /// b7 review 3: the focused frame must lie inside the proposed visible part too; a stale focused element (the
-    /// previous row, before the focus engine moved on) is not what this scroll shows, so it never snaps back to it.
-    public static func rowTop(proposed: Double, viewport: Double, row: HomeRowSpan, focused: HomeRowSpan?,
-                              maxOffset: Double) -> Double {
-        guard let focused, viewport > 0 else { return proposed }
-        guard contains(focused, top: proposed, height: viewport) else { return proposed }
-        let target = min(max(row.minY, 0), max(0, maxOffset))
-        guard abs(target - proposed) <= viewport / 2 else { return proposed }
-        guard contains(focused, top: target, height: viewport) else { return proposed }
-        return target
+    /// Build 8 device test (b7-1 log: 0 `Fokus-Scroll auf Reihenoberkante` lines): the b7 rule picked the row from
+    /// UIKit's focused item, which can still be the previous row's card while the focus engine computes the scroll
+    /// (stale, rejected). The row now comes from the proposed target itself: the focus engine centres the focused
+    /// card, so the centre of the proposed visible rect lies in the row the focus moved into.
+    ///
+    /// Vertical home list, scroll target in `HomeListScroll.offset` terms (distance from the very top; the b7-1 log
+    /// showed for the strips that the target rect is inset-adjusted, "vorher = Versatz + Inset"). `height`: height of
+    /// the proposed visible rect. `rows`: the rows' frames in the same content coordinates.
+    /// Unchanged: a target at the very top or already on a row's top (programmatic scrolls: rescue, `scrollToRow`,
+    /// scroll to the top), no row at the centre, or a correction larger than half the visible height (not a focus
+    /// scroll of that row).
+    public static func rowTop(proposed: Double, height: Double, rows: [(UUID, HomeRowSpan)],
+                              maxOffset: Double) -> VerticalDecision {
+        let probe = proposed + height / 2
+        func keep(_ o: VerticalOutcome, _ row: (UUID, HomeRowSpan)? = nil) -> VerticalDecision {
+            VerticalDecision(outcome: o, target: proposed, probeY: probe, row: row?.0, span: row?.1)
+        }
+        guard height > 0 else { return keep(.noScroll) }
+        guard proposed > HeadingSnap.tolerance else { return keep(.veryTop) }
+        let end = max(0, maxOffset)
+        func top(_ span: HomeRowSpan) -> Double { min(max(span.minY, 0), end) }
+        if let r = rows.first(where: { abs(top($0.1) - proposed) <= HeadingSnap.tolerance }) {
+            return keep(.atRowTop, r)
+        }
+        guard let row = row(at: probe, rows: rows) else { return keep(.noRow) }
+        let target = top(row.1)
+        guard abs(target - proposed) <= height / 2 else { return keep(.tooFar, row) }
+        guard abs(target - proposed) > HeadingSnap.tolerance else { return keep(.atRowTop, row) }
+        return VerticalDecision(outcome: .retargeted, target: target, probeY: probe, row: row.0, span: row.1)
     }
 
-    private static func contains(_ span: HomeRowSpan, top: Double, height: Double) -> Bool {
-        span.minY >= top - directionSlack && span.maxY <= top + height + directionSlack
+    /// Rows are 50–70 pt apart; a centre in that gap belongs to the nearer row. Farther away (hero, action button)
+    /// there is no row.
+    public static let gapSlack: Double = 80
+
+    /// The row containing `y`, else the nearest one within `gapSlack`.
+    public static func row(at y: Double, rows: [(UUID, HomeRowSpan)]) -> (UUID, HomeRowSpan)? {
+        if let r = rows.first(where: { y >= $0.1.minY && y <= $0.1.maxY }) { return r }
+        func distance(_ s: HomeRowSpan) -> Double { y < s.minY ? s.minY - y : y - s.maxY }
+        guard let near = rows.min(by: { distance($0.1) < distance($1.1) }), distance(near.1) <= gapSlack
+        else { return nil }
+        return near
+    }
+
+    /// Why one call of the vertical behaviour kept or changed the target (log text German).
+    public enum VerticalOutcome: String, CaseIterable, Hashable, Sendable {
+        case notVertical = "nicht senkrecht"
+        case offMain = "nicht im Hauptthread"
+        case noScroll = "kein Scrollzustand"
+        case rescue = "Rettung läuft"
+        case topEdge = "oberer Rand fokussiert"
+        case actionButton = "Knopf unten fokussiert"
+        case veryTop = "Ziel ganz oben"
+        case atRowTop = "Ziel schon an Reihenoberkante"
+        case noRow = "keine Reihe in der Mitte"
+        case tooFar = "Korrektur über halbe Höhe"
+        case retargeted = "auf Reihenoberkante"
+    }
+
+    public struct VerticalDecision: Hashable, Sendable {
+        public var outcome: VerticalOutcome
+        /// Final target (= proposed unless `retargeted`).
+        public var target: Double
+        /// Centre of the proposed visible rect (content y) used to pick the row.
+        public var probeY: Double
+        public var row: UUID?
+        public var span: HomeRowSpan?
+
+        public init(outcome: VerticalOutcome, target: Double, probeY: Double, row: UUID?, span: HomeRowSpan?) {
+            self.outcome = outcome
+            self.target = target
+            self.probeY = probeY
+            self.row = row
+            self.span = span
+        }
     }
 
     /// b7 review 5: after a rescued up/down press (`HomeMoveRescue`: scroll to a row, the action button or the very
@@ -76,5 +131,91 @@ public enum FocusScrollTarget {
         return "Fokus-Scroll links mit Rand: Ziel \(pt(proposed)) → \(pt(adjusted)) (vorher \(pt(current)), Versatz \(o), Start \(pt(start)))"
     }
 
+    /// Build 8: one call of the vertical behaviour (first `FocusScrollProbe.detailLines` per app run): "Fokus-Scroll
+    /// senkrecht #3: keine Reihe in der Mitte · Ziel 3356 → 3356 · Höhe 676 · Mitte 3694". With a row:
+    /// "… · Reihe 3434…3866".
+    public static func verticalLine(number: Int, outcome: VerticalOutcome, proposed: Double, target: Double,
+                                    height: Double?, probeY: Double?, span: HomeRowSpan?) -> String {
+        var parts = ["Fokus-Scroll senkrecht #\(number): \(outcome.rawValue)", "Ziel \(pt(proposed)) → \(pt(target))"]
+        if let height { parts.append("Höhe \(pt(height))") }
+        if let probeY { parts.append("Mitte \(pt(probeY))") }
+        if let span { parts.append("Reihe \(pt(span.minY))…\(pt(span.maxY))") }
+        return parts.joined(separator: " · ")
+    }
+
     private static func pt(_ v: Double) -> String { "\(Int(v.rounded()))" }
+}
+
+/// Build 8: counts the calls of the vertical focus scroll behaviour per outcome, so the device log tells whether it
+/// is called at all and which guard keeps it out. The first `detailLines` calls per app run get a line each; a
+/// summary (with the number of row entries for comparison) follows every `summaryEvery` calls and when the home
+/// page disappears.
+public struct FocusScrollProbe: Sendable {
+    public static let detailLines = 20
+    public static let summaryEvery = 100
+
+    public private(set) var total = 0
+    public private(set) var counts: [FocusScrollTarget.VerticalOutcome: Int] = [:]
+    /// Rows the focus entered (`showHeading`): with 0 calls this says "never called", not "nothing happened".
+    public private(set) var rowEntries = 0
+    private var summarized: (total: Int, rows: Int)?
+
+    public init() {}
+
+    /// Counts one call; `true`: it gets its own line (call number = `total`).
+    public mutating func note(_ outcome: FocusScrollTarget.VerticalOutcome) -> Bool {
+        total += 1
+        counts[outcome, default: 0] += 1
+        return total <= Self.detailLines
+    }
+
+    public mutating func noteRowEntry() { rowEntries += 1 }
+
+    /// After `note`: time for a periodic summary.
+    public var summaryDue: Bool { total > 0 && total % Self.summaryEvery == 0 }
+
+    /// The summary line, nil when nothing changed since the last one (`markSummarized`).
+    public func summaryLine() -> String? {
+        if let s = summarized, s.total == total, s.rows == rowEntries { return nil }
+        guard total > 0 || rowEntries > 0 else { return nil }
+        let parts = FocusScrollTarget.VerticalOutcome.allCases.compactMap { o in
+            counts[o].map { "\(o.rawValue) \($0)" }
+        }
+        let tail = parts.isEmpty ? "" : " · " + parts.joined(separator: " · ")
+        return "Fokus-Scroll senkrecht: \(total) Aufrufe bei \(rowEntries) Reihenwechseln\(tail)"
+    }
+
+    public mutating func markSummarized() { summarized = (total, rowEntries) }
+}
+
+/// Build 8 (b7-1 log 17:53:16.2: a snap at 0.4 s moved Preise from +15 to +71, the system's focus scroll was still
+/// running to its own target): the last target a scroll of the home list was heading for. While the list is still
+/// on its way there, the heading checks do not snap; a focus scroll retargeted to a row's top owns that row change
+/// (`showHeading` then adds no scroll of its own).
+public struct FocusScrollFlight: Hashable, Sendable {
+    /// The system's focus scroll takes about 0.3–0.4 s.
+    public static let window: Double = 0.6
+
+    /// Target in `HomeListScroll.offset` terms.
+    public var target: Double
+    /// Uptime of the target update.
+    public var at: Double
+    /// The row whose top the target was moved to (`retargeted`), nil otherwise.
+    public var row: UUID?
+
+    public init(target: Double, at: Double, row: UUID?) {
+        self.target = target
+        self.at = at
+        self.row = row
+    }
+
+    private func recent(_ now: Double) -> Bool { now >= at && now - at < Self.window }
+
+    /// Still on the way: recent and the list is more than `HeadingSnap.snapMinimum` away from the target.
+    public func inFlight(now: Double, offset: Double) -> Bool {
+        recent(now) && abs(offset - target) > HeadingSnap.snapMinimum
+    }
+
+    /// A recent focus scroll heads for this row's top: it owns the row change.
+    public func owns(row id: UUID, now: Double) -> Bool { row == id && recent(now) }
 }

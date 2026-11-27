@@ -84,26 +84,83 @@ import PlayerCore
         HeadingSnapSample(row: rowSpans[id], scroll: listScroll, list: Self.listView())
     }
 
-    /// Build 7 device test: target of a focus scroll of the home list (`HomeFocusScroll`), raw content y of the
-    /// visible rect's top. The row under the focused element goes to the list's top edge (`FocusScrollTarget.rowTop`)
-    /// instead of where the focus engine centred the card; nil: leave the target as proposed (top edge focused, no
-    /// focused element in the list, no row under it, or no change worth a scroll).
-    func focusScrollTarget(rawY: Double, height: Double) -> Double? {
-        guard FocusScrollTarget.mayRetarget(now: Self.now, lastRescue: lastRescue) else { return nil }
-        guard !focus.atTop, let scroll = listScroll, let sv = TabBarGuard.shared.knownScrollView, sv.window != nil,
-              let view = Self.focusedItem() as? UIView, view.window != nil, view.isDescendant(of: sv) else { return nil }
-        let f = view.convert(view.bounds, to: sv)
-        let focused = HomeRowSpan(minY: Double(f.minY), maxY: Double(f.maxY))
-        guard let id = HomeMoveRescue.row(atContentY: Double(f.midY), spans: rowSpans.map { ($0.key, $0.value) }),
-              let row = rowSpans[id] else { return nil }
-        let proposed = rawY + scroll.insetTop
-        let adjusted = FocusScrollTarget.rowTop(proposed: proposed, viewport: height - scroll.insetTop, row: row,
-                                                focused: focused, maxOffset: scroll.maxOffset)
-        guard abs(adjusted - proposed) > HeadingSnap.tolerance else { return nil }
-        if throttle.allow("focus scroll", now: Self.now) {
-            RemoteLog.info("nav", FocusScrollTarget.rowLine(proposed: proposed, adjusted: adjusted, row: row))
+    /// Build 7 device test: target of a focus scroll of the home list (`HomeFocusScroll`). Build 8 (b7-1 log: 0
+    /// `Fokus-Scroll auf Reihenoberkante` lines): the row comes from the proposed target rect (its centre, where the
+    /// focus engine put the focused card), no longer from UIKit's focused item, which can still be the previous
+    /// row's card at this point. `y`: the proposed visible rect's top; like the strips' target rect (b7-1: "vorher"
+    /// = "Versatz" + inset) it is inset-adjusted, i.e. in `HomeListScroll.offset` terms. Every call is counted and
+    /// the first ones logged with the guard that decided (`FocusScrollProbe`). nil: leave the target as proposed.
+    func focusScrollTarget(y: Double, height: Double) -> Double? {
+        let now = Self.now
+        guard let scroll = listScroll else {
+            noteFocusScroll(.noScroll, proposed: y, height: height)
+            return nil
         }
-        return adjusted - scroll.insetTop
+        let outcome: FocusScrollTarget.VerticalOutcome?
+        if !FocusScrollTarget.mayRetarget(now: now, lastRescue: lastRescue) {
+            outcome = .rescue
+        } else if focus.atTop {
+            outcome = .topEdge
+        } else if focus.focused.contains(.actionButton) {
+            outcome = .actionButton
+        } else {
+            outcome = nil
+        }
+        let decision: FocusScrollTarget.VerticalDecision
+        if let outcome {
+            decision = FocusScrollTarget.VerticalDecision(outcome: outcome, target: y, probeY: y + height / 2,
+                                                          row: nil, span: nil)
+        } else {
+            decision = FocusScrollTarget.rowTop(proposed: y, height: height, rows: rowSpans.map { ($0.key, $0.value) },
+                                                maxOffset: scroll.maxOffset)
+        }
+        let retargeted = decision.outcome == .retargeted
+        // Build 8: the heading checks compare against this target (no snap while the list is on its way), and a
+        // retargeted row change is owned by this scroll (`showHeading` adds none).
+        flight = FocusScrollFlight(target: decision.target, at: now, row: retargeted ? decision.row : nil)
+        record(decision, proposed: y, height: height)
+        if retargeted, let span = decision.span, throttle.allow("focus scroll", now: now) {
+            RemoteLog.info("nav", FocusScrollTarget.rowLine(proposed: y, adjusted: decision.target, row: span))
+        }
+        return retargeted ? decision.target : nil
+    }
+
+    /// Build 8: calls of the vertical behaviour per outcome (log only).
+    @ObservationIgnored private var probe = FocusScrollProbe()
+    /// Build 8: the last target a scroll of the list was heading for (`FocusScrollFlight`).
+    @ObservationIgnored private(set) var flight: FocusScrollFlight?
+
+    /// Build 8: a call the behaviour turned away before any lookup (`notVertical`, `offMain`).
+    func noteFocusScroll(_ outcome: FocusScrollTarget.VerticalOutcome, proposed: Double, height: Double?) {
+        let d = FocusScrollTarget.VerticalDecision(outcome: outcome, target: proposed, probeY: nil, row: nil, span: nil)
+        record(d, proposed: proposed, height: height)
+    }
+
+    private func record(_ d: FocusScrollTarget.VerticalDecision, proposed: Double, height: Double?) {
+        if probe.note(d.outcome) {
+            RemoteLog.info("nav", FocusScrollTarget.verticalLine(number: probe.total, outcome: d.outcome,
+                                                                 proposed: proposed, target: d.target, height: height,
+                                                                 probeY: d.probeY, span: d.span))
+        }
+        if probe.summaryDue { logFocusScrollSummary() }
+    }
+
+    /// Build 8: a row gained the focus (`showHeading`), for the summary line's comparison.
+    func noteRowEntry() { probe.noteRowEntry() }
+
+    /// Build 8: a recent focus scroll was retargeted to this row's top; it owns the row change.
+    func focusScrollOwns(row id: UUID) -> Bool { flight?.owns(row: id, now: Self.now) == true }
+
+    /// Build 8: the list is still on its way to the last target (heading checks wait).
+    func scrollInFlight() -> FocusScrollFlight? {
+        guard let flight, let scroll = listScroll, flight.inFlight(now: Self.now, offset: scroll.offset) else { return nil }
+        return flight
+    }
+
+    private func logFocusScrollSummary() {
+        guard let line = probe.summaryLine() else { return }
+        probe.markSummarized()
+        RemoteLog.info("nav", line)
     }
 
     /// b7 review 5: uptime of the last rescued up/down press (`HomeView.rescueFailedMove`).
@@ -198,6 +255,7 @@ import PlayerCore
         settle = nil
         headingChecks?.cancel()
         headingChecks = nil
+        logFocusScrollSummary()   // Build 8: calls of the vertical behaviour while the page was shown
     }
 
     private func focusEvent(_ note: Notification, failed: Bool) {

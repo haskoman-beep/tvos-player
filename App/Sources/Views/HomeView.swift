@@ -300,14 +300,20 @@ struct HomeView: View {
         // list's top edge (`HeadingSnap` tolerance, 2 pt), e.g. focus back in the row it just left.
         let now = topWatch.headingSample(row: id)
         let inPlace = HeadingSnap.decide(row: now.row, scroll: now.scroll) == .inPlace
-        if !inPlace {
+        // Build 8 (one owner per row change): a focus scroll already retargeted to this row's top
+        // (`HomeFocusScroll`) moves the list there; no second scroll of our own. Otherwise this is the fallback and
+        // scrolls at once. Should the focus scroll be retargeted after this, both head for the same row top.
+        let owned = !inPlace && topWatch.focusScrollOwns(row: id)
+        if !inPlace, !owned {
             DispatchQueue.main.async {
                 withAnimation(.easeOut(duration: 0.25)) { scroll(id) }
             }
         }
         let title = model.homeRowTitle(row.content)
         if !restart {
-            RemoteLog.info("nav", "Reihe fokussiert, Überschrift nach oben: \(title)\(inPlace ? " (steht schon oben)" : "")")
+            topWatch.noteRowEntry()
+            let note = inPlace ? " (steht schon oben)" : owned ? " (Fokus-Scroll übernimmt)" : ""
+            RemoteLog.info("nav", "Reihe fokussiert, Überschrift nach oben: \(title)\(note)")
         }
         // Build 3 device test: the row stopped too low (heading visible, posters cut at the bottom); the system's
         // focus scroll finished after ours. S5 (Build 4 follow-up): one blind re-snap at 400 ms was not enough on
@@ -322,8 +328,17 @@ struct HomeView: View {
                 try? await Task.sleep(until: start + Duration.milliseconds(at), clock: ContinuousClock())
                 guard !Task.isCancelled, headingRow == id else { return }
                 let before = watch.headingSample(row: id)
-                let decision = HeadingSnap.decide(row: before.row, scroll: before.scroll)
-                guard HeadingSnap.shouldSnap(decision, check: i) else {
+                // Build 8: rows closer than `snapMinimum` stay (no animated −2 pt snap), and no snap while a
+                // scroll of the list is still on its way (b7-1 17:53:16.2: a snap against the running focus scroll
+                // made +15 into +71); the next check looks again.
+                let decision = HeadingSnap.decide(row: before.row, scroll: before.scroll,
+                                                  tolerance: HeadingSnap.snapMinimum)
+                let flight = watch.scrollInFlight()
+                if let flight, case .snap = decision {
+                    RemoteLog.info("nav", HeadingSnap.flightLine(title: title, ms: at, target: flight.target,
+                                                                 sample: before))
+                }
+                guard HeadingSnap.shouldSnap(decision, check: i, inFlight: flight != nil) else {
                     if i == checks.count - 1 {
                         RemoteLog.info("nav", HeadingSnap.checkLine(title: title, ms: at, decision: decision, sample: before))
                     }
@@ -467,11 +482,24 @@ private struct HomeFocusScroll: ScrollTargetBehavior {
     let watch: HomeTopEdgeWatch
 
     func updateTarget(_ target: inout ScrollTarget, context: TargetContext) {
-        guard context.axes.contains(.vertical), Thread.isMainThread else { return }   // b7 review 4
         let y = Double(target.rect.minY)
         let height = Double(target.rect.height)
         let watch = self.watch
-        let adjusted: Double? = MainActor.assumeIsolated { watch.focusScrollTarget(rawY: y, height: height) }
+        // Build 8: every call is counted with the guard that turned it away (`FocusScrollProbe`).
+        guard Thread.isMainThread else {   // b7 review 4
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { watch.noteFocusScroll(.offMain, proposed: y, height: height) }
+            }
+            return
+        }
+        let vertical = context.axes.contains(.vertical)
+        let adjusted: Double? = MainActor.assumeIsolated {
+            guard vertical else {
+                watch.noteFocusScroll(.notVertical, proposed: y, height: height)
+                return nil
+            }
+            return watch.focusScrollTarget(y: y, height: height)
+        }
         if let adjusted { target.rect.origin.y = CGFloat(adjusted) }
     }
 }
