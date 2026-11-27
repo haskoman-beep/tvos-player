@@ -246,6 +246,8 @@ struct HomeView: View {
     /// to the very top), other presses to the neighbour row (remembered or first card, `HomeFocusTarget`); review N2:
     /// down from the last row to the „Reihen & Collections“ button.
     private func rescueFailedMove(up: Bool, from row: UUID) {
+        // b7 review 5: the rescue's own scroll wins; the focus scroll target stays as proposed for a moment.
+        topWatch.noteRescue()
         let rows = model.profile.home.rowsBelowHero(model.profile.appearance)
         let look = model.profile.themeLook.home
         let hasHero = HomeTopEdge.showsHero(look.heroStyle, hasHeroSource: model.profile.home.heroSource(model.profile.appearance) != nil)
@@ -447,11 +449,30 @@ private struct TopEdgeScroll: ViewModifier {
             }) { _, v in
                 watch.setScroll(v)
             }
+            // Build 7 device test: the focus scroll itself ends with the focused row at the list's top edge.
+            .scrollTargetBehavior(HomeFocusScroll(watch: watch))
             .onAppear {
                 watch.scrollToTop = { proxy.scrollTo(HomeTopEdgeWatch.topID, anchor: .top) }
                 watch.scrollToRow = { proxy.scrollTo($0, anchor: .top) }
                 watch.scrollToActionButton = { proxy.scrollTo(HomeTopEdgeWatch.actionButtonID, anchor: .bottom) }
             }
+    }
+}
+
+/// Build 7 device test ("beim Stoppen geht die Karte etwas hoch"): the focus engine centred the focused card in the
+/// list, so short rows (landscape/logo tiles) stopped ~80 pt low and the heading snap moved them up afterwards. This
+/// behaviour corrects the focus scroll's target to the row's top (`HomeTopEdgeWatch.focusScrollTarget`); the heading
+/// checks stay as the fallback. Device check: `nav: Fokus-Scroll auf Reihenoberkante …` lines show it is called.
+private struct HomeFocusScroll: ScrollTargetBehavior {
+    let watch: HomeTopEdgeWatch
+
+    func updateTarget(_ target: inout ScrollTarget, context: TargetContext) {
+        guard context.axes.contains(.vertical), Thread.isMainThread else { return }   // b7 review 4
+        let y = Double(target.rect.minY)
+        let height = Double(target.rect.height)
+        let watch = self.watch
+        let adjusted: Double? = MainActor.assumeIsolated { watch.focusScrollTarget(rawY: y, height: height) }
+        if let adjusted { target.rect.origin.y = CGFloat(adjusted) }
     }
 }
 

@@ -8,6 +8,7 @@ import Testing
     // contentOffset.y − (−inset.top) = distance from the very top; the end leaves the bottom inset visible.
     let s = HomeListScroll(contentOffsetY: 788, contentHeight: 3000, insetTop: 24, insetBottom: 60, viewportHeight: 600)
     #expect(s.offset == 812)
+    #expect(s.insetTop == 24)
     #expect(s.maxOffset == 2484)
     // Content shorter than the list: nothing to scroll.
     let short = HomeListScroll(contentOffsetY: 0, contentHeight: 300, insetTop: 0, insetBottom: 60, viewportHeight: 600)
@@ -48,6 +49,16 @@ import Testing
     #expect(!HeadingSnap.shouldSnap(.inPlace, check: 0))
     #expect(HeadingSnap.shouldSnap(.snap(deviation: 38), check: 0))
     #expect(HeadingSnap.shouldSnap(.snap(deviation: 38), check: 2))
+}
+
+@Test func lateChecksSkipSmallDeviations() {
+    // Build 7 device test: +14/+19 at 1.5 s moved the card up after the user stopped.
+    #expect(HeadingSnap.shouldSnap(.snap(deviation: 14), check: 0))
+    #expect(!HeadingSnap.shouldSnap(.snap(deviation: 14), check: 1))
+    #expect(!HeadingSnap.shouldSnap(.snap(deviation: 19), check: 2))
+    #expect(!HeadingSnap.shouldSnap(.snap(deviation: -19), check: 2))
+    #expect(HeadingSnap.shouldSnap(.snap(deviation: 20), check: 2))
+    #expect(HeadingSnap.shouldSnap(.snap(deviation: -84), check: 2))
 }
 
 @Test func checksAreBoundedAndEndAfterOneAndAHalfSeconds() {
