@@ -97,6 +97,48 @@ extension KeyedDecodingContainer {
     }
 }
 
+extension KeyedDecodingContainer {
+    /// A string-keyed map read entry by entry where unreadable entries are kept as raw JSON (to be written back).
+    func decodeSalvagedMap<T: Decodable>(_ type: T.Type, forKey key: Key,
+                                         report: DecodeReportBox) -> (values: [String: T], raw: [String: JSONValue]) {
+        var values: [String: T] = [:], raw: [String: JSONValue] = [:]
+        for (k, item) in decodeLenient([String: Salvaged<T>].self, forKey: key, default: [:], report: report) {
+            switch item {
+            case .value(let v): values[k] = v
+            case .raw(let j): raw[k] = j
+            }
+        }
+        return (values, raw)
+    }
+}
+
+/// Free-form key for maps written entry by entry.
+struct SalvageKey: CodingKey {
+    let stringValue: String
+    var intValue: Int? { nil }
+    init(_ s: String) { stringValue = s }
+    init?(stringValue: String) { self.stringValue = stringValue }
+    init?(intValue: Int) { nil }
+}
+
+extension KeyedEncodingContainer {
+    /// A list followed by the raw leftovers read with it (`decodeSalvagedList`).
+    mutating func encodeSalvaged<T: Encodable>(_ values: [T], raw: [JSONValue], forKey key: Key) throws {
+        var list = nestedUnkeyedContainer(forKey: key)
+        for v in values { try list.encode(v) }
+        for r in raw { try list.encode(r) }
+    }
+
+    /// A map plus the raw leftovers read with it (`decodeSalvagedMap`); a readable entry replaces a leftover of the
+    /// same key. Without leftovers the map is encoded as before.
+    mutating func encodeSalvaged<T: Encodable>(_ values: [String: T], raw: [String: JSONValue], forKey key: Key) throws {
+        guard !raw.isEmpty else { return try encode(values, forKey: key) }
+        var map = nestedContainer(keyedBy: SalvageKey.self, forKey: key)
+        for (k, v) in values { try map.encode(v, forKey: SalvageKey(k)) }
+        for (k, r) in raw where values[k] == nil { try map.encode(r, forKey: SalvageKey(k)) }
+    }
+}
+
 /// One element of a list that may be unreadable: the value, or nil (path noted in the report).
 struct FailableDecodable<T: Decodable>: Decodable {
     let value: T?

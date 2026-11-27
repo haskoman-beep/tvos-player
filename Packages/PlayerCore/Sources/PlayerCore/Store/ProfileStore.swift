@@ -5,6 +5,9 @@ public struct StoredProfiles: Codable, Sendable, Equatable {
     public var schemaVersion: Int
     public var profiles: [Profile]
     public var activeProfileID: UUID?
+    /// Phase 0a: profiles this build cannot read (e.g. without `id`), kept as raw JSON and written back after
+    /// `profiles`. Before, they were skipped on load and the next save lost them for good.
+    public var unknownProfiles: [JSONValue] = []
 
     public init(schemaVersion: Int = StoredProfiles.currentSchema, profiles: [Profile], activeProfileID: UUID? = nil) {
         self.schemaVersion = schemaVersion; self.profiles = profiles; self.activeProfileID = activeProfileID
@@ -19,14 +22,22 @@ public struct StoredProfiles: Codable, Sendable, Equatable {
 
     enum CodingKeys: String, CodingKey { case schemaVersion, profiles, activeProfileID }
 
-    /// Task 1.2: profiles are decoded one by one; an unreadable profile (e.g. without `id`) is skipped and named in the
-    /// `DecodeReport` (`profiles[1]`). Encoding stays synthesized, the format is unchanged.
+    /// Task 1.2: profiles are decoded one by one; an unreadable profile (e.g. without `id`) is named in the
+    /// `DecodeReport` (`profiles[1]`) and kept raw in `unknownProfiles`. The format is unchanged.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let r = DecodeReportBox.of(decoder)
         schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
-        profiles = try c.decode([FailableDecodable<Profile>].self, forKey: .profiles).compactMap(\.value)
+        (profiles, unknownProfiles) = Salvaged.split(try c.decode([Salvaged<Profile>].self, forKey: .profiles))
         activeProfileID = c.decodeLenient(UUID?.self, forKey: .activeProfileID, default: nil, report: r)
+    }
+
+    /// Same keys and order as the former synthesized encoding; `profiles` gets the raw leftovers appended.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schemaVersion, forKey: .schemaVersion)
+        try c.encodeSalvaged(profiles, raw: unknownProfiles, forKey: .profiles)
+        try c.encodeIfPresent(activeProfileID, forKey: .activeProfileID)
     }
 }
 

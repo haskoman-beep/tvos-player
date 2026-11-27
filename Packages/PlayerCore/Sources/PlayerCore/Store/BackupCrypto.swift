@@ -168,9 +168,15 @@ extension StoredProfiles {
     /// address (= `InstalledAddon.id`), only the first stays; an address without a readable host (`""`) is dropped.
     public func withoutSecrets() -> StoredProfiles {
         var s = self
+        // Phase 0a: raw leftovers cannot be scrubbed (their structure is unknown), so they are left out.
+        s.unknownProfiles = []
         for i in s.profiles.indices {
             s.profiles[i].apiKeys = [:]
             s.profiles[i].syncTokens = [:]
+            s.profiles[i].unknownAddons = []
+            s.profiles[i].unknownCollections = []
+            s.profiles[i].unknownApiKeys = [:]
+            s.profiles[i].unknownSyncTokens = [:]
             var seen = Set<String>()
             var kept: [InstalledAddon] = []
             for var a in s.profiles[i].addons {

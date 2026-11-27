@@ -50,6 +50,12 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
     public var hiddenRows: [HomeRow] = []
     /// Task 1.2: hidden rows this build cannot read (newer build), kept as raw JSON and written back after `hiddenRows`.
     public var unknownHiddenRows: [JSONValue] = []
+    /// Phase 0a: addons, collections, API keys and logins this build cannot read, kept as raw JSON and written back
+    /// (lists after the readable entries). Before, they were skipped on load and the next save lost them for good.
+    public var unknownAddons: [JSONValue] = []
+    public var unknownCollections: [JSONValue] = []
+    public var unknownApiKeys: [String: JSONValue] = [:]
+    public var unknownSyncTokens: [String: JSONValue] = [:]
     /// Wave U: look of text subtitles, with its own brightness for HDR/DV (default = the look before wave U).
     public var subtitleStyle: SubtitleStyle = SubtitleStyle()
     /// Wave P-a: skip action per segment type and the card after a movie.
@@ -116,13 +122,13 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         }
         subtitleLanguage = c.decodeLenient(String.self, forKey: .subtitleLanguage, default: d.subtitleLanguage, report: r)
         progressSource = c.decodeLenient(ProgressSource.self, forKey: .progressSource, default: d.progressSource, report: r)
-        addons = c.decodeLenientList(InstalledAddon.self, forKey: .addons, report: r)
-        collections = c.decodeLenientList(MediaCollection.self, forKey: .collections, report: r)
+        (addons, unknownAddons) = c.decodeSalvagedList(InstalledAddon.self, forKey: .addons, report: r)
+        (collections, unknownCollections) = c.decodeSalvagedList(MediaCollection.self, forKey: .collections, report: r)
         home = c.decodeLenient(HomeLayout.self, forKey: .home, default: d.home, report: r)
-        apiKeys = c.decodeLenient([String: String].self, forKey: .apiKeys, default: [:], report: r)
+        (apiKeys, unknownApiKeys) = c.decodeSalvagedMap(String.self, forKey: .apiKeys, report: r)
         autoplayNext = c.decodeLenient(Bool.self, forKey: .autoplayNext, default: d.autoplayNext, report: r)
         stillWatchingAfter = c.decodeLenient(Int.self, forKey: .stillWatchingAfter, default: d.stillWatchingAfter, report: r)
-        syncTokens = c.decodeLenientMap(SyncToken.self, forKey: .syncTokens, report: r)
+        (syncTokens, unknownSyncTokens) = c.decodeSalvagedMap(SyncToken.self, forKey: .syncTokens, report: r)
         appearance = c.decodeLenient(Appearance.self, forKey: .appearance, default: d.appearance, report: r)
         diskCache = c.decodeLenient(DiskCacheSettings.self, forKey: .diskCache, default: d.diskCache, report: r)
         addonTimeout = c.decodeLenient(Double.self, forKey: .addonTimeout, default: d.addonTimeout, report: r)
@@ -148,13 +154,13 @@ public struct Profile: Codable, Sendable, Equatable, Identifiable {
         try c.encode(subtitleMode, forKey: .subtitleMode)
         try c.encode(subtitleLanguage, forKey: .subtitleLanguage)
         try c.encode(progressSource, forKey: .progressSource)
-        try c.encode(addons, forKey: .addons)
-        try c.encode(collections, forKey: .collections)
+        try c.encodeSalvaged(addons, raw: unknownAddons, forKey: .addons)
+        try c.encodeSalvaged(collections, raw: unknownCollections, forKey: .collections)
         try c.encode(home, forKey: .home)
-        try c.encode(apiKeys, forKey: .apiKeys)
+        try c.encodeSalvaged(apiKeys, raw: unknownApiKeys, forKey: .apiKeys)
         try c.encode(autoplayNext, forKey: .autoplayNext)
         try c.encode(stillWatchingAfter, forKey: .stillWatchingAfter)
-        try c.encode(syncTokens, forKey: .syncTokens)
+        try c.encodeSalvaged(syncTokens, raw: unknownSyncTokens, forKey: .syncTokens)
         try c.encode(appearance, forKey: .appearance)
         try c.encode(diskCache, forKey: .diskCache)
         try c.encode(addonTimeout, forKey: .addonTimeout)
