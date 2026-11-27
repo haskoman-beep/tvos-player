@@ -18,6 +18,9 @@ final class AppModel: ObservableObject {
     private var secretSnapshot: SecretSnapshot = [:]
     /// Build 5 device test 1: bytes per profile part at the last load or save (`noteProfileSizes`).
     private var profileSizes: [UUID: [String: Int]] = [:]
+    /// Review N7: the running size check (encoding off the main thread; saves in a row collapse into one).
+    private var profileSizeTask: Task<Void, Never>?
+    private var profileSizeTaskIsSave = false
     /// Task 1.3: `.unreadable` while the stored profiles cannot be read; RootView then shows ProfileRecoveryView and
     /// `save()` writes nothing until the user restores a version or starts again.
     @Published private(set) var storeState: StoreState = .ready
@@ -387,14 +390,37 @@ final class AppModel: ObservableObject {
 
     /// Build 5 device test 1 (profiles.json 24.0 → 19.4 KB): bytes per profile part. On load one summary line per
     /// profile; after a save a line only when a part lost at least `ProfileSizeReport.minimumDelta` bytes.
+    /// Review N7: the encode runs off the main thread, a save waits `profileSizeDelay` and a newer save replaces it
+    /// (it compares against the last checked state, so a shrink over several saves is still named); checks run in
+    /// order, a load check is never dropped.
     func noteProfileSizes(load: Bool) {
+        let profiles = stored.profiles
+        let previous = profileSizeTask
+        if !load, profileSizeTaskIsSave { previous?.cancel() }
+        profileSizeTaskIsSave = !load
+        profileSizeTask = Task { [weak self] in
+            await previous?.value
+            if !load {
+                try? await Task.sleep(for: Self.profileSizeDelay)
+                guard !Task.isCancelled else { return }
+            }
+            let sizes = await Task.detached(priority: .utility) {
+                profiles.map { ($0.id, ProfileSizeReport.sections($0)) }
+            }.value
+            self?.adoptProfileSizes(sizes, load: load)
+        }
+    }
+
+    /// Review N7: a save's size check waits this long (saves in a row cost one encode).
+    private static let profileSizeDelay: Duration = .seconds(2)
+
+    private func adoptProfileSizes(_ sizes: [(UUID, [String: Int])], load: Bool) {
         var next: [UUID: [String: Int]] = [:]
-        for (i, p) in stored.profiles.enumerated() {
-            let s = ProfileSizeReport.sections(p)
-            next[p.id] = s
+        for (i, (id, s)) in sizes.enumerated() {
+            next[id] = s
             if load {
                 RemoteLog.info("speicher", "Profil \(i + 1): \(ProfileSizeReport.summary(s))")
-            } else if let before = profileSizes[p.id],
+            } else if let before = profileSizes[id],
                       let line = ProfileSizeReport.shrinkLine(name: "\(i + 1)", before: before, after: s) {
                 RemoteLog.info("speicher", line)
             }
