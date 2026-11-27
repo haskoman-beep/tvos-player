@@ -107,7 +107,7 @@ public enum BrandPage {
         Entry("Hulu", .provider, "15"),
         Entry("Max", .provider, "1899|384", ["hbomax"]),
         Entry("Peacock", .provider, "386|387", ["peacocktv", "peacockpremium"]),
-        Entry("discovery+", .provider, "510", ["discovery"]),                             // unsure
+        Entry("discovery+", .provider, "510", ["discovery"]),                             // unsure: 510 or 520
     ]
 
     /// TMDB company IDs (`with_companies`, films and series).
@@ -172,21 +172,27 @@ public enum BrandPage {
         if GenrePageRule.isGenreCollection(id: id, title: title) || id.hasPrefix("pkg.") { return nil }
         let words = title.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil).lowercased()
             .split(whereSeparator: { !($0.isLetter || $0.isNumber) }).map(String.init)
-        let streaming: Set = ["dienste", "anbieter", "provider", "providers", "services", "plattformen", "mediatheken"]
-        if words.contains(where: { $0.hasPrefix("streaming") || streaming.contains($0)
-            || $0.hasSuffix("dienste") || $0.hasSuffix("anbieter") }) { return .streaming }
-        let studios: Set = ["studio", "studios", "networks", "sender", "companies", "produktionsfirmen", "filmstudios"]
+        // Build 8 review: service / provider / studio wording only. „Streaming“ as a word part is not enough („Neu im
+        // Streaming“, „Streaming-Charts“ are title lists); a row titled only „Streaming“ still counts.
+        if words == ["streaming"] { return .streaming }
+        let streaming: Set = ["dienste", "anbieter", "provider", "providers", "service", "services", "plattformen", "mediatheken"]
+        if words.contains(where: { streaming.contains($0) || $0.hasSuffix("dienste") || $0.hasSuffix("anbieter") }) {
+            return .streaming
+        }
+        let studios: Set = ["studios", "networks", "sender", "companies", "produktionsfirmen"]
         if words.contains(where: { studios.contains($0) || $0.hasSuffix("studios") }) { return .studios }
         return nil
     }
 
     /// Page of `folder`. `collection` looks up a collection by ID (as `GenrePageRule`); `searched` answers a cached
-    /// company search by key (nil = not searched yet).
+    /// company search by key (nil = not searched yet). Build 8 review: `tmdb` false (no TMDB key): only the addon
+    /// grid or the row page (a TMDB grid would only say „TMDB-Key fehlt“); the package keeps its grid.
     public static func resolve(_ folder: Folder, collection: (String) -> MediaCollection?,
-                               searched: (String) -> CompanySearchCache.Lookup?) -> Resolution {
+                               searched: (String) -> CompanySearchCache.Lookup?, tmdb: Bool = true) -> Resolution {
         if folder.id.hasPrefix(streamingPackagePrefix) { return packageGrid(folder) }
         guard let row = rowKind(of: folder, collection: collection) else { return .rowPage }
         let label = row == .streaming ? "Dienst" : "Studio"
+        guard tmdb else { return addonGrid(folder, label: label, addonOnly: true) }
         let name = ReadyPackages.normalizedArtName(folder.title)
         if let e = entry(normalizedName: name, row: row) { return .grid(grid(e, folder: folder)) }
         // The folder's own TMDB lists already name the service or studio.
@@ -194,8 +200,9 @@ public enum BrandPage {
             return .grid(Grid(label: label, origin: .folder, sources: own, initial: GenreFilter.initial(available: own.available),
                               regionFallback: [:], header: plainHeader(folder)))
         }
+        // Build 8 review: the company search only for studio rows (a service is no production company).
         let key = CompanySearchCache.searchKey(folder.title)
-        if !name.isEmpty {
+        if row == .studios, !name.isEmpty {
             switch searched(key) {
             case nil: return .search(query: folder.title.trimmingCharacters(in: .whitespacesAndNewlines), key: key)
             case .found(let studio)?:
@@ -252,8 +259,8 @@ public enum BrandPage {
                           regionFallback: [:], header: plainHeader(folder)))
     }
 
-    static func addonGrid(_ folder: Folder, label: String) -> Resolution {
-        guard let own = GenrePageSources.of(folder) else { return .rowPage }
+    static func addonGrid(_ folder: Folder, label: String, addonOnly: Bool = false) -> Resolution {
+        guard let own = GenrePageSources.of(folder), !addonOnly || own.hasAddon else { return .rowPage }
         return .grid(Grid(label: label, origin: own.hasAddon ? .addon : .folder, sources: own,
                           initial: GenreFilter.initial(available: own.available), regionFallback: [:], header: plainHeader(folder)))
     }
@@ -406,30 +413,50 @@ public struct CompanySearchCache: Codable, Sendable, Equatable {
 
     public func encoded() -> Data? { try? JSONEncoder().encode(self) }
 
-    /// The company of a search answer whose folded name equals the title (the first such one with a logo, else the
-    /// first); nil when no name matches exactly.
-    public static func exactMatch(_ results: [StudioLogo], title: String) -> StudioLogo? {
+    /// One company of a `/search/company` answer with its `origin_country` (nil when missing or empty).
+    public struct Result: Sendable, Equatable {
+        public let studio: StudioLogo
+        public let country: String?
+    }
+
+    /// Countries whose companies most titles of the app's catalogs come from (tie break of equal names).
+    public static let preferredCountries: Set<String> = ["US", "GB", "DE"]
+
+    /// The company of a search answer whose folded name equals the title; nil when no name matches exactly.
+    /// Build 8 review: several companies often share a name (small namesakes in other countries). Of those, the one
+    /// with a logo wins (TMDB curates logos for the known ones), then one from the US, GB or DE, then TMDB's order
+    /// (its search ranks by popularity). The title count per company would need one request each, so it is not used.
+    public static func exactMatch(_ results: [Result], title: String) -> StudioLogo? {
         let n = ReadyPackages.normalizedArtName(title)
         guard !n.isEmpty else { return nil }
-        let same = results.filter { $0.id != nil && ReadyPackages.normalizedArtName($0.name) == n }
-        return same.first { $0.logo != nil } ?? same.first
+        let same = results.enumerated().filter { $0.element.studio.id != nil && ReadyPackages.normalizedArtName($0.element.studio.name) == n }
+        func score(_ r: Result) -> Int {
+            (r.studio.logo != nil ? 2 : 0) + (r.country.map { preferredCountries.contains($0) } == true ? 1 : 0)
+        }
+        let best = same.min { a, b in
+            let sa = score(a.element), sb = score(b.element)
+            return sa != sb ? sa > sb : a.offset < b.offset
+        }
+        return best?.element.studio
     }
 
     /// Companies of a `/search/company` answer.
-    public static func parse(_ data: Data) -> [StudioLogo] {
+    public static func parse(_ data: Data) -> [Result] {
         guard let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let arr = o["results"] as? [[String: Any]] else { return [] }
         return arr.compactMap { r in
             guard let id = r["id"] as? Int, let name = r["name"] as? String else { return nil }
             let path = (r["logo_path"] as? String).flatMap { $0.hasPrefix("/") && !$0.lowercased().hasSuffix(".svg") ? $0 : nil }
-            return StudioLogo(name: name, logo: path.map { TMDBClient.studioLogoBase + $0 }, id: id, kind: .company)
+            let country = (r["origin_country"] as? String).flatMap { $0.isEmpty ? nil : $0.uppercased() }
+            return Result(studio: StudioLogo(name: name, logo: path.map { TMDBClient.studioLogoBase + $0 }, id: id, kind: .company),
+                          country: country)
         }
     }
 }
 
 extension TMDBClient {
     /// Build 8: TMDB `/search/company` (first page).
-    public func searchCompany(_ query: String) async throws -> [StudioLogo] {
+    public func searchCompany(_ query: String) async throws -> [CompanySearchCache.Result] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return [] }
         return CompanySearchCache.parse(try await http.data(from: url("/search/company", ["query": q, "page": "1"])))

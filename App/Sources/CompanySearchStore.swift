@@ -42,11 +42,18 @@ final class CompanySearchStore {
         let t = Task<CompanySearchCache.Lookup?, Never> { @MainActor in
             let started = Date()
             do {
-                let found = CompanySearchCache.exactMatch(try await tmdb.searchCompany(query), title: query)
+                let results: [CompanySearchCache.Result] = try await tmdb.searchCompany(query)
+                let found: StudioLogo? = CompanySearchCache.exactMatch(results, title: query)
                 self.store(key, found)
                 let ms = Int(Date().timeIntervalSince(started) * 1000)
                 RemoteLog.info("genre", "Studio-Suche \(query): " + (found.map { "TMDB \($0.id ?? 0)" } ?? "kein genauer Treffer") + " (\(ms) ms)")
-                return found.map { .found($0) } ?? .miss
+                // Build 8 review: explicit type (no implicit-member inference through the optional map).
+                if let found {
+                    let hit: CompanySearchCache.Lookup = .found(found)
+                    return hit
+                }
+                let miss: CompanySearchCache.Lookup = .miss
+                return miss
             } catch {
                 RemoteLog.error("genre", "Studio-Suche \(query) fehlgeschlagen: \(error)")
                 return nil
@@ -74,7 +81,12 @@ final class CompanySearchStore {
             do {
                 let l = try await tmdb.studioLogo(studio)
                 self.store(key, l.map { StudioLogo(name: studio.name, logo: $0, id: nil, kind: studio.kind) })
-                return l.map { .found(StudioLogo(name: studio.name, logo: $0)) } ?? .miss
+                if let l {
+                    let hit: CompanySearchCache.Lookup = .found(StudioLogo(name: studio.name, logo: l))
+                    return hit
+                }
+                let miss: CompanySearchCache.Lookup = .miss
+                return miss
             } catch {
                 return nil   // failed: asked again on the next open
             }

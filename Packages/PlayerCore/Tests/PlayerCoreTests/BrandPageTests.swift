@@ -37,6 +37,15 @@ private func noSearch(_ key: String) -> CompanySearchCache.Lookup? { nil }
     #expect(BrandPage.rowKind(collectionID: "pkg.genres", title: "Genres") == nil)
     #expect(BrandPage.rowKind(collectionID: "kit.a.x", title: "Preise") == nil)
     #expect(BrandPage.rowKind(collectionID: "kit.a.x", title: "Regisseure") == nil)
+    // Review: „streaming“ alone inside a longer title is a title list, not a row of services.
+    #expect(BrandPage.rowKind(collectionID: "kit.a.x", title: "Neu im Streaming") == nil)
+    #expect(BrandPage.rowKind(collectionID: "kit.a.x", title: "Streaming-Charts") == nil)
+    #expect(BrandPage.rowKind(collectionID: "kit.a.x", title: "Top Streaming Movies") == nil)
+    #expect(BrandPage.rowKind(collectionID: "kit.a.x", title: "Studio Ghibli Filme") == nil)
+    #expect(BrandPage.rowKind(collectionID: "kit.a.x", title: "Streaming") == .streaming)
+    #expect(BrandPage.rowKind(collectionID: "kit.a.x", title: "Streamingdienste") == .streaming)
+    #expect(BrandPage.rowKind(collectionID: "kit.a.x", title: "Providers") == .streaming)
+    #expect(BrandPage.rowKind(collectionID: "kit.a.x", title: "Filmstudios") == .studios)
 }
 
 @Test func brandTablesNormaliseAndPreferRowKind() {
@@ -133,6 +142,26 @@ private func noSearch(_ key: String) -> CompanySearchCache.Lookup? { nil }
     let a = try #require(grid(BrandPage.afterSearch(xyz, collection: lookup([col]), answer: .miss)))
     #expect(a.origin == .addon && a.label == "Studio" && a.sources.movies?.id == "kit.f.studios.xyz.0")
     #expect(grid(BrandPage.withoutSearch(xyz, collection: lookup([col])))?.origin == .addon)
+    // Review: no company search in a streaming row; an unknown service opens its addon grid at once.
+    let svc = addonFolder("kit.f.streaming.xyz", "XYZ Films")
+    let scol = MediaCollection(id: "kit.f.streaming", title: "Streaming-Dienste", folders: [svc])
+    #expect(grid(BrandPage.resolve(svc, collection: lookup([scol]), searched: noSearch))?.origin == .addon)
+}
+
+@Test func withoutTMDBKeyOnlyAddonGridOrRowPage() throws {
+    // Review: no TMDB key: a known name opens the addon grid, not a TMDB grid that only says „TMDB-Key fehlt“.
+    let netflix = addonFolder("kit.f.streaming.netflix", "Netflix")
+    let col = MediaCollection(id: "kit.f.streaming", title: "Streaming-Dienste", folders: [netflix])
+    let g = try #require(grid(BrandPage.resolve(netflix, collection: lookup([col]), searched: noSearch, tmdb: false)))
+    #expect(g.origin == .addon && g.label == "Dienst")
+    // Own TMDB lists need the key too: row page.
+    let own = Folder(id: "kit.f.studios.o", title: "Pixar", sources: [
+        CatalogSource(id: "o.m", title: "M", kind: .tmdbCompany(id: "3"), mediaType: .movie)])
+    let col2 = MediaCollection(id: "kit.f.studios", title: "Studios", folders: [own])
+    #expect(BrandPage.resolve(own, collection: lookup([col2]), searched: noSearch, tmdb: false) == .rowPage)
+    // The package keeps its grid (the user asked for it; the page names the missing key).
+    let pkg = try #require(ReadyPackages.streamingDE.folders.first)
+    #expect(grid(BrandPage.resolve(pkg, collection: { _ in nil }, searched: noSearch, tmdb: false))?.origin == .tmdbProvider)
 }
 
 @Test func brandRuleKeepsOtherFolders() throws {
@@ -190,21 +219,27 @@ private func noSearch(_ key: String) -> CompanySearchCache.Lookup? { nil }
     let json = #"""
     {"results":[{"id":1,"name":"XYZ Films International","logo_path":"/a.png"},
                 {"id":2,"name":"xyz films","logo_path":null},
-                {"id":3,"name":"XYZ Films","logo_path":"/c.png"},
-                {"id":4,"name":"XYZ","logo_path":"/d.svg"}]}
+                {"id":3,"name":"XYZ Films","logo_path":"/c.png","origin_country":"FR"},
+                {"id":4,"name":"XYZ","logo_path":"/d.svg"},
+                {"id":5,"name":"XYZ Films","logo_path":"/e.png","origin_country":"US"}]}
     """#
     let r = CompanySearchCache.parse(Data(json.utf8))
-    #expect(r.map(\.id) == [1, 2, 3, 4])
-    #expect(r[3].logo == nil)   // SVG does not decode
-    // Exact folded name only; of two such, the one with a logo.
-    #expect(CompanySearchCache.exactMatch(r, title: "XYZ Films")?.id == 3)
+    #expect(r.map(\.studio.id) == [1, 2, 3, 4, 5])
+    #expect(r[3].studio.logo == nil && r[0].country == nil && r[4].country == "US")   // SVG does not decode
+    // Exact folded name only; logo first, then US/GB/DE, then TMDB order.
+    #expect(CompanySearchCache.exactMatch(r, title: "XYZ Films")?.id == 5)
+    #expect(CompanySearchCache.exactMatch(Array(r.prefix(4)), title: "XYZ Films")?.id == 3)
+    #expect(CompanySearchCache.exactMatch(Array(r.prefix(2)), title: "XYZ Films")?.id == 2)
+    let noLogo = [CompanySearchCache.Result(studio: StudioLogo(name: "A", logo: nil, id: 8), country: "JP"),
+                  CompanySearchCache.Result(studio: StudioLogo(name: "A", logo: nil, id: 9), country: "GB")]
+    #expect(CompanySearchCache.exactMatch(noLogo, title: "A")?.id == 9)
     #expect(CompanySearchCache.exactMatch(r, title: "XYZ Film") == nil)
     #expect(CompanySearchCache.exactMatch(r, title: "  ") == nil)
     // The request goes to /search/company.
     let probe = TMDBClient(apiKey: "k", language: "de-DE", http: FakeHTTP(routes: [:]))
     let u = try probe.url("/search/company", ["query": "XYZ Films", "page": "1"])
     let client = TMDBClient(apiKey: "k", language: "de-DE", http: FakeHTTP(routes: [u.absoluteString: json]))
-    #expect(try await client.searchCompany(" XYZ Films ").count == 4)
+    #expect(try await client.searchCompany(" XYZ Films ").count == 5)
     #expect(try await client.searchCompany("  ").isEmpty)
 }
 

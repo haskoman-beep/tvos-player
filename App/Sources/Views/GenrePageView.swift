@@ -21,8 +21,10 @@ struct FolderRouteView: View {
         if let g = GenrePageRule.sources(for: folder, collection: { model.collection($0) }) {
             GenrePageView(folder: folder, sources: g)
         } else {
+            // Build 8 review: without a TMDB key only the addon grid or the row page (`tmdb: false`).
             brandPage(searched ?? BrandPage.resolve(folder, collection: { model.collection($0) },
-                                                    searched: { CompanySearchStore.shared.lookup($0) }))
+                                                    searched: { CompanySearchStore.shared.lookup($0) },
+                                                    tmdb: model.tmdb != nil))
         }
     }
 
@@ -296,6 +298,13 @@ struct GenrePageView: View {
         if src.limit == nil, let cached = model.cache[src.id], !cached.isEmpty, let first = p.beginNext() {
             let added = p.receive(first, items: cached)
             RemoteLog.info("genre", p.logLine(genre: folder.title, filter: f, added: added, label: logLabel) + " (Cache)")
+            // Build 8 review: the first page time also when it came from the cache (warm-up or home row).
+            if !firstLogged.contains(f) {
+                let sinceOpen: Int? = firstLogged.isEmpty ? Int(Date().timeIntervalSince(openedAt) * 1000) : nil
+                firstLogged.insert(f)
+                RemoteLog.info("genre", BrandPage.firstPageLine(label: logLabel, title: folder.title, filter: f, count: cached.count,
+                                                                fetchMs: 0, sinceOpenMs: sinceOpen) + " (Cache)")
+            }
         }
         let r = p.beginNext()
         paging[f] = p

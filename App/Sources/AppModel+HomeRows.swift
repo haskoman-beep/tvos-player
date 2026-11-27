@@ -71,18 +71,22 @@ extension AppModel {
             guard key == profile.id.uuidString else { return }
             guard FolderPage.mayPrefetch(runningLoads: homeRowLoads.count) else { return }
             // Build 8: a studio / streaming tile opens the TMDB grid: warm its first pages (start filter first; the
-            // grid shows the cached page at once), or run the company search of an unknown studio ahead.
-            var candidates = f.sources
-            switch BrandPage.resolve(f, collection: { self.collection($0) }, searched: { CompanySearchStore.shared.lookup($0) }) {
-            case .grid(let g):
-                candidates = BrandPage.warmSources(g)
-            case .search(let query, let searchKey):
-                folderPrefetches[f.id] = (count: 0, at: Date())
-                _ = await CompanySearchStore.shared.search(query, key: searchKey, tmdb: tmdb)
-                return
-            case .rowPage:
-                break
+            // grid shows the cached page at once). Review: an unknown studio runs its company search first, then
+            // warms what the page will show (TMDB page, addon grid or row page sources).
+            let hasTMDB = tmdb != nil
+            let lookup: (String) -> MediaCollection? = { self.collection($0) }
+            var page = BrandPage.resolve(f, collection: lookup, searched: { CompanySearchStore.shared.lookup($0) }, tmdb: hasTMDB)
+            if case .search(let query, let searchKey) = page {
+                let answer: CompanySearchCache.Lookup? = await CompanySearchStore.shared.search(query, key: searchKey, tmdb: tmdb)
+                guard key == profile.id.uuidString else { return }
+                if let answer {
+                    page = BrandPage.afterSearch(f, collection: lookup, answer: answer)
+                } else {
+                    page = BrandPage.withoutSearch(f, collection: lookup)
+                }
             }
+            var candidates = f.sources
+            if case .grid(let g) = page { candidates = BrandPage.warmSources(g) }
             let picked = FolderPage.prefetchSources(candidates, isCached: { id in
                 self.cache[id] != nil || self.homeRowLoads["\(key)|\(id)"] != nil || self.recentLoadFailures.isRecent(id)
             })
