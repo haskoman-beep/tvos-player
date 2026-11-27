@@ -265,7 +265,11 @@ struct HomeView: View {
                 DispatchQueue.main.async { withAnimation(.easeOut(duration: 0.25)) { scroll(target.id) } }
             }
         case .actionButton:
-            // Review N2: the button claims `.add` when the lazy list builds it after the scroll.
+            // Review N2: the button claims `.add` when the lazy list builds it after the scroll; no heading check of
+            // the last row may scroll back against that scroll (b6 review 2, as on the way to the hero buttons).
+            topWatch.headingChecks?.cancel()
+            topWatch.headingChecks = nil
+            headingRow = nil
             focusTarget.request(.add)
             if let scroll = topWatch.scrollToActionButton {
                 DispatchQueue.main.async { withAnimation(.easeOut(duration: 0.25)) { scroll() } }
