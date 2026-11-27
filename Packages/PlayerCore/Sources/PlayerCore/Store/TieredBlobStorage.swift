@@ -134,7 +134,24 @@ public struct TieredBlobStorage: BlobStorage {
 
     /// Diagnosis for the device log: blocks whose UserDefaults copy a newer file has overtaken AND that differ from
     /// that file (a lost UserDefaults write). Call before `migrate()`, which removes such entries.
+    /// Review of Phase 0a: set once the entries written by older builds (no revision) were taken over.
+    public static let adoptedKey = "rev.adopted"
+
+    /// First start after the update: until now the UserDefaults copy always won, and no entry has a revision. They
+    /// are taken over once as the current state (an old file in Application Support must not win over them). After
+    /// that, an entry without a revision gives way to a file. Called by `migrate()` and `overtakenDefaults()`.
+    func adoptLegacyDefaults() {
+        guard defaults.data(forKey: Self.adoptedKey) == nil else { return }
+        let names = defaults.keys(withPrefix: Self.prefix).map { String($0.dropFirst(Self.prefix.count)) }
+            + Self.generationKeys.keys
+        for n in names where defaults.data(forKey: storeKey(n)) != nil && revision(n) == nil {
+            setRevision(n, max(Date(), (newestFileDate(n) ?? .distantPast).addingTimeInterval(0.001)))
+        }
+        defaults.set(Data([1]), forKey: Self.adoptedKey)
+    }
+
     public func overtakenDefaults() -> [String] {
+        adoptLegacyDefaults()
         let names = defaults.keys(withPrefix: Self.prefix).map { String($0.dropFirst(Self.prefix.count)) }
             + Self.generationKeys.keys
         return names.filter { n in
@@ -256,6 +273,7 @@ public struct TieredBlobStorage: BlobStorage {
     /// Vorbehalt liegen; von den übrigen werden die kleinsten zuerst behalten.
     @discardableResult
     public func migrate() -> Migration {
+        adoptLegacyDefaults()
         var m = Migration()
         let sizes = defaultsSizes()
         let order = sizes.keys.sorted { a, b in sizes[a]! != sizes[b]! ? sizes[a]! < sizes[b]! : a < b }

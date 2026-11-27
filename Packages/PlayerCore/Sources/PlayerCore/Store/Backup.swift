@@ -154,10 +154,17 @@ extension StoredProfiles {
             var addons: [InstalledAddon] = []
             var seen = Set<String>()
             for a in p.addons {
+                // An entry with the same address is the backup's own (it wins); only configured ones come from here.
                 let mine = old.addons.filter { AddonAccess.publicManifestURL($0.manifestURL) == a.manifestURL }
+                    .map { $0.manifestURL == a.manifestURL ? a : $0 }
                 for x in mine.isEmpty ? [a] : mine where seen.insert(x.manifestURL).inserted { addons.append(x) }
             }
             if addons.map(\.manifestURL) != p.addons.map(\.manifestURL) { p.addons = addons; n += 1 }
+            // Review: entries this build cannot read are not in the plain export; the ones of this TV stay.
+            if p.unknownAddons.isEmpty, !old.unknownAddons.isEmpty { p.unknownAddons = old.unknownAddons; n += 1 }
+            if p.unknownCollections.isEmpty, !old.unknownCollections.isEmpty { p.unknownCollections = old.unknownCollections; n += 1 }
+            for (k, v) in old.unknownApiKeys where p.unknownApiKeys[k] == nil && p.apiKeys[k] == nil { p.unknownApiKeys[k] = v; n += 1 }
+            for (k, v) in old.unknownSyncTokens where p.unknownSyncTokens[k] == nil && p.syncTokens[k] == nil { p.unknownSyncTokens[k] = v; n += 1 }
             if n > 0 { s.profiles[i] = p; kept += 1 }
         }
         return (s, kept)

@@ -7,6 +7,8 @@ import Testing
 // (app killed, cfprefsd refusing). The next start then sees the old entry next to a newer file.
 
 private let name = "profiles.json"
+/// Marks a store whose entries from older builds were taken over already (`adoptLegacyDefaults`).
+private let adopted = TieredBlobStorage.adoptedKey
 
 /// Every entry of the store, as the next app start would find it.
 private func snapshot(_ kv: MemoryKeyValueBlobs) -> [String: Data] {
@@ -68,7 +70,7 @@ private func age(_ dir: FileBlobStorage, _ name: String, by seconds: TimeInterva
     let dir = FileBlobStorage(directory: tempDir())
     try dir.write("progress-a.json", Data("file".utf8))
     let stale = Data(repeating: 7, count: TieredBlobStorage.smallLimit + 1)   // too large: migrate() moves it out
-    let kv = MemoryKeyValueBlobs(["blob.progress-a.json": stale])
+    let kv = MemoryKeyValueBlobs(["blob.progress-a.json": stale, adopted: Data([1])])
     let s = TieredBlobStorage(defaults: kv, directories: [dir])
     s.migrate()
     #expect(dir.read("progress-a.json") == Data("file".utf8))
@@ -96,7 +98,29 @@ private func age(_ dir: FileBlobStorage, _ name: String, by seconds: TimeInterva
         "profilegen.1": Data("oldgen".utf8),         // generation key, overtaken as well
         "blob.same.json": Data("same".utf8),         // no revision but identical: nothing lost
         "blob.only.json": Data("only".utf8),         // no file at all: still the valid copy
+        adopted: Data([1]),
     ])
     let s = TieredBlobStorage(defaults: kv, directories: [dir])
     #expect(s.overtakenDefaults() == [name, "profiles.json.1"])
+}
+
+/// Review: first start after the update. No entry has a revision yet, and UserDefaults was the copy that won until
+/// now (Application Support may hold a file from a start long ago). The entries are taken over once, as they are.
+@Test func entriesOfAnOlderBuildWinOnceAfterTheUpdate() throws {
+    let dir = FileBlobStorage(directory: tempDir())
+    try dir.write(name, Data("old file".utf8))
+    let kv = MemoryKeyValueBlobs(["blob." + name: Data("defaults".utf8)])
+    let s = TieredBlobStorage(defaults: kv, directories: [dir])
+    #expect(s.overtakenDefaults().isEmpty)
+    s.migrate()
+    #expect(s.read(name) == Data("defaults".utf8))
+    #expect(kv.data(forKey: adopted) != nil)
+
+    // Later an entry without revision gives way again (the take-over happens once).
+    try dir.write("other.json", Data("file".utf8))
+    kv.set(Data("defaults".utf8), forKey: "blob.other.json")
+    let next = TieredBlobStorage(defaults: kv, directories: [dir])
+    next.migrate()
+    #expect(next.read("other.json") == Data("file".utf8))
+    #expect(next.read(name) == Data("defaults".utf8))
 }

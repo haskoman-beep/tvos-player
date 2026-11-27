@@ -55,6 +55,30 @@ private func book(poster: String?, sourceAddon: String?) throws -> ProgressBook 
     #expect(out.profiles[0].addons.map(\.manifestURL) == [configured, second])
 }
 
+@Test func plainRestoreKeepsEntriesThisBuildCannotRead() {
+    // Review: the plain export leaves the raw leftovers out; the profile on this TV still has them.
+    var here = Profile.makeDefault(name: "A")
+    here.unknownAddons = [.string("addon")]
+    here.unknownCollections = [.string("sammlung")]
+    here.unknownApiKeys = ["k": .int(1)]
+    here.unknownSyncTokens = ["t": .int(2)]
+    let plain = StoredProfiles(profiles: [here], activeProfileID: here.id).withoutSecrets()
+    #expect(plain.profiles[0].unknownAddons.isEmpty)
+    let (out, kept) = plain.keepingSecrets(from: [here])
+    #expect(out.profiles[0] == here && kept == 1)
+}
+
+@Test func plainRestoreTakesTheBackupsEntryOfAnAddonWithoutConfiguration() {
+    // Review: one configured addon must not make the other addons come from this TV as well.
+    var here = Profile.makeDefault(name: "A")
+    here.addons = [addon(configured), addon("https://b.example.invalid/manifest.json", name: "B hier")]
+    var plain = StoredProfiles(profiles: [here], activeProfileID: here.id).withoutSecrets()
+    plain.profiles[0].addons[1].manifest.name = "B aus Sicherung"
+    let (out, _) = plain.keepingSecrets(from: [here])
+    #expect(out.profiles[0].addons.map(\.manifestURL) == [configured, "https://b.example.invalid/manifest.json"])
+    #expect(out.profiles[0].addons[1].manifest.name == "B aus Sicherung")
+}
+
 @Test func plainRestoreLeavesAnAddonAloneThatIsNotConfiguredHere() {
     var here = Profile.makeDefault(name: "A")
     here.addons = [addon("https://anders.example.invalid/manifest.json")]
@@ -199,12 +223,13 @@ private func book(poster: String?, sourceAddon: String?) throws -> ProgressBook 
 
 @Test func restoreKeepsUnreadableLocalProfiles() {
     var here = StoredProfiles.makeDefault()
-    here.unknownProfiles = [.object(["name": .string("Ohne ID")])]
+    let onlyHere = JSONValue.object(["name": .string("Nur hier")])
+    here.unknownProfiles = [.object(["name": .string("Ohne ID")]), onlyHere]
     let a = Profile.makeDefault(name: "A")
     var backup = StoredProfiles(profiles: [a], activeProfileID: a.id)
     backup.unknownProfiles = [.object(["name": .string("Ohne ID")]), .object(["name": .string("Auch unlesbar")])]
     let out = backup.keepingLocalProfiles(from: here) { _ in false }
-    #expect(out.unknownProfiles == backup.unknownProfiles)   // the shared one once, not twice
+    #expect(out.unknownProfiles == backup.unknownProfiles + [onlyHere])   // the shared one once, not twice
 }
 
 // MARK: Finding 5
