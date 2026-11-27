@@ -209,9 +209,12 @@ struct HomeRowView: View {
             switch p {
             case .tiles:
                 let folders = c?.folders ?? []
-                let line = CollectionArtStats(folders: folders, logoStyle: row.style == .logoTiles).logLine(title: title)
+                // Build 6: a genre row counts no motion (it shows none, `TileMotion.isStillRow`).
+                let still = c.map(TileMotion.isStillRow) ?? false
+                let line = CollectionArtStats(folders: folders, logoStyle: row.style == .logoTiles, stillRow: still)
+                    .logLine(title: title)
                 // Welle F-l: Paket-Reihen melden zusätzlich, wie viele Paket-Kacheln ein Bild bzw. GIF haben.
-                let packLine = PackageArtStats(folders: folders)?.logLine(row: title)
+                let packLine = PackageArtStats(folders: folders, stillRow: still)?.logLine(row: title)
                 Strip(kind: tileKind) {
                     ForEach(folders) { f in
                         card(.folder(f)) { FolderTile(folder: f, logoStyle: row.style == .logoTiles,

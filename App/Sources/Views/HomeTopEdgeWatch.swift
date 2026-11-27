@@ -11,6 +11,8 @@ import PlayerCore
 @MainActor @Observable final class HomeTopEdgeWatch {
     /// ID of the whole scroll content (scroll target "very top").
     static let topID = "home.top"
+    /// Review N2: ID of the „Reihen & Collections“ button below the rows (scroll target of a rescued down press).
+    static let actionButtonID = "home.actionButton"
 
     private(set) var barRequest: HomeTopRules.BarRequest = .automatic
 
@@ -30,6 +32,8 @@ import PlayerCore
     @ObservationIgnored var scrollToTop: (() -> Void)?
     /// Set by the scroll view (ScrollViewReader): scrolls a home row (heading included) to the list's top edge.
     @ObservationIgnored var scrollToRow: ((UUID) -> Void)?
+    /// Review N2: set by the scroll view (ScrollViewReader): scrolls the „Reihen & Collections“ button into view.
+    @ObservationIgnored var scrollToActionButton: (() -> Void)?
     /// Build 5 device test 1 (items 2, 7): an up (true) or down (false) press the focus engine dropped on the home
     /// page; `HomeView` moves the focus itself (`HomeMoveRescue`).
     /// Review W2/M1: with the row that kept the focus (from the focused element's frame, never from the row presence).
@@ -202,7 +206,8 @@ import PlayerCore
 
     /// Build 5 device test 1 (items 2, 7) with review W2/M1/N3: a dropped up/down press of an element inside the
     /// home list goes to `onFailedMove` with the row under that element, one hop later and only when no focus
-    /// update came in meanwhile; at most one per direction and second.
+    /// update came in meanwhile; at most one per row, direction and second (review N3: a held direction against a row that
+    /// cannot take the focus logs and rescues once a second, a rescue that moved on to the next row is not held back).
     private func rescueLater(_ context: UIFocusUpdateContext) {
         let up = context.focusHeading.contains(.up)
         guard up || context.focusHeading.contains(.down), onFailedMove != nil,
@@ -210,7 +215,7 @@ import PlayerCore
               view.window != nil, view.isDescendant(of: sv) else { return }
         let y = Double(view.convert(view.bounds, to: sv).midY)
         guard let row = HomeMoveRescue.row(atContentY: y, spans: rowSpans.map { ($0.key, $0.value) }),
-              throttle.allow(up ? "rescue up" : "rescue down", now: Self.now) else { return }
+              throttle.allow("rescue \(up ? "up" : "down") \(row.uuidString)", now: Self.now) else { return }
         let serial = updateSerial
         Task { @MainActor [weak self] in
             guard let self, self.updateSerial == serial else { return }

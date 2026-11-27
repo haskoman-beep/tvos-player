@@ -243,7 +243,8 @@ struct HomeView: View {
 
     /// Build 5 device test 1 (items 2, 7): the focus engine dropped an up/down press in the rows (target not built
     /// by the lazy list or outside it after the heading snap). Up from the first row goes to „Abspielen“ (scrolled
-    /// to the very top), other presses to the neighbour row (remembered or first card, `HomeFocusTarget`).
+    /// to the very top), other presses to the neighbour row (remembered or first card, `HomeFocusTarget`); review N2:
+    /// down from the last row to the „Reihen & Collections“ button.
     private func rescueFailedMove(up: Bool, from row: UUID) {
         let rows = model.profile.home.rowsBelowHero(model.profile.appearance)
         let look = model.profile.themeLook.home
@@ -256,12 +257,24 @@ struct HomeView: View {
         if case .row(let i) = rescue { target = rows[i] }
         RemoteLog.info("nav", rescue.line(up: up, from: index, fromTitle: model.homeRowTitle(rows[index].content),
                                           toTitle: target.map { model.homeRowTitle($0.content) }))
-        if let target {
+        switch rescue {
+        case .row:
+            guard let target else { return }
             focusTarget.request(.row(target.id))
             if let scroll = topWatch.scrollToRow {
                 DispatchQueue.main.async { withAnimation(.easeOut(duration: 0.25)) { scroll(target.id) } }
             }
-        } else {
+        case .actionButton:
+            // Review N2: the button claims `.add` when the lazy list builds it after the scroll; no heading check of
+            // the last row may scroll back against that scroll (b6 review 2, as on the way to the hero buttons).
+            topWatch.headingChecks?.cancel()
+            topWatch.headingChecks = nil
+            headingRow = nil
+            focusTarget.request(.add)
+            if let scroll = topWatch.scrollToActionButton {
+                DispatchQueue.main.async { withAnimation(.easeOut(duration: 0.25)) { scroll() } }
+            }
+        case .heroButtons:
             // Review M2: no heading check of the first row may scroll against the way to the top.
             topWatch.headingChecks?.cancel()
             topWatch.headingChecks = nil
@@ -360,6 +373,7 @@ struct HomeView: View {
             // Keine Akzentfarbe (RootView .tint) auf der Startseite; Welle F-i: Token-Knopf wie Abspielen/Details.
             FocusReportingButton(title: "Reihen & Collections", action: { manager = ManagerTarget() },
                                  onFocus: { topWatch.report(.actionButton, $0) }, focusTarget: focusTarget)
+                .id(HomeTopEdgeWatch.actionButtonID)   // review N2: scroll target of a rescued down press
                 .padding(.top, 20)
                 .padding(.leading, Theme.Space.edge)
         }
@@ -436,6 +450,7 @@ private struct TopEdgeScroll: ViewModifier {
             .onAppear {
                 watch.scrollToTop = { proxy.scrollTo(HomeTopEdgeWatch.topID, anchor: .top) }
                 watch.scrollToRow = { proxy.scrollTo($0, anchor: .top) }
+                watch.scrollToActionButton = { proxy.scrollTo(HomeTopEdgeWatch.actionButtonID, anchor: .bottom) }
             }
     }
 }
@@ -448,17 +463,38 @@ private struct FocusReportingButton: View {
     /// Task 4.1a (F-A-3): claims a pending `.add` target (last row hidden or deleted).
     var focusTarget: HomeFocusTarget? = nil
     @FocusState private var focused: Bool
+    /// b6 review 1: the running claim of a pending `.add` target (`FocusClaim`).
+    @State private var claim: Task<Void, Never>?
 
     var body: some View {
         Button(title, action: action)
             .buttonStyle(ThemeActionButtonStyle())
             .focused($focused)
             .onChange(of: focused) { _, f in onFocus(f) }
-            .onDisappear { onFocus(false) }
+            .onDisappear {
+                onFocus(false)
+                claim?.cancel()
+                claim = nil
+            }
             .onChange(of: focusTarget?.serial, initial: true) { _, _ in
                 guard focusTarget?.claim(.add) == true else { return }
-                DispatchQueue.main.async { focused = true }
+                claimFocus()
             }
+    }
+
+    /// b6 review 1: a button the lazy list builds in this pass can lose the one assignment, so it is repeated
+    /// (`FocusClaim`, at most half a second). Not ended by other focus moves: after a context-menu action the system
+    /// moves the focus off the vanished tile, and the target must win over that move (Task 4.1a F-A-3).
+    private func claimFocus() {
+        claim?.cancel()
+        claim = Task { @MainActor in
+            let outcome = await FocusClaim.run(endsOnMove: false, held: { focused }, assign: { focused = true })
+            switch outcome {
+            case .held(let n): RemoteLog.info("fokus", "Knopf unten fokussiert" + (n > 1 ? " (nach \(n) Versuchen)" : ""))
+            case .movedAway, .cancelled: break
+            case .gaveUp: RemoteLog.info("fokus", "Knopf unten: Fokus nach \(FocusClaim.tries) Versuchen nicht übernommen")
+            }
+        }
     }
 }
 

@@ -43,10 +43,11 @@ public struct CollectionArtStats: Equatable, Sendable {
     /// Kacheln mit bewegtem Fokusbild (nur außerhalb des Logo-Stils gezeigt).
     public var gifs: Int
 
-    public init(folders: [Folder], logoStyle: Bool) {
+    /// Build 6 (review of 576a588): a still row (`TileMotion.isStillRow`, genre rows) shows no GIF and counts none.
+    public init(folders: [Folder], logoStyle: Bool, stillRow: Bool = false) {
         tiles = folders.count
         images = folders.filter { logoStyle ? $0.logo != nil : ($0.coverImage ?? $0.backdrop) != nil }.count
-        gifs = logoStyle ? 0 : folders.filter { $0.focusGif != nil }.count
+        gifs = logoStyle || stillRow ? 0 : folders.filter { $0.focusGif != nil }.count
     }
 
     /// „Collection <titel>: <n> Kacheln, Bilder <n>, GIF <n>“.

@@ -9,6 +9,9 @@ public enum HomeMoveRescue: Equatable, Sendable {
     case heroButtons
     /// Focus the row at this index (its remembered or first card), scrolled to the list's top edge.
     case row(Int)
+    /// Review N2: down from the last row: focus the „Reihen & Collections“ button below it (the lazy list had not
+    /// built it yet), scrolled into view.
+    case actionButton
 
     /// - `up`: direction of the failed press (false = down).
     /// - `focusedRow`: index of the row that holds the focus among the shown rows; nil = focus not in a row.
@@ -19,7 +22,7 @@ public enum HomeMoveRescue: Equatable, Sendable {
             if i > 0 { return .row(i - 1) }
             return edge == .heroButtons ? .heroButtons : nil   // without a hero the tab bar is the system's job
         }
-        return i + 1 < rowCount ? .row(i + 1) : nil
+        return i + 1 < rowCount ? .row(i + 1) : .actionButton   // review N2: below the last row sits the button
     }
 
     /// Review W2/M1: the row whose frame (list content coordinates) holds `y`, the centre of the element that kept
@@ -28,12 +31,16 @@ public enum HomeMoveRescue: Equatable, Sendable {
         spans.first { y >= $0.1.minY && y <= $0.1.maxY }?.0
     }
 
-    /// Log line: "Hoch|Runter verschluckt in Reihe <n> (<title>) → Knopfzeile|Reihe <m> (<title>)".
+    /// Log line: "Hoch|Runter verschluckt in Reihe <n> (<title>) → Knopfzeile|Reihe <m> (<title>) fokussiert", for the
+    /// bottom button "… → Knopf „Reihen & Collections“ angefordert".
     public func line(up: Bool, from: Int, fromTitle: String, toTitle: String?) -> String {
         let target: String
         switch self {
         case .heroButtons: target = "Knopfzeile"
         case .row(let i): target = "Reihe \(i + 1) (\(toTitle ?? "?"))"
+        case .actionButton:
+            // b6 review 1: the button is built later; it logs „Knopf unten fokussiert“ once it holds the focus.
+            return "\(up ? "Hoch" : "Runter") verschluckt in Reihe \(from + 1) (\(fromTitle)) → Knopf „Reihen & Collections“ angefordert"
         }
         return "\(up ? "Hoch" : "Runter") verschluckt in Reihe \(from + 1) (\(fromTitle)) → \(target) fokussiert"
     }

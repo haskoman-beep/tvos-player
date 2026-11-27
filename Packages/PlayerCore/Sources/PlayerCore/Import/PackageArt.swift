@@ -222,13 +222,15 @@ public struct PackageArtStats: Equatable, Sendable {
     public var videos: Int
 
     /// nil, wenn die Reihe keine Paket-Kachel hat.
-    public init?(folders: [Folder]) {
+    /// Build 6 (review of 576a588): `stillRow` (`TileMotion.isStillRow`): the row shows no motion, so it counts none,
+    /// whatever its tiles still carry.
+    public init?(folders: [Folder], stillRow: Bool = false) {
         let p = folders.filter { ReadyPackages.isPackageFolder($0.id) }
         guard !p.isEmpty else { return nil }
         tiles = p.count
         images = p.filter { !($0.coverImage ?? "").isEmpty }.count
-        gifs = p.filter { !($0.focusGif ?? "").isEmpty }.count
-        videos = p.filter { !($0.focusVideo ?? "").isEmpty }.count
+        gifs = stillRow ? 0 : p.filter { !($0.focusGif ?? "").isEmpty }.count
+        videos = stillRow ? 0 : p.filter { !($0.focusVideo ?? "").isEmpty }.count
     }
 
     public func logLine(row: String) -> String {
