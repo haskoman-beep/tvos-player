@@ -42,6 +42,12 @@ final class AppModel: ObservableObject {
     /// Phase 0b: number of the last profile save (queued or direct). The result of an older queued save no longer
     /// touches the Keychain: a newer save, a restore or a profile delete came after it.
     private var profileSaveSerial = 0
+    /// True between "entered background" and "will enter foreground".
+    private var savesInBackground = false
+    /// Serial of the last direct profile write (delete, restore): queued saves from before it never mirror.
+    private var profileDirectSerial = 0
+    /// Serial of the newest queued save whose secrets were mirrored.
+    private var profileMirroredSerial = 0
     /// Fortschritt des aktiven Profils.
     @Published private(set) var progress = ProgressBook()
     /// Task 1.3 (S-11): the progress file was unreadable (kept as .bak). The sync pull then merges in memory only;
@@ -130,8 +136,14 @@ final class AppModel: ObservableObject {
     /// main thread waits until the queued saves are on disk, at most 3 s.
     private func observeSaveDrain() {
         let saver = self.saver
+        _ = NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil,
+                                                   queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.savesInBackground = false }
+        }
         for name in [UIApplication.didEnterBackgroundNotification, UIApplication.willTerminateNotification] {
-            _ = NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
+            _ = NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                // From here on a save waits for its write (see `settleIfInBackground`).
+                MainActor.assumeIsolated { self?.savesInBackground = true }
                 let start = ContinuousClock.now
                 let waiting = saver.waitingKeys.count
                 let done = saver.drain(timeout: 3)
@@ -426,16 +438,36 @@ final class AppModel: ObservableObject {
         saver.submit(SaveQueue.profilesKey, { try store.save(snapshot) }, done: { [weak self] result in
             Task { @MainActor in self?.profilesSaved(snapshot, serial: serial, result) }
         })
+        settleIfInBackground(SaveQueue.profilesKey)
+    }
+
+    /// Phase 0b: the profiles were written directly (not through a queued save); completions of older queued saves
+    /// are stale from here on.
+    private func noteDirectProfileWrite() {
+        profileSaveSerial &+= 1
+        profileDirectSerial = profileSaveSerial
+    }
+
+    /// Phase 0b: a save that comes after the app went to the background (a late scrobble answer, a renewed token)
+    /// is written before the call returns, as before Phase 0b: the app may be suspended right after it.
+    private func settleIfInBackground(_ key: String) {
+        if savesInBackground { saver.settle(key) }
     }
 
     /// Phase 0b: back on the main thread after a queued profile save.
     private func profilesSaved(_ saved: StoredProfiles, serial: Int, _ result: Result<Void, Error>) {
-        if case .failure(let error) = result { lastError = "Speichern fehlgeschlagen: \(error)"; return }
-        // Stale: a newer save is on its way (it mirrors), or a restore or delete wrote the profiles directly.
-        guard serial == profileSaveSerial else { return }
+        if case .failure(let error) = result {
+            // An older save that failed while a newer one is on its way: the newer one reports.
+            if serial == profileSaveSerial { lastError = "Speichern fehlgeschlagen: \(error)" }
+            return
+        }
+        // Stale: a restore or delete wrote the profiles directly after it, or a newer save was mirrored already.
+        // Every other written save mirrors its own snapshot (the next one may fail).
+        guard serial > profileDirectSerial, serial > profileMirroredSerial else { return }
+        profileMirroredSerial = serial
         // Only after the file was written, and only what it holds: the Keychain never holds what the profile lacks.
         mirrorSecrets(saved.profiles)
-        noteProfileSizes(load: false)
+        if serial == profileSaveSerial { noteProfileSizes(load: false) }
     }
 
     /// Build 5 device test 1 (profiles.json 24.0 → 19.4 KB): bytes per profile part. On load one summary line per
@@ -513,6 +545,7 @@ final class AppModel: ObservableObject {
         progressStore.save(progress, profile: profile.id, on: saver) { [weak self] error in
             Task { @MainActor in self?.lastError = "Fortschritt nicht gespeichert: \(error)" }
         }
+        settleIfInBackground(SaveQueue.progressKey(profile.id))
     }
 
     /// Progress of a profile; an unreadable file is kept as `.bak` by ProgressStore and the book starts empty
@@ -561,7 +594,8 @@ final class AppModel: ObservableObject {
     /// „Diese Fassung laden“.
     func restoreProfiles(_ id: String) {
         do {
-            let s = try store.restore(id)
+            let s = try saver.runNow(SaveQueue.profilesKey) { try store.restore(id) }
+            noteDirectProfileWrite()
             storeState = .ready
             RemoteLog.info("speicher", "Profile wiederhergestellt aus \(id) · \(s.profiles.count) Profil(e)")
             profilesReplaced(s, recovery: true)
@@ -571,7 +605,8 @@ final class AppModel: ObservableObject {
     /// „Neu anfangen“ (after the confirmation).
     func startFreshProfiles() {
         do {
-            let s = try store.startFresh()
+            let s = try saver.runNow(SaveQueue.profilesKey) { try store.startFresh() }
+            noteDirectProfileWrite()
             storeState = .ready
             RemoteLog.info("speicher", "Profile neu angefangen · unlesbarer Stand bleibt als profiles.json.unreadable.bak")
             profilesReplaced(s, recovery: true)
@@ -641,7 +676,7 @@ final class AppModel: ObservableObject {
     }
 
     func deleteProfile(_ id: UUID) {
-        guard stored.profiles.count > 1 else { return }
+        guard stored.profiles.count > 1, stored.profiles.contains(where: { $0.id == id }) else { return }
         guard storeState == .ready else {
             RemoteLog.info("speicher", "Profil nicht gelöscht: Profile nicht lesbar, Auswahl offen")
             return
@@ -651,12 +686,13 @@ final class AppModel: ObservableObject {
         let remaining: [Profile]
         // Phase 0b: its queued progress write lands first (else it would bring the block back); the delete writes
         // the profiles directly, in the queue's order, and replaces a queued profile save that is older.
+        // If it fails, the queue brings the dropped save back; the serial moves only after the write went through.
         saver.settle(SaveQueue.progressKey(id))
-        profileSaveSerial &+= 1
         do {
             remaining = try saver.runNow(SaveQueue.profilesKey) {
                 try store.delete(profile: id, from: stored, blocks: progressStore.storage).profiles.profiles
             }
+            noteDirectProfileWrite()
         }
         catch { lastError = "Profil nicht gelöscht, Speichern fehlgeschlagen: \(error)"; return }
         stored.profiles = remaining
@@ -1126,8 +1162,8 @@ final class AppModel: ObservableObject {
                     // Fix round 2: saved directly, so the cleanup below runs only after the restored profiles are
                     // stored (a failed save ends in the catch: nothing is removed).
                     // Phase 0b: directly, in the save queue's order; a queued profile save is older and is dropped.
-                    profileSaveSerial &+= 1
                     try saver.runNow(SaveQueue.profilesKey) { try store.save(imported) }
+                    noteDirectProfileWrite()
                     stored = imported
                     if keptKeys > 0 { RemoteLog.info("speicher", "Sicherung ohne Schlüssel: \(keptKeys) Profil(e) behalten ihre Schlüssel oder Addon-Adressen") }
                     if keptProfiles > 0 { RemoteLog.info("speicher", "Sicherung: \(keptProfiles) Profil(e) dieses Geräts fehlen in der Sicherung und bleiben") }

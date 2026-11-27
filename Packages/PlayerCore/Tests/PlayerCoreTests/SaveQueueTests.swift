@@ -187,6 +187,90 @@ private let film = MetaPreview(id: "tt1", type: "movie", name: "Film")
     for t in 0..<8 { #expect(dir.read("k\(t)") == Data("199".utf8)) }
 }
 
+@Test func runNowThatThrowsBringsTheDroppedJobBack() {
+    // A queued save is dropped for a direct write; the direct write fails: the queued state must still be written.
+    let q = SaveQueue()
+    let j = Journal()
+    let gate = Gate()
+    q.submit("hold") { gate.pass() }
+    gate.started.wait()
+    q.submit("other") { j.add("other") }
+    q.submit("profiles", { j.add("queued profiles") }, done: { _ in j.add("done") })
+    DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) { gate.open.signal() }
+    #expect(throws: Boom.self) { try q.runNow("profiles") { throw Boom() } }
+    #expect(q.drain(timeout: 5))
+    #expect(j.all == ["queued profiles", "done", "other"])
+}
+
+@Test func runNowThatThrowsOnAnIdleQueueStillWritesTheDroppedJob() {
+    let q = SaveQueue()
+    let j = Journal()
+    let gate = Gate()
+    q.submit("hold") { gate.pass() }
+    gate.started.wait()
+    q.submit("profiles") { j.add("queued profiles") }
+    gate.open.signal()
+    // Whether the worker took the job first or `runNow` dropped it: it must have run once in the end.
+    #expect(throws: Boom.self) { try q.runNow("profiles") { throw Boom() } }
+    #expect(q.drain(timeout: 5))
+    #expect(j.all == ["queued profiles"])
+}
+
+@Test func jobDroppedByRunNowOrDiscardNeverReportsDone() throws {
+    let q = SaveQueue()
+    let j = Journal()
+    let gate = Gate()
+    q.submit("hold") { gate.pass() }
+    gate.started.wait()
+    q.submit("a", { j.add("a") }, done: { _ in j.add("done a") })
+    q.submit("b", { j.add("b") }, done: { _ in j.add("done b") })
+    DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) { gate.open.signal() }
+    q.runNow("a") { j.add("direct a") }
+    q.discard("b")
+    #expect(q.drain(timeout: 5))
+    #expect(j.all == ["direct a"])
+}
+
+@Test func submitFromInsideAJobAndDoneIsSeenByDrain() {
+    let q = SaveQueue()
+    let j = Journal()
+    q.submit("a", { q.submit("b") { j.add("b") } }, done: { _ in q.submit("c") { j.add("c") } })
+    #expect(q.drain(timeout: 5))
+    #expect(j.all == ["b", "c"])
+}
+
+@Test func progressFailureWithoutHandlerReachesOnError() {
+    struct Refusing: BlobStorage {
+        func read(_ name: String) -> Data? { nil }
+        func write(_ name: String, _ data: Data) throws { throw Boom() }
+        func remove(_ name: String) {}
+    }
+    let j = Journal()
+    let q = SaveQueue(onError: { key, _ in j.add(key) })
+    let id = UUID()
+    ProgressStore(storage: Refusing()).save(ProgressBook(), profile: id, on: q)
+    #expect(q.drain(timeout: 5))
+    #expect(j.all == [SaveQueue.progressKey(id)])
+}
+
+@Test func mixedCallersFromManyThreadsEndWithTheLastState() {
+    let q = SaveQueue()
+    let dir = FileBlobStorage(directory: tempDir())
+    DispatchQueue.concurrentPerform(iterations: 6) { t in
+        for i in 0..<150 {
+            let v = Data("\(i)".utf8)
+            switch i % 5 {
+            case 1: q.runNow("k\(t)") { try? dir.write("k\(t)", v) }
+            case 2: q.submit("k\(t)") { try dir.write("k\(t)", v) }; q.settle("k\(t)")
+            case 3: q.discard("k\(t)"); q.submit("k\(t)") { try dir.write("k\(t)", v) }
+            default: q.submit("k\(t)") { try dir.write("k\(t)", v) }
+            }
+        }
+    }
+    #expect(q.drain(timeout: 30))
+    for t in 0..<6 { #expect(dir.read("k\(t)") == Data("149".utf8)) }
+}
+
 // MARK: progress through the queue
 
 @Test func deferredProgressSaveIsReadBackAfterSettle() {
@@ -248,4 +332,31 @@ private let film = MetaPreview(id: "tt1", type: "movie", name: "Film")
     dir.remove(store.name(id))
     #expect(q.drain(timeout: 5))
     #expect(dir.read(store.name(id)) == nil)
+}
+
+@Test func twoThreadsNeverExceedTheDefaultsBudgetTogether() {
+    // Each block alone fits, both together do not: whoever comes second must stay file-only.
+    // The slow key listing holds the gap between check and set open: without the lock both writers pass the check.
+    struct SlowListing: KeyValueBlobs {
+        let inner: MemoryKeyValueBlobs
+        func data(forKey key: String) -> Data? { inner.data(forKey: key) }
+        func set(_ data: Data, forKey key: String) { inner.set(data, forKey: key) }
+        func remove(forKey key: String) { inner.remove(forKey: key) }
+        func keys(withPrefix prefix: String) -> [String] {
+            let k = inner.keys(withPrefix: prefix)
+            Thread.sleep(forTimeInterval: 0.01)
+            return k
+        }
+    }
+    let kv = MemoryKeyValueBlobs()
+    let s = TieredBlobStorage(defaults: SlowListing(inner: kv), directories: [FileBlobStorage(directory: tempDir())])
+    var rng = SystemRandomNumberGenerator()
+    let blob = Data((0..<70_000).map { _ in UInt8.random(in: 0...255, using: &rng) })
+    for _ in 0..<10 {
+        s.remove("a.json"); s.remove("b.json")
+        DispatchQueue.concurrentPerform(iterations: 2) { i in try? s.write(i == 0 ? "a.json" : "b.json", blob) }
+        let used = ["a.json", "b.json"].reduce(0) { $0 + (kv.data(forKey: TieredBlobStorage.prefix + $1)?.count ?? 0) }
+        #expect(used > 0 && used <= TieredBlobStorage.othersBudget)
+        #expect(s.read("a.json") == blob && s.read("b.json") == blob)
+    }
 }

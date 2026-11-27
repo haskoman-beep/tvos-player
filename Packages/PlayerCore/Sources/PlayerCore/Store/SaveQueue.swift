@@ -38,7 +38,8 @@ public final class SaveQueue: @unchecked Sendable {
 
     /// `onError`: called with the key for every failed job that has no `done` of its own.
     public init(label: String = "player.save", onError: (@Sendable (String, Error) -> Void)? = nil) {
-        worker = DispatchQueue(label: label, qos: .utility)
+        // Not `.utility`: the main thread waits for this thread in `drain`, `settle` and `runNow`.
+        worker = DispatchQueue(label: label, qos: .userInitiated)
         self.onError = onError
     }
 
@@ -60,10 +61,12 @@ public final class SaveQueue: @unchecked Sendable {
     }
 
     /// Runs `body` on the calling thread, after the job that runs right now and before the jobs that wait. A waiting
-    /// job with this key is dropped: it is older than what `body` writes.
+    /// job with this key is dropped: it is older than what `body` writes. If `body` throws, that job comes back and
+    /// runs next (unless a newer one was submitted meanwhile).
     public func runNow<T>(_ key: String, _ body: () throws -> T) rethrows -> T {
         state.lock()
-        if waiting.removeValue(forKey: key) != nil { order.removeAll { $0 == key } }
+        let dropped = waiting.removeValue(forKey: key)
+        if dropped != nil { order.removeAll { $0 == key } }
         urgent += 1
         state.broadcast()
         state.unlock()
@@ -75,7 +78,24 @@ public final class SaveQueue: @unchecked Sendable {
             state.broadcast()
             state.unlock()
         }
-        return try body()
+        do { return try body() } catch {
+            // The body wrote nothing: the state of the dropped job is still the newest one, it runs next.
+            if let dropped { putBack(key, dropped) }
+            throw error
+        }
+    }
+
+    private func putBack(_ key: String, _ entry: Entry) {
+        state.lock()
+        var start = false
+        if waiting[key] == nil {
+            waiting[key] = entry
+            order.insert(key, at: 0)
+            start = !workerActive
+            if start { workerActive = true }
+        }
+        state.unlock()
+        if start { worker.async { self.pump() } }
     }
 
     /// Returns when no job with this key waits or runs (the block on disk is the last submitted state).

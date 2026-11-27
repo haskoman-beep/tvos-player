@@ -160,24 +160,33 @@ public struct TieredBlobStorage: BlobStorage {
         }.sorted()
     }
 
+    private static let defaultsLock = NSLock()
+
     public func write(_ name: String, _ data: Data) throws {
         let fileOK = writeFile(name, data)
         let z = compress(data)
         let k = storeKey(name)
         let family = Self.profileFamily.contains(name)
         defer { if family { trimProfileFamily() } }
+        // Phase 0b: writes come from the save queue's thread and from the main thread. Budget check and set are one
+        // step for the whole process, else two blocks could both pass the check and exceed the budget together.
+        Self.defaultsLock.lock()
+        var kept = false
         if let z, fitsDefaults(name, bytes: z.count) {
             defaults.set(z, forKey: k)
             if defaults.data(forKey: k) == z {
                 // No file took this write: the copy must still rank above every older file.
                 let newest = newestFileDate(name)
                 setRevision(name, fileOK ? newest ?? Date() : max(Date(), (newest ?? .distantPast).addingTimeInterval(0.001)))
-                return
+                kept = true
+            } else {
+                dropDefaults(name)   // Schreiben nicht angekommen: nur Datei gilt
             }
-            dropDefaults(name)   // Schreiben nicht angekommen: nur Datei gilt
         } else {
             dropDefaults(name)
         }
+        Self.defaultsLock.unlock()
+        if kept { return }
         if name == Self.profileName { onProfilesFileOnly?(z?.count ?? data.count) }
         // Only when a file really holds it (otherwise nothing was saved and StorageFull follows).
         if fileOK, Self.isProgress(name) { onProgressFileOnly?(name) }
