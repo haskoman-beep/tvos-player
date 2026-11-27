@@ -206,7 +206,8 @@ import PlayerCore
 
     /// Build 5 device test 1 (items 2, 7) with review W2/M1/N3: a dropped up/down press of an element inside the
     /// home list goes to `onFailedMove` with the row under that element, one hop later and only when no focus
-    /// update came in meanwhile; at most one per direction and second.
+    /// update came in meanwhile; at most one per row, direction and second (review N3: a held direction against a row that
+    /// cannot take the focus logs and rescues once a second, a rescue that moved on to the next row is not held back).
     private func rescueLater(_ context: UIFocusUpdateContext) {
         let up = context.focusHeading.contains(.up)
         guard up || context.focusHeading.contains(.down), onFailedMove != nil,
@@ -214,7 +215,7 @@ import PlayerCore
               view.window != nil, view.isDescendant(of: sv) else { return }
         let y = Double(view.convert(view.bounds, to: sv).midY)
         guard let row = HomeMoveRescue.row(atContentY: y, spans: rowSpans.map { ($0.key, $0.value) }),
-              throttle.allow(up ? "rescue up" : "rescue down", now: Self.now) else { return }
+              throttle.allow("rescue \(up ? "up" : "down") \(row.uuidString)", now: Self.now) else { return }
         let serial = updateSerial
         Task { @MainActor [weak self] in
             guard let self, self.updateSerial == serial else { return }
