@@ -435,8 +435,13 @@ final class FusionKitStore: ObservableObject {
             layout = FusionKitSync.apply(settings: nil, layout: model.profile.home)
         } else if s != settings { settings = s; persist() }
         if layout != model.profile.home { model.update { $0.home = layout } }
-        if settingsStored, !r.added.isEmpty || !r.removed.isEmpty || !r.deselected.isEmpty {
-            RemoteLog.info("kit", "Startseite: +\(r.added.count) −\(r.removed.count) Reihen" + (r.deselected.isEmpty ? "" : " · \(r.deselected.count) im Editor entfernt → abgewählt"))
+        if settingsStored, !r.added.isEmpty || !r.removed.isEmpty || !r.deselected.isEmpty || !r.parked.isEmpty {
+            // Build 6 (L3): waiting rows leave with place and style ("wartet") and come back there ("an alter Stelle").
+            var line = "Startseite: +\(r.added.count) −\(r.removed.count) Reihen"
+            if !r.parked.isEmpty { line += " · \(r.parked.count) wartet (Platz und Stil gemerkt)" }
+            if !r.restored.isEmpty { line += " · \(r.restored.count) an alter Stelle zurück" }
+            if !r.deselected.isEmpty { line += " · \(r.deselected.count) im Editor entfernt → abgewählt" }
+            RemoteLog.info("kit", line)
         }
         if !loggedHidden, !r.hidden.isEmpty || hiddenTiles > 0 {
             loggedHidden = true
