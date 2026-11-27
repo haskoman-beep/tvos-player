@@ -24,6 +24,17 @@ public struct RowFocusTracker<Card: Equatable> {
 
     public var inside: Bool { card != nil || placeholder != nil }
 
+    /// Re-review L4: tracker slot of the status tile (empty/failed row). Its `.focused` value is 0 like the first
+    /// placeholder, but the two are different views: on the switch from placeholders to the status tile their
+    /// reports must not cancel each other.
+    public static var statusSlot: Int { -1 }
+
+    /// The focused placeholder as the row's focus state value (status tile → 0), nil without one.
+    public var focusStateSlot: Int? {
+        guard let p = placeholder else { return nil }
+        return p == Self.statusSlot ? 0 : p
+    }
+
     /// A card's button focus changed (also its first report when built).
     public mutating func card(_ c: Card, focused: Bool) -> [Event] {
         var out: [Event] = []
@@ -43,7 +54,7 @@ public struct RowFocusTracker<Card: Equatable> {
         return out + insideEvent()
     }
 
-    /// A placeholder's (or the status tile's, slot 0) focus changed.
+    /// A placeholder's (or the status tile's, `statusSlot`) focus changed.
     public mutating func placeholder(_ slot: Int, focused: Bool) -> [Event] {
         if focused {
             guard placeholder != slot else { return [] }
@@ -53,13 +64,6 @@ public struct RowFocusTracker<Card: Equatable> {
             placeholder = nil
         }
         return insideEvent()
-    }
-
-    /// The row left the screen: forget the focus without events (the row reports its leave itself).
-    public mutating func reset() {
-        card = nil
-        placeholder = nil
-        reportedInside = false
     }
 
     private mutating func insideEvent() -> [Event] {

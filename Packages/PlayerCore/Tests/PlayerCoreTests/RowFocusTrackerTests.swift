@@ -50,12 +50,34 @@ import Testing
     #expect(t.placeholder(1, focused: false) == [.inside(false)])
 }
 
-@Test func trackerResetForgetsWithoutEvents() {
+@Test func trackerReappearClearsByTheProbesOwnFalseAndReseeds() {
+    // Re-review L3: no reset on disappear; the probe reports false when it leaves and its focus again when it appears.
     var t = RowFocusTracker<String>()
     _ = t.card("a", focused: true)
-    t.reset()
-    #expect(t.card == nil)
-    #expect(!t.inside)
-    // After the reset the next focus is an enter again.
+    #expect(t.card("a", focused: false) == [.route(old: "a", new: nil), .inside(false)])
     #expect(t.card("a", focused: true) == [.route(old: nil, new: "a"), .inside(true)])
+    #expect(t.card == "a")
+}
+
+@Test func trackerStatusTileHasItsOwnSlot() {
+    // Re-review L4: placeholders → status tile (focus state value 0 for both). Either report order stays inside.
+    let status = RowFocusTracker<String>.statusSlot
+    var t = RowFocusTracker<String>()
+    _ = t.placeholder(0, focused: true)
+    #expect(t.placeholder(status, focused: true) == [])
+    #expect(t.placeholder(0, focused: false) == [])
+    #expect(t.inside)
+    #expect(t.focusStateSlot == 0)   // the status tile's `.focused` value
+    var u = RowFocusTracker<String>()
+    _ = u.placeholder(0, focused: true)
+    #expect(u.placeholder(0, focused: false) == [.inside(false)])
+    #expect(u.placeholder(status, focused: true) == [.inside(true)])
+    #expect(u.focusStateSlot == 0)
+}
+
+@Test func trackerFocusStateSlotOfPlaceholders() {
+    var t = RowFocusTracker<String>()
+    #expect(t.focusStateSlot == nil)
+    _ = t.placeholder(3, focused: true)
+    #expect(t.focusStateSlot == 3)
 }

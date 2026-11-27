@@ -78,7 +78,10 @@ struct ButtonFocusProbe: View {
     var body: some View {
         Color.clear
             .accessibilityHidden(true)
-            .onChange(of: isFocused, initial: true) { _, f in report(f) }
+            .onChange(of: isFocused) { _, f in report(f) }
+            // Re-review L3: on every appearance (not only the first, as `onChange(initial:)`), so a row that comes
+            // back with this button still focused learns it again after the false of `onDisappear`.
+            .onAppear { report(isFocused) }
             .onDisappear { report(false) }
     }
 }
