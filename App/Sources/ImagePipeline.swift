@@ -318,8 +318,43 @@ actor ImagePipeline {
         for u in urls { Task { _ = await image(u, target: target) } }
     }
 
+    /// Build 8 (poster): at most 3 disk warm-ups at once (visible pictures keep the connections).
+    static let diskWarm = AsyncLimiter(limit: 3)
+    /// Build 8 review: running disk warm-ups per download address; a tile load of the same address waits for it and
+    /// then reads the disk cache (no second download).
+    private var warming: [String: Task<Void, Never>] = [:]
+
+    /// Build 8 (poster): puts a picture into the disk cache only (no decode, no memory bitmap), so a tile of a warmed
+    /// block shows it from disk when it comes on screen. The size variant is the one a tile with `neededWidth` asks
+    /// for. Skipped when the picture is in memory, on disk, already loading for a view or already warming (checked
+    /// again once the slot is taken). Counts in the `Ladungen` of the cache line.
+    func warmDisk(_ url: URL, neededWidth: Int) async {
+        let candidates = ImageURLVariant.candidates(for: url.absoluteString, neededWidth: neededWidth)
+        guard let first = candidates.first, let u = URL(string: first) else { return }
+        let r = URLRequest(url: u, cachePolicy: .returnCacheDataElseLoad)
+        guard !warmNotNeeded(url, request: r) else { return }
+        guard await Self.diskWarm.acquire() else { return }
+        if warmNotNeeded(url, request: r) { await Self.diskWarm.release(); return }
+        let http = self.http
+        let task = Task<Void, Never> { _ = try? await http.data(r, limits: Self.limits, fresh: false) }
+        warming[first] = task
+        await task.value
+        warming[first] = nil
+        await Self.diskWarm.release()
+    }
+
+    private func warmNotNeeded(_ url: URL, request: URLRequest) -> Bool {
+        if cachedAnySize(url) != nil { return true }
+        if let u = request.url, warming[u.absoluteString] != nil { return true }
+        let prefix = url.absoluteString + "#"
+        if inFlight.keys.contains(where: { $0.hasPrefix(prefix) }) { return true }
+        return urlCache.cachedResponse(for: request) != nil
+    }
+
     /// Task 2.3: one picture download with the image limits; the session's cache rule stays in charge.
     private func load(_ url: URL) async throws -> (Data, URLResponse) {
+        // Build 8 review: a disk warm-up of this address is running: let it finish, then this reads the disk cache.
+        if let w = warming[url.absoluteString] { await w.value }
         stats.fetched()   // P3: disk or network comes from the task metrics (`ImageLoadMetrics`)
         let r = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad)
         let (d, resp) = try await http.data(r, limits: Self.limits, fresh: false)
@@ -549,6 +584,9 @@ struct RemoteImage: View {
     var keepsPreviousWhileLoading = false
     /// Wave F-k: called with the address when it cannot be loaded (not on cancel); poster tiles then try the next one.
     var onFailure: (@MainActor (String) -> Void)? = nil
+    /// Build 8 (poster): decode at the drawn size exactly instead of the next size step (poster tiles, see
+    /// `ImageTarget.init(points:stepped:)`).
+    var exactSize = false
     @Environment(\.displayScale) private var displayScale
     /// Build 8: upper bound of the decode scale (grid page posters, `GridImageScale`); nil = the screen scale.
     @Environment(\.imageDecodeScaleCap) private var decodeScaleCap
@@ -625,7 +663,7 @@ struct RemoteImage: View {
                 if h < 1 { h = capPoints }
             }
             let decodeScale = decodeScaleCap.map { min(displayScale, $0) } ?? displayScale
-            guard var t = ImageTarget(points: w, h, scale: decodeScale, fit: fit) else { return }
+            guard var t = ImageTarget(points: w, h, scale: decodeScale, fit: fit, stepped: !exactSize) else { return }
             if let cap = maxPixels { t.width = min(t.width, cap); t.height = min(t.height, cap) }
             // b4n2: once the logo shows, the view shrinks from its room to the fitted picture; the picture decoded for
             // the room stays (no second decode). More room than it was decoded for loads again.

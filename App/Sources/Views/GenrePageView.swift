@@ -305,6 +305,7 @@ struct GenrePageView: View {
                 RemoteLog.info("genre", BrandPage.firstPageLine(label: logLabel, title: folder.title, filter: f, count: cached.count,
                                                                 fetchMs: 0, sinceOpenMs: sinceOpen) + " (Cache)")
             }
+            model.warmTilePosters(cached, decodeScaleCap: GridImageScale.cap)   // Build 8 (poster): overlay posters of the block now
         }
         let r = p.beginNext()
         paging[f] = p
@@ -337,6 +338,7 @@ struct GenrePageView: View {
                 let before = p.items.count
                 let added = p.receive(r, items: items, totalPages: total)
                 paging[f] = p
+                model.warmTilePosters(items, decodeScaleCap: GridImageScale.cap)   // Build 8 (poster): overlay posters of the block now
                 RemoteLog.info("genre", p.logLine(genre: name, filter: f, added: added, label: label))
                 if retrying.remove(f) != nil, f == filter {
                     // Review I-2: the retry button goes away; its focus moves to the first new (else the last) title.
