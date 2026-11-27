@@ -458,33 +458,21 @@ struct HeroButtons: View {
 
     /// Build 5 device test 1 (item 2): a dropped up press in the first row hands the focus to „Abspielen“.
     /// Review N4: on a button row built (or scrolled into view) in the same pass the focus engine can drop the
-    /// assignment, so it is repeated one hop later and then every 100 ms until a button holds the focus, for at most
-    /// `heroClaimTries` steps (half a second); after that the claim ends and never pulls the focus later.
+    /// assignment, so it is repeated (`FocusClaim`, at most half a second). b6 review 3: the claim ends as soon as the
+    /// focus moved anywhere else meanwhile (the user went on in the rows), so it never pulls the focus back.
     private func claimHeroFocusRequest() {
         guard focus.takeHeroFocusRequest() else { return }
         heroClaim?.cancel()
         heroClaim = Task { @MainActor in
-            for attempt in 0...Self.heroClaimTries {
-                if attempt == 0 {
-                    // One main-queue hop, as before: the button row of this pass is in the hierarchy then.
-                    await withCheckedContinuation { c in DispatchQueue.main.async { c.resume() } }
-                } else {
-                    try? await Task.sleep(for: .milliseconds(100))
-                }
-                guard !Task.isCancelled else { return }
-                if field != nil {   // a button holds the focus (the user may already be on „Details“)
-                    if attempt > 1 { RemoteLog.info("fokus", "Abspielen nach \(attempt) Versuchen fokussiert") }
-                    return
-                }
-                guard attempt < Self.heroClaimTries else { break }
-                field = .play
+            let outcome = await FocusClaim.run(endsOnMove: true, held: { field != nil }, assign: { field = .play })
+            switch outcome {
+            case .held(let n) where n > 1: RemoteLog.info("fokus", "Abspielen nach \(n) Versuchen fokussiert")
+            case .held, .cancelled: break
+            case .movedAway: RemoteLog.info("fokus", "Abspielen: Anspruch beendet, Fokus woanders hin bewegt")
+            case .gaveUp: RemoteLog.info("fokus", "Abspielen: Fokus nach \(FocusClaim.tries) Versuchen nicht übernommen")
             }
-            RemoteLog.info("fokus", "Abspielen: Fokus nach \(Self.heroClaimTries) Versuchen nicht übernommen")
         }
     }
-
-    /// Review N4: assignments of a hero focus claim (one hop, then every 100 ms; the last check at 500 ms).
-    private static let heroClaimTries = 5
 
     /// Task 5.2: only the carousel listens to left/right (other styles keep the plain focus moves).
     private var moveAction: ((MoveCommandDirection) -> Void)? {
@@ -570,5 +558,55 @@ extension ImageTarget {
     /// remove once they are merged. A new caller would split the hero's cache entry again.
     static func fullScreen(scale: CGFloat) -> ImageTarget {
         ImageTarget(points: 1920, 1080, scale: Double(scale), fit: false) ?? ImageTarget(width: 1920, height: 1280, fit: false)
+    }
+}
+
+/// Review N4 (b6): a focus assignment the focus engine can drop (a view built or scrolled into view in the same
+/// pass). Assigns after one main-queue hop and then every 100 ms until `held` holds, at most `tries` times (the last
+/// check at 500 ms). `endsOnMove`: the claim ends when any focus update came in that did not reach the target (the
+/// user moved on), so a late retry never steals the focus.
+@MainActor enum FocusClaim {
+    enum Outcome: Equatable {
+        /// Held at this check (0 = before the first assignment, 1 = after it).
+        case held(Int)
+        case movedAway, gaveUp, cancelled
+    }
+
+    static let tries = 5
+
+    static func run(endsOnMove: Bool, held: () -> Bool, assign: () -> Void) async -> Outcome {
+        let updates = FocusUpdateCount()
+        defer { updates.stop() }
+        for attempt in 0...tries {
+            if attempt == 0 {
+                await withCheckedContinuation { c in DispatchQueue.main.async { c.resume() } }
+            } else {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            guard !Task.isCancelled else { return .cancelled }
+            if held() { return .held(attempt) }
+            if endsOnMove, updates.count > 0 { return .movedAway }
+            guard attempt < tries else { break }
+            assign()
+        }
+        return .gaveUp
+    }
+}
+
+/// Counts focus updates (`UIFocusSystem.didUpdateNotification`) from its creation until `stop()`.
+@MainActor private final class FocusUpdateCount {
+    private(set) var count = 0
+    private var token: NSObjectProtocol?
+
+    init() {
+        token = NotificationCenter.default.addObserver(forName: UIFocusSystem.didUpdateNotification, object: nil,
+                                                       queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.count += 1 }
+        }
+    }
+
+    func stop() {
+        if let token { NotificationCenter.default.removeObserver(token) }
+        token = nil
     }
 }
