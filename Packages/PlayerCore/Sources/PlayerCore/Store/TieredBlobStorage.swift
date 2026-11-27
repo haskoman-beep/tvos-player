@@ -26,7 +26,8 @@ public protocol KeyValueBlobs: Sendable {
 ///   the files (same file rules as every block).
 /// - Andere Blöcke nur bis `smallLimit` je Block und zusammen höchstens `budget - profileLimit - deviceLimit`.
 /// - Nach dem Schreiben in UserDefaults wird gegengelesen; weicht der Wert ab, wird der Eintrag gelöscht.
-/// - Lesen: Defaults-Eintrag zuerst (jeder Schreibvorgang hält ihn aktuell oder löscht ihn), sonst die jüngste Datei.
+/// - Lesen: Defaults-Eintrag nur, solange keine Datei jünger ist als seine Revision (`rev.<Schlüssel>`), sonst die
+///   jüngste Datei. Phase 0a: ein Defaults-Schreibvorgang kann verloren gehen, obwohl das Gegenlesen stimmte.
 public struct TieredBlobStorage: BlobStorage {
     public static let prefix = "blob."
     public static let profileName = "profiles.json"
@@ -98,9 +99,48 @@ public struct TieredBlobStorage: BlobStorage {
     /// Key in UserDefaults: own key for the generations, `blob.<name>` for everything else.
     func storeKey(_ name: String) -> String { Self.generationKeys[name] ?? key(name) }
 
+    /// Phase 0a: revision of the UserDefaults copy = date of the newest file at the moment that copy was written.
+    func revisionKey(_ name: String) -> String { "rev." + storeKey(name) }
+
+    func revision(_ name: String) -> Date? {
+        guard let d = defaults.data(forKey: revisionKey(name)), d.count == 8 else { return nil }
+        let bits = d.withUnsafeBytes { $0.loadUnaligned(as: UInt64.self) }
+        return Date(timeIntervalSinceReferenceDate: Double(bitPattern: bits))
+    }
+
+    func setRevision(_ name: String, _ date: Date) {
+        withUnsafeBytes(of: date.timeIntervalSinceReferenceDate.bitPattern) { defaults.set(Data($0), forKey: revisionKey(name)) }
+    }
+
+    /// Removes the UserDefaults copy together with its revision.
+    func dropDefaults(_ name: String) {
+        defaults.remove(forKey: storeKey(name))
+        defaults.remove(forKey: revisionKey(name))
+    }
+
+    /// The UserDefaults copy, but only while no file is newer than it. A UserDefaults write can pass the read-back
+    /// check and still never reach the disk (app killed, cfprefsd refusing); the entry found at the next start is
+    /// then older than the files. An entry without a revision (older app version) proves nothing and gives way too.
+    func currentDefaults(_ name: String) -> Data? {
+        guard let z = defaults.data(forKey: storeKey(name)), let d = decompress(z) else { return nil }
+        guard let fileDate = newestFileDate(name) else { return d }
+        guard let rev = revision(name), rev >= fileDate else { return nil }
+        return d
+    }
+
     public func read(_ name: String) -> Data? {
-        if let z = defaults.data(forKey: storeKey(name)), let d = decompress(z) { return d }
-        return newestFile(name)
+        currentDefaults(name) ?? newestFile(name)
+    }
+
+    /// Diagnosis for the device log: blocks whose UserDefaults copy a newer file has overtaken AND that differ from
+    /// that file (a lost UserDefaults write). Call before `migrate()`, which removes such entries.
+    public func overtakenDefaults() -> [String] {
+        let names = defaults.keys(withPrefix: Self.prefix).map { String($0.dropFirst(Self.prefix.count)) }
+            + Self.generationKeys.keys
+        return names.filter { n in
+            guard let z = defaults.data(forKey: storeKey(n)), let d = decompress(z) else { return false }
+            return currentDefaults(n) == nil && newestFile(n) != d
+        }.sorted()
     }
 
     public func write(_ name: String, _ data: Data) throws {
@@ -111,10 +151,15 @@ public struct TieredBlobStorage: BlobStorage {
         defer { if family { trimProfileFamily() } }
         if let z, fitsDefaults(name, bytes: z.count) {
             defaults.set(z, forKey: k)
-            if defaults.data(forKey: k) == z { return }
-            defaults.remove(forKey: k)   // Schreiben nicht angekommen: nur Datei gilt
+            if defaults.data(forKey: k) == z {
+                // No file took this write: the copy must still rank above every older file.
+                let newest = newestFileDate(name)
+                setRevision(name, fileOK ? newest ?? Date() : max(Date(), (newest ?? .distantPast).addingTimeInterval(0.001)))
+                return
+            }
+            dropDefaults(name)   // Schreiben nicht angekommen: nur Datei gilt
         } else {
-            defaults.remove(forKey: k)
+            dropDefaults(name)
         }
         if name == Self.profileName { onProfilesFileOnly?(z?.count ?? data.count) }
         // Only when a file really holds it (otherwise nothing was saved and StorageFull follows).
@@ -123,7 +168,7 @@ public struct TieredBlobStorage: BlobStorage {
     }
 
     public func remove(_ name: String) {
-        defaults.remove(forKey: storeKey(name))
+        dropDefaults(name)
         for dir in directories { dir.remove(name) }
     }
 
@@ -144,6 +189,11 @@ public struct TieredBlobStorage: BlobStorage {
             if best == nil || date > best!.date { best = (d, date) }
         }
         return best?.data
+    }
+
+    /// Date of the newest file copy over all folders; nil when no folder has the blob.
+    func newestFileDate(_ name: String) -> Date? {
+        directories.compactMap { $0.modificationDate(name) }.max()
     }
 
     func fitsDefaults(_ name: String, bytes: Int) -> Bool {
@@ -181,8 +231,9 @@ public struct TieredBlobStorage: BlobStorage {
             if all + z.count <= Self.profileLimit, gens + z.count <= Self.generationsLimit {
                 all += z.count; gens += z.count; continue
             }
-            if let d = decompress(z), !directories.contains(where: { $0.read(n) == d }) { writeFile(n, d) }
-            defaults.remove(forKey: k)
+            // Phase 0a: a copy that a newer file has overtaken is dropped, never written over that file.
+            if let d = currentDefaults(n), !directories.contains(where: { $0.read(n) == d }) { writeFile(n, d) }
+            dropDefaults(n)
         }
     }
 
@@ -216,10 +267,12 @@ public struct TieredBlobStorage: BlobStorage {
                 others += bytes; m.kept.append(name); continue
             }
             let z = defaults.data(forKey: key(name)) ?? Data()
+            // Phase 0a: readable, but a newer file exists: the file stays, only the stale entry goes.
+            if decompress(z) != nil, currentDefaults(name) == nil { dropDefaults(name); m.moved.append(name); continue }
             // Nicht entpackbar: Rohdaten beiseitelegen statt verwerfen.
             let (fileName, payload) = decompress(z).map { (name, $0) } ?? (name + ".defaults-raw", z)
             if writeFile(fileName, payload), directories.contains(where: { $0.read(fileName) == payload }) {
-                defaults.remove(forKey: key(name)); m.moved.append(name)
+                dropDefaults(name); m.moved.append(name)
             } else {
                 m.failed.append(name)
             }

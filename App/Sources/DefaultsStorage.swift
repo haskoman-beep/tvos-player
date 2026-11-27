@@ -34,6 +34,9 @@ struct DefaultsStorage: BlobStorage, BlobCopies, BlobNames {
                                            RemoteLog.error("speicher", "Fortschritt nur als Datei gespeichert (\(name), nicht in UserDefaults) · Caches kann tvOS leeren")
                                        }
                                    })
+        // Phase 0a: a UserDefaults copy older than its file means a UserDefaults write was lost (the file wins now).
+        let overtaken = tiered.overtakenDefaults()
+        if !overtaken.isEmpty { RemoteLog.error("speicher", "UserDefaults-Kopie älter als Datei, Datei gilt: \(overtaken)") }
         let m = tiered.migrate()
         if !m.moved.isEmpty || !m.failed.isEmpty {
             RemoteLog.info("speicher", "Migration: verschoben \(m.moved) · behalten \(m.kept) · fehlgeschlagen \(m.failed)")
