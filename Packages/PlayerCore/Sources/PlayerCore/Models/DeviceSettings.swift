@@ -11,6 +11,10 @@ public struct DeviceSettings: Codable, Sendable, Equatable {
     public var remoteLogEnabled: Bool
     /// Bonjour service name (`_playerlog._tcp`) chosen on the TV; only this receiver gets the log.
     public var remoteLogReceiver: String?
+    /// Phase 0a.1: `audioShaping` / `displayMode` this build cannot read (e.g. a newer build's value type), as raw
+    /// JSON by key. Written back in place while the field is still the default stand-in, else under `keptUnreadable`
+    /// (same rule as `Profile.keptUnreadable`). Before, the defaults were written over them on the next save.
+    public var keptUnreadable: [String: JSONValue] = [:]
 
     public init(audioShaping: AudioShapingSettings = AudioShapingSettings(),
                 displayMode: DisplayModeSettings = DisplayModeSettings(),
@@ -19,16 +23,36 @@ public struct DeviceSettings: Codable, Sendable, Equatable {
         self.remoteLogEnabled = remoteLogEnabled; self.remoteLogReceiver = remoteLogReceiver
     }
 
-    enum CodingKeys: String, CodingKey { case audioShaping, displayMode, remoteLogEnabled, remoteLogReceiver }
+    enum CodingKeys: String, CodingKey { case audioShaping, displayMode, remoteLogEnabled, remoteLogReceiver, keptUnreadable }
 
-    /// Missing or unreadable fields fall back to the defaults instead of dropping the whole block.
+    /// Missing or unreadable fields fall back to the defaults instead of dropping the whole block. Phase 0a.1: an
+    /// unreadable `audioShaping` / `displayMode` is kept raw (`keptUnreadable`) and noted in the `DecodeReport`.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        let r = DecodeReportBox.of(decoder)
         let d = DeviceSettings()
-        audioShaping = (try? c.decodeIfPresent(AudioShapingSettings.self, forKey: .audioShaping)) ?? nil ?? d.audioShaping
-        displayMode = (try? c.decodeIfPresent(DisplayModeSettings.self, forKey: .displayMode)) ?? nil ?? d.displayMode
+        var kept: [String: JSONValue] = [:]
+        audioShaping = c.decodeKeeping(AudioShapingSettings.self, forKey: .audioShaping, default: d.audioShaping,
+                                       report: r, kept: &kept)
+        displayMode = c.decodeKeeping(DisplayModeSettings.self, forKey: .displayMode, default: d.displayMode,
+                                      report: r, kept: &kept)
         remoteLogEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .remoteLogEnabled)) ?? nil ?? d.remoteLogEnabled
         remoteLogReceiver = (try? c.decodeIfPresent(String.self, forKey: .remoteLogReceiver)) ?? nil
+        c.decodeKeptUnreadable(forKey: .keptUnreadable, into: &kept, report: r)
+        keptUnreadable = kept
+    }
+
+    /// Same keys, order and format as the former synthesized encoding; `keptUnreadable` only when not empty.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        var aside = keptUnreadable
+        try c.encodeKeeping(audioShaping, untouched: audioShaping == AudioShapingSettings(), keeping: &aside,
+                            forKey: .audioShaping)
+        try c.encodeKeeping(displayMode, untouched: displayMode == DisplayModeSettings(), keeping: &aside,
+                            forKey: .displayMode)
+        try c.encode(remoteLogEnabled, forKey: .remoteLogEnabled)
+        try c.encodeIfPresent(remoteLogReceiver, forKey: .remoteLogReceiver)
+        try c.encodeKeptUnreadable(aside, forKey: .keptUnreadable)
     }
 
     /// One-time move: the values the active profile had before wave S round 2 (raw `profiles.json`).
@@ -66,6 +90,8 @@ public final class DeviceSettingsStore: @unchecked Sendable {
     public static let name = TieredBlobStorage.deviceName
     /// UserDefaults key of the one-time flag in the app.
     public static let migratedFlagKey = "deviceSettingsMigrated.v1"
+    /// Phase 0a.1: an unreadable block is copied here before the defaults replace it (`.bak`: file only).
+    public static let unreadableName = name + ".unreadable.bak"
     public let storage: BlobStorage
     let isMigrated: @Sendable () -> Bool
     let markMigrated: @Sendable () -> Void
@@ -92,6 +118,8 @@ public final class DeviceSettingsStore: @unchecked Sendable {
         if let data = storage.read(Self.name) {
             if !isMigrated() { markMigrated() }
             if let s = try? JSONDecoder().decode(DeviceSettings.self, from: data) { return (s, .loaded, nil) }
+            // Phase 0a.1: the unreadable bytes are kept aside first, so writing the defaults is not their end.
+            if storage.read(Self.unreadableName) != data { try? storage.write(Self.unreadableName, data) }
             return (DeviceSettings(), .blockUnreadable, write(DeviceSettings()))
         }
         if isMigrated() { return (DeviceSettings(), .blockMissing, write(DeviceSettings())) }

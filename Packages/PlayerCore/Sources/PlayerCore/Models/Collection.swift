@@ -121,6 +121,10 @@ public struct MediaCollection: Codable, Sendable, Hashable, Identifiable {
     public var id: String
     public var title: String
     public var folders: [Folder]
+    /// Phase 0a.1: folders this build cannot read (e.g. without `title`, or `sources` in a newer shape), kept as raw
+    /// JSON in their original order. Not shown; `encode` writes them back unchanged after `folders`. Before, they
+    /// were dropped on load and the next save lost them for good.
+    public var unknownFolders: [JSONValue] = []
 
     public init(id: String, title: String, folders: [Folder]) {
         self.id = id; self.title = title; self.folders = folders
@@ -128,12 +132,21 @@ public struct MediaCollection: Codable, Sendable, Hashable, Identifiable {
 
     enum CodingKeys: String, CodingKey { case id, title, folders }
 
-    /// Task 1.2: folders are read one by one; an unreadable folder is dropped (path in the `DecodeReport`), the other
-    /// folders stay. Encoding stays synthesized, the format is unchanged.
+    /// Task 1.2: folders are read one by one; an unreadable folder is set aside raw (path in the `DecodeReport`), the
+    /// other folders stay. Phase 0a.1: `folders` present but no list throws, so the whole collection is kept raw by
+    /// the profile (`Profile.unknownCollections`) instead of being written back without folders. Missing → none.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         title = try c.decode(String.self, forKey: .title)
-        folders = c.decodeLenientList(Folder.self, forKey: .folders, report: DecodeReportBox.of(decoder))
+        (folders, unknownFolders) = Salvaged.split(try c.decodeIfPresent([Salvaged<Folder>].self, forKey: .folders) ?? [])
+    }
+
+    /// Same keys, order and format as the former synthesized encoding; `folders` gets the raw leftovers appended.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(title, forKey: .title)
+        try c.encodeSalvaged(folders, raw: unknownFolders, forKey: .folders)
     }
 }

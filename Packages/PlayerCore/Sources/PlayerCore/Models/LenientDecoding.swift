@@ -112,6 +112,71 @@ extension KeyedDecodingContainer {
     }
 }
 
+// MARK: - Phase 0a.1: whole objects this build cannot read
+
+// A whole stored object (the start page `home`, `appearance`, `look`, a device setting …) that this build cannot
+// read used to fall back to its default, and the next save wrote the default over the user's data. Now its raw JSON
+// is kept in a `keptUnreadable` map of the owning type (keyed by the field's coding key) and written back:
+// - while the working value is still the stand-in from reading (`untouched`), the raw value goes back under its own
+//   key, so the file keeps exactly what the newer build wrote;
+// - once the user changed the working value, that value is written under the key and the raw value moves to the
+//   sibling key `keptUnreadable` (`{"home": <raw>}`), so neither is lost and each has one fixed place.
+// Reading takes a raw value from either place; the value under the key itself wins over an older copy set aside.
+
+extension KeyedDecodingContainer {
+    /// `decodeLenient` for an object or list holding user work: a present but unreadable value also goes raw into
+    /// `kept[key]` (to be written back by `encodeKeeping`). Missing key or `null` → `default`, nothing kept.
+    func decodeKeeping<T: Decodable>(_ type: T.Type, forKey key: Key, default fallback: T, report: DecodeReportBox,
+                                     kept: inout [String: JSONValue]) -> T {
+        guard contains(key) else { return fallback }
+        if (try? decodeNil(forKey: key)) == true { return fallback }
+        do {
+            return try decode(T.self, forKey: key)
+        } catch {
+            report.note(codingPath + [key])
+            if let raw = try? decode(JSONValue.self, forKey: key) { kept[key.stringValue] = raw }
+            return fallback
+        }
+    }
+
+    /// Adds the raw values set aside under `key` (see above) to `kept`; call it after the fields. Each one is still
+    /// unread, so its field's path goes into the report. A copy whose field was unreadable in place as well is the
+    /// older one: the value in place wins, the older copy is reported under `key` and dropped.
+    func decodeKeptUnreadable(forKey key: Key, into kept: inout [String: JSONValue], report: DecodeReportBox) {
+        let aside = decodeLenient([String: JSONValue].self, forKey: key, default: [:], report: report)
+        for (name, raw) in aside {
+            var path = codingPath
+            if kept[name] == nil {
+                kept[name] = raw
+            } else {
+                path.append(key)
+            }
+            path.append(SalvageKey(name))
+            report.note(path)
+        }
+    }
+}
+
+extension KeyedEncodingContainer {
+    /// Writes `value`, or, while it is `untouched` (still the stand-in from reading), the raw value kept for `key`,
+    /// which is then taken out of `aside`.
+    mutating func encodeKeeping<T: Encodable>(_ value: T, untouched: Bool, keeping aside: inout [String: JSONValue],
+                                              forKey key: Key) throws {
+        if untouched, let raw = aside.removeValue(forKey: key.stringValue) {
+            try encode(raw, forKey: key)
+        } else {
+            try encode(value, forKey: key)
+        }
+    }
+
+    /// The raw values left after the fields (their working value was changed, or this build does not know the key)
+    /// go under `key`. Nothing is written when none are left, so the format stays as before.
+    mutating func encodeKeptUnreadable(_ aside: [String: JSONValue], forKey key: Key) throws {
+        guard !aside.isEmpty else { return }
+        try encode(aside, forKey: key)
+    }
+}
+
 /// Free-form key for maps written entry by entry.
 struct SalvageKey: CodingKey {
     let stringValue: String

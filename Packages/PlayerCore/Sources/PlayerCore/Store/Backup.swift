@@ -365,6 +365,7 @@ extension Profile {
         return name == d.name && addons.isEmpty && collections.isEmpty && apiKeys.isEmpty && syncTokens.isEmpty
             && unknownAddons.isEmpty && unknownCollections.isEmpty && unknownApiKeys.isEmpty && unknownSyncTokens.isEmpty
             && home.rows.map(\.content) == d.home.rows.map(\.content)
+            && keptUnreadable.isEmpty   // Phase 0a.1: a stand-in for an unreadable object is not "untouched"
     }
 }
 

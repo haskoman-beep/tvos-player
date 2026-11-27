@@ -56,8 +56,17 @@ public struct HomeLayout: Codable, Sendable, Hashable {
     enum CodingKeys: String, CodingKey { case rows }
 
     /// Same format as before (`{"rows":[…]}`); an unreadable row is set aside instead of failing the layout.
+    /// Phase 0a.1: an object with other keys but no `rows` (a newer build's shape) is not read as an empty layout:
+    /// it throws, so the profile keeps it raw (`Profile.keptUnreadable`) instead of writing `{"rows":[]}` over it.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        if !c.contains(.rows) {
+            let other = try decoder.container(keyedBy: SalvageKey.self).allKeys
+            if !other.isEmpty {
+                throw DecodingError.keyNotFound(CodingKeys.rows, DecodingError.Context(
+                    codingPath: c.codingPath, debugDescription: "Start page without rows (shape of a newer build)"))
+            }
+        }
         let items = try c.decodeIfPresent([Salvaged<HomeRow>].self, forKey: .rows) ?? []
         (rows, unknownRows) = Salvaged.split(items)
     }
