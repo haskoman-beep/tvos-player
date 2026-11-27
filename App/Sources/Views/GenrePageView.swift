@@ -34,6 +34,8 @@ struct GenrePageView: View {
     @State private var retrying: Set<GenreFilter> = []
     /// Review M-1: page on screen; a block that lands after leaving it does not chain the next one.
     @State private var onScreen = false
+    /// Build 7: studio logo address that could not be loaded (header shows the name).
+    @State private var headerLogoFailed: String?
 
     init(folder: Folder, sources: GenrePageSources) {
         self.folder = folder; self.sources = sources
@@ -57,7 +59,7 @@ struct GenrePageView: View {
 
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: Theme.Space.l) {
-                Text(folder.title).textRole(.display).accessibilityAddTraits(.isHeader)
+                header
                 filterBar
                 grid(state, columns: cols, tileWidth: tile.width, spacing: spacing, rowGap: rowGap)
                     .zIndex(1)   // review M-6: a lifted card of the last row draws above the footer
@@ -84,7 +86,7 @@ struct GenrePageView: View {
         }
         .onAppear {
             onScreen = true
-            RemoteLog.info("genre", "Genre: \(folder.title) geöffnet, Filter \(filter.title) (\(sources.available.map(\.title).joined(separator: "/")))")
+            RemoteLog.info("genre", "\(logLabel): \(folder.title) geöffnet, Filter \(filter.title) (\(sources.available.map(\.title).joined(separator: "/")))")
         }
         .onDisappear { onScreen = false }
     }
@@ -97,6 +99,26 @@ struct GenrePageView: View {
     /// tvOS bottom safe area (as the home list, wave F-m).
     private static let bottomSafeArea: CGFloat = 60
 
+    // MARK: Header
+
+    /// Build 7: „Genre“ / „Studio“ in the log lines (`StudioPage`).
+    private var logLabel: String { StudioPage.logLabel(folder) }
+
+    /// The title; the studio page shows the studio logo (white shape, as the detail plates), the name if it fails.
+    @ViewBuilder private var header: some View {
+        if let logo = StudioPage.headerLogo(folder), headerLogoFailed != logo {
+            RemoteImage(url: logo, maxPixels: 900, fit: true, placeholder: AnyView(Color.clear),
+                        onFailure: { headerLogoFailed = $0 })
+                .saturation(0)
+                .brightness(1)
+                .frame(maxWidth: 520, maxHeight: 120, alignment: .leading)
+                .accessibilityLabel(folder.title)
+                .accessibilityAddTraits(.isHeader)
+        } else {
+            Text(folder.title).textRole(.display).accessibilityAddTraits(.isHeader)
+        }
+    }
+
     // MARK: Filter
 
     private var filterBar: some View {
@@ -104,7 +126,7 @@ struct GenrePageView: View {
             ForEach(sources.available, id: \.self) { f in
                 Button {
                     guard f != filter else { return }
-                    RemoteLog.info("genre", "Genre: \(folder.title) Filter \(f.title)")
+                    RemoteLog.info("genre", "\(logLabel): \(folder.title) Filter \(f.title)")
                     lastIndex = 0
                     filter = f
                 } label: {
@@ -168,7 +190,7 @@ struct GenrePageView: View {
     private func retryButton(text: String, loading: Bool) -> some View {
         Button {
             guard !loading else { return }
-            RemoteLog.info("genre", "Genre: \(folder.title) \(filter.title) erneut versuchen")
+            RemoteLog.info("genre", "\(logLabel): \(folder.title) \(filter.title) erneut versuchen")
             retry(filter)
         } label: {
             HStack(spacing: Theme.Space.xs) {
@@ -195,7 +217,7 @@ struct GenrePageView: View {
         // Review M-2: the home row's cached first block shows at once (same request: TMDB page 1 / addon skip 0).
         if src.limit == nil, let cached = model.cache[src.id], !cached.isEmpty, let first = p.beginNext() {
             let added = p.receive(first, items: cached)
-            RemoteLog.info("genre", p.logLine(genre: folder.title, filter: f, added: added) + " (Cache)")
+            RemoteLog.info("genre", p.logLine(genre: folder.title, filter: f, added: added, label: logLabel) + " (Cache)")
         }
         let r = p.beginNext()
         paging[f] = p
@@ -219,7 +241,7 @@ struct GenrePageView: View {
 
     private func load(_ f: GenreFilter, _ r: GenrePageRequest) {
         guard let src = sources.source(for: f) else { return }
-        let name = folder.title
+        let name = folder.title, label = logLabel
         Task { @MainActor in
             do {
                 let (items, total) = try await fetch(src, r)
@@ -227,7 +249,7 @@ struct GenrePageView: View {
                 let before = p.items.count
                 let added = p.receive(r, items: items, totalPages: total)
                 paging[f] = p
-                RemoteLog.info("genre", p.logLine(genre: name, filter: f, added: added))
+                RemoteLog.info("genre", p.logLine(genre: name, filter: f, added: added, label: label))
                 if retrying.remove(f) != nil, f == filter {
                     // Review I-2: the retry button goes away; its focus moves to the first new (else the last) title.
                     if retryFocused, let target = (p.items.count > before ? p.items[before] : p.items.last)?.id { focusedID = target }
@@ -236,7 +258,7 @@ struct GenrePageView: View {
                 if f == filter, onScreen { prefetchIfNeeded(columns: columnsNow) }
             } catch {
                 guard var p = paging[f] else { return }
-                let line = p.failLine(genre: name, filter: f, request: r, error: "\(error)")
+                let line = p.failLine(genre: name, filter: f, request: r, error: "\(error)", label: label)
                 p.fail(r)
                 paging[f] = p
                 retrying.remove(f)

@@ -41,8 +41,8 @@ struct DetailExtras: View {
             }
             if !info.studioLogos.isEmpty {
                 Text(isSeries ? "Sender & Studios" : "Studios").textRole(.sectionTitle).accessibilityAddTraits(.isHeader)
-                StudioRow(studios: info.studioLogos)
-                    .onAppear { StudioRowLog.note(info) }
+                // Build 7: focusable plates → studio page; the log line comes after the logo lookups.
+                StudioRow(studios: info.studioLogos, titleID: info.tmdbID)
             }
             if !info.recommendations.isEmpty {
                 Text("Ähnliche Titel").textRole(.sectionTitle).accessibilityAddTraits(.isHeader)
