@@ -187,11 +187,15 @@ private func ids(_ l: HomeLayout) -> [String] { l.rows.map { FusionImport.kitID(
 
     // Ohne Client ID: Trakt-Liste ausgeblendet (Auswahl bleibt), Kachel-Reihe bleibt (TMDB-Kachel).
     r = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: false, traktLogin: false)
-    #expect(r.removed == ["fusion.s.trakt.A"] && r.hidden == ["fusion.s.trakt.A"])
+    // Build 6 (L3): parked with place and style, not removed.
+    #expect(r.removed.isEmpty && r.parked == ["fusion.s.trakt.A"] && r.hidden == ["fusion.s.trakt.A"] && r.layoutChanged)
     #expect(st.isSelected("fusion.s.trakt.A") && ids(layout) == ["fusion.s.collection.D", "list:builtin.continue"])
-    // ID wieder da → Reihe kommt zurück (ans Ende).
+    #expect(st.placed == ["fusion.s.collection.D"] && st.parked.map(\.kitID) == ["fusion.s.trakt.A"])
+    // ID wieder da → Reihe kommt an ihren alten Platz (oben) mit ihrem Stil zurück.
     r = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: false)
-    #expect(r.added == ["fusion.s.trakt.A"])
+    #expect(r.added == ["fusion.s.trakt.A"] && r.restored == ["fusion.s.trakt.A"] && st.parked.isEmpty)
+    #expect(ids(layout) == ["fusion.s.trakt.A", "fusion.s.collection.D", "list:builtin.continue"])
+    #expect(layout.rows[0].style == .poster)
 
     // Kit aus: alle Kit-Reihen weg, Auswahl bleibt für später.
     st.enabled = false
@@ -314,4 +318,146 @@ private func ids(_ l: HomeLayout) -> [String] { l.rows.map { FusionImport.kitID(
     await #expect(throws: TraktNameError(name: "x/../y")) { try await t.list(user: "x/../y", slug: "l", token: nil) }
     await #expect(throws: TraktNameError(name: "l#a")) { try await t.list(user: "u", slug: "l#a", token: nil) }
     #expect(http.sent.isEmpty)
+}
+
+// MARK: Build 6 (L3): waiting rows keep place and style
+
+private let traktSrc = FusionKitSource(id: "s", title: "S", url: "https://x.example.invalid", custom: true)
+private let userA = HomeRow(content: .list(.continueWatching), style: .landscape)
+private let userB = HomeRow(content: .list(CatalogSource(id: "u.b", title: "B", kind: .tmdbList(id: "1"), mediaType: .movie)))
+
+/// Layout [userA, trakt.A (landscape), collection.D, userB] with all three kit rows placed.
+private func placedLayout(_ st: inout FusionKitSettings, _ contents: [String: FusionKitContent]) -> HomeLayout {
+    st = FusionKitSettings(enabled: true)
+    st.setSelected("fusion.s.trakt.A", true, source: traktSrc)
+    st.setSelected("fusion.s.collection.D", true, source: traktSrc)
+    var layout = HomeLayout(rows: [userA])
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true)
+    layout.rows.append(userB)
+    layout.rows[1].style = .landscape
+    return layout
+}
+
+@Test func fusionWaitingRowKeepsIndexStyleAndID() throws {
+    let contents = ["s": try kit("s")]
+    var st = FusionKitSettings()
+    var layout = placedLayout(&st, contents)
+    #expect(ids(layout) == ["list:builtin.continue", "fusion.s.trakt.A", "fusion.s.collection.D", "list:u.b"])
+    let rowID = layout.rows[1].id
+
+    // No Client ID: the list leaves the start page (no empty row), the tile row stays.
+    var r = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: false, traktLogin: false)
+    #expect(r.parked == ["fusion.s.trakt.A"] && r.removed.isEmpty)
+    #expect(ids(layout) == ["list:builtin.continue", "fusion.s.collection.D", "list:u.b"])
+    // Still waiting: nothing changes, the parked entry stays as it was.
+    let parked = st.parked
+    r = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: false, traktLogin: false)
+    #expect(!r.layoutChanged && r.parked.isEmpty && st.parked == parked)
+    // Source not loaded (start without network): the entry stays too.
+    r = FusionKitSync.apply(layout: &layout, settings: &st, contents: [:], traktID: true, traktLogin: true)
+    #expect(st.parked == parked && ids(layout).count == 3)
+
+    r = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true)
+    #expect(r.restored == ["fusion.s.trakt.A"] && st.parked.isEmpty)
+    #expect(ids(layout) == ["list:builtin.continue", "fusion.s.trakt.A", "fusion.s.collection.D", "list:u.b"])
+    #expect(layout.rows[1].style == .landscape && layout.rows[1].id == rowID)
+    #expect(st.placed == ["fusion.s.trakt.A", "fusion.s.collection.D"])
+}
+
+@Test func fusionWaitingRowsFollowUserReordering() throws {
+    let contents = ["s": try kit("s")]
+    var st = FusionKitSettings()
+    var layout = placedLayout(&st, contents)
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: false, traktLogin: false)
+    // The user moves the row above it to the end while it waits: it comes back below that row.
+    layout.rows.append(layout.rows.removeFirst())
+    #expect(ids(layout) == ["fusion.s.collection.D", "list:u.b", "list:builtin.continue"])
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true)
+    #expect(ids(layout) == ["fusion.s.collection.D", "list:u.b", "list:builtin.continue", "fusion.s.trakt.A"])
+
+    // The row above it is deleted while it waits: the next remembered row above, else the old index.
+    layout = placedLayout(&st, contents)
+    layout.rows.insert(HomeRow(content: .list(CatalogSource(id: "u.c", title: "C", kind: .tmdbList(id: "2"), mediaType: .series))), at: 1)
+    // [userA, C, trakt.A, D, userB]
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: false, traktLogin: false)
+    layout.rows.removeAll { $0.content.key == "list:u.c" }
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true)
+    #expect(ids(layout) == ["list:builtin.continue", "fusion.s.trakt.A", "fusion.s.collection.D", "list:u.b"])
+
+    // Two neighbours wait (both need Trakt): they come back in their old order, whatever order they return in.
+    st = FusionKitSettings(enabled: true)
+    st.setSelected("fusion.s.trakt.B", true, source: traktSrc)
+    st.setSelected("fusion.s.trakt.A", true, source: traktSrc)
+    layout = HomeLayout(rows: [userA])
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true)
+    layout.rows.append(userB)
+    layout.rows.swapAt(1, 2)   // [userA, trakt.A, trakt.B, userB]; selection order is B, A
+    let before = ids(layout)
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: false, traktLogin: false)
+    #expect(ids(layout) == ["list:builtin.continue", "list:u.b"] && st.parked.count == 2)
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true)
+    #expect(ids(layout) == before)
+}
+
+@Test func fusionWaitingRowDroppedWithKit() throws {
+    let contents = ["s": try kit("s")]
+    var st = FusionKitSettings()
+    var layout = placedLayout(&st, contents)
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: false, traktLogin: false)
+    #expect(st.parked.count == 1)
+
+    // Removing the kit source forgets it.
+    var copy = st
+    copy.removeSource("s")
+    #expect(copy.parked.isEmpty)
+    // Deselected while it waits: forgotten, it does not come back.
+    copy = st
+    var l = layout
+    copy.setSelected("fusion.s.trakt.A", false, source: traktSrc)
+    _ = FusionKitSync.apply(layout: &l, settings: &copy, contents: contents, traktID: true, traktLogin: true)
+    #expect(copy.parked.isEmpty && !ids(l).contains("fusion.s.trakt.A"))
+    // Kit off: forgotten as well; turned on again it is a new row at the end.
+    st.enabled = false
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true)
+    #expect(st.parked.isEmpty && ids(layout) == ["list:builtin.continue", "list:u.b"])
+    // Row gone from the kit file while it waits: forgotten.
+    var st2 = FusionKitSettings()
+    var l2 = placedLayout(&st2, contents)
+    _ = FusionKitSync.apply(layout: &l2, settings: &st2, contents: contents, traktID: false, traktLogin: false)
+    let empty = #"{"exportType":"fusionWidgets","widgets":[]}"#
+    _ = FusionKitSync.apply(layout: &l2, settings: &st2, contents: ["s": try kit("s", empty)], traktID: true, traktLogin: true)
+    #expect(st2.parked.isEmpty)
+}
+
+@Test func fusionRowWaitingForAddonKeepsPlace() throws {
+    let json = #"{"exportType":"fusionWidgets","widgets":[{"id":"p","title":"P","type":"row.classic","dataSource":{"kind":"addonCatalog","payload":{"addonId":"YOUR_AIOMETADATA","catalogId":"movie::x","type":"movie"}}}]}"#
+    let contents = ["s": try FusionImport.parse(Data(json.utf8), sourceKey: "s")]
+    let aio = InstalledAddon(manifestURL: "https://aio.example.invalid/manifest.json",
+                             manifest: AddonManifest(id: "com.example.aio", name: "AIOMetadata", version: "1", resources: [], types: [],
+                                                     catalogs: [CatalogDescriptor(type: "movie", id: "x")]))
+    var st = FusionKitSettings(enabled: true)
+    st.setSelected("fusion.s.p", true, source: traktSrc)
+    var layout = HomeLayout(rows: [userA])
+    _ = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true, addons: [aio])
+    layout.rows.insert(layout.rows.removeLast(), at: 0)
+    layout.rows[0].style = .hero
+    layout.rows.append(userB)   // [p (hero), userA, userB]
+
+    // Addon removed: the row waits off the start page.
+    var r = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true, addons: [])
+    #expect(r.parked == ["fusion.s.p"] && ids(layout) == ["list:builtin.continue", "list:u.b"])
+    r = FusionKitSync.apply(layout: &layout, settings: &st, contents: contents, traktID: true, traktLogin: true, addons: [aio])
+    #expect(r.restored == ["fusion.s.p"] && ids(layout) == ["fusion.s.p", "list:builtin.continue", "list:u.b"])
+    #expect(layout.rows[0].style == .hero)
+}
+
+@Test func fusionSettingsParkedRoundTrip() throws {
+    var st = FusionKitSettings(enabled: true)
+    st.parked = [FusionKitParkedRow(row: HomeRow(content: .list(CatalogSource(id: "fusion.s.x", title: "X", kind: .tmdbList(id: "1"), mediaType: .movie)),
+                                                 style: .hero), above: ["list:builtin.continue"], index: 1)]
+    let back = try JSONDecoder().decode(FusionKitSettings.self, from: JSONEncoder().encode(st))
+    #expect(back == st && back.parked.first?.kitID == "fusion.s.x")
+    // Older settings without `parked` (and an unreadable value) decode to none.
+    let bad = try JSONDecoder().decode(FusionKitSettings.self, from: Data(#"{"enabled":true,"parked":7}"#.utf8))
+    #expect(bad.parked.isEmpty && bad.enabled)
 }

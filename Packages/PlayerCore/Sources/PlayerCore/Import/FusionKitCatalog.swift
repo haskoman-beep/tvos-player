@@ -90,6 +90,21 @@ public enum FusionKitCatalog {
     }
 }
 
+/// Build 6 (L3): a placed kit row that waits for an addon or a Trakt login. It leaves the start page (no empty rows),
+/// but keeps its row (id, style) and where it stood, so it comes back at the same place with the same style.
+public struct FusionKitParkedRow: Codable, Sendable, Hashable {
+    /// The row as it stood on the start page (id, content, style).
+    public var row: HomeRow
+    /// Content keys of the rows above it when it left, nearest first (at most `FusionKitSync.anchorLimit`).
+    public var above: [String]
+    /// Its index when it left (used only when none of `above` is on the start page any more).
+    public var index: Int
+
+    public init(row: HomeRow, above: [String], index: Int) { self.row = row; self.above = above; self.index = index }
+
+    public var kitID: String? { FusionImport.kitID(of: row) }
+}
+
 /// Kit-Einstellungen eines Profils.
 public struct FusionKitSettings: Codable, Sendable, Equatable {
     public var enabled: Bool
@@ -99,12 +114,15 @@ public struct FusionKitSettings: Codable, Sendable, Equatable {
     public var placed: [String]
     /// Quellen der gewählten Reihen und per Handy eingetragene Kit-URLs (zum Laden ohne Katalog).
     public var sources: [FusionKitSource]
+    /// Build 6 (L3): placed rows that wait for an addon or a Trakt login (off the start page, place and style kept).
+    public var parked: [FusionKitParkedRow]
 
-    public init(enabled: Bool = false, selected: [String] = [], placed: [String] = [], sources: [FusionKitSource] = []) {
-        self.enabled = enabled; self.selected = selected; self.placed = placed; self.sources = sources
+    public init(enabled: Bool = false, selected: [String] = [], placed: [String] = [], sources: [FusionKitSource] = [],
+                parked: [FusionKitParkedRow] = []) {
+        self.enabled = enabled; self.selected = selected; self.placed = placed; self.sources = sources; self.parked = parked
     }
 
-    enum CodingKeys: String, CodingKey { case enabled, selected, placed, sources }
+    enum CodingKeys: String, CodingKey { case enabled, selected, placed, sources, parked }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -112,6 +130,7 @@ public struct FusionKitSettings: Codable, Sendable, Equatable {
         selected = try c.decodeIfPresent([String].self, forKey: .selected) ?? []
         placed = try c.decodeIfPresent([String].self, forKey: .placed) ?? []
         sources = try c.decodeIfPresent([FusionKitSource].self, forKey: .sources) ?? []
+        parked = (try? c.decodeIfPresent([FusionKitParkedRow].self, forKey: .parked)) ?? []
     }
 
     public func isSelected(_ rowID: String) -> Bool { selected.contains(rowID) }
@@ -152,6 +171,7 @@ public struct FusionKitSettings: Codable, Sendable, Equatable {
     public mutating func removeSource(_ id: String) {
         sources.removeAll { $0.id == id }
         selected.removeAll { FusionImport.sourceKey(ofID: $0) == id }
+        parked.removeAll { $0.kitID.flatMap(FusionImport.sourceKey(ofID:)) == id }
     }
 }
 
@@ -160,15 +180,23 @@ public struct FusionKitSyncResult: Equatable, Sendable {
     public var removed: [String] = []
     /// Vom Nutzer im Startseiten-Editor entfernt → abgewählt.
     public var deselected: [String] = []
-    /// Gewählt, aber ohne Trakt Client ID bzw. Anmeldung nicht ladbar → ausgeblendet.
+    /// Gewählt, aber ohne Trakt Client ID bzw. Anmeldung (oder ohne Addon) nicht ladbar → ausgeblendet.
     public var hidden: [String] = []
+    /// Build 6 (L3): left the start page in this sync, but wait with place and style (`FusionKitSettings.parked`).
+    public var parked: [String] = []
+    /// Build 6 (L3): came back from `parked` at their old place (also listed in `added`).
+    public var restored: [String] = []
     public var layoutChanged = false
     public init() {}
 }
 
 /// Gleicht die Kit-Reihen der Startseite mit den Einstellungen ab. Eigene Reihen des Nutzers bleiben unberührt,
-/// vorhandene Kit-Reihen behalten Platz und Stil; neue kommen ans Ende.
+/// vorhandene Kit-Reihen behalten Platz und Stil; neue kommen ans Ende. Build 6 (L3): a placed row that waits for an
+/// addon or a Trakt login leaves the start page but is parked with place and style, and comes back there.
 public enum FusionKitSync {
+    /// Rows above a parked row that are remembered as its anchor.
+    public static let anchorLimit = 8
+
     /// Task 2.4 (S-12): rule for kit rows when the settings may be missing (e.g. right after restoring a backup
     /// without kit settings). `nil` = no settings stored for the profile → the layout stays as it is. Kit rows are
     /// removed only when settings were loaded and the selection is explicitly empty (kit off or nothing chosen).
@@ -211,9 +239,12 @@ public enum FusionKitSync {
             }
         }
 
-        // 3. Überzählige Kit-Reihen entfernen, vorhandene Listen aktualisieren, fehlende anhängen.
+        // 3. Überzählige Kit-Reihen entfernen, vorhandene Listen aktualisieren, wartende parken, fehlende einsetzen.
+        let waiting = Set(res.hidden)
+        var parked: [String: FusionKitParkedRow] = [:]
+        for p in settings.parked { if let id = p.kitID { parked[id] = p } }
         var rows: [HomeRow] = []
-        for row in layout.rows {
+        for (i, row) in layout.rows.enumerated() {
             guard let id = FusionImport.kitID(of: row) else { rows.append(row); continue }
             if let r = want[id] {
                 var row = row
@@ -221,6 +252,11 @@ public enum FusionKitSync {
                 rows.append(row)
             } else if unknown.contains(id) {
                 rows.append(row)
+            } else if waiting.contains(id) {
+                // Anchors from the whole old layout (neighbours that wait too count), so adjacent rows keep their order.
+                let above = layout.rows[..<i].reversed().prefix(anchorLimit).map(\.content.key)
+                parked[id] = FusionKitParkedRow(row: row, above: Array(above), index: i)
+                res.parked.append(id)
             } else {
                 res.removed.append(id)
             }
@@ -228,12 +264,41 @@ public enum FusionKitSync {
         let kept = Set(rows.compactMap { FusionImport.kitID(of: $0) })
         for id in order where !kept.contains(id) {
             guard let r = want[id] else { continue }
-            rows.append(HomeRow(content: r.content, style: r.style))
+            if let p = parked.removeValue(forKey: id) {
+                rows.insert(restoredRow(p, as: r), at: restoreIndex(p, in: rows))
+                res.restored.append(id)
+            } else {
+                rows.append(HomeRow(content: r.content, style: r.style))
+            }
             res.added.append(id)
         }
-        if !res.added.isEmpty || !res.removed.isEmpty { res.layoutChanged = true }
+        if !res.added.isEmpty || !res.removed.isEmpty || !res.parked.isEmpty { res.layoutChanged = true }
         layout.rows = rows
         settings.placed = rows.compactMap { FusionImport.kitID(of: $0) }
+        // Keep only rows that still wait (or whose file is not loaded yet); kit off, deselected or gone → forgotten.
+        let keep = waiting.union(unknown)
+        var still: [FusionKitParkedRow] = []
+        for id in settings.parked.compactMap(\.kitID) + res.parked where keep.contains(id) {
+            if let p = parked.removeValue(forKey: id) { still.append(p) }
+        }
+        settings.parked = still
         return res
+    }
+
+    /// A parked row as it comes back: its id and style; a list takes the current source of the kit file.
+    static func restoredRow(_ p: FusionKitParkedRow, as r: FusionKitRow) -> HomeRow {
+        var row = p.row
+        if case .list = r.body { row.content = r.content }
+        if !row.content.allowedStyles.contains(row.style) { row.style = r.style }
+        return row
+    }
+
+    /// Below the nearest remembered row above it that is still on the start page; at the top if it was the first row;
+    /// otherwise at its old index (clamped).
+    static func restoreIndex(_ p: FusionKitParkedRow, in rows: [HomeRow]) -> Int {
+        for key in p.above {
+            if let j = rows.firstIndex(where: { $0.content.key == key }) { return j + 1 }
+        }
+        return p.above.isEmpty ? 0 : min(p.index, rows.count)
     }
 }
