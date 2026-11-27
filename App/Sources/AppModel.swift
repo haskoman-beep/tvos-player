@@ -457,9 +457,10 @@ final class AppModel {
         }
         // In the background the app may be suspended right after this call: written and mirrored at once, as
         // before Phase 0b (a late scrobble answer, a renewed token).
+        let snapshot = stored, store = self.store
         if savesInBackground {
             do {
-                try saver.runNow(SaveQueue.profilesKey) { try store.save(stored) }
+                try saver.runNow(SaveQueue.profilesKey) { try store.save(snapshot) }
                 noteDirectProfileWrite()
                 mirrorSecrets()
             } catch { lastError = "Speichern fehlgeschlagen: \(error)" }
@@ -467,7 +468,7 @@ final class AppModel {
         }
         // Phase 0b: a snapshot goes to the save queue; encoding, rotation and writing leave the main thread.
         profileSaveSerial &+= 1
-        let serial = profileSaveSerial, snapshot = stored, store = self.store
+        let serial = profileSaveSerial
         saver.submit(SaveQueue.profilesKey, { try store.save(snapshot) }, done: { [weak self] result in
             Task { @MainActor in self?.profilesSaved(snapshot, serial: serial, result) }
         })
