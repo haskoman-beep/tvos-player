@@ -783,7 +783,7 @@ struct DetailView: View {
         }
     }
 
-    /// Task 5.3: „Abspielen“ is the one primary button (light, never the accent since b7), the others secondary; SF Symbols, no Unicode.
+    /// Build 8: „Abspielen“ looks exactly like the trailer button (secondary style); the user asked for one look.
     private func movieButtons(_ imdb: String) -> some View {
         let resume = model.progress.resumePosition(for: imdb)
         let title = resume.map { "Fortsetzen ab \(timeText($0))" } ?? "Abspielen"
@@ -795,7 +795,7 @@ struct DetailView: View {
             } label: {
                 ThemeButtonLabel(title, symbol: "play.fill")
             }
-            .buttonStyle(ThemeButton(.primary))
+            .buttonStyle(ThemeButton(.secondary))
             .focused($focus, equals: .play)
             if let k = extra?.trailerYouTube { trailerButton(k) }
         }
