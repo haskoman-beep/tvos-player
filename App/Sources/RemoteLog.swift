@@ -189,6 +189,10 @@ final class RemoteLog {
 
     // MARK: Verlauf auf dem Gerät
 
+    /// Review of Phase 0b: lines logged after the background observer above ran (result of the save drain) are
+    /// sent and written at once.
+    func persistNow() { flush(); saveRing(now: true) }
+
     /// `now`: write at once on the calling thread (going into the background), otherwise off the main thread.
     private func saveRing(now: Bool = false) {
         guard ringDirty, let url = ringURL, let data = try? JSONEncoder().encode(ring) else { return }

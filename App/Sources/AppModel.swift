@@ -167,6 +167,10 @@ final class AppModel {
             _ = NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 // From here on a save waits for its write (see `settleIfInBackground`).
                 MainActor.assumeIsolated { self?.savesInBackground = true }
+                // Review of Phase 0b: without a background task tvOS may suspend the app while writes still wait.
+                let task = MainActor.assumeIsolated {
+                    UIApplication.shared.beginBackgroundTask(withName: "save-drain", expirationHandler: nil)
+                }
                 let start = ContinuousClock.now
                 let waiting = saver.waitingKeys.count
                 let done = saver.drain(timeout: 3)
@@ -174,6 +178,16 @@ final class AppModel {
                     let ms = Metric.ms(start.duration(to: ContinuousClock.now))
                     if !done { RemoteLog.error("speicher", "Hintergrund-Speichern nach 3 s nicht fertig · wartend \(saver.waitingKeys)") }
                     else if waiting > 0 { RemoteLog.info("speicher", "Hintergrund-Speichern abgeschlossen · \(waiting) wartend · \(ms) ms") }
+                    // The log's own background observer ran before this one: these lines need their own write.
+                    if !done || waiting > 0 { RemoteLog.shared.persistNow() }
+                    if done { UIApplication.shared.endBackgroundTask(task) }
+                }
+                // Not done in 3 s: the main thread is released, the writes get the rest of the background time.
+                if !done {
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        _ = saver.drain(timeout: 20)
+                        DispatchQueue.main.async { UIApplication.shared.endBackgroundTask(task) }
+                    }
                 }
             }
         }
@@ -734,8 +748,10 @@ final class AppModel {
         stored.profiles = remaining
         removeProfileData(id)
         // Aktives Profil gelöscht: über den Profilwechsel (Cache leeren, Stand des neuen Profils lesen).
+        // Review of Phase 0b: the keychain mirror follows the direct write at once in both cases. The profile switch
+        // only queues its save; killed before that lands, the deleted profile's keys would stay in the keychain.
+        mirrorSecrets()
         if stored.activeProfileID == id, let next = stored.profiles.first?.id { switchProfile(next) } else {
-            mirrorSecrets()
             noteProfileSizes(load: false)
         }
     }
