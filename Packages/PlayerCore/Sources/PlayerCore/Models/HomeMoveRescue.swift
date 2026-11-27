@@ -31,13 +31,16 @@ public enum HomeMoveRescue: Equatable, Sendable {
         spans.first { y >= $0.1.minY && y <= $0.1.maxY }?.0
     }
 
-    /// Log line: "Hoch|Runter verschluckt in Reihe <n> (<title>) → Knopfzeile|Reihe <m> (<title>)|Knopf unten".
+    /// Log line: "Hoch|Runter verschluckt in Reihe <n> (<title>) → Knopfzeile|Reihe <m> (<title>) fokussiert", for the
+    /// bottom button "… → Knopf „Reihen & Collections“ angefordert".
     public func line(up: Bool, from: Int, fromTitle: String, toTitle: String?) -> String {
         let target: String
         switch self {
         case .heroButtons: target = "Knopfzeile"
         case .row(let i): target = "Reihe \(i + 1) (\(toTitle ?? "?"))"
-        case .actionButton: target = "Knopf „Reihen & Collections“"
+        case .actionButton:
+            // b6 review 1: the button is built later; it logs „Knopf unten fokussiert“ once it holds the focus.
+            return "\(up ? "Hoch" : "Runter") verschluckt in Reihe \(from + 1) (\(fromTitle)) → Knopf „Reihen & Collections“ angefordert"
         }
         return "\(up ? "Hoch" : "Runter") verschluckt in Reihe \(from + 1) (\(fromTitle)) → \(target) fokussiert"
     }

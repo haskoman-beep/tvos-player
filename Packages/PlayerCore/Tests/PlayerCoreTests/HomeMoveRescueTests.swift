@@ -26,7 +26,7 @@ import Foundation
     #expect(HomeMoveRescue.decide(up: false, focusedRow: 8, rowCount: 9, edge: .heroButtons) == .actionButton)
     #expect(HomeMoveRescue.decide(up: false, focusedRow: 0, rowCount: 1, edge: .firstRow) == .actionButton)
     #expect(HomeMoveRescue.actionButton.line(up: false, from: 8, fromTitle: "Genres", toTitle: nil)
-            == "Runter verschluckt in Reihe 9 (Genres) → Knopf „Reihen & Collections“ fokussiert")
+            == "Runter verschluckt in Reihe 9 (Genres) → Knopf „Reihen & Collections“ angefordert")
 }
 
 @Test func rescueLineNamesBothEnds() {

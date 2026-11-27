@@ -463,17 +463,38 @@ private struct FocusReportingButton: View {
     /// Task 4.1a (F-A-3): claims a pending `.add` target (last row hidden or deleted).
     var focusTarget: HomeFocusTarget? = nil
     @FocusState private var focused: Bool
+    /// b6 review 1: the running claim of a pending `.add` target (`FocusClaim`).
+    @State private var claim: Task<Void, Never>?
 
     var body: some View {
         Button(title, action: action)
             .buttonStyle(ThemeActionButtonStyle())
             .focused($focused)
             .onChange(of: focused) { _, f in onFocus(f) }
-            .onDisappear { onFocus(false) }
+            .onDisappear {
+                onFocus(false)
+                claim?.cancel()
+                claim = nil
+            }
             .onChange(of: focusTarget?.serial, initial: true) { _, _ in
                 guard focusTarget?.claim(.add) == true else { return }
-                DispatchQueue.main.async { focused = true }
+                claimFocus()
             }
+    }
+
+    /// b6 review 1: a button the lazy list builds in this pass can lose the one assignment, so it is repeated
+    /// (`FocusClaim`, at most half a second). Not ended by other focus moves: after a context-menu action the system
+    /// moves the focus off the vanished tile, and the target must win over that move (Task 4.1a F-A-3).
+    private func claimFocus() {
+        claim?.cancel()
+        claim = Task { @MainActor in
+            let outcome = await FocusClaim.run(endsOnMove: false, held: { focused }, assign: { focused = true })
+            switch outcome {
+            case .held(let n): RemoteLog.info("fokus", "Knopf unten fokussiert" + (n > 1 ? " (nach \(n) Versuchen)" : ""))
+            case .movedAway, .cancelled: break
+            case .gaveUp: RemoteLog.info("fokus", "Knopf unten: Fokus nach \(FocusClaim.tries) Versuchen nicht übernommen")
+            }
+        }
     }
 }
 
