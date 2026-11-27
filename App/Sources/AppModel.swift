@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import PlayerCore
 
 /// App-Zustand: Profile (persistiert), Clients, Katalog-Cache.
@@ -53,6 +54,11 @@ final class AppModel: ObservableObject {
     /// Build 7 (folder): folder id → sources started ahead when its tile rested in focus (page log line) and when
     /// (at most one warm-up per folder a minute, so a failing catalog is not asked on every rest).
     var folderPrefetches: [String: (count: Int, at: Date)] = [:]
+    /// Build 7 review (L4): sources whose last row load failed (30 s, `homeRowItems`).
+    var recentLoadFailures = RecentLoadFailures()
+    /// Build 7 review (M3): every finished row load and background refresh (source id, result), for the folder page.
+    /// A subject, not `@Published`: no view of the model re-renders for it.
+    let homeRowLoadDone = PassthroughSubject<(id: String, load: CatalogLoad), Never>()
     /// Task 3.1: profile epoch. `advance` on a profile switch or backup import, `bump` on a language or addon set
     /// change. A task that awaits and then writes profile data remembers `scopes.current` and checks it afterwards.
     @Published private(set) var scopes = ScopeClock(profile: UUID())
@@ -559,6 +565,7 @@ final class AppModel: ObservableObject {
         // Welle D-b (Mi3): das schon aktive Profil erneut wählen ändert nichts (laufende Suchen bleiben gültig).
         guard id != stored.activeProfileID else { return }
         stored.activeProfileID = id; cache.removeAll(); save()
+        folderPrefetches.removeAll(); recentLoadFailures.removeAll()   // Build 7 review (L6)
         // Task 3.1: new epoch; late results of the old profile are dropped, its token renewal still lands in it.
         scopes.advance(to: id)
         resetStreamState()

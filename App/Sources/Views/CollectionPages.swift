@@ -4,11 +4,15 @@ import PlayerCore
 
 /// Ordner einer Collection: eine Reihe pro Quelle.
 /// Build 7 (folder): rows from `FolderPage.rows` (same request once, shared titles get " · Filme" / " · Serien"),
-/// and a page line under the title (`FolderLoadStatus`): spinner at once while nothing arrived, a German reason
+/// and a page line beside the title (`FolderLoadStatus`): spinner at once while nothing arrived, a German reason
 /// when every source finished without titles. The rows keep their placeholders and status tiles.
+/// Review b7 M2: the load state lives in `FolderPageLoad`, owned here (the header inside the `LazyVStack` is dropped
+/// when it scrolls off; its state went with it: spinner again, second log line, new requests).
 struct FolderView: View {
+    @EnvironmentObject var model: AppModel
     let folder: Folder
     private let rows: [CatalogSource]
+    @StateObject private var load = FolderPageLoad()
 
     init(folder: Folder) {
         self.folder = folder
@@ -19,11 +23,11 @@ struct FolderView: View {
         ScrollView(.vertical) {
             LazyVStack(alignment: .leading, spacing: Theme.Space.xl) {
                 // Build 7: the page line sits beside the title (no extra gap above the rows once titles show). Own
-                // view with its own state: a source landing re-runs only the line, not the rows.
+                // view observing the holder: a source landing re-runs only the line, not the rows.
                 HStack(alignment: .firstTextBaseline, spacing: Theme.Space.l) {
                     Text(folder.title).textRole(.display).layoutPriority(1)
                         .accessibilityAddTraits(.isHeader)
-                    FolderLoadStatus(folder: folder, rows: rows)
+                    FolderLoadStatus(load: load, rows: rows)
                 }
                 .padding(.horizontal, Theme.Space.edge)
                 if rows.isEmpty { FocusAnchor(kind: .back).padding(.leading, Theme.Space.edge) }   // N6 (Welle F-c)
@@ -33,25 +37,21 @@ struct FolderView: View {
             }
             .padding(.vertical, Theme.Space.edgeVertical)
         }
+        // Outside the lazy stack: runs once per page (the holder ignores a second start, e.g. back from a detail page).
+        .task { load.start(model: model, folder: folder, rows: rows) }
     }
 }
 
-/// Build 7 (folder): starts every row's load at once (parallel, through the shared `homeRowItems`, so the rows and a
-/// focus warm-up join the same request), shows the page phase (`FolderPagePhase`) and logs one line with the
-/// per-source times when the last source finished (`FolderLoadLog`).
+/// Build 7 (folder): the page line (phase from `FolderLoadState`, the cache read synchronously for rows without a
+/// recorded result, so a cached folder shows no spinner).
 private struct FolderLoadStatus: View {
     @EnvironmentObject var model: AppModel
-    let folder: Folder
+    @ObservedObject var load: FolderPageLoad
     let rows: [CatalogSource]
-    @State private var results: [String: FolderSourceResult] = [:]
-
-    private var phase: FolderPagePhase {
-        FolderPagePhase.of(rows.map { results[$0.id] ?? .loading })
-    }
 
     var body: some View {
-        let p = phase
-        // A real container (not `Group`): the task belongs to it and does not restart when the phase changes.
+        let cache = model.cache
+        let p = load.state.phase(rows, cachedCount: { cache[$0]?.count })
         ZStack(alignment: .leading) {
             switch p {
             case .content:
@@ -68,36 +68,66 @@ private struct FolderLoadStatus: View {
                     .lineLimit(2)
             }
         }
-        .task(id: folder.id) { await loadAll() }
     }
+}
 
-    private func loadAll() async {
+/// Build 7 (folder): load state of one folder page. `start` runs once: every row's load in parallel through the shared
+/// `homeRowItems` (rows and a focus warm-up join the same request), one log line with the per-source times when the
+/// last finished (`FolderLoadLog`). Review b7 M3: later loads of the same sources (row retry, rebuilt lazy row,
+/// background refresh) arrive through `homeRowLoadDone` and keep the line current.
+@MainActor
+final class FolderPageLoad: ObservableObject {
+    @Published private(set) var state = FolderLoadState()
+    private var started = false
+    private var updates: AnyCancellable?
+
+    func start(model: AppModel, folder: Folder, rows: [CatalogSource]) {
+        guard !started else { return }
+        started = true
         let t0 = Date()
+        let ids = Set(rows.map(\.id))
+        updates = model.homeRowLoadDone.sink { [weak self] e in
+            MainActor.assumeIsolated {
+                guard let self, ids.contains(e.id) else { return }
+                let ms = Int(Date().timeIntervalSince(t0) * 1000)
+                self.state.record(e.id, Self.result(e.load, ms: ms))
+            }
+        }
         // A warm-up of the last two minutes counts (the tile rested shortly before the click).
         let warm = model.folderPrefetches[folder.id].map { Date().timeIntervalSince($0.at) < 120 ? $0.count : 0 } ?? 0
-        let m = model
-        await withTaskGroup(of: (String, FolderSourceResult).self) { group in
-            for s in rows {
-                if isUnserved(s) { results[s.id] = .noAddon; continue }
-                group.addTask { @MainActor in
-                    let r = await m.homeRowItems(s)
-                    let ms = Int(Date().timeIntervalSince(t0) * 1000)
-                    let result: FolderSourceResult = r.failed ? .failed(ms: ms)
-                        : .loaded(count: r.items.count, ms: ms, cached: r.fromCache)
-                    return (s.id, result)
+        var unserved: [String] = []
+        for s in rows where Self.isUnserved(s, model: model) {
+            state.record(s.id, .noAddon)
+            unserved.append(s.id)
+        }
+        let loads = rows.filter { !unserved.contains($0.id) }
+        Task { @MainActor [weak self] in
+            var own: [String: FolderSourceResult] = [:]
+            await withTaskGroup(of: (String, FolderSourceResult).self) { group in
+                for s in loads {
+                    group.addTask { @MainActor in
+                        let r = await model.homeRowItems(s)
+                        return (s.id, Self.result(r, ms: Int(Date().timeIntervalSince(t0) * 1000)))
+                    }
+                }
+                for await (id, result) in group {
+                    own[id] = result
+                    self?.state.record(id, result)
                 }
             }
-            for await (id, result) in group { results[id] = result }
+            for id in unserved { own[id] = .noAddon }
+            let total = Int(Date().timeIntervalSince(t0) * 1000)
+            let lines = rows.map { (title: $0.title, result: own[$0.id] ?? .loading) }
+            RemoteLog.info("katalog", FolderLoadLog.line(folder: folder.title, rows: lines, totalMs: total, prefetched: warm))
         }
-        // The shared loads do not stop when the page goes (they fill the cache), so the line also comes after leaving.
-        let total = Int(Date().timeIntervalSince(t0) * 1000)
-        let lines = rows.map { (title: $0.title, result: results[$0.id] ?? .loading) }
-        let left = Task.isCancelled ? " · Seite vorher verlassen" : ""
-        RemoteLog.info("katalog", FolderLoadLog.line(folder: folder.title, rows: lines, totalMs: total, prefetched: warm) + left)
+    }
+
+    private static func result(_ r: CatalogLoad, ms: Int) -> FolderSourceResult {
+        r.failed ? .failed(ms: ms) : .loaded(count: r.items.count, ms: ms, cached: r.fromCache)
     }
 
     /// Addon catalog no installed addon serves (`loadItems` returns an empty list for it without a request).
-    private func isUnserved(_ s: CatalogSource) -> Bool {
+    private static func isUnserved(_ s: CatalogSource, model: AppModel) -> Bool {
         guard case .addon(let addonId, let catalogId, let type) = s.kind else { return false }
         return AddonCatalogResolver.resolve(model.profile.addons, addonId: addonId, catalogId: catalogId, type: type) == nil
     }

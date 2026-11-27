@@ -42,7 +42,9 @@ private func addon(_ id: String, _ title: String, _ type: String, catalog: Strin
              addon("c", "C", "movie", catalog: "c"), addon("d", "D", "movie", catalog: "d"),
              addon("e", "E", "movie", catalog: "e"), addon("f", "F", "movie", catalog: "f")]
     let picked = FolderPage.prefetchSources(s, isCached: { $0 == "b" })
-    #expect(picked.map(\.id) == ["a", "c", "d", "e"])   // b cached, watchlist local, at most 4
+    #expect(picked.map(\.id) == ["a", "c"])   // b cached, watchlist local, at most 2
+    #expect(FolderPage.prefetchSources(s, isCached: { $0 == "b" }, limit: 4).map(\.id) == ["a", "c", "d", "e"])
+    #expect(FolderPage.mayPrefetch(runningLoads: 5) && !FolderPage.mayPrefetch(runningLoads: 6))
     #expect(FolderPage.prefetchSources(s, isCached: { _ in true }).isEmpty)
     #expect(FolderPage.prefetchSources(s, isCached: { _ in false }, limit: 2).map(\.id) == ["a", "b"])
 }
@@ -74,4 +76,36 @@ private func addon(_ id: String, _ title: String, _ type: String, catalog: Strin
     #expect(line == "Ordner Shudder: 4 Quellen in 15000 ms · 1 beim Fokus vorgeladen · Shudder · Filme 36 (7760 ms) · Shudder · Serien 50 (Cache) · X Fehler (15000 ms) · Y ohne Addon")
     #expect(FolderLoadLog.line(folder: "A24", rows: [("A24", .loaded(count: 50, ms: 379, cached: false))], totalMs: 379)
             == "Ordner A24: 1 Quelle in 379 ms · A24 50 (379 ms)")
+}
+
+@Test func folderLoadStateSeedsFromCacheAndFollowsLaterLoads() {
+    let rows = [addon("a", "A", "movie", catalog: "a"), addon("b", "B", "series", catalog: "b")]
+    var st = FolderLoadState()
+    // Nothing recorded: the cache answers synchronously (no spinner for a cached folder).
+    #expect(st.phase(rows, cachedCount: { $0 == "a" ? 20 : nil }) == .content)
+    #expect(st.phase(rows, cachedCount: { _ in nil }) == .loading)
+    #expect(st.result("a", cachedCount: { _ in 0 }) == .loaded(count: 0, ms: 0, cached: true))
+    st.record("a", .failed(ms: 100)); st.record("b", .failed(ms: 120))
+    #expect(st.phase(rows, cachedCount: { _ in nil }) == .failed)
+    // A row retry filled the cache afterwards: titles win over the old failure.
+    #expect(st.phase(rows, cachedCount: { $0 == "b" ? 5 : nil }) == .content)
+    // A later load result replaces the failure; a later failure does not hide titles.
+    st.record("a", .loaded(count: 7, ms: 900, cached: false))
+    #expect(st.results["a"] == .loaded(count: 7, ms: 900, cached: false))
+    st.record("a", .failed(ms: 50))
+    #expect(st.results["a"] == .loaded(count: 7, ms: 900, cached: false))
+    #expect(st.phase(rows, cachedCount: { _ in nil }) == .content)
+}
+
+@Test func recentLoadFailuresExpire() {
+    var f = RecentLoadFailures()
+    let t0 = Date(timeIntervalSince1970: 1_000)
+    #expect(!f.isRecent("a", now: t0))
+    f.mark("a", now: t0)
+    #expect(f.isRecent("a", now: t0.addingTimeInterval(29)))
+    #expect(!f.isRecent("a", now: t0.addingTimeInterval(30)))
+    f.mark("b", now: t0); f.forget("b")
+    #expect(!f.isRecent("b", now: t0))
+    f.mark("c", now: t0); f.removeAll()
+    #expect(!f.isRecent("c", now: t0))
 }

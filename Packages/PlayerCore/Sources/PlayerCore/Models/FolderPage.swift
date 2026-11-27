@@ -22,11 +22,17 @@ public enum FolderPage {
     }
 
     /// Sources of a folder worth loading ahead when its tile rests in focus: not cached yet, at most `limit`
-    /// (the first rows are the ones on screen when the page opens).
+    /// (the first rows are the ones on screen when the page opens). Review b7 M1: 2, not 4.
     public static func prefetchSources(_ sources: [CatalogSource], isCached: (String) -> Bool,
-                                       limit: Int = 4) -> [CatalogSource] {
+                                       limit: Int = 2) -> [CatalogSource] {
         Array(rows(sources).filter { isPrefetchable($0) && !isCached($0.id) }.prefix(limit))
     }
+
+    /// Review b7 M1: global cap. With this many row loads already running (home preload, other warm-ups) a resting
+    /// tile warms nothing; the page still loads on open.
+    public static let prefetchBusyLimit = 6
+
+    public static func mayPrefetch(runningLoads: Int) -> Bool { runningLoads < prefetchBusyLimit }
 
     /// Local lists (progress, watchlist, calendar) need no warm-up.
     static func isPrefetchable(_ s: CatalogSource) -> Bool {
@@ -125,5 +131,61 @@ public enum FolderLoadLog {
         let warm = prefetched > 0 ? " · \(prefetched) beim Fokus vorgeladen" : ""
         let head = "Ordner \(folder): \(rows.count) \(rows.count == 1 ? "Quelle" : "Quellen") in \(totalMs) ms\(warm)"
         return ([head] + parts).joined(separator: " · ")
+    }
+}
+
+/// Build 7 review (M2, M3, L5): what the folder page knows about its sources. Lives in a holder owned by the page
+/// (not in the lazily built header, which scrolling dropped). Results come from the page's own loads and from every
+/// later load of the same source (row retry, lazy row rebuilt, background refresh).
+public struct FolderLoadState: Equatable, Sendable {
+    public private(set) var results: [String: FolderSourceResult] = [:]
+    public init() {}
+
+    /// A newer result replaces the old one, except that a failure does not hide titles already shown.
+    public mutating func record(_ id: String, _ r: FolderSourceResult) {
+        if case .failed = r, case .loaded(let n, _, _)? = results[id], n > 0 { return }
+        results[id] = r
+    }
+
+    /// Result of a row: recorded, else the cache (count of a stored list, read synchronously, so a cached folder
+    /// shows no spinner on its first frame), else loading.
+    public func result(_ id: String, cachedCount: (String) -> Int?) -> FolderSourceResult {
+        switch results[id] {
+        case nil, .loading?:
+            if let n = cachedCount(id) { return .loaded(count: n, ms: 0, cached: true) }
+            return .loading
+        case let r?:
+            // A row retry or refresh filled the cache after a failed or empty result: titles win.
+            if let n = cachedCount(id), n > 0, !r.hasTitles { return .loaded(count: n, ms: 0, cached: true) }
+            return r
+        }
+    }
+
+    public func phase(_ rows: [CatalogSource], cachedCount: (String) -> Int?) -> FolderPagePhase {
+        FolderPagePhase.of(rows.map { result($0.id, cachedCount: cachedCount) })
+    }
+}
+
+extension FolderSourceResult {
+    var hasTitles: Bool {
+        if case .loaded(let n, _, _) = self { return n > 0 }
+        return false
+    }
+}
+
+/// Build 7 review (L4): sources whose last load failed, remembered for `ttl` seconds. A lazily rebuilt row or a
+/// renewed focus rest then does not ask a failing catalog again at once; a row's own retry forgets the entry first.
+public struct RecentLoadFailures: Sendable {
+    public static let ttl: TimeInterval = 30
+    private var at: [String: Date] = [:]
+    public init() {}
+
+    public mutating func mark(_ id: String, now: Date = Date()) { at[id] = now }
+    public mutating func forget(_ id: String) { at[id] = nil }
+    public mutating func removeAll() { at.removeAll() }
+
+    public func isRecent(_ id: String, now: Date = Date()) -> Bool {
+        guard let t = at[id] else { return false }
+        return now.timeIntervalSince(t) < Self.ttl
     }
 }
