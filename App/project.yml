@@ -45,6 +45,9 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: de.haskoman.player
         SWIFT_VERSION: "5.0"
+        # Phase 0a.1: diagnostic only. In Swift 5 mode the data-race checks of Swift 6 come as warnings, never as
+        # errors; CI lists them (step "Concurrency warnings"). Not a Swift 6 migration.
+        SWIFT_STRICT_CONCURRENCY: complete
         # Build number/commit/branch: 1 or empty for local builds; CI sets the run number, commit and branch (build.yml).
         CURRENT_PROJECT_VERSION: "1"
         PLAYER_BUILD_COMMIT: ""

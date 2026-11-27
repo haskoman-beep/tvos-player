@@ -116,6 +116,31 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build > build.log 2>&1 || { grep -E 'error:|BUILD FAILED' build.log | head -80; exit 1; }
           tail -5 build.log
           /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' -c 'Print :PlayerBuildCommit' -c 'Print :PlayerBuildBranch' build/Build/Products/Release-appletvos/Player.app/Info.plist
+      - name: Concurrency warnings
+        # Phase 0a.1: the app target builds with SWIFT_STRICT_CONCURRENCY=complete (App/project.yml) as a diagnostic.
+        # This step only makes the compiler's warnings visible (summary + concurrency-warnings.txt); it never fails.
+        if: always()
+        run: |
+          cd App
+          [ -f build.log ] || { echo "no build.log"; exit 0; }
+          grep -E '/App/Sources/[^ ]*\.swift:[0-9]+:[0-9]+: warning: ' build.log | sed -E 's|^.*/App/Sources/||' | sort -u > all-warnings.txt || true
+          grep -i -E 'actor|sendable|concurren|data race|isolat|nonisolated|capture of|mutation of captured' all-warnings.txt > concurrency-warnings.txt || true
+          total=$(wc -l < all-warnings.txt | tr -d ' '); conc=$(wc -l < concurrency-warnings.txt | tr -d ' ')
+          {
+            echo "## Concurrency warnings (app target, diagnostic)"
+            echo
+            echo "Compiler warnings in App/Sources: ${total} · about concurrency: ${conc}"
+            echo
+            echo "### By file"
+            echo '```'
+            cut -d: -f1 concurrency-warnings.txt | sort | uniq -c | sort -rn | head -40
+            echo '```'
+            echo "### AppModel and storage (first 60)"
+            echo '```'
+            grep -E '^(AppModel|Playback/PlayerMemory|.*Store)' concurrency-warnings.txt | head -60
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Concurrency::${conc} concurrency warnings in App/Sources (of ${total} warnings)"
       - name: Verify Dolby Vision FEL
         # Packages/AetherFEL enables the engine trait DolbyVisionFelCurves. The hard check is the build guard
         # FelBuildGuard.swift there (without the trait there is no FelCurveFoldResult and the build fails); this step
@@ -171,6 +196,16 @@ jobs:
         with:
           name: build-log
           path: App/build.log
+      - name: Upload concurrency warnings
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: concurrency-warnings
+          path: |
+            App/concurrency-warnings.txt
+            App/all-warnings.txt
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Upload IPA
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
