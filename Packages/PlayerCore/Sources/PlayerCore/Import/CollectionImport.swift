@@ -163,7 +163,7 @@ public enum PreviewPack {
     }
 
     /// Fills the gaps of matching tiles: focus video where there is none, still where there is none. The tile's own
-    /// fields always win.
+    /// fields win, except on a genre row, which loses all focus video and GIF (`TileMotion.isStillRow`, 27.11.).
     public static func apply(_ index: Index, to c: MediaCollection) -> MediaCollection {
         if TileMotion.isStillRow(c) { return TileMotion.stillRowStripped(c) }
         guard !index.isEmpty else { return c }

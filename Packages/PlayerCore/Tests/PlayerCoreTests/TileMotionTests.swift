@@ -358,6 +358,10 @@ private func boxes(_ handlers: [String]) -> [UInt8] {
     let imported = MediaCollection(id: "x", title: " Genres ", folders: [
         Folder(id: "g1", title: "Action", sources: [], focusGif: "https://example.invalid/a.gif", focusVideo: "https://example.invalid/b.mp4")])
     #expect(TileMotion.of(PreviewPack.apply(PreviewPack.Index([]), to: imported).folders[0]) == .still)
+    for t in ["Genres · autorA", "Genres (Poster) · x", "Film-Genres", "Beliebte Genres"] {
+        #expect(TileMotion.isStillRow(MediaCollection(id: "k", title: t, folders: [])))
+    }
+    #expect(!TileMotion.isStillRow(ReadyPackages.streamingDE))
     let streaming = PreviewPack.apply(pack, to: MediaCollection(id: "s", title: "Streaming", folders: [
         Folder(id: "n", title: "Netflix", sources: [])]))
     #expect(TileMotion.of(streaming.folders[0]) == .video("https://example.invalid/n.mp4"))

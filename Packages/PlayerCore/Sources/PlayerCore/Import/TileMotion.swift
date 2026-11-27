@@ -37,9 +37,10 @@ public enum TileMotion: Equatable, Sendable {
         return .still
     }
 
-    /// User decision 27.11.: the Genres row keeps its stills (no focus video, no GIF), built in or imported.
+    /// User decision 27.11.: genre rows keep their stills (no focus video, no GIF): the built-in package and kit or
+    /// import rows such as „Genres · Autor“, „Genres (Poster)“, „Film-Genres“ (same rule as the genre page).
     public static func isStillRow(_ c: MediaCollection) -> Bool {
-        c.id == "pkg.genres" || ["genres", "genre"].contains(PreviewPack.key(c.title))
+        GenrePageRule.isGenreCollection(id: c.id, title: c.title)
     }
 
     /// The collection with focus video and GIF removed from every tile when it is a still row, else unchanged.
