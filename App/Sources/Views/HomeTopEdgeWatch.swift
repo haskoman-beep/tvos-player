@@ -70,6 +70,7 @@ import PlayerCore
 
     /// S5: scroll geometry of the list (offset from the very top and the largest offset).
     func setScroll(_ value: HomeListScroll) {
+        if listScroll?.offset != value.offset { lastScrollMove = Self.now }
         listScroll = value
         if offset != value.offset { setOffset(value.offset) }
     }
@@ -96,20 +97,11 @@ import PlayerCore
             noteFocusScroll(.noScroll, proposed: y, height: height)
             return nil
         }
-        let outcome: FocusScrollTarget.VerticalOutcome?
-        if !FocusScrollTarget.mayRetarget(now: now, lastRescue: lastRescue) {
-            outcome = .rescue
-        } else if focus.atTop {
-            outcome = .topEdge
-        } else if focus.focused.contains(.actionButton) {
-            outcome = .actionButton
-        } else {
-            outcome = nil
-        }
+        // b8 review 2: no SwiftUI focus state here (it lags behind the focus engine); very top, content end and
+        // the half-height limit keep the hero buttons and the bottom button out.
         let decision: FocusScrollTarget.VerticalDecision
-        if let outcome {
-            decision = FocusScrollTarget.VerticalDecision(outcome: outcome, target: y, probeY: y + height / 2,
-                                                          row: nil, span: nil)
+        if !FocusScrollTarget.mayRetarget(now: now, lastRescue: lastRescue) {
+            decision = FocusScrollTarget.VerticalDecision(outcome: .rescue, target: y, probeY: nil, row: nil, span: nil)
         } else {
             decision = FocusScrollTarget.rowTop(proposed: y, height: height, rows: rowSpans.map { ($0.key, $0.value) },
                                                 maxOffset: scroll.maxOffset)
@@ -153,8 +145,18 @@ import PlayerCore
 
     /// Build 8: the list is still on its way to the last target (heading checks wait).
     func scrollInFlight() -> FocusScrollFlight? {
-        guard let flight, let scroll = listScroll, flight.inFlight(now: Self.now, offset: scroll.offset) else { return nil }
+        guard let flight, let scroll = listScroll,
+              flight.inFlight(now: Self.now, offset: scroll.offset, lastMove: lastScrollMove) else { return nil }
         return flight
+    }
+
+    /// b8 review 4: uptime of the last change of the list's offset (moving or at rest).
+    @ObservationIgnored private var lastScrollMove: Double?
+
+    /// b8 review 3: only the rows on the page keep a frame (hidden or deleted rows leave `rowSpans`).
+    func keepRows(_ ids: [UUID]) {
+        let keep = Set(ids)
+        rowSpans = rowSpans.filter { keep.contains($0.key) }
     }
 
     private func logFocusScrollSummary() {

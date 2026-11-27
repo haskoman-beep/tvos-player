@@ -36,8 +36,9 @@ public enum FocusScrollTarget {
     /// showed for the strips that the target rect is inset-adjusted, "vorher = Versatz + Inset"). `height`: height of
     /// the proposed visible rect. `rows`: the rows' frames in the same content coordinates.
     /// Unchanged: a target at the very top or already on a row's top (programmatic scrolls: rescue, `scrollToRow`,
-    /// scroll to the top), no row at the centre, or a correction larger than half the visible height (not a focus
-    /// scroll of that row).
+    /// scroll to the top), a target at the content end (b8 review 2: the bottom button, last rows), no row at the
+    /// centre, a correction larger than half the visible height (not a focus scroll of that row; also the way up to
+    /// the hero buttons), or a row taller than the visible height (b8 review 5: its bottom would leave the list).
     public static func rowTop(proposed: Double, height: Double, rows: [(UUID, HomeRowSpan)],
                               maxOffset: Double) -> VerticalDecision {
         let probe = proposed + height / 2
@@ -51,9 +52,11 @@ public enum FocusScrollTarget {
         if let r = rows.first(where: { abs(top($0.1) - proposed) <= HeadingSnap.tolerance }) {
             return keep(.atRowTop, r)
         }
+        guard proposed < end - HeadingSnap.tolerance else { return keep(.atEnd) }
         guard let row = row(at: probe, rows: rows) else { return keep(.noRow) }
         let target = top(row.1)
         guard abs(target - proposed) <= height / 2 else { return keep(.tooFar, row) }
+        guard row.1.maxY - target <= height + directionSlack else { return keep(.tooTall, row) }
         guard abs(target - proposed) > HeadingSnap.tolerance else { return keep(.atRowTop, row) }
         return VerticalDecision(outcome: .retargeted, target: target, probeY: probe, row: row.0, span: row.1)
     }
@@ -77,12 +80,12 @@ public enum FocusScrollTarget {
         case offMain = "nicht im Hauptthread"
         case noScroll = "kein Scrollzustand"
         case rescue = "Rettung läuft"
-        case topEdge = "oberer Rand fokussiert"
-        case actionButton = "Knopf unten fokussiert"
         case veryTop = "Ziel ganz oben"
         case atRowTop = "Ziel schon an Reihenoberkante"
+        case atEnd = "Ziel am Inhaltsende"
         case noRow = "keine Reihe in der Mitte"
         case tooFar = "Korrektur über halbe Höhe"
+        case tooTall = "Reihe höher als die Liste"
         case retargeted = "auf Reihenoberkante"
     }
 
@@ -90,12 +93,13 @@ public enum FocusScrollTarget {
         public var outcome: VerticalOutcome
         /// Final target (= proposed unless `retargeted`).
         public var target: Double
-        /// Centre of the proposed visible rect (content y) used to pick the row.
-        public var probeY: Double
+        /// Centre of the proposed visible rect (content y) used to pick the row; nil when the call ended before
+        /// (b8 review 1).
+        public var probeY: Double?
         public var row: UUID?
         public var span: HomeRowSpan?
 
-        public init(outcome: VerticalOutcome, target: Double, probeY: Double, row: UUID?, span: HomeRowSpan?) {
+        public init(outcome: VerticalOutcome, target: Double, probeY: Double?, row: UUID?, span: HomeRowSpan?) {
             self.outcome = outcome
             self.target = target
             self.probeY = probeY
@@ -154,7 +158,12 @@ public struct FocusScrollProbe: Sendable {
     public static let detailLines = 20
     public static let summaryEvery = 100
 
+    /// b8 review 6: counted only, no detail line (launch and scroll-to-top calls would use up the lines).
+    public static let quiet: Set<FocusScrollTarget.VerticalOutcome> = [.veryTop]
+
     public private(set) var total = 0
+    /// Detail lines given so far.
+    public private(set) var detailed = 0
     public private(set) var counts: [FocusScrollTarget.VerticalOutcome: Int] = [:]
     /// Rows the focus entered (`showHeading`): with 0 calls this says "never called", not "nothing happened".
     public private(set) var rowEntries = 0
@@ -162,11 +171,13 @@ public struct FocusScrollProbe: Sendable {
 
     public init() {}
 
-    /// Counts one call; `true`: it gets its own line (call number = `total`).
+    /// Counts one call; `true`: it gets its own line (call number = `total`). `quiet` outcomes never do.
     public mutating func note(_ outcome: FocusScrollTarget.VerticalOutcome) -> Bool {
         total += 1
         counts[outcome, default: 0] += 1
-        return total <= Self.detailLines
+        guard !Self.quiet.contains(outcome), detailed < Self.detailLines else { return false }
+        detailed += 1
+        return true
     }
 
     public mutating func noteRowEntry() { rowEntries += 1 }
@@ -211,9 +222,15 @@ public struct FocusScrollFlight: Hashable, Sendable {
 
     private func recent(_ now: Double) -> Bool { now >= at && now - at < Self.window }
 
-    /// Still on the way: recent and the list is more than `HeadingSnap.snapMinimum` away from the target.
-    public func inFlight(now: Double, offset: Double) -> Bool {
-        recent(now) && abs(offset - target) > HeadingSnap.snapMinimum
+    /// b8 review 4: the list counts as moving while its offset changed this recently (seconds).
+    public static let movingWindow: Double = 0.12
+
+    /// Still on the way: recent, more than `HeadingSnap.snapMinimum` away from the target and still moving
+    /// (`lastMove`: uptime of the last offset change). A list that came to rest off a kept target is not in flight,
+    /// so the check snaps it.
+    public func inFlight(now: Double, offset: Double, lastMove: Double?) -> Bool {
+        guard recent(now), abs(offset - target) > HeadingSnap.snapMinimum, let lastMove else { return false }
+        return now >= lastMove && now - lastMove < Self.movingWindow
     }
 
     /// A recent focus scroll heads for this row's top: it owns the row change.

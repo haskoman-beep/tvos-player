@@ -60,6 +60,8 @@ struct HomeView: View {
                             .padding(.top, max(0, 40 - room))
                             .padding(.bottom, 40)
                             .coordinateSpace(.named(HomeTopEdgeWatch.contentSpace))   // S5: row frames
+                            // b8 review 3: frames of rows no longer on the page are dropped.
+                            .onChange(of: rows.map(\.id), initial: true) { _, ids in topWatch.keepRows(ids) }
                             .id(HomeTopEdgeWatch.topID)
                             // Wave F-m R2: the tab bar guard binds the bar to this list, not to a tall row.
                             .background(alignment: .topLeading) { PageScrollViewProbe() }
@@ -162,6 +164,8 @@ struct HomeView: View {
                     .padding(.top, HeroMetrics.listPadding)
                     .padding(.bottom, 60)
                     .coordinateSpace(.named(HomeTopEdgeWatch.contentSpace))   // S5: row frames
+                    // b8 review 3: frames of rows no longer on the page are dropped.
+                    .onChange(of: rows.map(\.id), initial: true) { _, ids in topWatch.keepRows(ids) }
                     .id(HomeTopEdgeWatch.topID)
                     .background(alignment: .topLeading) { PageScrollViewProbe() }
                 }

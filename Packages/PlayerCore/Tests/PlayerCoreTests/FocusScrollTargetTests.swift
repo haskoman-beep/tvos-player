@@ -144,14 +144,51 @@ private let homeRows: [(UUID, HomeRowSpan)] = [
 @Test func flightBlocksSnapsAndOwnsTheRowChange() {
     let f = FocusScrollFlight(target: 3434, at: 100, row: studios)
     // b7-1 17:53:16.2 pattern: the list is still on its way → no snap.
-    #expect(f.inFlight(now: 100.3, offset: 3380))
+    #expect(f.inFlight(now: 100.3, offset: 3380, lastMove: 100.25))
     // Arrived (within the snap minimum) or too old: not in flight.
-    #expect(!f.inFlight(now: 100.3, offset: 3430))
-    #expect(!f.inFlight(now: 100.7, offset: 3380))
+    #expect(!f.inFlight(now: 100.3, offset: 3430, lastMove: 100.25))
+    #expect(!f.inFlight(now: 100.7, offset: 3380, lastMove: 100.65))
+    // b8 review 4: at rest 6–19 pt off a kept target (no offset change lately): not in flight, the check snaps.
+    #expect(!f.inFlight(now: 100.4, offset: 3420, lastMove: 100.1))
+    #expect(!f.inFlight(now: 100.4, offset: 3420, lastMove: nil))
     #expect(f.owns(row: studios, now: 100.1))
     #expect(!f.owns(row: genres, now: 100.1))
     #expect(!f.owns(row: studios, now: 101))
     #expect(!FocusScrollFlight(target: 3434, at: 100, row: nil).owns(row: studios, now: 100.1))
+}
+
+@Test func verticalDecisionWithoutProbe() {
+    // b8 review 1: a call that ends before the row lookup has no centre.
+    let d = FocusScrollTarget.VerticalDecision(outcome: .rescue, target: 120, probeY: nil, row: nil, span: nil)
+    #expect(d.probeY == nil)
+    #expect(FocusScrollTarget.verticalLine(number: 2, outcome: d.outcome, proposed: 120, target: d.target, height: 676,
+                                           probeY: d.probeY, span: d.span)
+            == "Fokus-Scroll senkrecht #2: Rettung läuft · Ziel 120 → 120 · Höhe 676")
+}
+
+@Test func contentEndAndTallRowsKeepTheTarget() {
+    // b8 review 2: at the content end (bottom button, last rows) the target stays.
+    let last: [(UUID, HomeRowSpan)] = [(genres, HomeRowSpan(minY: 6798, maxY: 7425))]
+    #expect(FocusScrollTarget.rowTop(proposed: 7406, height: 676, rows: last, maxOffset: 7406).outcome == .atEnd)
+    // b8 review 5: a row taller than the list would lose its bottom at its top.
+    let huge: [(UUID, HomeRowSpan)] = [(genres, HomeRowSpan(minY: 1000, maxY: 1900))]
+    let d = FocusScrollTarget.rowTop(proposed: 1200, height: 676, rows: huge, maxOffset: 5000)
+    #expect(d.outcome == .tooTall)
+    #expect(d.target == 1200)
+}
+
+@Test func quietOutcomesAreCountedWithoutLines() {
+    // b8 review 6: launch calls at the very top do not use up the detail lines.
+    var p = FocusScrollProbe()
+    for _ in 0..<30 {
+        let line = p.note(.veryTop)
+        #expect(!line)
+    }
+    let first = p.note(.retargeted)
+    #expect(first)
+    #expect(p.total == 31)
+    #expect(p.detailed == 1)
+    #expect(p.summaryLine() == "Fokus-Scroll senkrecht: 31 Aufrufe bei 0 Reihenwechseln · Ziel ganz oben 30 · auf Reihenoberkante 1")
 }
 
 @Test func stripStartIsZeroInTargetSpace() {
