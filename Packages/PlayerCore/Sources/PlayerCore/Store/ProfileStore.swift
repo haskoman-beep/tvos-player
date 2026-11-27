@@ -41,7 +41,7 @@ public struct StoredProfiles: Codable, Sendable, Equatable {
     }
 }
 
-public enum StoreError: Error, Equatable { case newerSchema(Int), empty, candidateMissing }
+public enum StoreError: Error, Equatable { case newerSchema(Int), empty, candidateMissing, lastProfile }
 
 /// Task 1.3: result of loading the profiles at start.
 public enum ProfileLoad: Sendable {
@@ -169,6 +169,19 @@ public final class ProfileStore: @unchecked Sendable {
         let data = try JSONEncoder().encode(s)
         rotateIfDue(replacing: s, now: now)
         try storage.write(Self.name, data)
+    }
+
+    /// Phase 0a (finding 5): deletes a profile in the safe order. The profiles without it are saved first; only when
+    /// that went through, its blocks in `blocks` are removed. A failed save throws and leaves everything as it was.
+    /// The last profile cannot be deleted (`StoreError.lastProfile`); an unknown ID changes nothing.
+    public func delete(profile id: UUID, from s: StoredProfiles, blocks: BlobStorage) throws -> (profiles: StoredProfiles, removed: [String]) {
+        guard s.profiles.contains(where: { $0.id == id }) else { return (s, []) }
+        var next = s
+        next.profiles.removeAll { $0.id == id }
+        guard !next.profiles.isEmpty else { throw StoreError.lastProfile }
+        if next.activeProfileID == id { next.activeProfileID = next.profiles.first?.id }
+        try save(next)
+        return (next, ProfileBlocks.remove(profile: id, from: blocks))
     }
 
     /// Full export (with all keys); the format of build 249.

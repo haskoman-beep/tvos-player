@@ -149,6 +149,15 @@ extension StoredProfiles {
                 n += SecretMigration.fillMissing(&one, store: store)
                 p = one[0]
             }
+            // Phase 0a: the plain export cut the access part out of addon addresses. On the TV that still holds the
+            // configured address, it comes back (every local configuration of that addon, in the local order).
+            var addons: [InstalledAddon] = []
+            var seen = Set<String>()
+            for a in p.addons {
+                let mine = old.addons.filter { AddonAccess.publicManifestURL($0.manifestURL) == a.manifestURL }
+                for x in mine.isEmpty ? [a] : mine where seen.insert(x.manifestURL).inserted { addons.append(x) }
+            }
+            if addons.map(\.manifestURL) != p.addons.map(\.manifestURL) { p.addons = addons; n += 1 }
             if n > 0 { s.profiles[i] = p; kept += 1 }
         }
         return (s, kept)
@@ -270,5 +279,104 @@ extension ProfileBlocks {
         let kept = Set(after)
         var seen = Set<UUID>()
         return before.filter { !kept.contains($0) && seen.insert($0).inserted }
+    }
+}
+
+// MARK: Phase 0a: a restore on the same TV keeps what the backup could not carry
+
+extension Backup {
+    /// Phase 0a (finding 3): the plain export leaves out or shortens what is not public (pictures of progress
+    /// entries, addon addresses of the last sources, custom kit sources, collection links). Restored on the TV that
+    /// still holds the full values, those come back from `progress`, `fusionKits` and `collectionLinks` (the local
+    /// state, by profile ID). Everything the backup does carry wins. A backup with secrets is returned unchanged.
+    public func keepingLocalDetail(progress localBooks: [UUID: ProgressBook], fusionKits localKits: [UUID: Data],
+                                   collectionLinks localLinks: [UUID: Data]) -> Backup {
+        guard !profiles.carriesSecrets else { return self }
+        var b = self
+        for (id, book) in progress { if let l = localBooks[id] { b.progress[id] = Self.fillingDetail(book, from: l) } }
+        for (id, k) in fusionKits { if let l = localKits[id] { b.fusionKits[id] = Self.fillingKit(k, from: l) } }
+        for (id, x) in collectionLinks { if let l = localLinks[id] { b.collectionLinks[id] = Self.fillingLinks(x, from: l) } }
+        return b
+    }
+
+    static func fillingDetail(_ book: ProgressBook, from local: ProgressBook) -> ProgressBook {
+        var b = book
+        for (k, var e) in b.entries {
+            guard let l = local.entries[k] else { continue }
+            if e.item.poster == nil, publicOrNil(l.item.poster) == nil { e.item.poster = l.item.poster }
+            if e.item.background == nil, publicOrNil(l.item.background) == nil { e.item.background = l.item.background }
+            if e.item.logo == nil, publicOrNil(l.item.logo) == nil { e.item.logo = l.item.logo }
+            b.entries[k] = e
+        }
+        // A last source comes back when the backup holds its scrubbed form, or none because it could not be scrubbed.
+        let scrubbedLocal = scrubbed(local).sources ?? [:]
+        for (k, l) in local.sources ?? [:] where b.entries.keys.contains(where: { $0 == k || $0.hasPrefix(k + ":") }) || b.sources?[k] != nil {
+            let inBackup = b.sources?[k]
+            guard inBackup == scrubbedLocal[k], inBackup != l else { continue }
+            b.sources = (b.sources ?? [:]).merging([k: l]) { _, new in new }
+        }
+        return b
+    }
+
+    /// Kit settings of the backup plus the local custom sources the export had to leave out (with their chosen and
+    /// waiting rows). Unreadable bytes on either side: the backup as it is.
+    static func fillingKit(_ data: Data, from local: Data) -> Data {
+        let d = JSONDecoder()
+        guard var k = try? d.decode(FusionKitSettings.self, from: data),
+              let l = try? d.decode(FusionKitSettings.self, from: local) else { return data }
+        if let s = scrubbedKit(local), (try? d.decode(FusionKitSettings.self, from: s)) == k { return local }
+        var changed = false
+        for s in l.sources where s.custom && !AddonAccess.isPublic(s.url) && !k.sources.contains(where: { $0.id == s.id }) {
+            k.sources.append(s)
+            for r in l.selected where FusionImport.sourceKey(ofID: r) == s.id && !k.selected.contains(r) { k.selected.append(r) }
+            k.parked += l.parked.filter { $0.kitID.flatMap(FusionImport.sourceKey(ofID:)) == s.id && !k.parked.contains($0) }
+            changed = true
+        }
+        return changed ? (try? JSONEncoder().encode(k)) ?? data : data
+    }
+
+    /// Links of the backup plus the local ones the export had to leave out (address not public), in the local order
+    /// behind them. Unreadable bytes on either side: the backup as it is.
+    static func fillingLinks(_ data: Data, from local: Data) -> Data {
+        func list(_ d: Data) -> [NSDictionary]? { (try? JSONSerialization.jsonObject(with: d) as? [Any])?.compactMap { $0 as? NSDictionary } }
+        guard let inBackup = list(data), let mine = list(local) else { return data }
+        if let s = scrubbedLinks(local), list(s) == inBackup { return local }
+        let extra = mine.filter { e in
+            guard let u = e["url"] as? String, !AddonAccess.isPublic(u) else { return false }
+            return !inBackup.contains(e)
+        }
+        guard !extra.isEmpty else { return data }
+        return (try? JSONSerialization.data(withJSONObject: inBackup + extra, options: [.sortedKeys])) ?? data
+    }
+}
+
+extension Profile {
+    /// Phase 0a: a profile as a fresh install creates it and nobody touched (no addon, key, login, collection or
+    /// own start page row, default name).
+    public var isUntouchedDefault: Bool {
+        let d = Profile.makeDefault()
+        return name == d.name && addons.isEmpty && collections.isEmpty && apiKeys.isEmpty && syncTokens.isEmpty
+            && unknownAddons.isEmpty && unknownCollections.isEmpty && unknownApiKeys.isEmpty && unknownSyncTokens.isEmpty
+            && home.rows.map(\.content) == d.home.rows.map(\.content)
+    }
+}
+
+extension StoredProfiles {
+    /// Phase 0a (finding 4): a restore replaces the profiles the backup contains and keeps every other profile of
+    /// this TV (created after the backup, or unreadable in it) behind them, so no local profile and none of its data
+    /// is deleted by a restore. Only an untouched default profile without data (`hasData`) gives way. Unreadable
+    /// local profiles (`unknownProfiles`) stay as well; a raw backup entry with the ID of a kept profile is left out.
+    public func keepingLocalProfiles(from here: StoredProfiles, hasData: (UUID) -> Bool) -> StoredProfiles {
+        var s = self
+        let restored = Set(profiles.map(\.id))
+        let kept = here.profiles.filter { !restored.contains($0.id) && !($0.isUntouchedDefault && !hasData($0.id)) }
+        s.profiles += kept
+        let keptIDs = Set(kept.map { $0.id.uuidString.lowercased() })
+        s.unknownProfiles.removeAll { raw in
+            guard case .object(let o) = raw, case .string(let id)? = o["id"] else { return false }
+            return keptIDs.contains(id.lowercased())
+        }
+        s.unknownProfiles += here.unknownProfiles.filter { !s.unknownProfiles.contains($0) }
+        return s
     }
 }

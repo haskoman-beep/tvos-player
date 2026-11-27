@@ -596,10 +596,22 @@ final class AppModel: ObservableObject {
 
     func deleteProfile(_ id: UUID) {
         guard stored.profiles.count > 1 else { return }
-        stored.profiles.removeAll { $0.id == id }
+        guard storeState == .ready else {
+            RemoteLog.info("speicher", "Profil nicht gelöscht: Profile nicht lesbar, Auswahl offen")
+            return
+        }
+        // Phase 0a (finding 5): the profiles without it are saved first; its data goes only after that went through.
+        // A failed save leaves the profile and its data as they were.
+        let remaining: [Profile]
+        do { remaining = try store.delete(profile: id, from: stored, blocks: progressStore.storage).profiles.profiles }
+        catch { lastError = "Profil nicht gelöscht, Speichern fehlgeschlagen: \(error)"; return }
+        stored.profiles = remaining
         removeProfileData(id)
         // Aktives Profil gelöscht: über den Profilwechsel (Cache leeren, Stand des neuen Profils lesen).
-        if stored.activeProfileID == id, let next = stored.profiles.first?.id { switchProfile(next) } else { save() }
+        if stored.activeProfileID == id, let next = stored.profiles.first?.id { switchProfile(next) } else {
+            mirrorSecrets()
+            noteProfileSizes(load: false)
+        }
     }
 
     // MARK: Addons
@@ -1034,26 +1046,43 @@ final class AppModel: ObservableObject {
                 do {
                     let before = stored.profiles.map(\.id)
                     // Task 2.4: version 2 (with progress, kits, links, device) or an old plain profile backup.
-                    let (backup, report) = try Backup.decodeReporting(d)
+                    let (read, report) = try Backup.decodeReporting(d)
+                    // Phase 0a (finding 3): a plain export restored on this TV gets back what it could not carry
+                    // (pictures and last sources of progress entries, custom kit sources, links that are not public).
+                    var localBooks: [UUID: ProgressBook] = [:], localKits: [UUID: Data] = [:], localLinks: [UUID: Data] = [:]
+                    for p in stored.profiles {
+                        localBooks[p.id] = p.id == profile.id ? progress : progressStore.load(profile: p.id)
+                        localKits[p.id] = FusionKitStore.storedSettings(p.id)
+                        localLinks[p.id] = CollectionLinkStore.storedLinks(p.id)
+                    }
+                    let backup = read.keepingLocalDetail(progress: localBooks, fusionKits: localKits, collectionLinks: localLinks)
                     // Final review: like the load line, paths only (a backup from a newer build).
                     if !report.isEmpty { RemoteLog.info("speicher", "Import · ignoriert: \(report.ignored.joined(separator: ", "))") }
                     // Task 3.9 (user decision 24.11.): a backup without keys keeps the keys, logins and remote-log
                     // secret of profiles that already exist here (same ID; Keychain fills gaps); a new ID gets none.
                     // A backup that carries keys keeps its own values.
                     let (withKeys, keptKeys) = backup.profiles.keepingSecrets(from: stored.profiles, store: secrets)
-                    let (imported, expired) = withKeys.droppingExpiredTokens()
+                    let (restored, expired) = withKeys.droppingExpiredTokens()
+                    // Phase 0a (finding 4): profiles of this TV the backup does not contain (created later, or
+                    // unreadable in it) stay with their data; only an untouched default profile gives way.
+                    let imported = restored.keepingLocalProfiles(from: stored) { id in
+                        !(localBooks[id]?.entries.isEmpty ?? true) || localKits[id] != nil || localLinks[id] != nil
+                    }
+                    let keptProfiles = imported.profiles.count - restored.profiles.count
                     // Fix round 2: saved directly, so the cleanup below runs only after the restored profiles are
                     // stored (a failed save ends in the catch: nothing is removed).
                     try store.save(imported)
                     stored = imported
-                    if keptKeys > 0 { RemoteLog.info("speicher", "Sicherung ohne Schlüssel: \(keptKeys) Profil(e) behalten ihre Schlüssel") }
+                    if keptKeys > 0 { RemoteLog.info("speicher", "Sicherung ohne Schlüssel: \(keptKeys) Profil(e) behalten ihre Schlüssel oder Addon-Adressen") }
+                    if keptProfiles > 0 { RemoteLog.info("speicher", "Sicherung: \(keptProfiles) Profil(e) dieses Geräts fehlen in der Sicherung und bleiben") }
                     mirrorSecrets()   // Task 2.2 write rule also after a restore (Keychain follows the saved profiles)
                     for gone in ProfileBlocks.removedByRestore(before: before, after: imported.profiles.map(\.id)) {
                         removeProfileData(gone)
                     }
                     // Parts of version 2 overwrite only what the backup contains; a version 1 file leaves them as they are.
                     for (id, book) in backup.progress where backup.profileIDs.contains(id) {
-                        try? progressStore.save(book, profile: id)
+                        do { try progressStore.save(book, profile: id) }
+                        catch { RemoteLog.error("speicher", "Sicherung: Fortschritt eines Profils nicht gespeichert: \(error)") }
                     }
                     for (id, k) in backup.fusionKits where backup.profileIDs.contains(id) { FusionKitStore.setStoredSettings(k, for: id) }
                     for (id, l) in backup.collectionLinks where backup.profileIDs.contains(id) { CollectionLinkStore.setStoredLinks(l, for: id) }
