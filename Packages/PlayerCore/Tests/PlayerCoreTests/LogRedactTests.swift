@@ -383,3 +383,21 @@ import Testing
     // Addresses inside URLs are handled by the URL rule as before.
     #expect(LogRedact.text("x https://h.example/x/c.mkv?mail=a@b.example y") == "x https://h.example/…/c.mkv y")
 }
+
+/// Nuvio review 2, finding 15: no false positives on file names and scp-style remotes, no partial or missed
+/// addresses with non-ASCII letters, `%40` or a bare `localhost`.
+@Test func redactEmailEdgeCases() {
+    for plain in ["Bild poster@2x.png geladen", "icon@3x.webp", "git@github.com:owner/repo.git fertig"] {
+        #expect(LogRedact.text(plain) == plain)
+    }
+    for (line, secret) in [("müller@example.org fehlgeschlagen", "ller"), ("user@exämple.org fehlgeschlagen", "user"),
+                           ("Anmeldung user%40example.org fehlgeschlagen", "user"),
+                           ("root@localhost fehlgeschlagen", "root"), ("Jürgen.Groß@mail.example.de", "rgen")] {
+        let r = LogRedact.text(line)
+        #expect(!r.contains(secret) && !r.contains("example") && !r.contains("localhost"), "\(r)")
+        #expect(r.contains("…@…") && LogRedact.text(r) == r)
+    }
+    // A sentence colon after an address is no remote path.
+    let colon = LogRedact.text("an user@example.org: abgelehnt")
+    #expect(!colon.contains("user@") && colon.hasSuffix(": abgelehnt"))
+}

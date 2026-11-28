@@ -31,7 +31,7 @@ public enum LogRedact {
         var out = head
         if out.contains("/") { out = replaceURLs(out) }
         // Nuvio T2: e-mail addresses outside URLs (URLs were shortened above, so no credential `@` is left there).
-        if out.contains("@") {
+        if out.contains("@") || out.contains("%40") {
             out = emailPattern.stringByReplacingMatches(
                 in: out, range: NSRange(location: 0, length: (out as NSString).length), withTemplate: "…@…")
         }
@@ -231,10 +231,22 @@ public enum LogRedact {
     nonisolated(unsafe) private static let bearerPattern = try! NSRegularExpression(
         pattern: #"\b(Bearer|Basic)\s+(?:"[^"]*"|'[^']*'|"[^"]*$|'[^']*$|[A-Za-z0-9._~+/=\-]+)"#, options: [.caseInsensitive])
 
-    /// An e-mail address: local part, `@`, a domain with at least one dot and a letter TLD. Becomes `…@…` (which the
-    /// pattern no longer matches, so a second pass changes nothing).
-    nonisolated(unsafe) private static let emailPattern = try! NSRegularExpression(
-        pattern: #"(?<![A-Za-z0-9._%+\-])[A-Za-z0-9._%+\-]+@(?:[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}(?![A-Za-z0-9\-])"#)
+    /// An e-mail address: local part, `@` (or `%40`), a domain with at least one dot and a letter TLD, or `localhost`.
+    /// Letters may be non-ASCII (`müller@exämple.org`). Not an address (review 2, finding 15): a "TLD" that is a file
+    /// extension (`poster@2x.png`) and a host followed by `:` and a path (`git@github.com:owner/repo.git`). Becomes
+    /// `…@…` (which the pattern no longer matches, so a second pass changes nothing).
+    nonisolated(unsafe) private static let emailPattern: NSRegularExpression = {
+        let local = #"[\p{L}\p{N}._%+\-]"#
+        let label = #"[\p{L}\p{N}](?:[\p{L}\p{N}\-]*[\p{L}\p{N}])?"#
+        let files = (shownExtensions.union(notTLDs)).sorted().joined(separator: "|")
+        let tld = #"(?!(?i:"# + files + #")(?![\p{L}\p{N}\-]))\p{L}{2,}"#
+        let pattern = #"(?<!"# + local + #")"# + local + #"+(?:@|%40)(?:(?:"# + label + #"\.)+"# + tld
+            + #"|localhost)(?![\p{L}\p{N}\-]|:[^\s])"#
+        return try! NSRegularExpression(pattern: pattern)
+    }()
+
+    /// File extensions besides `shownExtensions` that never end an address in a log line.
+    static let notTLDs: Set<String> = ["git", "pdf", "log", "gz", "tar", "swift", "plist", "bin", "dat", "tmp"]
 
     nonisolated(unsafe) private static let opaquePattern = try! NSRegularExpression(
         pattern: "[A-Za-z0-9_-]{\(opaqueRun),}")
