@@ -34,8 +34,9 @@ struct CollectionLinksPage: View {
             if !store.links.isEmpty {
                 SettingsSection("Importe") {
                     ForEach(store.links) { l in
-                        SettingsRow(symbol: l.url == nil ? "doc.on.clipboard" : "link", tint: tint,
-                                    title: l.url.flatMap { URL(string: $0)?.host } ?? "Eingefügter Code",
+                        let account = NuvioAccountImport.isAccountLink(l.url)   // T10: pseudo-link, no host
+                        SettingsRow(symbol: account ? "person.crop.circle" : (l.url == nil ? "doc.on.clipboard" : "link"), tint: tint,
+                                    title: account ? "Nuvio-Konto" : (l.url.flatMap { URL(string: $0)?.host } ?? "Eingefügter Code"),
                                     detail: "\(l.format) · \(l.summary)",
                                     accessory: .value(l.at.formatted(date: .numeric, time: .shortened)),
                                     reserveDetailSpace: false) {
