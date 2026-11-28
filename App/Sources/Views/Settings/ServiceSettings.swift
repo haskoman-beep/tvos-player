@@ -45,6 +45,7 @@ struct AccountSettingsRows: View {
                     }
                 }
             }
+            NuvioAccountRow(tint: tint)   // plan_nuvio_konto T8 (Views/Settings/NuvioSettings.swift)
         }
         .navigationDestination(item: $page) { p in
             switch p {

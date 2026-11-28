@@ -599,6 +599,26 @@ final class AppModel {
         settleIfInBackground(SaveQueue.progressKey(profile.id))
     }
 
+    /// plan_nuvio_konto T9: replays a Nuvio pass onto the live book and `state` (both may have changed during the
+    /// pass) and saves the book. `bookSaved` false: the book file is held (unreadable at load), so the caller must not
+    /// store the state either (its cursors would point past rows that are not on disk).
+    func replayNuvio(_ changes: NuvioSyncChanges, state: inout NuvioState) -> (applied: NuvioSyncApplied, bookSaved: Bool) {
+        var book = progress
+        let a = changes.apply(to: &book, state: &state)
+        guard a.applied else { return (a, false) }
+        guard book != progress else { return (a, true) }
+        progress = book
+        if progressSaveHeld {
+            RemoteLog.info("speicher", "Fortschritt nach Nuvio-Abgleich nicht gespeichert: Datei war unlesbar, wartet auf nächsten Fortschritt")
+            return (a, false)
+        }
+        do { try saveProgressBook() } catch {
+            lastError = "Fortschritt nicht gespeichert: \(error)"
+            return (a, false)
+        }
+        return (a, true)
+    }
+
     /// Progress of a profile; an unreadable file is kept as `.bak` by ProgressStore and the book starts empty
     /// (saved only with the next progress).
     func loadProgress(_ id: UUID) -> ProgressBook {
@@ -717,6 +737,7 @@ final class AppModel {
         let removed = ProfileBlocks.remove(profile: id, from: progressStore.storage)
         FusionKitStore.setStoredSettings(nil, for: id)
         CollectionLinkStore.setStoredLinks(nil, for: id)
+        forgetNuvioProfile(id)   // plan_nuvio_konto T8: nuvio-<profile>.json and the in-memory state
         RemoteLog.info("speicher", "Profildaten entfernt · \(removed.count) Block/Blöcke")
     }
 
@@ -894,6 +915,26 @@ final class AppModel {
         let id = try? await tmdb.imdbID(tmdbID: n, type: m.type == "series" ? .series : .movie)
         if let id { imdbCache[key] = id }
         return id
+    }
+
+    /// plan_nuvio_konto T9: like `imdbID(for:)`, but tells "no IMDb id" (counted, given up after a few answers)
+    /// from "could not ask" (offline, no TMDB key: tried again next pass) for the Nuvio pass.
+    func nuvioIMDbLookup(for m: MetaPreview) async -> NuvioIDLookup {
+        if m.id.hasPrefix("tt") { return .found(m.id) }
+        guard m.id.hasPrefix("tmdb:"), let n = Int(m.id.dropFirst(5)) else { return .notFound }
+        guard let tmdb else { return .unavailable }
+        let key = "\(m.type):\(n)"
+        if let c = imdbCache[key] { return .found(c) }
+        do {
+            guard let id = try await tmdb.imdbID(tmdbID: n, type: m.type == "series" ? .series : .movie),
+                  id.hasPrefix("tt") else { return .notFound }
+            imdbCache[key] = id
+            return .found(id)
+        } catch APIError.status(404) {
+            return .notFound
+        } catch {
+            return .unavailable
+        }
     }
 
     /// TMDB-ID → IMDb-ID (ändert sich nicht; spart die Nachfrage bei jedem Vorladen/Öffnen).
@@ -1232,6 +1273,8 @@ final class AppModel {
                         do { try saver.runNow(SaveQueue.progressKey(id)) { _ = try progressStore.save(book, profile: id) } }
                         catch { RemoteLog.error("speicher", "Sicherung: Fortschritt eines Profils nicht gespeichert: \(error)") }
                     }
+                    // plan_nuvio_konto T8: a replaced book is pulled from scratch (profile choice and outbox stay).
+                    resetNuvioCursors(for: backup.progress.keys.filter { backup.profileIDs.contains($0) })
                     for (id, k) in backup.fusionKits where backup.profileIDs.contains(id) { FusionKitStore.setStoredSettings(k, for: id) }
                     for (id, l) in backup.collectionLinks where backup.profileIDs.contains(id) { CollectionLinkStore.setStoredLinks(l, for: id) }
                     // Picture and sound come back; the remote log switch and receiver stay as set on this TV (SEC-2).
@@ -1249,7 +1292,9 @@ final class AppModel {
             case .importCollectionLink(let u): await CollectionLinkStore.shared.importLink(u, model: self)   // wave F-o round 2
             case .importCollectionCode(let d): await CollectionLinkStore.shared.importCode(d, model: self)
             case .exportSecrets: break   // PhoneServer.answer seals the file after „Erlauben“
-            case .nuvioSignIn: break   // Nuvio: wired in T8
+            case .nuvioSignIn(let email, let password):
+                // plan_nuvio_konto T8: the two values end with this call (AppModel+Nuvio); never logged or kept.
+                await nuvioSignIn(email: email, password: password)
             case .look(let l):
                 // Task 4.3 (controller ruling): the look goes onto the active profile, and the old fields it maps to
                 // are written too, so the views that still read `appearance`/`player` show it today (PlayerCore).

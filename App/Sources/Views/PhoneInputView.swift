@@ -231,6 +231,7 @@ final class PhoneServer: ObservableObject {
         let backups = PhoneBackupState(blocked: model.storeState != .ready, sealedFile: sealedFile, sealedDelivered: sealedDelivered,
                                        sealedOutcome: sealedOutcome, requestOpen: gate.current(now: now) != nil)
         let (resp, cmds) = page.handle(r, profileName: model.profile.name, home: model.phoneHomeState(), backups: backups,
+                                       nuvio: model.phoneNuvioState,   // plan_nuvio_konto T8: form only while signed out
                                        nuvioLogin: { self.session.openNuvioLogin($0, open: PhoneSeal.cryptoKitOpen) }) {
             model.backupData()
         }
@@ -314,9 +315,20 @@ struct PhoneInputView: View {
                 }
                 VStack(alignment: .leading, spacing: theme.space.m) {
                     Text("Am Handy eingeben").textRole(.pageTitle)
-                    Text("QR-Code mit der iPhone-Kamera scannen. Auf der Seite Addon-URLs, Schlüssel, Nuvio-Export oder TMDB-Links einfügen und senden. Unter „Startseite ordnen“ Reihen per Finger verschieben und ausblenden. Dort kannst du auch alle Profile sichern.")
-                        .textRole(.rowTitle)
+                    if section == .nuvio {
+                        // plan_nuvio_konto T8: the sign-in steps and the hint of plan section 4 (hint as on the phone page).
+                        VStack(alignment: .leading, spacing: theme.space.s) {
+                            ForEach(NuvioTexts.signInSteps, id: \.self) { step in
+                                Text(step).textRole(.rowTitle)
+                            }
+                            Text(NuvioTexts.signInHint).textRole(.rowDetail)
+                        }
                         .frame(maxWidth: Theme.Layout.phoneTextWidth, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text("QR-Code mit der iPhone-Kamera scannen. Auf der Seite Addon-URLs, Schlüssel, Nuvio-Export oder TMDB-Links einfügen und senden. Unter „Startseite ordnen“ Reihen per Finger verschieben und ausblenden. Dort kannst du auch alle Profile sichern.")
+                            .textRole(.rowTitle)
+                            .frame(maxWidth: Theme.Layout.phoneTextWidth, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                    }
                     if let a = server.shownAddress {
                         Text(a).font(theme.type.font(.rowDetail).monospaced()).foregroundStyle(theme.color.secondary)
                     }
