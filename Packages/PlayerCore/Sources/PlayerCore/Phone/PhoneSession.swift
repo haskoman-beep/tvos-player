@@ -13,7 +13,7 @@ public enum PhoneLimits {
     public static func maxBody(for path: String) -> Int {
         switch path {
         case "/submit": 8 * 1024 * 1024   // backups and pasted collection code
-        default: 16 * 1024                // "/home" (one move) and everything else
+        default: 16 * 1024                // "/home" (one move), "/nuvio" (sign-in) and everything else
         }
     }
 }
@@ -49,8 +49,16 @@ public struct PhoneSession: Sendable {
     private var cookie: String?
     private var peer: String?
     private var started: Date?
+    /// plan_nuvio_konto T1b: key of the sealed Nuvio sign-in (PhoneSeal.swift); lives and dies with this session.
+    let key: PhonePageKey
+    /// Nonces of sealed sign-ins this session already accepted (each once).
+    var usedNonces: Set<Data> = []
 
-    public init(token: String, now: Date) { self.token = token; self.created = now }
+    /// `pageKey`: 32 bytes, random by default; it reaches the phone only in the QR address's fragment (`qrAddress`).
+    public init(token: String, now: Date, pageKey: Data = PhoneSession.randomPageKey()) {
+        precondition(pageKey.count == PhoneSeal.keyLength, "page key must be 32 bytes")
+        self.token = token; self.created = now; self.key = PhonePageKey(data: pageKey)
+    }
 
     /// `cookie` is the raw `Cookie` header, `peer` the address of the connecting device.
     public mutating func authorize(queryToken: String?, cookie header: String?, peer: String, now: Date) -> PhoneAuth {
@@ -63,17 +71,24 @@ public struct PhoneSession: Sendable {
         return .firstUse(setCookie: "\(Self.cookieName)=\(c); Path=/; Max-Age=\(Int(Self.sessionLifetime)); HttpOnly; SameSite=Lax")
     }
 
-    /// Head first (SEC-5): body limit of the path, then access. Only `.readBody` lets the server read on.
+    /// Head first (SEC-5): page key in the address, body limit of the path, then access. Only `.readBody` lets the
+    /// server read on.
     public mutating func admit(_ head: RequestHead, peer: String, now: Date) -> PhoneAdmission {
+        // Review T1b: a scanner that wrote `#` as `%23` (or a client that sent the fragment) put the page key on the
+        // Wi-Fi. The session ends at once, so the TV shows a new code with a new key (`needsNewCode`).
+        if Self.carriesPageKey(head) {
+            ended = true
+            return .respond(Self.deniedResponse)
+        }
         guard head.contentLength <= PhoneLimits.maxBody(for: head.path) else {
             return .respond(HTTPResponse(status: 413, body: Data(PhoneInputPage.html("Zu groß", "<p>Die Eingabe ist zu groß.</p>").utf8)))
         }
         switch authorize(queryToken: head.query["t"], cookie: head.headers["cookie"], peer: peer, now: now) {
         case .denied:
-            return .respond(HTTPResponse(status: 403, body: Data(PhoneInputPage.html("Kein Zugang",
-                "<p>Diese Adresse gilt nicht mehr. Am Fernseher „Neuer QR-Code“ wählen und neu scannen.</p>").utf8)))
+            return .respond(Self.deniedResponse)
         case .firstUse(let set):
-            // Token out of the address bar; the anchor (#home …) stays, browsers keep it across the redirect.
+            // Token out of the address bar; the fragment (#home, #nuvio&k=… with the page key) stays, browsers keep it
+            // across the redirect because this Location has none. The key is never part of this answer.
             var rest = head.query; rest["t"] = nil
             let q = rest.sorted { $0.key < $1.key }.map { "\(Self.formEscape($0.key))=\(Self.formEscape($0.value))" }.joined(separator: "&")
             let loc = head.method == "GET" ? head.path + (q.isEmpty ? "" : "?" + q) : "/"
@@ -84,6 +99,27 @@ public struct PhoneSession: Sendable {
     }
 
     public mutating func end() { ended = true }
+
+    /// The 403 "no access" page. Review T1b: it carries the page script with the marker `nv_forget`, which drops a
+    /// stored page key (and takes one out of the address of an old QR code).
+    static var deniedResponse: HTTPResponse {
+        HTTPResponse(status: 403, body: Data(PhoneInputPage.html("Kein Zugang",
+            "<p>Diese Adresse gilt nicht mehr. Am Fernseher „Neuer QR-Code“ wählen und neu scannen.</p>"
+            + "<p id=nv_forget hidden></p><script>\(PhoneSealScript.source)</script>").utf8))
+    }
+
+    /// Review T1b: the request carries a page key: a query parameter `k`, or `k=` starting a parameter anywhere in the
+    /// percent-decoded target (`?t=tok%23nuvio&k=…`, `%26k%3D…`, a literal `#…&k=…` a client should never send).
+    /// `ok=` or `lk=` are other parameters and do not count.
+    static func carriesPageKey(_ head: RequestHead) -> Bool {
+        if head.query["k"] != nil { return true }
+        let decoded = Array((head.target.removingPercentEncoding ?? head.target).utf8)
+        guard decoded.count >= 2 else { return false }
+        for i in 1..<(decoded.count - 1) where decoded[i] == UInt8(ascii: "k") && decoded[i + 1] == UInt8(ascii: "=") {
+            if [UInt8(ascii: "?"), UInt8(ascii: "&"), UInt8(ascii: "#"), UInt8(ascii: ";")].contains(decoded[i - 1]) { return true }
+        }
+        return false
+    }
 
     /// Someone is (or was) connected with this code.
     public var isConnected: Bool { tokenUsed && !ended }
@@ -162,6 +198,10 @@ extension PhoneCommand {
                 + (noSecrets && hasAddons ? " Addons mit Zugangsdaten danach neu eintragen." : ""))
         case .exportSecrets:
             return .needsConfirmation(summary: "Sicherung mit allen Schlüsseln und Anmeldungen verschlüsselt an das Handy geben. Den Code zeigt danach nur der Fernseher.")
+        case .nuvioSignIn(let email, _):
+            // plan_nuvio_konto T1: someone could sign the TV into their own account. Review T1b: so the TV names the
+            // account, masked (`maskedEmail`); never the password. The log uses `logKind` only, never this text.
+            return .needsConfirmation(summary: Self.maskedEmail(email.value).map { "Bei Nuvio anmelden: \($0)" } ?? "Bei Nuvio anmelden")
         case .importNuvioURL, .importNuvioJSON, .addTMDBLink, .importFusionURL, .moveRow, .removeRow, .deleteRow, .restoreRow, .addRow,
              .setRatingIconSet, .importCollectionLink, .importCollectionCode, .look:
             return .plain
@@ -172,6 +212,19 @@ extension PhoneCommand {
     public var needsBackupCode: Bool {
         if case .importBackup(let d) = self { return BackupCrypto.isSealed(d) }
         return false
+    }
+
+    /// Review T1b: `u…@example.org` for `user@example.org`: the first character of the local part (only a letter or a
+    /// digit, otherwise left out) and the domain after the last `@`. Nil without a local part or domain, or when the
+    /// domain holds anything but letters, digits, `.` and `-` or is longer than 253 characters, so the text on the TV
+    /// cannot be made to read like something else.
+    static func maskedEmail(_ email: String) -> String? {
+        guard let at = email.lastIndex(of: "@") else { return nil }
+        let local = email[..<at], domain = email[email.index(after: at)...]
+        guard let first = local.first, !domain.isEmpty, domain.count <= 253,
+              domain.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || $0 == "." || $0 == "-" }),
+              domain.unicodeScalars.contains(where: { CharacterSet.alphanumerics.contains($0) }) else { return nil }
+        return (first.isLetter || first.isNumber ? String(first) : "") + "…@" + domain
     }
 
     static let keyLabels = ["tmdb": "TMDB-API-Key", "mdblist": "MDBList-Key", "trakt_id": "Trakt Client ID",
@@ -207,6 +260,7 @@ extension PhoneConfirmation {
             case .setKey(let s, _): k = s == AtvloadlyAddress.key ? "Adresse" : "Schlüssel"
             case .importBackup: k = "Import"
             case .exportSecrets: k = "Sicherung"
+            case .nuvioSignIn: k = "nuvio-anmeldung"
             default: k = "Befehl"
             }
             if !kinds.contains(k) { kinds.append(k) }

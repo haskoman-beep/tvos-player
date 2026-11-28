@@ -50,6 +50,20 @@ jobs:
           sudo xcode-select -s "$(ls -d /Applications/Xcode_27*.app /Applications/Xcode_26.3*.app 2>/dev/null | sort -V | tail -1)"
           xcodebuild -version
           xcodebuild -showsdks | grep -i tvos
+      # plan_nuvio_konto T1b: the phone page's JavaScript ChaCha20-Poly1305 (RFC 8439 vectors, OpenSSL differential,
+      # padding, page binding) under the runner's Node; the Linux job's swift container has no Node.
+      - name: Phone seal script (Node)
+        run: node --version && node tools/phone_seal_test.mjs
+      # The shipped CryptoKit opener (PhoneSeal.cryptoKitOpen) against the JavaScript fixture; CryptoKit exists only
+      # here, the Linux job runs the rest of the suite.
+      - name: Phone seal opener (CryptoKit)
+        run: |
+          set -o pipefail
+          cd Packages/PlayerCore && swift test --filter javaScriptFixture 2>&1 | tee "$RUNNER_TEMP/seal-tests.log"
+          # Fails if the CryptoKit cases were compiled out or skipped instead of run.
+          for t in javaScriptFixtureOpensWithCryptoKit javaScriptFixtureRefusesWrongKeyOrAADWithCryptoKit; do
+            grep -E "Test $t\(\) passed" "$RUNNER_TEMP/seal-tests.log" || { echo "::error title=Seal::$t did not run"; exit 1; }
+          done
       # Face model for X-Ray (SFace, OpenCV Zoo, Apache-2.0): downloaded and converted to Core ML fp16 here in CI
       # only, never committed (.gitignore). Cached by the script/requirements hash plus the pinned ONNX SHA-256.
       # Must run before XcodeGen: project.yml lists App/Resources/SFace.mlpackage (Xcode compiles it to .mlmodelc).

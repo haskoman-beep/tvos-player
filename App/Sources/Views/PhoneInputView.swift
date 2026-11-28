@@ -9,7 +9,8 @@ import PlayerCore
 /// restore, addons, keys and the export with secrets (`PhoneConfirmGate`).
 @MainActor
 final class PhoneServer: ObservableObject {
-    /// QR address (with the one-time token).
+    /// Address with the one-time token, set while the server runs. The QR code shows `qrAddress(section:)`, which adds
+    /// the page key in the fragment.
     @Published var address: String?
     /// Address as text on screen, without the token (SEC-16).
     @Published var shownAddress: String?
@@ -86,6 +87,13 @@ final class PhoneServer: ObservableObject {
             shownAddress = base
             address = "\(base)/?t=\(session.token)"
         } else { failure = "Keine WLAN/LAN-Adresse gefunden." }
+    }
+
+    /// QR address for `section`: one-time token, section anchor and the session's page key in the fragment
+    /// (`PhoneSession.qrAddress`, plan_nuvio_konto T1b).
+    func qrAddress(section: PhoneSection?) -> String? {
+        guard address != nil, let base = shownAddress else { return nil }
+        return session.qrAddress(base: base, section: section)
     }
 
     private func tick() {
@@ -222,7 +230,8 @@ final class PhoneServer: ObservableObject {
         let now = Date()
         let backups = PhoneBackupState(blocked: model.storeState != .ready, sealedFile: sealedFile, sealedDelivered: sealedDelivered,
                                        sealedOutcome: sealedOutcome, requestOpen: gate.current(now: now) != nil)
-        let (resp, cmds) = page.handle(r, profileName: model.profile.name, home: model.phoneHomeState(), backups: backups) {
+        let (resp, cmds) = page.handle(r, profileName: model.profile.name, home: model.phoneHomeState(), backups: backups,
+                                       nuvioLogin: { self.session.openNuvioLogin($0, open: PhoneSeal.cryptoKitOpen) }) {
             model.backupData()
         }
         // One download of the sealed file; the code stays on screen until the view closes.
@@ -290,7 +299,7 @@ struct PhoneInputView: View {
     @State private var backupCode = ""
     @Environment(\.theme) private var theme
 
-    private var link: String? { server.address.map { PhoneSection.url($0, section: section) } }
+    private var link: String? { server.qrAddress(section: section) }
 
     var body: some View {
         ZStack {

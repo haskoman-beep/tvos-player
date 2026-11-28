@@ -431,3 +431,53 @@ private func req(_ s: String) -> HTTPRequest {
     #expect(s.profiles.count == 1 && !report.isEmpty)
     #expect(report.ignored.allSatisfy { !$0.contains("turquoise") })   // paths only, no values
 }
+
+// MARK: Nuvio sign-in (plan_nuvio_konto T1)
+
+@Test func nuvioBodyOverSixteenKilobytesIs413() {
+    var s = PhoneSession(token: "tok", now: t0)
+    let c = cookieHeader(s.authorize(queryToken: "tok", cookie: nil, peer: phone, now: t0))
+    #expect(PhoneLimits.maxBody(for: PhoneInputPage.nuvioPath) == 16 * 1024)
+    let big = s.admit(head("POST /nuvio HTTP/1.1\r\nCookie: \(c)\r\nContent-Length: \(16 * 1024 + 1)\r\n\r\n"), peer: phone, now: t0 + 1)
+    guard case .respond(let r) = big else { Issue.record("413 expected"); return }
+    #expect(r.status == 413)
+    #expect(s.admit(head("POST /nuvio HTTP/1.1\r\nCookie: \(c)\r\nContent-Length: 60\r\n\r\n"), peer: phone, now: t0 + 2) == .readBody(60))
+}
+
+@Test func nuvioSignInNeedsConfirmationWithoutValues() {
+    let cmd = PhoneCommand.nuvioSignIn(email: PhoneSecret("user@example.org"), password: PhoneSecret("FAKE-PASS-0010"))
+    guard case .needsConfirmation(let summary) = cmd.sensitivity else { Issue.record("confirmation expected"); return }
+    // Review T1b: the TV names the account, masked (first character of the local part and the domain), never the password.
+    #expect(summary == "Bei Nuvio anmelden: u…@example.org")
+    #expect(!summary.contains("user") && !summary.contains("FAKE"))
+    #expect(!cmd.isHomeEdit && !cmd.needsBackupCode)
+    var g = PhoneConfirmGate()
+    let (plain, refused) = g.offer([cmd], now: t0)
+    #expect(plain.isEmpty && refused.isEmpty)
+    let open = g.current(now: t0)
+    #expect(open?.summary == ["Bei Nuvio anmelden: u…@example.org"] && open?.expires == t0 + 60)
+    // The log path never carries the masked address.
+    #expect(open?.logKind == "nuvio-anmeldung")
+    for o in [PhoneConfirmation.Outcome.allowed, .declined, .lapsed] {
+        let line = open?.logLine(o) ?? ""
+        #expect(!line.contains("example") && !line.contains("u…") && !line.contains("@"), "\(line)")
+    }
+    #expect(g.resolve(allow: true, now: t0 + 59) == [cmd])
+}
+
+@Test func nuvioSignInSummaryMasksTheAddress() {
+    func summary(_ email: String) -> String? {
+        if case .needsConfirmation(let s) = PhoneCommand.nuvioSignIn(email: PhoneSecret(email), password: PhoneSecret("p")).sensitivity { s } else { nil }
+    }
+    #expect(summary("a@b.example") == "Bei Nuvio anmelden: a…@b.example")
+    #expect(summary("Ännchen.Muster@bücher.example") == "Bei Nuvio anmelden: Ä…@bücher.example")
+    #expect(summary("x\"@y\"@mail.example") == "Bei Nuvio anmelden: x…@mail.example")   // the last @ starts the domain
+    #expect(summary("9@sub-1.example.org") == "Bei Nuvio anmelden: 9…@sub-1.example.org")
+    // A first character that is no letter or digit is left out.
+    #expect(summary("+tag@example.org") == "Bei Nuvio anmelden: …@example.org")
+    // No @, nothing before or after it, or a domain with other characters (spaces, line breaks, direction marks): no address.
+    for bad in ["nomail", "", "@example.org", "user@", "user@exa mple.org", "user@example.org\nErlaubt", "user@example.org\u{202E}gro",
+                "user@" + String(repeating: "a", count: 254)] {
+        #expect(summary(bad) == "Bei Nuvio anmelden", "\(bad)")
+    }
+}
