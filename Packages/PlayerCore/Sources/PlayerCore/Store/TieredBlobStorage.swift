@@ -39,6 +39,11 @@ public protocol KeyValueBlobs: Sendable {
 ///   4. The highest rank wins. On equal rank between verified copies the UserDefaults entry wins, then the folder
 ///      order. On equal rank with an unverified copy involved the dates decide (UserDefaults: `rev.<key>`, file:
 ///      modification date; equal dates → same order): for rank 0 this is exactly the Phase 0a rule.
+///   5. Review F1: `remove` leaves a tombstone stamp (number above everything known, a fingerprint no payload can
+///      have) in each writable folder's sidecar, or in the record when no folder took it. Copies ranked at or below
+///      the highest tombstone are removed state and never win, so the next write numbers above the removed state
+///      even when UserDefaults falls back to it, and a copy a folder refused to delete stays gone.
+///   6. Review F5: stamps above `seqLimit` come from damaged sidecars/records and are ignored.
 ///   Phase 0a's date revision `rev.<key>` is still written (older builds read it) but only rule 4 uses it.
 public struct TieredBlobStorage: BlobStorage {
     public static let prefix = "blob."
@@ -166,6 +171,13 @@ public struct TieredBlobStorage: BlobStorage {
 
     static let stampFormat: UInt8 = 1
 
+    /// Review F5: stamps carry no checksum. A number above this bound can only come from a damaged sidecar or record
+    /// (2^48 writes are never reached); such stamps are dropped on decoding, and numbering stops here.
+    static let seqLimit: UInt64 = 1 << 48
+
+    /// Review F1: fingerprint of a tombstone stamp left by `remove` (no payload has this length).
+    static let tombstonePrint = Fingerprint(count: .max, hash: 0)
+
     /// Format byte, then 24 bytes per stamp (seq, length, hash; little endian). First stamp = the write it belongs to.
     static func encodeStamps(_ stamps: [Stamp]) -> Data {
         var out: [UInt8] = [stampFormat]
@@ -177,7 +189,8 @@ public struct TieredBlobStorage: BlobStorage {
         return Data(out)
     }
 
-    /// nil for a missing or unreadable sidecar/record (treated as absent).
+    /// nil for a missing or unreadable sidecar/record (treated as absent), also when every stamp in it is above
+    /// `seqLimit`.
     static func decodeStamps(_ data: Data?) -> [Stamp]? {
         guard let data else { return nil }
         let b = [UInt8](data)
@@ -187,12 +200,13 @@ public struct TieredBlobStorage: BlobStorage {
             for i in 0..<8 { v |= UInt64(b[at + i]) << UInt64(8 * i) }
             return v
         }
-        return stride(from: 1, to: b.count, by: 24).map { o in
+        let stamps = stride(from: 1, to: b.count, by: 24).map { o in
             Stamp(seq: word(o), print: Fingerprint(count: word(o + 8), hash: word(o + 16)))
-        }
+        }.filter { $0.seq <= seqLimit }
+        return stamps.isEmpty ? nil : stamps
     }
 
-    static func next(_ seq: UInt64) -> UInt64 { seq == .max ? seq : seq + 1 }
+    static func next(_ seq: UInt64) -> UInt64 { seq >= seqLimit ? seqLimit : seq + 1 }
 
     /// One readable copy of a blob, ranked.
     struct Candidate {
@@ -215,9 +229,27 @@ public struct TieredBlobStorage: BlobStorage {
         var highest: UInt64 = 0
         /// Any sidecar or record exists (the name is no longer pure legacy).
         var hasStamps = false
-        var winner: Candidate? { TieredBlobStorage.best(candidates) }
-        var bestFile: Candidate? { TieredBlobStorage.best(candidates.filter { $0.place != .defaults }) }
+        /// Review F1: highest tombstone number (rule 5); copies ranked at or below it are removed state.
+        var barrier: UInt64?
+        /// The copies that may win (all of them when there is no tombstone).
+        var visible: [Candidate] {
+            guard let b = barrier else { return candidates }
+            return candidates.filter { $0.stamp.seq > b }
+        }
+        var winner: Candidate? { TieredBlobStorage.best(visible) }
+        var bestFile: Candidate? { TieredBlobStorage.best(visible.filter { $0.place != .defaults }) }
+        /// The UserDefaults copy, also when it is removed state (its stamp is kept as the second stamp of a record).
         var defaultsCopy: Candidate? { candidates.first { $0.place == .defaults } }
+        /// Review F2: distinct payloads that may win, best first.
+        var ranked: [Data] {
+            var rest = visible
+            var out: [Data] = []
+            while let top = TieredBlobStorage.best(rest) {
+                out.append(top.data)
+                rest.removeAll { $0.data == top.data }
+            }
+            return out
+        }
     }
 
     /// Rule 4: `a` is strictly better than `b` (on a full tie the earlier one, UserDefaults then folder order, stays).
@@ -258,6 +290,7 @@ public struct TieredBlobStorage: BlobStorage {
         let known = (record ?? []) + sidecars.compactMap { $0 }.flatMap { $0 }
         var snap = Snapshot()
         snap.hasStamps = !known.isEmpty
+        snap.barrier = known.filter { $0.print == Self.tombstonePrint }.map(\.seq).max()
         if let z = defaults.data(forKey: storeKey(name)), let d = decompress(z) {
             snap.candidates.append(rank(d, own: record, known: known, place: .defaults, date: revision(name) ?? .distantPast))
         }
@@ -355,9 +388,12 @@ public struct TieredBlobStorage: BlobStorage {
                 dropDefaults(name)   // Schreiben nicht angekommen: nur Datei gilt
             }
         } else {
-            dropDefaults(name)
             // The record also vouches for the file copies (a sidecar tvOS removed from Caches, a folder that missed it).
-            defaults.set(Self.encodeStamps([stamp]), forKey: sequenceKey(name))
+            // Review F3: record before the copy goes, with the dropped copy's stamp: if the removal is lost, the old
+            // copy still matches a stamp below the new one instead of ranking as foreign (newer).
+            let old = snap.defaultsCopy.map { [$0.stamp] } ?? []
+            defaults.set(Self.encodeStamps([stamp] + old), forKey: sequenceKey(name))
+            dropDefaults(name)
         }
         if Self.profileFamily.contains(name) { trimProfileFamily() }
         Self.storeLock.unlock()
@@ -368,15 +404,43 @@ public struct TieredBlobStorage: BlobStorage {
         guard fileOK else { throw StorageFull(bytes: data.count) }
     }
 
+    /// Review F1 (rule 5): tombstone first, then the copies. The tombstone goes into the record and into the sidecar
+    /// of every writable folder, each time with the stamp of the copy it covers as second stamp; an interrupted remove
+    /// then already reads as removed. Afterwards the copies, the sidecars of folders without a tombstone and, when a
+    /// folder holds the tombstone, the record go (UserDefaults keeps no entry for a removed blob). A name without any
+    /// stamp (legacy or never written) is removed completely, as before.
     public func remove(_ name: String) {
         Self.storeLock.lock()
         defer { Self.storeLock.unlock() }
+        let snap = evaluate(name)
+        // Removed already (only the tombstone is left): keep it as it is.
+        if snap.candidates.isEmpty, let b = snap.barrier, b == snap.highest { return }
+        var marked: [URL] = []
+        if snap.highest > 0 {
+            let tomb = Stamp(seq: Self.next(snap.highest), print: Self.tombstonePrint)
+            let copy = snap.defaultsCopy.map { [$0.stamp] } ?? []
+            defaults.set(Self.encodeStamps([tomb] + copy), forKey: sequenceKey(name))
+            for dir in writeDirectories where directories.contains(where: { $0.directory == dir.directory }) {
+                let stamps = [tomb] + folderStamp(dir, snap)
+                if (try? dir.write(Self.sidecarName(name), Self.encodeStamps(stamps))) != nil { marked.append(dir.directory) }
+            }
+        }
         dropDefaults(name)
-        // Payloads before their sidecars: an interrupted remove leaves stamped copies or stamps without copies, never
-        // an unstamped (legacy) copy of a blob that has stamps elsewhere.
         for dir in directories { dir.remove(name) }
-        for dir in directories { dir.remove(Self.sidecarName(name)) }
-        defaults.remove(forKey: sequenceKey(name))
+        for dir in directories where !marked.contains(dir.directory) { dir.remove(Self.sidecarName(name)) }
+        // The record keeps the tombstone only while it is needed: no folder holds one, or a folder without one still
+        // holds something of the blob (it refused the delete) that a lost tombstone elsewhere would let through.
+        let leftover = directories.contains { dir in
+            !marked.contains(dir.directory) && (dir.read(name) != nil || dir.read(Self.sidecarName(name)) != nil)
+        }
+        if snap.highest == 0 || (!marked.isEmpty && !leftover) { defaults.remove(forKey: sequenceKey(name)) }
+    }
+
+    /// Stamp of the payload `dir` holds now (from the snapshot), as second stamp of a new sidecar there.
+    func folderStamp(_ dir: FileBlobStorage, _ snapshot: Snapshot) -> [Stamp] {
+        guard let i = directories.firstIndex(where: { $0.directory == dir.directory }),
+              let old = snapshot.candidates.first(where: { $0.place == .folder(i) }) else { return [] }
+        return [old.stamp]
     }
 
     /// Phase 0a.1: into every folder that takes it, sidecar first (new stamp plus the stamp of the payload it
@@ -385,11 +449,7 @@ public struct TieredBlobStorage: BlobStorage {
     func writeFiles(_ name: String, _ data: Data, stamp: Stamp, snapshot: Snapshot) -> Bool {
         var ok = false
         for dir in writeDirectories {
-            var stamps = [stamp]
-            if let i = directories.firstIndex(where: { $0.directory == dir.directory }),
-               let old = snapshot.candidates.first(where: { $0.place == .folder(i) }) {
-                stamps.append(old.stamp)
-            }
+            let stamps = [stamp] + folderStamp(dir, snapshot)
             guard (try? dir.write(Self.sidecarName(name), Self.encodeStamps(stamps))) != nil else { continue }
             if (try? dir.write(name, data)) != nil { ok = true }
         }
@@ -549,6 +609,20 @@ public extension BlobStorage {
             if (try? write(b.name, b.data)) == nil || read(b.name) != b.data { failed.append(b.name) }
         }
         return failed
+    }
+}
+
+/// Review F2: storages that keep several copies of one blob list the distinct payloads that could be current, best
+/// first (`read` returns the first). A loader falls back to the next one when the best does not decode at all.
+public protocol BlobCandidates: Sendable {
+    func rankedPayloads(_ name: String) -> [Data]
+}
+
+extension TieredBlobStorage: BlobCandidates {
+    public func rankedPayloads(_ name: String) -> [Data] {
+        Self.storeLock.lock()
+        defer { Self.storeLock.unlock() }
+        return evaluate(name).ranked
     }
 }
 

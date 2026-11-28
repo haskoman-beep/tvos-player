@@ -387,15 +387,26 @@ public struct ProgressStore: Sendable {
 
     /// Missing file: empty book. Task 1.3 (S-11): an unreadable file gives nil and is kept as
     /// `progress-<Profil>.json.bak`; the caller starts with an empty book and saves only after the next progress.
+    /// Review F2: on a storage with several copies (`BlobCandidates`), an unreadable best copy is kept as .bak and the
+    /// next copy that decodes is used instead (the next save then replaces the damaged one).
     public func load(profile: UUID) -> ProgressBook? {
         guard let d = storage.read(name(profile)) else { return ProgressBook() }
         let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
         if let r = try? dec.decodeReporting(ProgressBook.self, from: d) {
             // Phase 0a.1: an entry that could not be read is left out of the book; the file as it was stays as .bak.
-            if !r.report.isEmpty { try? storage.write(name(profile) + ".bak", d) }
+            // Review F7: unless the .bak holds an earlier file that did not decode at all (worth more).
+            if !r.report.isEmpty {
+                let old = storage.read(name(profile) + ".bak")
+                let keepOld = old.map { $0 != d && (try? dec.decodeReporting(ProgressBook.self, from: $0)) == nil } ?? false
+                if !keepOld { try? storage.write(name(profile) + ".bak", d) }
+            }
             return r.value
         }
         try? storage.write(name(profile) + ".bak", d)
+        let others = (storage as? BlobCandidates)?.rankedPayloads(name(profile)).filter { $0 != d } ?? []
+        for c in others {
+            if let r = try? dec.decodeReporting(ProgressBook.self, from: c) { return r.value }
+        }
         return nil
     }
 
