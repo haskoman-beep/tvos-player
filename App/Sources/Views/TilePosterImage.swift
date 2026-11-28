@@ -27,12 +27,13 @@ struct TilePosterImage: View {
         let url = TilePosterChoice.current(addon: addon, poster: item.poster, failed: gone)
         // S2: the TMDB poster stays until the addon poster has arrived (no placeholder in between); `.id`: a kept
         // picture always belongs to this item.
+        // Build 8 (poster): decoded at the tile size exactly (`exactSize`), not the next size step.
         RemoteImage(url: url, keepsPreviousWhileLoading: true, onFailure: { s in
             var urls = gone
             urls.insert(s)
             failed = Failed(item: item.id, urls: urls)
             TilePosterLog.note(url: s, next: TilePosterChoice.fallbackText(addon: addon, poster: item.poster, failed: urls))
-        })
+        }, exactSize: true)
         .id(item.id)
         // Wave F-k R1: base layer; the placeholder is 92 % transparent, the loaded picture covers the title.
         .background(alignment: .bottomLeading) {

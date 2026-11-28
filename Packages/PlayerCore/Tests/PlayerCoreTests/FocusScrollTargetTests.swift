@@ -4,40 +4,6 @@ import Testing
 
 // MARK: Build 7: focus scroll targets (row top, leading clearance)
 
-@Test func shortRowLandsAtItsTopInsteadOfCentred() {
-    // b6-1 log: Studios 3628…4060, focus scroll ended at 3545 (Abstand +83); list 676 pt high.
-    let row = HomeRowSpan(minY: 3628, maxY: 4060)
-    let card = HomeRowSpan(minY: 3710, maxY: 4040)
-    #expect(FocusScrollTarget.rowTop(proposed: 3545, viewport: 676, row: row, focused: card, maxOffset: 7160) == 3628)
-    // Tall poster row: ±20 pt off becomes exact too.
-    let tall = HomeRowSpan(minY: 2938, maxY: 3565)
-    let poster = HomeRowSpan(minY: 3020, maxY: 3540)
-    #expect(FocusScrollTarget.rowTop(proposed: 2919, viewport: 676, row: tall, focused: poster, maxOffset: 6313) == 2938)
-}
-
-@Test func rowTopStopsAtTheContentEnd() {
-    let row = HomeRowSpan(minY: 7042, maxY: 7669)
-    let card = HomeRowSpan(minY: 7120, maxY: 7600)
-    #expect(FocusScrollTarget.rowTop(proposed: 6950, viewport: 676, row: row, focused: card, maxOffset: 7000) == 7000)
-    // A row at the very top cannot go above 0.
-    let first = HomeRowSpan(minY: -10, maxY: 600)
-    #expect(FocusScrollTarget.rowTop(proposed: 30, viewport: 676, row: first,
-                                     focused: HomeRowSpan(minY: 70, maxY: 580), maxOffset: 5000) == 0)
-}
-
-@Test func rowTopLeavesOtherScrollsAlone() {
-    let row = HomeRowSpan(minY: 3628, maxY: 4060)
-    let card = HomeRowSpan(minY: 3710, maxY: 4040)
-    // More than half the visible height: not this row's focus scroll (rescue, scroll to the top, other row).
-    #expect(FocusScrollTarget.rowTop(proposed: 3200, viewport: 676, row: row, focused: card, maxOffset: 7160) == 3200)
-    // Unknown focused element: no change.
-    #expect(FocusScrollTarget.rowTop(proposed: 3545, viewport: 676, row: row, focused: nil, maxOffset: 7160) == 3545)
-    // Row taller than the list: the focused card would leave the visible part at the row's top.
-    let huge = HomeRowSpan(minY: 1000, maxY: 1900)
-    let low = HomeRowSpan(minY: 1300, maxY: 1850)
-    #expect(FocusScrollTarget.rowTop(proposed: 1200, viewport: 676, row: huge, focused: low, maxOffset: 5000) == 1200)
-}
-
 @Test func leftMoveKeepsTheContentMargin() {
     // Focus scroll to the leading edge (card at x 0) → card on the 80 pt line.
     #expect(FocusScrollTarget.leading(proposed: 412, current: 700, clearance: 80, minimum: -80) == 332)
@@ -60,16 +26,6 @@ import Testing
             == "Fokus-Scroll links mit Rand: Ziel 0 → 0 (vorher 300, Versatz ?, Start 0)")
 }
 
-@Test func staleFocusedElementOutsideTheProposedRectIsIgnored() {
-    // b7 review 3: the focus engine scrolls to the next row while the focused element is still the previous row's
-    // card: that card is not inside the proposed visible part, so no snap back to it.
-    let row = HomeRowSpan(minY: 3628, maxY: 4060)
-    let oldCard = HomeRowSpan(minY: 3710, maxY: 4040)
-    #expect(FocusScrollTarget.rowTop(proposed: 3800, viewport: 676, row: row, focused: oldCard, maxOffset: 7160) == 3800)
-    // Partly visible counts as outside too.
-    #expect(FocusScrollTarget.rowTop(proposed: 3330, viewport: 676, row: row, focused: oldCard, maxOffset: 7160) == 3330)
-}
-
 @Test func retargetWaitsAfterARescue() {
     // b7 review 5: one second after a rescued press the list keeps the proposed targets.
     #expect(FocusScrollTarget.mayRetarget(now: 100, lastRescue: nil))
@@ -86,4 +42,157 @@ import Testing
     #expect(FocusScrollTarget.leading(proposed: 40, current: 300, clearance: 80, minimum: 0) == 0)
     // Right move counted from the original target: unchanged.
     #expect(FocusScrollTarget.leading(proposed: 340, current: 300, clearance: 80, minimum: -80) == 340)
+}
+
+// MARK: Build 8: vertical row from the proposed rect, probe, flight
+
+private let studios = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
+private let preise = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+private let genres = UUID(uuidString: "00000000-0000-0000-0000-000000000004")!
+/// b7-1 log: Preise 2938…3370, Studios 3434…3866, Genres 3930…4362, list 676 pt high, max ≈ 7406.
+private let homeRows: [(UUID, HomeRowSpan)] = [
+    (preise, HomeRowSpan(minY: 2938, maxY: 3370)),
+    (studios, HomeRowSpan(minY: 3434, maxY: 3866)),
+    (genres, HomeRowSpan(minY: 3930, maxY: 4362)),
+]
+
+@Test func centredFocusScrollGoesToTheRowTop() {
+    // Studios landed at 3356 (Abstand +78): the centre 3694 lies in Studios → its top.
+    let d = FocusScrollTarget.rowTop(proposed: 3356, height: 676, rows: homeRows, maxOffset: 7406)
+    #expect(d.outcome == .retargeted)
+    #expect(d.target == 3434)
+    #expect(d.row == studios)
+    #expect(d.probeY == 3694)
+    // Genres +73 (3857) and Preise +128 (2810) as well.
+    #expect(FocusScrollTarget.rowTop(proposed: 3857, height: 676, rows: homeRows, maxOffset: 7406).target == 3930)
+    #expect(FocusScrollTarget.rowTop(proposed: 2810, height: 676, rows: homeRows, maxOffset: 7406).target == 2938)
+}
+
+@Test func rowChoiceNeedsNoFocusedItem() {
+    // b7-1: the focused UIKit item can still be the previous row's card; the target alone decides. A move up from
+    // Genres into Studios proposes Studios' card centred (3356) and lands on Studios, not back on Genres.
+    let d = FocusScrollTarget.rowTop(proposed: 3356, height: 676, rows: homeRows, maxOffset: 7406)
+    #expect(d.row == studios)
+}
+
+@Test func centreInTheGapBetweenRowsTakesTheNearerRow() {
+    // Centre 3400 between Preise (…3370) and Studios (3434…): Preise is 30 pt away, Studios 34.
+    let d = FocusScrollTarget.rowTop(proposed: 3062, height: 676, rows: homeRows, maxOffset: 7406)
+    #expect(d.row == preise)
+    #expect(d.target == 2938)
+    // Far from every row (hero above the rows): no row.
+    let hero = FocusScrollTarget.rowTop(proposed: 1800, height: 676, rows: homeRows, maxOffset: 7406)
+    #expect(hero.outcome == .noRow)
+    #expect(hero.target == 1800)
+}
+
+@Test func programmaticScrollsKeepTheirTarget() {
+    // Already on a row's top (scrollToRow, rescue): unchanged, even for a row shorter than half the list.
+    let short: [(UUID, HomeRowSpan)] = [(preise, HomeRowSpan(minY: 1000, maxY: 1200)),
+                                        (studios, HomeRowSpan(minY: 1260, maxY: 1900))]
+    let d = FocusScrollTarget.rowTop(proposed: 1000, height: 676, rows: short, maxOffset: 7406)
+    #expect(d.outcome == .atRowTop)
+    #expect(d.target == 1000)
+    // Very top (hero, scroll to the top).
+    #expect(FocusScrollTarget.rowTop(proposed: 0, height: 676, rows: homeRows, maxOffset: 7406).outcome == .veryTop)
+    // More than half the visible height away: not this row's focus scroll.
+    let far: [(UUID, HomeRowSpan)] = [(genres, HomeRowSpan(minY: 3000, maxY: 4000))]
+    let f = FocusScrollTarget.rowTop(proposed: 2600, height: 676, rows: far, maxOffset: 7406)
+    #expect(f.outcome == .tooFar)
+    #expect(f.target == 2600)
+    // No height: nothing to decide.
+    #expect(FocusScrollTarget.rowTop(proposed: 3356, height: 0, rows: homeRows, maxOffset: 7406).outcome == .noScroll)
+}
+
+@Test func rowTopStopsAtTheContentEnd() {
+    let last: [(UUID, HomeRowSpan)] = [(genres, HomeRowSpan(minY: 7042, maxY: 7669))]
+    let d = FocusScrollTarget.rowTop(proposed: 6950, height: 676, rows: last, maxOffset: 7000)
+    #expect(d.outcome == .retargeted)
+    #expect(d.target == 7000)
+    // At the content end already: unchanged.
+    #expect(FocusScrollTarget.rowTop(proposed: 7000, height: 676, rows: last, maxOffset: 7000).outcome == .atRowTop)
+}
+
+@Test func probeLogsTheFirstCallsAndSummarizes() {
+    var p = FocusScrollProbe()
+    #expect(p.summaryLine() == nil)
+    p.noteRowEntry()
+    #expect(p.summaryLine() == "Fokus-Scroll senkrecht: 0 Aufrufe bei 1 Reihenwechseln")
+    for i in 1...FocusScrollProbe.detailLines {
+        let detail = p.note(i == 1 ? .noRow : .retargeted)
+        #expect(detail)
+    }
+    let late = p.note(.retargeted)
+    #expect(!late)
+    #expect(p.summaryLine() == "Fokus-Scroll senkrecht: 21 Aufrufe bei 1 Reihenwechseln · keine Reihe in der Mitte 1 · auf Reihenoberkante 20")
+    p.markSummarized()
+    #expect(p.summaryLine() == nil)
+    while p.total < FocusScrollProbe.summaryEvery { _ = p.note(.atRowTop) }
+    #expect(p.summaryDue)
+    #expect(p.summaryLine() != nil)
+}
+
+@Test func verticalLogLine() {
+    #expect(FocusScrollTarget.verticalLine(number: 3, outcome: .retargeted, proposed: 3356, target: 3434, height: 676,
+                                           probeY: 3694, span: HomeRowSpan(minY: 3434, maxY: 3866))
+            == "Fokus-Scroll senkrecht #3: auf Reihenoberkante · Ziel 3356 → 3434 · Höhe 676 · Mitte 3694 · Reihe 3434…3866")
+    #expect(FocusScrollTarget.verticalLine(number: 1, outcome: .offMain, proposed: 10, target: 10, height: nil,
+                                           probeY: nil, span: nil)
+            == "Fokus-Scroll senkrecht #1: nicht im Hauptthread · Ziel 10 → 10")
+}
+
+@Test func flightBlocksSnapsAndOwnsTheRowChange() {
+    let f = FocusScrollFlight(target: 3434, at: 100, row: studios)
+    // b7-1 17:53:16.2 pattern: the list is still on its way → no snap.
+    #expect(f.inFlight(now: 100.3, offset: 3380, lastMove: 100.25))
+    // Arrived (within the snap minimum) or too old: not in flight.
+    #expect(!f.inFlight(now: 100.3, offset: 3430, lastMove: 100.25))
+    #expect(!f.inFlight(now: 100.7, offset: 3380, lastMove: 100.65))
+    // b8 review 4: at rest 6–19 pt off a kept target (no offset change lately): not in flight, the check snaps.
+    #expect(!f.inFlight(now: 100.4, offset: 3420, lastMove: 100.1))
+    #expect(!f.inFlight(now: 100.4, offset: 3420, lastMove: nil))
+    #expect(f.owns(row: studios, now: 100.1))
+    #expect(!f.owns(row: genres, now: 100.1))
+    #expect(!f.owns(row: studios, now: 101))
+    #expect(!FocusScrollFlight(target: 3434, at: 100, row: nil).owns(row: studios, now: 100.1))
+}
+
+@Test func verticalDecisionWithoutProbe() {
+    // b8 review 1: a call that ends before the row lookup has no centre.
+    let d = FocusScrollTarget.VerticalDecision(outcome: .rescue, target: 120, probeY: nil, row: nil, span: nil)
+    #expect(d.probeY == nil)
+    #expect(FocusScrollTarget.verticalLine(number: 2, outcome: d.outcome, proposed: 120, target: d.target, height: 676,
+                                           probeY: d.probeY, span: d.span)
+            == "Fokus-Scroll senkrecht #2: Rettung läuft · Ziel 120 → 120 · Höhe 676")
+}
+
+@Test func contentEndAndTallRowsKeepTheTarget() {
+    // b8 review 2: at the content end (bottom button, last rows) the target stays.
+    let last: [(UUID, HomeRowSpan)] = [(genres, HomeRowSpan(minY: 6798, maxY: 7425))]
+    #expect(FocusScrollTarget.rowTop(proposed: 7406, height: 676, rows: last, maxOffset: 7406).outcome == .atEnd)
+    // b8 review 5: a row taller than the list would lose its bottom at its top.
+    let huge: [(UUID, HomeRowSpan)] = [(genres, HomeRowSpan(minY: 1000, maxY: 1900))]
+    let d = FocusScrollTarget.rowTop(proposed: 1200, height: 676, rows: huge, maxOffset: 5000)
+    #expect(d.outcome == .tooTall)
+    #expect(d.target == 1200)
+}
+
+@Test func quietOutcomesAreCountedWithoutLines() {
+    // b8 review 6: launch calls at the very top do not use up the detail lines.
+    var p = FocusScrollProbe()
+    for _ in 0..<30 {
+        let line = p.note(.veryTop)
+        #expect(!line)
+    }
+    let first = p.note(.retargeted)
+    #expect(first)
+    #expect(p.total == 31)
+    #expect(p.detailed == 1)
+    #expect(p.summaryLine() == "Fokus-Scroll senkrecht: 31 Aufrufe bei 0 Reihenwechseln · Ziel ganz oben 30 · auf Reihenoberkante 1")
+}
+
+@Test func stripStartIsZeroInTargetSpace() {
+    // b7-1 log: "vorher" = "Versatz" + 160 in all 7 lines, the target rect is inset-adjusted: the start is 0.
+    #expect(FocusScrollTarget.leading(proposed: 60, current: 400, clearance: 80, minimum: 0) == 0)
+    #expect(FocusScrollTarget.leading(proposed: 2384, current: 2960, clearance: 80, minimum: 0) == 2304)
 }

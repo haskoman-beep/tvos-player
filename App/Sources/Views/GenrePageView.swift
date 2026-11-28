@@ -7,14 +7,48 @@ import PlayerCore
 /// `GenrePaging`; tiles, poster size and badges as in the home rows (`PosterCard`); focus room as wave F-m
 /// (`Theme.Focus`, `FocusHeadroom`).
 /// Wave G2 R1: genre folders open the genre page, every other folder the row page (PlayerCore `GenrePageRule`).
+/// Build 8: tiles of a studio / streaming row open the same grid (PlayerCore `BrandPage`: TMDB service, company or
+/// network by the tile title, else a cached company search, else the tile's addon catalogs); the rest the row page.
 struct FolderRouteView: View {
     @Environment(AppModel.self) var model
     let folder: Folder
+    /// Build 8: when the page was opened (first page time in the log, search included).
+    @State private var openedAt = Date()
+    /// Build 8: the page after a company search (nil while none ran).
+    @State private var searched: BrandPage.Resolution?
+
     var body: some View {
         if let g = GenrePageRule.sources(for: folder, collection: { model.collection($0) }) {
             GenrePageView(folder: folder, sources: g)
         } else {
+            // Build 8 review: without a TMDB key only the addon grid or the row page (`tmdb: false`).
+            brandPage(searched ?? BrandPage.resolve(folder, collection: { model.collection($0) },
+                                                    searched: { CompanySearchStore.shared.lookup($0) },
+                                                    tmdb: model.tmdb != nil))
+        }
+    }
+
+    @ViewBuilder private func brandPage(_ r: BrandPage.Resolution) -> some View {
+        switch r {
+        case .grid(let g):
+            GenrePageView(folder: folder, sources: g.sources, brand: g, openedAt: openedAt)
+        case .search(let query, let key):
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .task(id: key) { await runSearch(query: query, key: key) }
+        case .rowPage:
             FolderView(folder: folder)
+        }
+    }
+
+    /// Search once (cached on disk); a failed search (or no TMDB key) opens the addon grid or the row page.
+    private func runSearch(query: String, key: String) async {
+        let answer = await CompanySearchStore.shared.search(query, key: key, tmdb: model.tmdb)
+        let lookup: (String) -> MediaCollection? = { model.collection($0) }
+        if let answer {
+            searched = BrandPage.afterSearch(folder, collection: lookup, answer: answer)
+        } else {
+            searched = BrandPage.withoutSearch(folder, collection: lookup)
         }
     }
 }
@@ -36,11 +70,23 @@ struct GenrePageView: View {
     @State private var onScreen = false
     /// Build 7: studio logo address that could not be loaded (header shows the name).
     @State private var headerLogoFailed: String?
+    /// Build 8: studio / streaming tile of the home screen (nil for genre pages and detail studio plates).
+    let brand: BrandPage.Grid?
+    let openedAt: Date
+    /// Build 8: TMDB logo of a table studio / network (looked up once, cached on disk), tile picture that failed.
+    @State private var brandLogo: String?
+    @State private var headerTileFailed: String?
+    /// Build 8: region US lists that replaced an empty region DE list (by the DE source ID).
+    @State private var regionSwap: [String: CatalogSource] = [:]
+    /// Build 8: filters whose first page time is logged already.
+    @State private var firstLogged: Set<GenreFilter> = []
 
-    init(folder: Folder, sources: GenrePageSources) {
-        self.folder = folder; self.sources = sources
+    init(folder: Folder, sources: GenrePageSources, brand: BrandPage.Grid? = nil, openedAt: Date = Date()) {
+        self.folder = folder; self.sources = sources; self.brand = brand; self.openedAt = openedAt
         // Build 7 review: the studio page opens on Serien when it came from a series (or is a network).
-        let start = StudioPage.initialFilter(folder, available: sources.available)
+        // Build 8: a studio / streaming tile opens on the filter `BrandPage` picked.
+        let brandStart = brand.flatMap { sources.available.contains($0.initial) ? $0.initial : nil }
+        let start = brandStart ?? StudioPage.initialFilter(folder, available: sources.available)
             ?? GenreFilter.initial(available: sources.available)
         _filter = State(initialValue: start)
     }
@@ -89,7 +135,11 @@ struct GenrePageView: View {
         }
         .onAppear {
             onScreen = true
-            RemoteLog.info("genre", "\(logLabel): \(folder.title) geöffnet, Filter \(filter.title) (\(sources.available.map(\.title).joined(separator: "/")))")
+            if let brand {
+                RemoteLog.info("genre", BrandPage.openLine(brand, title: folder.title, filter: filter))
+            } else {
+                RemoteLog.info("genre", "\(logLabel): \(folder.title) geöffnet, Filter \(filter.title) (\(sources.available.map(\.title).joined(separator: "/")))")
+            }
         }
         .onDisappear { onScreen = false }
     }
@@ -104,22 +154,47 @@ struct GenrePageView: View {
 
     // MARK: Header
 
-    /// Build 7: „Genre“ / „Studio“ in the log lines (`StudioPage`).
-    private var logLabel: String { StudioPage.logLabel(folder) }
+    /// Build 7: „Genre“ / „Studio“ in the log lines (`StudioPage`). Build 8: „Dienst“ / „Studio“ (`BrandPage`).
+    private var logLabel: String { brand?.label ?? StudioPage.logLabel(folder) }
+
+    /// Build 8: the logo of the header: studio plate, folder logo, else the TMDB logo once looked up.
+    private var headerLogo: String? { StudioPage.headerLogo(folder) ?? brand?.header.logo ?? brandLogo }
 
     /// The title; the studio page shows the studio logo (white shape, as the detail plates), the name if it fails.
+    /// Build 8: a studio / streaming tile without a logo shows its tile picture beside the name.
     @ViewBuilder private var header: some View {
-        if let logo = StudioPage.headerLogo(folder), headerLogoFailed != logo {
-            RemoteImage(url: logo, maxPixels: 900, fit: true, placeholder: AnyView(Color.clear),
-                        onFailure: { headerLogoFailed = $0 })
-                .saturation(0)
-                .brightness(1)
-                .frame(maxWidth: 520, maxHeight: 120, alignment: .leading)
-                .accessibilityLabel(folder.title)
-                .accessibilityAddTraits(.isHeader)
-        } else {
-            Text(folder.title).textRole(.display).accessibilityAddTraits(.isHeader)
+        Group {
+            if let logo = headerLogo, headerLogoFailed != logo {
+                logoHeader(logo)
+            } else if let tile = brand?.header.tile, headerTileFailed != tile {
+                HStack(spacing: Theme.Space.m) {
+                    RemoteImage(url: tile, maxPixels: 640, onFailure: { headerTileFailed = $0 })
+                        .frame(width: Self.tileHeaderWidth, height: Self.tileHeaderHeight)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
+                        .accessibilityHidden(true)
+                    Text(folder.title).textRole(.display).accessibilityAddTraits(.isHeader)
+                }
+            } else {
+                Text(folder.title).textRole(.display).accessibilityAddTraits(.isHeader)
+            }
         }
+        .task(id: brand?.header.tmdbLogo) {
+            guard let studio = brand?.header.tmdbLogo, brandLogo == nil else { return }
+            brandLogo = await CompanySearchStore.shared.logo(studio, tmdb: model.tmdb)
+        }
+    }
+
+    private static let tileHeaderWidth: CGFloat = 213
+    private static let tileHeaderHeight: CGFloat = 120
+
+    private func logoHeader(_ logo: String) -> some View {
+        RemoteImage(url: logo, maxPixels: 900, fit: true, placeholder: AnyView(Color.clear),
+                    onFailure: { headerLogoFailed = $0 })
+            .saturation(0)
+            .brightness(1)
+            .frame(maxWidth: 520, maxHeight: 120, alignment: .leading)
+            .accessibilityLabel(folder.title)
+            .accessibilityAddTraits(.isHeader)
     }
 
     // MARK: Filter
@@ -175,6 +250,8 @@ struct GenrePageView: View {
             .focusSection()
             .onAppear { columnsNow = columns }
             .onChange(of: columns) { _, c in columnsNow = c }
+            // Build 8: grid posters decode at most at scale 1.5 (4K TV: one size step lower, image budget).
+            .environment(\.imageDecodeScaleCap, GridImageScale.cap)
         }
     }
 
@@ -221,6 +298,14 @@ struct GenrePageView: View {
         if src.limit == nil, let cached = model.cache[src.id], !cached.isEmpty, let first = p.beginNext() {
             let added = p.receive(first, items: cached)
             RemoteLog.info("genre", p.logLine(genre: folder.title, filter: f, added: added, label: logLabel) + " (Cache)")
+            // Build 8 review: the first page time also when it came from the cache (warm-up or home row).
+            if !firstLogged.contains(f) {
+                let sinceOpen: Int? = firstLogged.isEmpty ? Int(Date().timeIntervalSince(openedAt) * 1000) : nil
+                firstLogged.insert(f)
+                RemoteLog.info("genre", BrandPage.firstPageLine(label: logLabel, title: folder.title, filter: f, count: cached.count,
+                                                                fetchMs: 0, sinceOpenMs: sinceOpen) + " (Cache)")
+            }
+            model.warmTilePosters(cached, decodeScaleCap: GridImageScale.cap)   // Build 8 (poster): overlay posters of the block now
         }
         let r = p.beginNext()
         paging[f] = p
@@ -229,7 +314,8 @@ struct GenrePageView: View {
 
     private func prefetchIfNeeded(columns: Int) {
         let f = filter
-        guard var p = paging[f], p.shouldPrefetch(focusedIndex: lastIndex, columns: columns),
+        // Build 8: four rows ahead (more than a TMDB page), so holding the remote down does not reach the end first.
+        guard var p = paging[f], p.shouldPrefetch(focusedIndex: lastIndex, columns: columns, rows: BrandPage.prefetchRows),
               let r = p.beginNext() else { return }
         paging[f] = p
         load(f, r)
@@ -252,6 +338,7 @@ struct GenrePageView: View {
                 let before = p.items.count
                 let added = p.receive(r, items: items, totalPages: total)
                 paging[f] = p
+                model.warmTilePosters(items, decodeScaleCap: GridImageScale.cap)   // Build 8 (poster): overlay posters of the block now
                 RemoteLog.info("genre", p.logLine(genre: name, filter: f, added: added, label: label))
                 if retrying.remove(f) != nil, f == filter {
                     // Review I-2: the retry button goes away; its focus moves to the first new (else the last) title.
@@ -270,7 +357,29 @@ struct GenrePageView: View {
         }
     }
 
+    /// Build 8: one block, timed. The first block of each filter is logged (the first one also with the time since
+    /// the tile was selected); an empty first page of a service in region DE moves that list to region US.
     private func fetch(_ src: CatalogSource, _ r: GenrePageRequest) async throws -> ([MetaPreview], Int?) {
+        let first = r == .tmdbPage(1) || r == .addonSkip(0)
+        let f = sources.filter(ofSourceID: src.id)
+        let started = Date()
+        var answer = try await fetchBlock(regionSwap[src.id] ?? src, r)
+        if first, answer.0.isEmpty, regionSwap[src.id] == nil, let us = brand?.regionFallback[src.id] {
+            if let f { RemoteLog.info("genre", BrandPage.regionLine(label: logLabel, title: folder.title, filter: f)) }
+            regionSwap[src.id] = us
+            answer = try await fetchBlock(us, r)
+        }
+        if first, let f, !firstLogged.contains(f) {
+            let ms = Int(Date().timeIntervalSince(started) * 1000)
+            let sinceOpen: Int? = firstLogged.isEmpty ? Int(Date().timeIntervalSince(openedAt) * 1000) : nil
+            firstLogged.insert(f)
+            RemoteLog.info("genre", BrandPage.firstPageLine(label: logLabel, title: folder.title, filter: f,
+                                                            count: answer.0.count, fetchMs: ms, sinceOpenMs: sinceOpen))
+        }
+        return answer
+    }
+
+    private func fetchBlock(_ src: CatalogSource, _ r: GenrePageRequest) async throws -> ([MetaPreview], Int?) {
         switch (src.kind, r) {
         case (.addon(let addonId, let catalogId, let type), .addonSkip(let skip)):
             guard let hit = AddonCatalogResolver.resolve(model.profile.addons, addonId: addonId, catalogId: catalogId, type: type) else {

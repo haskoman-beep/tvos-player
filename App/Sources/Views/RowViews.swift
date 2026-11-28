@@ -1224,9 +1224,11 @@ struct StripFocusScroll: ScrollTargetBehavior {
         let box = self.box
         let clearance = self.clearance
         let adjusted: Double = MainActor.assumeIsolated {
-            // b7 review 2: the start is the real leading inset (0 without one: no overscroll).
+            // Build 8: the start is 0. The b7-1 log showed "vorher" = "Versatz" + 160 in all 7 lines with a 160 pt
+            // leading inset: the target rect is inset-adjusted (0 = the strip's start position), not the raw
+            // content offset, so the b7 clamp `-insetLeading` allowed an overscroll of the first card by the inset.
             guard let g = box.geometry else { return proposed }
-            let start = -g.insetLeading
+            let start = 0.0
             let x = FocusScrollTarget.leading(proposed: proposed, current: current, clearance: clearance, minimum: start)
             if x != proposed, StripFocusScrollLog.allow() {
                 RemoteLog.info("nav", FocusScrollTarget.leadingLine(proposed: proposed, adjusted: x, current: current,
