@@ -184,3 +184,47 @@ private func bookWithFilm(position: Double = 600, at: Date = t0) -> ProgressBook
     #expect(b.applyNuvio(deletedProgress: [], watchedRemoved: [film.id], protected: [], before: t0.addingTimeInterval(1)) == 0)
     #expect(b == before)
 }
+
+// MARK: Review 2 (findings 7, 16)
+
+@Test func nuvioWatchedItemTyingWithItsProgressRowFinishesTheTitle() throws {
+    // Same `last_watched` for the progress row and the watched item of one title, in either order.
+    let at = Date(timeIntervalSince1970: 1_750_000_000.123)
+    var a = ProgressBook()
+    a.merge(nuvio: [pulled(position: 1800, at: at), pulled(position: 0, duration: 0, at: at, watched: true)])
+    #expect(a.entries[film.id]?.finished == true)
+    var b = ProgressBook()
+    b.merge(nuvio: [pulled(position: 0, duration: 0, at: at, watched: true), pulled(position: 1800, at: at)])
+    #expect(b.entries[film.id]?.finished == true)
+    // A local unfinished entry at the same millisecond loses against the watched item.
+    var c = ProgressBook()
+    c.record(id: film.id, item: film, position: 600, duration: 6000, now: at)
+    #expect(c.merge(nuvio: [pulled(position: 0, duration: 0, at: at, watched: true)]) == 1)
+    #expect(c.entries[film.id]?.finished == true && c.entries[film.id]?.item.name == "Film")
+    // An unfinished row tying with a local unfinished entry still keeps local.
+    #expect(c.merge(nuvio: [pulled(position: 4000, at: at)]) == 0)
+}
+
+@Test func nuvioEchoOfAPushWithSubMillisecondLocalTimeChangesNothing() throws {
+    // The local entry carries sub-millisecond time; the push rounds it to whole ms and the echo comes back so.
+    for fraction in [0.0004, 0.0006] {
+        let local = t0.addingTimeInterval(fraction)
+        var b = bookWithFilm(at: local)
+        let before = b
+        let echoMS = NuvioMapping.epochMS(local)
+        #expect(b.merge(nuvio: [pulled(position: 600, at: NuvioMapping.date(ms: echoMS))]) == 0)
+        #expect(b == before)
+    }
+}
+
+@Test func nuvioRowsBelowTheServerLengthFloorAreNeverFinished() throws {
+    var b = ProgressBook()
+    // 1 ms of 1 ms, and 50 s of 50 s: below the server's 60 000 ms floor for completion.
+    b.merge(nuvio: [pulled(position: 0.001, duration: 0.001, at: t0),
+                    pulled("tt0000002", position: 50, duration: 50, at: t0)])
+    #expect(b.entries[film.id]?.finished == false && b.entries["tt0000002"]?.finished == false)
+    #expect(!NuvioState.isFinished(pulled(position: 50, duration: 50, at: t0)))
+    // At the floor the 92 % rule applies again.
+    b.merge(nuvio: [pulled("tt0000003", position: 59, duration: 60, at: t0)])
+    #expect(b.entries["tt0000003"]?.finished == true)
+}

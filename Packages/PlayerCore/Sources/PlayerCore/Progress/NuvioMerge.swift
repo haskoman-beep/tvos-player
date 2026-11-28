@@ -22,12 +22,17 @@ extension ProgressBook {
             r.duration = ProgressNumbers.storedDuration(r.duration)
             r.position = ProgressNumbers.storedPosition(r.position, duration: r.duration)
             let old = entries[r.id]
-            if let l = old, ProgressNumbers.date(l.updated) >= r.updated { continue }
+            let remoteMS = NuvioMapping.epochMS(r.updated)
+            if let l = old {
+                let localMS = NuvioMapping.epochMS(l.updated)
+                if localMS > remoteMS { continue }
+                if localMS == remoteMS, !(r.watched && !l.finished) { continue }
+            }
             if r.id != r.item.id, let m = entries[r.item.id], m.season == nil, m.finished,
-               ProgressNumbers.date(m.updated) >= r.updated { continue }
+               NuvioMapping.epochMS(m.updated) >= remoteMS { continue }
             let duration = r.duration > 0 ? r.duration : ProgressNumbers.storedDuration(old?.duration ?? 0)
             let position = duration > 0 ? min(r.position, duration) : r.position
-            let done = r.watched || (duration > 0 && position / duration >= Self.finishedAt)
+            let done = r.watched || Self.nuvioFinished(position: position, duration: duration)
             let ranLong = position > Self.markerSeconds
             if let l = old, l.finished, !done, !(ranLong && position > Self.unfinishFraction * duration) { continue }
             let keepNextUp = !done && old?.nextUp == true && !ranLong
@@ -39,6 +44,55 @@ extension ProgressBook {
                                   finished: done, nextUp: keepNextUp ? true : nil,
                                   remoteFraction: known ? nil : ProgressNumbers.storedFraction(old?.remoteFraction))
             if e != old { entries[r.id] = e; changed += 1 }
+        }
+        return changed
+    }
+
+    /// Shortest length (seconds) with which a pulled row can count as finished: the server records completion only
+    /// for `duration >= 60000` ms (reference v1.3, push section), so a 1 ms / 1 ms row is no finished title.
+    public static let nuvioMinFinishSeconds = 60.0
+
+    /// The 92 % rule for pulled rows, with the server's length floor.
+    static func nuvioFinished(position: Double, duration: Double) -> Bool {
+        duration.isFinite && duration >= nuvioMinFinishSeconds && position / duration >= finishedAt
+    }
+
+    /// Moves every entry of one title from its provisional id `from` (`tmdb:N`) to `to` (`tt…`) once the IMDb id is
+    /// known (review 2, finding 2). Only entries of the kind move (`series`: episodes and series markers; else the
+    /// film), so a film and a series sharing a TMDB number stay apart. When `to` already has an entry at the key, the
+    /// newer `updated` (whole ms) wins and a tie keeps the target; a finished entry is reopened only by a session past
+    /// `markerSeconds` and `unfinishFraction` (the rule of `record`). The target's title and artwork stay, gaps are
+    /// filled from the moved entry. `drop` says which moved entries a tombstone blocks. Idempotent: a second call finds nothing to
+    /// move. Returns how many entries changed.
+    @discardableResult
+    public mutating func rekeyNuvio(from: String, to: String, series: Bool,
+                                    drop: (WatchProgress) -> Bool = { _ in false }) -> Int {
+        guard from != to else { return 0 }
+        let moving = entries.values.filter { e in
+            e.item.id == from && (e.season != nil || ContentKind.isEpisodic(type: e.item.type)) == series
+        }.sorted { $0.id < $1.id }
+        var changed = 0
+        for old in moving {
+            entries[old.id] = nil
+            changed += 1
+            var e = old
+            e.id = NuvioMapping.localProgressID(itemID: to, season: old.season, episode: old.episode)
+            e.item.id = to
+            if e.item.poster == nil || e.item.poster?.isEmpty == true {
+                e.item.poster = NuvioMapping.meta(to, series: series, name: nil).poster
+            }
+            if e.item.background == nil || e.item.background?.isEmpty == true {
+                e.item.background = NuvioMapping.meta(to, series: series, name: nil).background
+            }
+            if drop(e) { continue }
+            guard let t = entries[e.id] else { entries[e.id] = e; continue }
+            let movedMS = NuvioMapping.epochMS(e.updated), targetMS = NuvioMapping.epochMS(t.updated)
+            var winner = movedMS > targetMS ? e : t
+            if winner == e, t.finished, !e.finished,
+               !(e.position > Self.markerSeconds && e.position > Self.unfinishFraction * e.duration) { winner = t }
+            // The target's title and artwork stay (it is the user's own entry); the moved one only fills gaps.
+            winner.item = Self.filled(t.item, from: e.item)
+            entries[e.id] = winner
         }
         return changed
     }
