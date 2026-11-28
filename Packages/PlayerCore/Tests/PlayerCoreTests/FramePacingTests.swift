@@ -164,6 +164,9 @@ private func feed(_ p: inout FramePacing, from start: TimeInterval, count: Int, 
     #expect(FramePacing.text(quiet) == "Startseite 2,1 s: 120 Bilder (60 Hz) · 0 verpasst · ≈0 Bilder fehlen · längstes 17 ms")
     let empty = FramePacing.Report(frames: 120, missed: 0, dropped: 0, longestMs: 17, hz: 60, tenths: 21, note: "")
     #expect(FramePacing.text(empty) == FramePacing.text(quiet))
+    let panel = FramePacing.Report(frames: 118, missed: 2, dropped: 3, longestMs: 125, hz: 24, tenths: 50, note: nil)
+    #expect(FramePacing.text(panel, place: "Spur-Panel")
+            == "Spur-Panel 5,0 s: 118 Bilder (24 Hz) · 2 verpasst · ≈3 Bilder fehlen · längstes 125 ms")
 }
 
 @Test func framePacingSumsDroppedFrames() {
