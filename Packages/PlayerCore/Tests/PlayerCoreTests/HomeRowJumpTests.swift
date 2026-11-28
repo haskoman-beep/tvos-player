@@ -37,6 +37,40 @@ private let rows = (0..<11).map { _ in UUID() }
     #expect(HomeRowJump.keptFrames(old: rows, new: moved).isEmpty)
 }
 
+// 09:33:12.501: Genres' frame from before the move (unconfirmed) lies where Netflix Top 10 now wrote its own.
+@Test func anUnconfirmedFrameUnderAConfirmedOneIsIgnored() {
+    let genres = rows[6], netflix = rows[7], letterboxd = rows[8]
+    let spans = [genres: HomeRowSpan(minY: 3930, maxY: 4362), netflix: HomeRowSpan(minY: 3930, maxY: 4556),
+                 letterboxd: HomeRowSpan(minY: 5116, maxY: 5548)]
+    let usable = HomeRowJump.usableSpans(spans, unconfirmed: [genres, letterboxd])
+    #expect(usable[genres] == nil)
+    #expect(usable[netflix] == HomeRowSpan(minY: 3930, maxY: 4556))
+    #expect(usable[letterboxd] == HomeRowSpan(minY: 5116, maxY: 5548))   // nothing confirmed overlaps it
+}
+
+// Review of 51392a0: two rows of equal height swap places (A B C → C B A). A and C write their new frames, B did
+// not move and writes none; its kept frame must stay usable (a dropped one would be gone while B is on screen).
+@Test func aBuiltRowTheChangeDidNotMoveKeepsItsFrame() {
+    let a = rows[0], b = rows[1], c = rows[2]
+    let unconfirmed = Set([a, b, c]).subtracting(HomeRowJump.keptFrames(old: [a, b, c], new: [c, b, a]))
+    #expect(unconfirmed == [a, b, c])
+    var spans = [a: HomeRowSpan(minY: 0, maxY: 100), b: HomeRowSpan(minY: 120, maxY: 220),
+                 c: HomeRowSpan(minY: 240, maxY: 340)]
+    var open = unconfirmed
+    spans[c] = HomeRowSpan(minY: 0, maxY: 100); open.remove(c)   // `onGeometryChange` of the moved rows
+    spans[a] = HomeRowSpan(minY: 240, maxY: 340); open.remove(a)
+    let usable = HomeRowJump.usableSpans(spans, unconfirmed: open)
+    #expect(usable == spans)
+}
+
+@Test func touchingFramesDoNotOverlapAndNoUnconfirmedKeepsAll() {
+    let a = rows[0], b = rows[1]
+    let spans = [a: HomeRowSpan(minY: 0, maxY: 100), b: HomeRowSpan(minY: 100, maxY: 200)]
+    #expect(HomeRowJump.usableSpans(spans, unconfirmed: [b]) == spans)
+    #expect(HomeRowJump.usableSpans(spans, unconfirmed: []) == spans)
+    #expect(HomeRowJump.usableSpans(spans, unconfirmed: [a, b]) == spans)   // nothing confirmed: as before the fix
+}
+
 @Test func skippedRowsLieBetweenTheEnds() {
     #expect(HomeRowJump.skipped(from: rows[2], to: rows[5], order: rows) == [rows[3], rows[4]])
     #expect(HomeRowJump.skipped(from: rows[5], to: rows[2], order: rows) == [rows[3], rows[4]])

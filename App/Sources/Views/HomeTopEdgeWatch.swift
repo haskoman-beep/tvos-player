@@ -78,11 +78,12 @@ import PlayerCore
     /// S5: a row's frame in `contentSpace` changed (row built by the lazy list, or its height changed).
     func setRowFrame(_ id: UUID, _ frame: CGRect) {
         rowSpans[id] = HomeRowSpan(minY: Double(frame.minY), maxY: Double(frame.maxY))
+        unconfirmedRows.remove(id)
     }
 
     /// S5: row frame, list scroll state and the list's UIKit view for the heading check and its log line.
     func headingSample(row id: UUID) -> HeadingSnapSample {
-        HeadingSnapSample(row: rowSpans[id], scroll: listScroll, list: Self.listView())
+        HeadingSnapSample(row: usableRowSpans[id], scroll: listScroll, list: Self.listView())
     }
 
     /// Build 7 device test: target of a focus scroll of the home list (`HomeFocusScroll`). Build 8 (b7-1 log: 0
@@ -103,7 +104,8 @@ import PlayerCore
         if !FocusScrollTarget.mayRetarget(now: now, lastRescue: lastRescue) {
             decision = FocusScrollTarget.VerticalDecision(outcome: .rescue, target: y, probeY: nil, row: nil, span: nil)
         } else {
-            decision = FocusScrollTarget.rowTop(proposed: y, height: height, rows: rowSpans.map { ($0.key, $0.value) },
+            decision = FocusScrollTarget.rowTop(proposed: y, height: height,
+                                                rows: usableRowSpans.map { ($0.key, $0.value) },
                                                 maxOffset: scroll.maxOffset)
         }
         let retargeted = decision.outcome == .retargeted
@@ -155,14 +157,25 @@ import PlayerCore
 
     /// b8 review 3: only the rows on the page keep a frame (hidden or deleted rows leave `rowSpans`).
     /// Phase 0a.1 (28.11. 09:33:12.501, `Reihe 3930…4362` = Genres before "Reihe verschoben 5→8"): a changed order
-    /// also drops the frames it may have moved (`HomeRowJump.keptFrames`); rows the lazy list has not built kept
-    /// their old place and misled the focus scroll target, the heading checks and the rescue. Built rows write their
-    /// new frame after this (`onGeometryChange` runs after the layout of the same update). The first call (page
-    /// built, no order yet) keeps every frame of a row on the page, as before.
+    /// marks the frames it may have moved unconfirmed (`HomeRowJump.keptFrames`); rows the lazy list has not built
+    /// kept their old place and misled the focus scroll target, the heading checks and the rescue. Review of
+    /// 51392a0: the frames are kept, not dropped, since `onGeometryChange` rewrites only a frame that changed (a
+    /// built row the change did not move would have none); `usableRowSpans` ignores an unconfirmed frame only where
+    /// a confirmed one overlaps it. The first call (page built, no order yet) confirms nothing new, as before.
     func keepRows(_ ids: [UUID]) {
-        let keep = rowOrder.isEmpty ? Set(ids) : HomeRowJump.keptFrames(old: rowOrder, new: ids)
-        rowSpans = rowSpans.filter { keep.contains($0.key) }
+        let shown = Set(ids)
+        let kept = rowOrder.isEmpty ? shown : HomeRowJump.keptFrames(old: rowOrder, new: ids)
+        rowSpans = rowSpans.filter { shown.contains($0.key) }
+        unconfirmedRows = unconfirmedRows.union(shown.subtracting(kept)).intersection(shown)
         rowOrder = ids
+    }
+
+    /// Phase 0a.1: rows whose stored frame an order change may have moved and that have not written it since.
+    @ObservationIgnored private var unconfirmedRows: Set<UUID> = []
+
+    /// Phase 0a.1: the row frames the focus scroll target, the heading checks, the rescue and the jump log use.
+    private var usableRowSpans: [UUID: HomeRowSpan] {
+        HomeRowJump.usableSpans(rowSpans, unconfirmed: unconfirmedRows)
     }
 
     /// Phase 0a.1: the shown rows in page order (from `keepRows`).
@@ -186,7 +199,7 @@ import PlayerCore
     private func listRow(of item: UIFocusItem?, in sv: UIScrollView) -> UUID? {
         guard let view = item as? UIView, view.window != nil, view.isDescendant(of: sv) else { return nil }
         let y = Double(view.convert(view.bounds, to: sv).midY)
-        return HomeMoveRescue.row(atContentY: y, spans: rowSpans.map { ($0.key, $0.value) })
+        return HomeMoveRescue.row(atContentY: y, spans: usableRowSpans.map { ($0.key, $0.value) })
     }
 
     /// Phase 0a.1 (4 of 79 row changes on 28.11. jumped over rows): tells a real jump of the focus engine (one update
@@ -204,7 +217,7 @@ import PlayerCore
         lastVerticalMove = now
         let skipped = HomeRowJump.skipped(from: from, to: next, order: rowOrder)
         if !skipped.isEmpty {
-            let rows = skipped.map { HomeRowJump.SkippedRow(title: title(of: $0), span: rowSpans[$0]) }
+            let rows = skipped.map { HomeRowJump.SkippedRow(title: title(of: $0), span: usableRowSpans[$0]) }
             RemoteLog.info("nav", HomeRowJump.jumpLine(from: title(of: from), to: title(of: next), down: !up,
                                                        skipped: rows, offset: listScroll?.offset,
                                                        flightTarget: flight?.target, sinceLastMs: since))
@@ -365,7 +378,7 @@ import PlayerCore
               let view = context.previouslyFocusedItem as? UIView, let sv = TabBarGuard.shared.knownScrollView,
               view.window != nil, view.isDescendant(of: sv) else { return }
         let y = Double(view.convert(view.bounds, to: sv).midY)
-        guard let row = HomeMoveRescue.row(atContentY: y, spans: rowSpans.map { ($0.key, $0.value) }),
+        guard let row = HomeMoveRescue.row(atContentY: y, spans: usableRowSpans.map { ($0.key, $0.value) }),
               throttle.allow("rescue \(up ? "up" : "down") \(row.uuidString)", now: Self.now) else { return }
         let serial = updateSerial
         Task { @MainActor [weak self] in

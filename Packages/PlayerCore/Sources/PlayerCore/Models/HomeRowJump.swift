@@ -8,8 +8,12 @@ import Foundation
 //    order only dropped rows that left the page, so after "Reihe verschoben 5→8: Preise" (09:33:08.663) the focus
 //    scroll at 09:33:12.501 still found Genres at its old place 3930…4362 while Netflix Top 10 sat at 3930…4556:
 //    `Fokus-Scroll auf Reihenoberkante: Ziel 4035 → 3930 (Reihe 3930…4362)` picked the wrong row (Netflix then got no
-//    "Fokus-Scroll übernimmt"). `keptFrames` drops every frame whose position the change may have moved; the lazy
-//    list writes it again when it builds or moves the row.
+//    "Fokus-Scroll übernimmt"). `keptFrames` names the frames a change cannot have moved; every other frame stays
+//    but is unconfirmed until the row writes it again. `onGeometryChange` only writes a frame that changed, so a
+//    built row the change did not move (a row between two swapped rows of equal height, a row behind a row of zero
+//    height) never confirms it: dropping those frames would leave a built, visible row without one (review of
+//    51392a0). `usableSpans` therefore ignores an unconfirmed frame only where a confirmed frame overlaps it (the
+//    place now belongs to another row, as Genres' at 09:33:12.501).
 //
 // 2. Diagnosis: the log cannot tell whether the focus engine really jumped over rows or passed through rows that
 //    did not report their focus (jumps 3 and 4 came at the remote's repeat speed, ~140 ms per row, and jump 3 had a
@@ -17,9 +21,10 @@ import Foundation
 //    to its rows (`skipped`) and logs the jumps, and logs a row that held the UIKit focus but did not report it.
 
 public enum HomeRowJump {
-    /// Rows whose stored frame is still valid after the shown rows changed from `old` to `new` (both in page order).
-    /// Positions before the first changed index stay; a pure reorder (same rows) also keeps the rows after the last
-    /// changed index (the heights in front of them sum up the same). Every other row may have moved.
+    /// Rows whose stored frame is certainly still valid after the shown rows changed from `old` to `new` (both in
+    /// page order). Positions before the first changed index stay; a pure reorder (same rows) also keeps the rows
+    /// after the last changed index (the heights in front of them sum up the same). Every other row may have moved
+    /// (its frame becomes unconfirmed, see `usableSpans`).
     public static func keptFrames(old: [UUID], new: [UUID]) -> Set<UUID> {
         var prefix = 0
         while prefix < old.count, prefix < new.count, old[prefix] == new[prefix] { prefix += 1 }
@@ -29,6 +34,17 @@ public enum HomeRowJump {
         while suffix < new.count - prefix, old[old.count - 1 - suffix] == new[new.count - 1 - suffix] { suffix += 1 }
         keep.formUnion(new.suffix(suffix))
         return keep
+    }
+
+    /// The stored row frames the focus scroll target, the heading checks and the rescue may use: every confirmed
+    /// frame, and an unconfirmed one (`unconfirmed`: not written since an order change may have moved it) unless a
+    /// confirmed frame overlaps it. Frames that only touch do not overlap.
+    public static func usableSpans(_ spans: [UUID: HomeRowSpan], unconfirmed: Set<UUID>) -> [UUID: HomeRowSpan] {
+        guard !unconfirmed.isEmpty else { return spans }
+        let confirmed = spans.filter { !unconfirmed.contains($0.key) }.map(\.value)
+        return spans.filter { id, span in
+            !unconfirmed.contains(id) || !confirmed.contains { $0.minY < span.maxY && span.minY < $0.maxY }
+        }
     }
 
     /// The rows between `from` and `to` (page order `order`) when one focus update passed over them; empty for
