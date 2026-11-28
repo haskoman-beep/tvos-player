@@ -1,0 +1,11 @@
+{
+  "comment": "Made by tools/phone_seal_test.mjs --write-fixture from PhoneSealScript.source (JavaScript ChaCha20-Poly1305). Opened by the CryptoKit test in PhoneSealTests.swift and by the envelope test there.",
+  "keyHex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+  "nonceHex": "a0a1a2a3a4a5a6a7a8a9aaab",
+  "aad": "player-nuvio-login-v1",
+  "plaintext": "{\"email\":\"user@example.org\",\"password\":\"FAKE-PASS-0011 äö€ \\\"&=+\\\\\"}",
+  "email": "user@example.org",
+  "password": "FAKE-PASS-0011 äö€ \"&=+\\",
+  "sealed": "oKGio6SlpqeoqaqrIZ14q6iP7ChM_yHSajagzWKEI1wWly1CdubamS3YZ1gnaoVqbleoN_litGZninzEvPARklSbmfOVBeIQVSBQAPkN-1lODCk1NKaLkuocMTYSJj9-ai7CGw",
+  "ciphertextAndTagHex": "219d78aba88fec284cff21d26a36a0cd6284235c16972d4276e6da992dd86758276a856a6e57a837f962b466678a7cc4bcf01192549b99f39505e21055205000f90dfb594e0c293534a68b92ea1c313612263f7e6a2ec21b"
+}

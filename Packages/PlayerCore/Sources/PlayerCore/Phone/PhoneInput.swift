@@ -210,9 +210,8 @@ public struct PhoneInputPage: Sendable {
     static let nuvioFieldLimit = 256
     static let nuvioSentText = "Gesendet. Bitte am Fernseher „Erlauben“ wählen."
     static let nuvioEmptyText = "Bitte E-Mail und Passwort eingeben."
-    static let nuvioHintText = "Der Fernseher fragt nach, bevor er sich anmeldet. Das Passwort wird nicht gespeichert."
-    /// Residual risk of the plain-HTTP LAN form (plan section 2), same words as the hint on the TV.
-    static let nuvioRiskText = "Es geht einmal unverschlüsselt durch dein WLAN zum Fernseher und von dort verschlüsselt an Nuvio. Nutze ein Passwort, das du nur für Nuvio verwendest."
+    /// T1b: e-mail and password are sealed on the phone (PhoneSeal.swift).
+    static let nuvioHintText = "Der Fernseher fragt nach, bevor er sich anmeldet. E-Mail und Passwort werden auf dem Handy verschlüsselt, bevor sie zum Fernseher gehen. Das Passwort wird nicht gespeichert."
     static let nuvioConnectedText = "Mit Nuvio verbunden. Abmelden geht am Fernseher unter Einstellungen › Konten."
     static let nuvioBusyText = "Anmeldung läuft …"
 
@@ -224,8 +223,11 @@ public struct PhoneInputPage: Sendable {
     }
 
     /// `backup` liefert den Profil-Export ohne Geheimnisse für GET /export; `home` den Stand für „Startseite ordnen“.
+    /// plan_nuvio_konto T1b: `nuvioLogin` opens the `sealed` field of `POST /nuvio`, normally
+    /// `{ session.openNuvioLogin($0, open: opener) }`; the default opens nothing, so every sign-in is refused.
     public func handle(_ r: HTTPRequest, profileName: String, home: PhoneHomeState = .empty,
                        backups: PhoneBackupState = PhoneBackupState(), nuvio: PhoneNuvioState = .signedOut,
+                       nuvioLogin: (String) -> PhoneNuvioLogin? = { _ in nil },
                        backup: () -> Data) -> (HTTPResponse, [PhoneCommand]) {
         switch (r.method, r.path) {
         case ("GET", "/"):
@@ -319,19 +321,26 @@ public struct PhoneInputPage: Sendable {
             return (HTTPResponse(status: 303, body: Data(), extraHeaders: ["Location": loc]), cmds)
         case ("POST", Self.nuvioPath):
             // plan_nuvio_konto T1: one sign-in per request. The answer never carries a value, also not on an error.
+            // T1b: only the field `sealed` (PhoneSeal.swift); e-mail or password in clear are refused, never read.
             let f = r.form
-            let email = (f["email"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines), password = f["password"] ?? ""
             var cmds: [PhoneCommand] = []
             let loc: String
-            if nuvio != .signedOut {
+            if f["email"] != nil || f["password"] != nil {
+                loc = "/?nv=krypto#nuvio"
+            } else if nuvio != .signedOut {
                 loc = "/#nuvio"   // the form is not shown in this state: an old page sent it
-            } else if email.isEmpty || password.isEmpty || email.count > Self.nuvioFieldLimit || password.count > Self.nuvioFieldLimit {
-                loc = "/?nv=leer#nuvio"
-            } else if backups.requestOpen {
-                loc = "/?wt=offen#nuvio"   // as on /submit: the phone hears that a request already waits on the TV
+            } else if let sealed = f[PhoneSeal.fieldName], let login = nuvioLogin(sealed) {
+                let email = login.email.value.trimmingCharacters(in: .whitespacesAndNewlines), password = login.password.value
+                if email.isEmpty || password.isEmpty || email.count > Self.nuvioFieldLimit || password.count > Self.nuvioFieldLimit {
+                    loc = "/?nv=leer#nuvio"
+                } else if backups.requestOpen {
+                    loc = "/?wt=offen#nuvio"   // as on /submit: the phone hears that a request already waits on the TV
+                } else {
+                    cmds = [.nuvioSignIn(email: PhoneSecret(email), password: PhoneSecret(password))]
+                    loc = "/?nv=gesendet#nuvio"
+                }
             } else {
-                cmds = [.nuvioSignIn(email: PhoneSecret(email), password: PhoneSecret(password))]
-                loc = "/?nv=gesendet#nuvio"
+                loc = "/?nv=krypto#nuvio"   // no script, no key, wrong key, tampered, replayed or no opener
             }
             return (HTTPResponse(status: 303, body: Data(), extraHeaders: ["Location": loc]), cmds)
         default:
@@ -417,6 +426,7 @@ public struct PhoneInputPage: Sendable {
         </form>
         <form id=homeform method=post action="/home"></form>\(nuvio == .signedOut ? "<form id=nuvioform method=post action=\"\(Self.nuvioPath)\" autocomplete=off></form>" : "")
         <script>\(Self.orderScript)\(Self.fileScript)</script>
+        <script>\(PhoneSealScript.source)</script>
         """
         return Self.html("Player · \(Self.escape(profileName))", body)
     }
@@ -432,9 +442,12 @@ public struct PhoneInputPage: Sendable {
         }
         switch state {
         case .signedOut:
-            out += "<label>E-Mail<input form=nuvioform name=email type=\"email\" autocomplete=off autocapitalize=off autocorrect=off spellcheck=false></label>"
-            out += "<label>Passwort<input form=nuvioform name=password type=\"password\" autocomplete=off></label>"
-            out += "<p class=hint>\(Self.nuvioHintText) \(Self.nuvioRiskText)</p>"
+            // T1b: the fields have no `name`, so no form ever submits them; the script posts only `sealed`.
+            out += "<label>E-Mail<input form=nuvioform id=nv_email type=\"email\" autocomplete=off autocapitalize=off autocorrect=off spellcheck=false></label>"
+            out += "<label>Passwort<input form=nuvioform id=nv_password type=\"password\" autocomplete=off></label>"
+            out += "<p id=nv_fail class=ok\(note == "krypto" ? "" : " hidden")>\(PhoneSeal.failureText)</p>"
+            out += "<noscript><p class=ok>\(PhoneSeal.failureText)</p></noscript>"
+            out += "<p class=hint>\(Self.nuvioHintText)</p>"
             out += "<button form=nuvioform>Anmelden</button>"
         case .connected(let name):
             out += "<p>\(Self.nuvioConnectedText)</p>"

@@ -49,8 +49,16 @@ public struct PhoneSession: Sendable {
     private var cookie: String?
     private var peer: String?
     private var started: Date?
+    /// plan_nuvio_konto T1b: key of the sealed Nuvio sign-in (PhoneSeal.swift); lives and dies with this session.
+    let key: PhonePageKey
+    /// Nonces of sealed sign-ins this session already accepted (each once).
+    var usedNonces: Set<Data> = []
 
-    public init(token: String, now: Date) { self.token = token; self.created = now }
+    /// `pageKey`: 32 bytes, random by default; it reaches the phone only in the QR address's fragment (`qrAddress`).
+    public init(token: String, now: Date, pageKey: Data = PhoneSession.randomPageKey()) {
+        precondition(pageKey.count == PhoneSeal.keyLength, "page key must be 32 bytes")
+        self.token = token; self.created = now; self.key = PhonePageKey(data: pageKey)
+    }
 
     /// `cookie` is the raw `Cookie` header, `peer` the address of the connecting device.
     public mutating func authorize(queryToken: String?, cookie header: String?, peer: String, now: Date) -> PhoneAuth {
@@ -73,7 +81,8 @@ public struct PhoneSession: Sendable {
             return .respond(HTTPResponse(status: 403, body: Data(PhoneInputPage.html("Kein Zugang",
                 "<p>Diese Adresse gilt nicht mehr. Am Fernseher „Neuer QR-Code“ wählen und neu scannen.</p>").utf8)))
         case .firstUse(let set):
-            // Token out of the address bar; the anchor (#home …) stays, browsers keep it across the redirect.
+            // Token out of the address bar; the fragment (#home, #nuvio&k=… with the page key) stays, browsers keep it
+            // across the redirect because this Location has none. The key is never part of this answer.
             var rest = head.query; rest["t"] = nil
             let q = rest.sorted { $0.key < $1.key }.map { "\(Self.formEscape($0.key))=\(Self.formEscape($0.value))" }.joined(separator: "&")
             let loc = head.method == "GET" ? head.path + (q.isEmpty ? "" : "?" + q) : "/"
