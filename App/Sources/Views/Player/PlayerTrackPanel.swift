@@ -144,6 +144,8 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
     @State private var userMoved = false
     /// Einmal je Panel (StateObject); hält keine Closures, also keinen Verweis zurück aufs Panel (R1 I1).
     @StateObject private var swipe = PanelSwipe()
+    /// p0a1 panel: column models of this panel, rebuilt only when their inputs change (`TrackPanelColumnCache`).
+    @State private var columnCache = TrackPanelColumnCache()
 
     private var picker: TrackPicker<E> {
         TrackPicker(engine: engine, audioLocked: audioLocked, lock: lock, onAudioSwitch: onAudioSwitch, onRemember: onRemember)
@@ -151,8 +153,8 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
 
     private var columns: [TrackPanelColumnModel] {
         let w = TrackPanelLook.widths(style)
-        return TrackPanelColumns.make(engine: engine, profile: profile, audioLocked: audioLocked, lock: shownLock,
-                                      audioWidth: w.audio, subtitleWidth: w.subtitles)
+        return columnCache.columns(engine: engine, profile: profile, audioLocked: audioLocked, lock: shownLock,
+                                   audioWidth: w.audio, subtitleWidth: w.subtitles)
     }
 
     var body: some View {
@@ -173,6 +175,8 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
             // Erster Fokus beim Öffnen (old == nil) ist kein Nutzerschritt.
             guard let old, let new else { return }
             userMoved = true
+            columnCache.focusMoves += 1
+            PanelFrameMeter.focusMoved()
             // Task 5.4: stacked sections (Seite) and the step up from Versatz in Mitte keep the row the focus engine
             // chose; Unten keeps the redirect onto the active row (Build 198).
             guard !style.isStacked, !(style == .menu && old.column == .offset) else { return }
@@ -193,7 +197,12 @@ struct PlayerTrackPanel<E: PlaybackEngine>: View {
             swipe.start()
             onCoverBottom(TrackPanelLook.coveredBottom(style))
         }
-        .onDisappear { swipe.stop(); RemoteLog.info("player", "Panel zu") }
+        .onDisappear {
+            swipe.stop()
+            PanelFrameMeter.stop()
+            RemoteLog.info("player", "Panel zu")
+            RemoteLog.info("player", columnCache.summary)
+        }
         .onExitCommand { dismiss() }
         .presentationBackground(.clear)
     }
@@ -408,6 +417,69 @@ enum TrackPanelColumns {
             TrackPanelLayout.subtitleColumn(engine.subtitleTracks, activeID: engine.activeSubtitleID,
                                             preferredLanguage: profile.subtitleLanguage, width: subtitleWidth),
             TrackPanelLayout.offsetColumn(offset: engine.subtitleOffset, nativeTrack: activeSub?.isNativelyRendered == true)])
+    }
+}
+
+/// p0a1 panel: column models of one open panel. Building them is the costly part of the panel body (11 Ton, 39 UT:
+/// language names through `Locale` several times per track, line fitting, duplicate checks), and the body ran it up
+/// to three times per focus step in „Unten“ (`defaultFocus`, the layout, the redirect in `onChange(of: focus)`) and
+/// again on every engine publish. Now it runs once per change of tracks, choice, offset, lock, profile languages or
+/// widths; focus steps read the stored models. Counters for the line `Panel-Messung` when the panel closes.
+@MainActor
+final class TrackPanelColumnCache {
+    private struct Key: Equatable {
+        var audio: [AudioTrackInfo]
+        var subtitles: [AudioTrackInfo]
+        var activeAudio: Int?
+        var activeSubtitle: Int?
+        var offset: Double
+        var audioPriority: [String]
+        var subtitleLanguage: String
+        var audioLocked: Bool
+        var lock: TrackLock?
+        var audioWidth: Double
+        var subtitleWidth: Double
+    }
+
+    private var key: Key?
+    private var stored: [TrackPanelColumnModel] = []
+    private var builds = 0
+    private var hits = 0
+    private var longestBuild: Duration = .zero
+    private var totalBuild: Duration = .zero
+    /// Focus steps of the user in this panel (set by the panel).
+    var focusMoves = 0
+
+    func columns<E: PlaybackEngine>(engine: E, profile: Profile, audioLocked: Bool, lock: TrackLock?,
+                                    audioWidth: Double, subtitleWidth: Double) -> [TrackPanelColumnModel] {
+        let k = Key(audio: engine.audioTracks, subtitles: engine.subtitleTracks, activeAudio: engine.activeAudioID,
+                    activeSubtitle: engine.activeSubtitleID, offset: engine.subtitleOffset,
+                    audioPriority: profile.audioPriority, subtitleLanguage: profile.subtitleLanguage,
+                    audioLocked: audioLocked, lock: lock, audioWidth: audioWidth, subtitleWidth: subtitleWidth)
+        if k == key { hits += 1; return stored }
+        let clock = ContinuousClock()
+        let start = clock.now
+        stored = TrackPanelColumns.make(engine: engine, profile: profile, audioLocked: audioLocked, lock: lock,
+                                        audioWidth: audioWidth, subtitleWidth: subtitleWidth)
+        let took = clock.now - start
+        key = k
+        builds += 1
+        totalBuild += took
+        if took > longestBuild { longestBuild = took }
+        return stored
+    }
+
+    /// „Panel-Messung: Fokus 12 Schritte · Spalten neu 2× (längster 3,4 ms, zusammen 5,1 ms) · aus Speicher 31×“.
+    var summary: String {
+        "Panel-Messung: Fokus \(focusMoves) Schritte · Spalten neu \(builds)× (längster \(Self.ms(longestBuild)) ms, "
+            + "zusammen \(Self.ms(totalBuild)) ms) · aus Speicher \(hits)×"
+    }
+
+    /// Milliseconds with one decimal and a German comma („3,4“).
+    private static func ms(_ d: Duration) -> String {
+        let c = d.components
+        let tenths = Int((Double(c.seconds) * 10_000 + Double(c.attoseconds) / 1e14).rounded())
+        return "\(tenths / 10),\(tenths % 10)"
     }
 }
 

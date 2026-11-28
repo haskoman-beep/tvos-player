@@ -264,9 +264,10 @@ public struct FramePacing: Sendable {
         events = EventTally()
     }
 
-    /// Log text of a report (category `ruckler`).
-    public static func text(_ r: Report) -> String {
-        var s = "Startseite \(r.tenths / 10),\(r.tenths % 10) s: \(r.frames) Bilder (\(r.hz) Hz)"
+    /// Log text of a report (category `ruckler`). `place`: where it was measured (home page, or „Spur-Panel“ for the
+    /// track panel over the running video).
+    public static func text(_ r: Report, place: String = "Startseite") -> String {
+        var s = "\(place) \(r.tenths / 10),\(r.tenths % 10) s: \(r.frames) Bilder (\(r.hz) Hz)"
         s += " · \(r.missed) verpasst · ≈\(r.dropped) Bilder fehlen · längstes \(r.longestMs) ms"
         if let e = r.events.countsText { s += " · Ereignisse: \(e)" }
         if r.missed > 0, let m = r.events.nearText { s += " · verpasst bei: \(m)" }

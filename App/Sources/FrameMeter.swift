@@ -73,3 +73,46 @@ enum FrameMeter {
         }
     }
 }
+
+/// p0a1 panel: the same frame count while focus moves in the open track panel (playback runs below it; with frame
+/// rate matching the TV may run at 24 Hz, then every focus animation shows only 24 pictures per second). One
+/// `ruckler` line „Spur-Panel …“ per 5 s window with focus moves, a last one when the panel closes. Off with
+/// „Ruckler protokollieren“ off. Shows the UI frame rate under the panel and whether focus steps miss frames.
+@MainActor
+enum PanelFrameMeter {
+    private static var pacing = FramePacing()
+    private static var link: CADisplayLink?
+
+    /// The user moved focus in the panel. Starts the display link when it is not running.
+    static func focusMoved() {
+        guard MainThreadWatchdog.isEnabled else { return }
+        guard pacing.activity(at: CACurrentMediaTime()) else { return }
+        guard link == nil else { return }
+        let l = CADisplayLink(target: Ticker(), selector: #selector(Ticker.tick(_:)))
+        l.add(to: .main, forMode: .common)   // native rate: the UI's own frame pace (24 Hz in a matched 24p mode)
+        link = l
+    }
+
+    /// The panel closed: the partial window's line.
+    static func stop() {
+        if let r = pacing.stop() { RemoteLog.info("ruckler", FramePacing.text(r, place: "Spur-Panel")) }
+        link?.invalidate()
+        link = nil
+    }
+
+    fileprivate static func tick(timestamp: CFTimeInterval, target: CFTimeInterval) {
+        let t = pacing.frame(at: timestamp, nominal: target - timestamp)
+        if let r = t.report { RemoteLog.info("ruckler", FramePacing.text(r, place: "Spur-Panel")) }
+        if !t.keepRunning {
+            link?.invalidate()
+            link = nil
+        }
+    }
+
+    private final class Ticker: NSObject {
+        @objc func tick(_ link: CADisplayLink) {
+            let ts = link.timestamp, target = link.targetTimestamp
+            MainActor.assumeIsolated { PanelFrameMeter.tick(timestamp: ts, target: target) }
+        }
+    }
+}
