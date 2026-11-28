@@ -22,7 +22,7 @@ import Testing
     let names = Metric.allCases.map(\.rawValue)
     #expect(names == ["start.usable", "start.profiles", "start.catalog", "detail.badges", "streams.firstRow",
                       "streams.order", "player.loadBegins", "player.firstFrame", "player.audioReload", "sync.merged",
-                      "home.rowBody"])
+                      "home.rowBody", "sync.nuvio"])
     #expect(Set(names).count == names.count)
     for m in Metric.allCases {
         #expect(m.rawValue.range(of: #"^[a-z]+\.[A-Za-z]+$"#, options: .regularExpression) != nil)

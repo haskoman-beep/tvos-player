@@ -340,6 +340,11 @@ extension AppModel {
         let quiet = job.mode != .full && r.outcome == .ok && r.summary.pushed == 0 && r.summary.pushDropped == 0
         if !quiet {
             RemoteLog.info("sync", NuvioLog.passLine(reason: job.reason, mode: job.mode, outcome: r.outcome, summary: r.summary, ms: ms))
+            // T11: the same pass as a measuring line (counts only).
+            RemoteLog.metric(.syncNuvio, ms: ms, fields: ["modus": job.mode == .full ? "voll" : "senden",
+                                                          "ergebnis": NuvioLog.kind(r.outcome),
+                                                          "gesendet": "\(r.summary.pushed)", "uebernommen": "\(r.summary.merged)",
+                                                          "geloescht": "\(r.summary.deleted)"])
         }
         if let e = reaction.error, lastError != e { lastError = e }
         // Profile parts only onto the profile the pass belongs to, and only while it is active.

@@ -28,6 +28,8 @@ public enum Metric: String, CaseIterable, Sendable, Hashable {
     /// Build 4 follow-up S4: not a duration but a count: body passes of the home rows in one 5 s window with focus
     /// movement (`BodyPassCounter`); field `fokus`: focus moves onto row tiles in that window.
     case homeRowBody = "home.rowBody"
+    /// plan_nuvio_konto T11: one Nuvio pass (full or push) from start to result; fields: mode, outcome kind, counts.
+    case syncNuvio = "sync.nuvio"
 
     /// Log category of all measuring points.
     public static let category = "metric"
