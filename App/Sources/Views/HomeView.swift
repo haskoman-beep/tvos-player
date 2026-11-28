@@ -95,6 +95,10 @@ struct HomeView: View {
             focus.resume()   // P2 fix round: the F-A-12 rest check runs again
             topWatch.start()
             topWatch.onFailedMove = { up, row in rescueFailedMove(up: up, from: row) }
+            // Phase 0a.1: row titles for the row jump diagnosis (log lines only).
+            topWatch.rowTitle = { id in
+                model.profile.home.rows.first { $0.id == id }.map { model.homeRowTitle($0.content) } ?? "?"
+            }
             FrameMeter.homeVisible(true)   // S1: frame meter while focus moves on this page
         }
         .onDisappear {
@@ -103,6 +107,7 @@ struct HomeView: View {
             focus.suspend()   // P2 fix round: no expand of the hero info behind the detail page
             topWatch.stop()
             topWatch.onFailedMove = nil   // review N5
+            topWatch.rowTitle = nil
             FrameMeter.homeVisible(false)
             focusTarget.drop("verworfen, Startseite verlassen")   // review I1
         }
@@ -373,6 +378,7 @@ struct HomeView: View {
                     if row.id == firstRow { topWatch.report(.firstRow, inside) }
                     if hero { focus.row(row.id, focused: inside) }   // F-A-12
                     if inside { focusedRows.insert(row.id) } else { focusedRows.remove(row.id) }
+                    if inside { topWatch.noteRowReported(row.id) }   // Phase 0a.1: row jump diagnosis
                     // Without a hero the first row is the top edge: `TopEdgeScroll` snaps the page to the very top.
                     if inside, hero || row.id != firstRow { showHeading(of: row) }
                     if !inside, headingRow == row.id { headingRow = nil }
