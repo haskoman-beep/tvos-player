@@ -55,6 +55,7 @@ struct NuvioSettingsPage: View {
                                 accessory: .chevron, reserveDetailSpace: false) {
                         page = .profiles
                     }
+                    if Self.hasProfile(status) { NuvioImportRow() }
                     SettingsRow(symbol: "rectangle.portrait.and.arrow.right", tint: tint, title: NuvioTexts.signOutVerb,
                                 detail: NuvioTexts.signOutHint, accessory: .none, detailAlwaysVisible: true,
                                 reserveDetailSpace: false) {

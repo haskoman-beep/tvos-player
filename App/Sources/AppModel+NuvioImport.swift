@@ -186,16 +186,15 @@ extension AppModel {
 
     /// Session, chosen profile (checked against a fresh profile list, A3) and client, or the page state to show.
     private func nuvioImportContext(_ target: UUID) async -> Result<NuvioImportContext, NuvioImportFailure> {
-        let sessions = NuvioSessionStore(store: secrets)
-        guard var session = sessions.load() else { return .failure(.init(.signedOut)) }
-        let state = NuvioStateStore(storage: progressStore.storage).load(target)
+        // Session, state and renewal are the shared ones of `AppModel+Nuvio` (single-flight refresh), so an import
+        // and a sync pass never race over the rotating refresh token.
+        guard var session = nuvioSession else { return .failure(.init(.signedOut)) }
+        let state = nuvioState(for: target)
         guard let index = state.profileIndex else { return .failure(.init(.noProfile)) }
-        let client = nuvioImportClient(sessions)
+        let client = nuvioClient()
         if session.needsRefresh() {
-            switch await client.renewal(session) {
-            case .renewed(let fresh):
-                session = fresh
-                do { try sessions.save(fresh) } catch { RemoteLog.error("nuvio", "Import: Sitzung nicht gespeichert") }
+            switch await renewNuvio(after: session) {
+            case .renewed(let fresh): session = fresh
             case .refused: return .failure(.init(.failed(NuvioAccountImport.errorText(NuvioError.signedOut))))
             case .unavailable: break   // the 401 path tries once more
             }
@@ -215,17 +214,6 @@ extension AppModel {
     struct NuvioImportFailure: Error {
         let phase: NuvioImportStore.Phase
         init(_ phase: NuvioImportStore.Phase) { self.phase = phase }
-    }
-
-    /// Client for the import. A refused access token is renewed once and the new session stored before the resend.
-    /// Merge note (T8): when `AppModel+Nuvio` brings the single-flight session refresh, this should use it, so two
-    /// renewals never race over the rotating refresh token.
-    private func nuvioImportClient(_ sessions: NuvioSessionStore) -> NuvioClient {
-        NuvioClient(onUnauthorized: { old in
-            let r = await NuvioClient().renewal(old)
-            if case .renewed(let fresh) = r { try? sessions.save(fresh) }
-            return r
-        })
     }
 
     /// Manifests of the candidates, all at once (a handful of addons). A failed load is left out: the preview shows
