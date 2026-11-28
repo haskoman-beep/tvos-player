@@ -220,6 +220,13 @@ private func stream(_ name: String, file: String? = nil, hash: String? = nil, ur
     #expect(FailedLinkBook.load(from: FileBlobStorage(directory: dir.appendingPathComponent("leer"))).entries.isEmpty)
 }
 
+extension Tag {
+    /// Asserts elapsed wall time (a real timeout or a speed bound). A busy parallel run can starve such a test for
+    /// seconds, so CI skips these in the parallel run and runs them alone, serially, in a second step
+    /// (.github/workflows/build.yml, WALL_CLOCK_TESTS). Plain `swift test` still runs them with everything else.
+    @Tag static var wallClock: Self
+}
+
 // MARK: Quellensuche mit Zeitgrenze
 
 private struct ScriptedHTTP: HTTPFetching {
@@ -244,7 +251,7 @@ private actor Updates {
     func add(_ p: AddonSearchProgress) { list.append(p) }
 }
 
-@Test func searchTimeoutAndStatusPerAddon() async {
+@Test(.tags(.wallClock)) func searchTimeoutAndStatusPerAddon() async {
     let http = ScriptedHTTP(routes: [
         "fast": (0.05, #"{"streams":[{"name":"F","url":"https://f/1"}]}"#, 200),
         "slow": (10, #"{"streams":[{"name":"S","url":"https://s/1"}]}"#, 200),

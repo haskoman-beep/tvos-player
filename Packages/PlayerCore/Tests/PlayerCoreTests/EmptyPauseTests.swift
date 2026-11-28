@@ -112,7 +112,7 @@ private final class LogLines: @unchecked Sendable {
     var all: [String] { lock.lock(); defer { lock.unlock() }; return lines }
 }
 
-@Test func youtubeResolveGivesUpAtOverallDeadline() async {
+@Test(.tags(.wallClock)) func youtubeResolveGivesUpAtOverallDeadline() async {
     #expect(YouTubeResolver.overallDeadline == 8)
     let poster = SlowPoster(), log = LogLines()
     let start = ContinuousClock.now

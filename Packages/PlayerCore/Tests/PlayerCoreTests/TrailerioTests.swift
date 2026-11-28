@@ -66,7 +66,7 @@ private struct SlowHTTP: HTTPFetching {
     }
 }
 
-@Test func trailerioTimeoutFallsBackQuickly() async {
+@Test(.tags(.wallClock)) func trailerioTimeoutFallsBackQuickly() async {
     let start = ContinuousClock.now
     let list = await TrailerioClient(http: SlowHTTP(), timeout: .milliseconds(100))
         .trailers(imdb: "tt0133093", series: false, language: "de")

@@ -31,8 +31,28 @@ jobs:
       # later Build 5 tasks still convert are listed in tools/token_allowlist.txt (stale lines only warn).
       - name: Design tokens
         run: bash tools/check_tokens.sh
+      # Tests tagged .wallClock (StabilityTests.swift) assert elapsed wall time; a busy parallel run starves them for
+      # seconds (runs on nuvio-konto: 3.5-7.7 s against 3/6 s bounds). The parallel run skips them; the next step runs
+      # them alone and serially. `swift test` cannot filter by tag, so the names are listed here; the next step fails
+      # when this list and the tagged tests differ. Plain local `swift test` still runs them with everything else.
       - name: swift test
-        run: cd Packages/PlayerCore && swift test
+        env:
+          WALL_CLOCK_TESTS: 'trailerioTimeoutFallsBackQuickly|youtubeResolveGivesUpAtOverallDeadline|searchTimeoutAndStatusPerAddon|redactLongRunIsFastAndCapped|redactLongRunBelowCapIsFastAndMasked'
+        run: cd Packages/PlayerCore && swift test --skip "$WALL_CLOCK_TESTS"
+      - name: swift test (wall-clock tests, serial)
+        env:
+          WALL_CLOCK_TESTS: 'trailerioTimeoutFallsBackQuickly|youtubeResolveGivesUpAtOverallDeadline|searchTimeoutAndStatusPerAddon|redactLongRunIsFastAndCapped|redactLongRunBelowCapIsFastAndMasked'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd Packages/PlayerCore
+          tagged=$(grep -rhoE '@Test\(\.tags\(\.wallClock\)\) func [A-Za-z0-9_]+' Tests | sed 's/.* func //' | sort)
+          listed=$(tr '|' '\n' <<< "$WALL_CLOCK_TESTS" | sort)
+          [ "$tagged" = "$listed" ] || { echo "::error title=Wall clock::WALL_CLOCK_TESTS differs from the .wallClock tests: $(echo $tagged)"; exit 1; }
+          swift test --skip-build --no-parallel --filter "$WALL_CLOCK_TESTS" 2>&1 | tee "$RUNNER_TEMP/wall-clock.log"
+          for t in $listed; do
+            grep -E "Test $t\(\) passed" "$RUNNER_TEMP/wall-clock.log" || { echo "::error title=Wall clock::$t did not run"; exit 1; }
+          done
   build:
     name: Build IPA
     needs: test

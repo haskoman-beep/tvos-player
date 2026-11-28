@@ -330,7 +330,7 @@ public enum NuvioSync {
             let kept = state.filterPulled(entries)
             r.merged = book.merge(nuvio: kept)
         case .stage(let rows):
-            for row in rows { r.dropped += state.stage(row) }
+            r.dropped = state.stage(contentsOf: rows)
         case .unstage(let ids):
             let gone = Set(ids)
             state.staged.removeAll { gone.contains($0.id) }
