@@ -1,0 +1,7 @@
+[
+  {
+    "profile_id": 1,
+    "collections_json": "[{\"id\": \"collection-1\", \"title\": \"Weekend Picks\", \"backdropImageUrl\": \"https://cdn.example.com/backdrops/weekend.jpg\", \"pinToTop\": true, \"viewMode\": \"TABBED_GRID\", \"showAllTab\": true, \"folders\": [{\"id\": \"folder-1\", \"title\": \"Sci-Fi\", \"coverImageUrl\": \"https://cdn.example.com/folders/scifi.jpg\", \"coverEmoji\": \"🚀\", \"tileShape\": \"LANDSCAPE\", \"hideTitle\": false, \"catalogSources\": [{\"addonId\": \"com.example.catalog\", \"type\": \"movie\", \"catalogId\": \"top\"}]}]}]",
+    "updated_at": "2026-01-01T00:00:00Z"
+  }
+]

@@ -1,0 +1,28 @@
+[
+  {
+    "event_id": 12346,
+    "operation": "upsert",
+    "progress_key": "tmdb:550",
+    "content_id": "tmdb:550",
+    "content_type": "movie",
+    "video_id": "tmdb:550",
+    "season": null,
+    "episode": null,
+    "position": 3600000,
+    "duration": 7920000,
+    "last_watched": 1711600000000
+  },
+  {
+    "event_id": 12347,
+    "operation": "delete",
+    "progress_key": "tmdb:1396_s1e1",
+    "content_id": "tmdb:1396",
+    "content_type": "series",
+    "video_id": "tmdb:1396:1:1",
+    "season": 1,
+    "episode": 1,
+    "position": 1800000,
+    "duration": 3480000,
+    "last_watched": 1711600000000
+  }
+]

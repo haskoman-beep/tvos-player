@@ -1,0 +1,30 @@
+[
+  {
+    "id": "00000000-0000-4000-8000-0000000000c1",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "profile_id": 1,
+    "content_id": "tmdb:550",
+    "content_type": "movie",
+    "video_id": "tmdb:550",
+    "season": null,
+    "episode": null,
+    "progress_key": "tmdb:550",
+    "position": 3600000,
+    "duration": 7920000,
+    "last_watched": 1711600000000
+  },
+  {
+    "id": "00000000-0000-4000-8000-0000000000c2",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "profile_id": 1,
+    "content_id": "tmdb:1396",
+    "content_type": "series",
+    "video_id": "tmdb:1396:1:1",
+    "season": 1,
+    "episode": 1,
+    "progress_key": "tmdb:1396_s1e1",
+    "position": 1800000,
+    "duration": 3480000,
+    "last_watched": 1711500000000
+  }
+]

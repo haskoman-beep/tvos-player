@@ -1,0 +1,24 @@
+[
+  {
+    "id": "00000000-0000-4000-8000-0000000000b2",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "profile_id": 1,
+    "url": "https://metadata.example.com/manifest.json",
+    "name": "Example Metadata",
+    "enabled": false,
+    "sort_order": 1,
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-0000000000b1",
+    "user_id": "00000000-0000-4000-8000-000000000001",
+    "profile_id": 1,
+    "url": "https://catalog.example.com/SECRETKEY0123456789abcdef/manifest.json",
+    "name": "Example Catalog",
+    "enabled": true,
+    "sort_order": 0,
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  }
+]
