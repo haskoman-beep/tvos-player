@@ -92,17 +92,20 @@ extension AppModel {
                 if canonical.id != m.id { _ = b.removeFromContinueWatching(itemID: m.id) }
                 b.markWatched(item: canonical, series: series)
             }
+            nuvioNoteWatched(canonical.id)   // plan_nuvio_konto A8 (a whole-series marker or no length: not sent)
         case .markUnwatched:
             // A catalog tile may carry a TMDB ID while playback recorded the IMDb ID: clear both.
             editProgress { b in
                 b.markUnwatched(itemID: m.id)
                 if let imdb, imdb != m.id { b.markUnwatched(itemID: imdb) }
             }
+            nuvioTombstone([m.id] + (imdb.map { [$0] } ?? []), kind: .markedUnwatched)   // T9: pulls must not undo it
         case .removeFromContinue:
             editProgress { b in
                 _ = b.removeFromContinueWatching(itemID: canonical.id)
                 if canonical.id != m.id { _ = b.removeFromContinueWatching(itemID: m.id) }
             }
+            nuvioTombstone([canonical.id, m.id], kind: .removedFromContinue)   // T9: pulls must not undo it
         case .watchlistAdd, .watchlistRemove: break
         }
         let services = Set(Self.syncServices.filter(isConnected))

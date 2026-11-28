@@ -154,6 +154,7 @@ final class AppModel {
         AddonMetaCache.loadPosterMap()   // Build 8 (poster): tile poster addresses from disk
         syncRemoteLog()
         observeSaveDrain()
+        observeNuvio()   // plan_nuvio_konto T9: session from the Keychain, foreground trigger (AppModel+Nuvio)
     }
 
     /// Phase 0b: tvOS may end a suspended app without notice. On the way into the background (and at the end) the
@@ -206,6 +207,7 @@ final class AppModel {
             progress.recordNextUp(id: n.id, item: n.item, season: s, episode: e)
         }
         do { try saveProgressBook() } catch { lastError = "Fortschritt nicht gespeichert: \(error)" }
+        nuvioNoteProgress(r.id)   // T9: local play into the Nuvio outbox (pushed when due)
         scrobbleProgress(r, fraction: duration > 0 ? position / duration : 0)
     }
 
@@ -226,10 +228,12 @@ final class AppModel {
     /// Player wird verlassen: Trakt/Simkl bekommen den letzten Stand.
     func endPlayback(_ r: PlayRequest) {
         sendScrobble(scrobbler.end(id: r.id))
+        nuvioAfterPlayback()   // T9: push at once; a full pass at most once per minute
     }
 
     /// Player pausiert: Trakt/Simkl bekommen `pause`; der nächste Fortschritt schickt wieder `start`.
     func scrobblePause(_ r: PlayRequest) {
+        nuvioPushNow(reason: "pause")   // T9: Nuvio does not depend on Trakt/Simkl being connected
         guard Self.syncServices.contains(where: isConnected) else { return }
         sendScrobble(scrobbler.pause(id: r.id))
     }
@@ -344,6 +348,8 @@ final class AppModel {
     /// Angefangenes aus dem gewählten Dienst holen und mit dem lokalen Stand zusammenführen.
     func syncRemoteProgress() async {
         await processSyncQueue()   // Wave L: send pending tile changes before pulling
+        // T9: app start, profile switch, replaced profiles: a Nuvio pass of its own, independent of the source below.
+        Task { await syncNuvio(.full, reason: "abgleich") }
         let scope = scopes.current   // Task 3.1 (S-3): the pull belongs to this profile and epoch
         let s: String
         switch profile.progressSource { case .local: return; case .trakt: s = "trakt"; case .simkl: s = "simkl" }
@@ -383,6 +389,7 @@ final class AppModel {
                 b.markFinished(id: r.id)
                 if let n = r.nextRequest, let s = n.season, let ep = n.episode { b.recordNextUp(id: n.id, item: n.item, season: s, episode: ep) }
             }
+            nuvioNoteWatched(r.id)   // A8: the app's own "watched" goes to Nuvio as watched
         }
         let previous = scrobbleChain
         scrobbleChain = Task {
