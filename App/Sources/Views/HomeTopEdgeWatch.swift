@@ -154,10 +154,72 @@ import PlayerCore
     @ObservationIgnored private var lastScrollMove: Double?
 
     /// b8 review 3: only the rows on the page keep a frame (hidden or deleted rows leave `rowSpans`).
+    /// Phase 0a.1 (28.11. 09:33:12.501, `Reihe 3930…4362` = Genres before "Reihe verschoben 5→8"): a changed order
+    /// also drops the frames it may have moved (`HomeRowJump.keptFrames`); rows the lazy list has not built kept
+    /// their old place and misled the focus scroll target, the heading checks and the rescue. Built rows write their
+    /// new frame after this (`onGeometryChange` runs after the layout of the same update). The first call (page
+    /// built, no order yet) keeps every frame of a row on the page, as before.
     func keepRows(_ ids: [UUID]) {
-        let keep = Set(ids)
+        let keep = rowOrder.isEmpty ? Set(ids) : HomeRowJump.keptFrames(old: rowOrder, new: ids)
         rowSpans = rowSpans.filter { keep.contains($0.key) }
+        rowOrder = ids
     }
+
+    /// Phase 0a.1: the shown rows in page order (from `keepRows`).
+    @ObservationIgnored private var rowOrder: [UUID] = []
+
+    // MARK: Row jump diagnosis (Phase 0a.1)
+
+    /// Set by `HomeView`: title of a shown row (log lines only).
+    @ObservationIgnored var rowTitle: ((UUID) -> String)?
+    /// The row under UIKit's focused item after the last focus update (nil: not in a row with a known frame).
+    @ObservationIgnored private var uikitRow: UUID?
+    /// Uptime of the last vertical focus update between two rows.
+    @ObservationIgnored private var lastVerticalMove: Double?
+    /// Uptime of each row's last focus report (`onFocusInside(true)`).
+    @ObservationIgnored private var rowReports: [UUID: Double] = [:]
+
+    /// A row reported that it holds the focus (`HomeRowView.onFocusInside`).
+    func noteRowReported(_ id: UUID) { rowReports[id] = Self.now }
+
+    /// The row under a focus item of the home list (its centre in the list content, as `rescueLater`).
+    private func listRow(of item: UIFocusItem?, in sv: UIScrollView) -> UUID? {
+        guard let view = item as? UIView, view.window != nil, view.isDescendant(of: sv) else { return nil }
+        let y = Double(view.convert(view.bounds, to: sv).midY)
+        return HomeMoveRescue.row(atContentY: y, spans: rowSpans.map { ($0.key, $0.value) })
+    }
+
+    /// Phase 0a.1 (4 of 79 row changes on 28.11. jumped over rows): tells a real jump of the focus engine (one update
+    /// over several rows: `Fokus sprang über Reihen (UIKit)`) from rows the focus passed through without reporting it
+    /// (`… hatte den Fokus (UIKit), meldete ihn nicht …`). Log only; nothing moves.
+    private func noteListMove(_ context: UIFocusUpdateContext) {
+        guard let sv = TabBarGuard.shared.knownScrollView, sv.window != nil else { return }
+        let from = listRow(of: context.previouslyFocusedItem, in: sv) ?? uikitRow
+        let next = listRow(of: context.nextFocusedItem, in: sv)
+        uikitRow = next
+        let up = context.focusHeading.contains(.up)
+        guard up || context.focusHeading.contains(.down), let next, let from, next != from else { return }
+        let now = Self.now
+        let since = lastVerticalMove.map { Int(((now - $0) * 1000).rounded()) }
+        lastVerticalMove = now
+        let skipped = HomeRowJump.skipped(from: from, to: next, order: rowOrder)
+        if !skipped.isEmpty {
+            let rows = skipped.map { HomeRowJump.SkippedRow(title: title(of: $0), span: rowSpans[$0]) }
+            RemoteLog.info("nav", HomeRowJump.jumpLine(from: title(of: from), to: title(of: next), down: !up,
+                                                       skipped: rows, offset: listScroll?.offset,
+                                                       flightTarget: flight?.target, sinceLastMs: since))
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(Int(HomeRowJump.reportWait * 1000)))
+            guard let self, !self.observers.isEmpty,
+                  !HomeRowJump.reported(enteredAt: now, lastReport: self.rowReports[next]),
+                  self.throttle.allow("unreported \(next.uuidString)", now: HomeTopEdgeWatch.now) else { return }
+            RemoteLog.info("nav", HomeRowJump.unreportedLine(title: self.title(of: next),
+                                                             now: self.uikitRow.map { self.title(of: $0) }))
+        }
+    }
+
+    private func title(of id: UUID) -> String { rowTitle?(id) ?? "?" }
 
     private func logFocusScrollSummary() {
         guard let line = probe.summaryLine() else { return }
@@ -270,7 +332,7 @@ import PlayerCore
             updateRequest()
         }
         if !failed { updateSerial &+= 1 }
-        if failed { rescueLater(context) }
+        if failed { rescueLater(context) } else { noteListMove(context) }
         guard context.focusHeading.contains(.up) else { return }
         // Review F-j M2: up inside the bar itself has no target; that is not a home page failure.
         if failed, context.previouslyFocusedItem.map(Self.isInTabBar) == true { return }
