@@ -245,14 +245,39 @@ final class CollectionLinkStore: ObservableObject {
         await importData(data, link: nil, model: model, scope: scope)
     }
 
+    /// Nuvio account (T10, A2): collections of the account under the stable pseudo-link `link`, so a second load is
+    /// the refresh of the stored entry. `merge` replaces `AppModel.importNuvio` (id-first merge, A1) and returns the
+    /// collections as stored locally (for the media snapshot and the result line).
+    func importAccount(_ data: Data, link: String, model: AppModel,
+                       merge: @escaping @MainActor (NuvioImportResult, [String: FolderMedia]?) -> NuvioImportResult) async {
+        ensure(model)
+        let scope = model.scopes.current   // Task 3.1
+        busy = true
+        defer { busy = false }
+        await importData(data, link: link, model: model, scope: scope, merge: merge)
+    }
+
+    /// Media snapshot the refresh path would use for the account link (nil = first import).
+    func accountSnapshot(_ link: String, model: AppModel) -> [String: FolderMedia]? {
+        ensure(model)
+        let id = NuvioImport.stableHash("link:" + link)
+        guard links.contains(where: { $0.id == id }) else { return nil }
+        return snapshot(id) ?? [:]
+    }
+
     /// "Aktualisieren": fetch one stored link again.
     func refresh(_ id: String, model: AppModel) async {
         guard let u = links.first(where: { $0.id == id })?.url else { return }
+        if NuvioAccountImport.isAccountLink(u) { await model.nuvioRefreshAccountCollections(link: u); return }
         await importLink(u, model: model)
     }
 
     func refreshAll(model: AppModel) async {
-        for u in links.compactMap(\.url) { await importLink(u, model: model) }
+        for u in links.compactMap(\.url) {
+            if NuvioAccountImport.isAccountLink(u) { await model.nuvioRefreshAccountCollections(link: u) } else {
+                await importLink(u, model: model)
+            }
+        }
     }
 
     /// Forget a link. Imported rows stay on the start page (they are removed there); a pack stops enriching.
@@ -311,7 +336,8 @@ final class CollectionLinkStore: ObservableObject {
 
     /// Task 3.1: `scope` was taken before the first await. Links, kit content and collections belong to the active
     /// profile's stores, so a result of an older scope is dropped (not rewritten by ID).
-    private func importData(_ data: Data, link: String?, model: AppModel, scope: ProfileScope) async {
+    private func importData(_ data: Data, link: String?, model: AppModel, scope: ProfileScope,
+                            merge: (@MainActor (NuvioImportResult, [String: FolderMedia]?) -> NuvioImportResult)? = nil) async {
         let (format, result) = await Task.detached(priority: .userInitiated) { Self.parse(data, link: link) }.value
         guard model.scopeStillCurrent(scope, "Collection-Import") else {
             model.notice = "Import verworfen: Profil oder Einstellungen wurden währenddessen geändert. Bitte erneut importieren."
@@ -354,9 +380,14 @@ final class CollectionLinkStore: ObservableObject {
             probe = ImportSummary.videos(collections)
             let base = ImportSummary.of(collections)
             line = { n in var s = base; s.rows = c.rows.count; s.sound = n; return s.line + ImportSummary.note(c.warnings) + ImportSummary.addonNote(waiting) }
-        case .collections(let r):
+        case .collections(let parsedResult):
             // A refresh of a stored link takes the fresh media addresses (I4); a first import only fills gaps.
-            model.importNuvio(result: r, refresh: previous.map { snapshot($0.id) ?? [:] }, profile: scope.profile)
+            let refresh = previous.map { snapshot($0.id) ?? [:] }
+            let r: NuvioImportResult
+            if let merge { r = merge(parsedResult, refresh) } else {
+                r = parsedResult
+                model.importNuvio(result: r, refresh: refresh, profile: scope.profile)
+            }
             // Only a link can be refreshed, so only a link keeps a snapshot (pasted code needs none).
             if link != nil { media = NuvioImport.media(of: r.collections) }
             let collections = r.collections.map { PreviewPack.apply(packIndex, to: $0) }
