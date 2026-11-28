@@ -56,6 +56,8 @@ public struct LimitedHTTPClient: HTTPClient {
     public static let shared = LimitedHTTPClient()
     /// Task 3.10: on the ephemeral transport (nothing cached, no cookies).
     public static let ephemeral = LimitedHTTPClient(transport: URLSessionByteTransport.ephemeral)
+    /// Nuvio account calls: redirects refused (see `URLSessionByteTransport.nuvio`).
+    public static let nuvio = LimitedHTTPClient(transport: URLSessionByteTransport.nuvio)
 
     static func prepared(_ request: URLRequest, limits: HTTPLimits, fresh: Bool) -> URLRequest {
         var r = request
@@ -146,6 +148,19 @@ public struct URLSessionByteTransport: HTTPByteTransport {
         return URLSessionByteTransport(session: URLSession(configuration: cfg))
     }()
 
+    /// Nuvio account calls only (review 2, finding 13): ephemeral (no cache, no cookies) and every HTTP redirect is
+    /// refused, so a 307/308 can never re-send the sign-in body or a token to another location; the 3xx answer
+    /// comes back as the response. Other clients keep `shared`/`ephemeral` and their redirect behaviour.
+    public static let nuvio: URLSessionByteTransport = {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.urlCache = nil
+        cfg.httpCookieStorage = nil
+        cfg.timeoutIntervalForRequest = 60
+        cfg.timeoutIntervalForResource = 60
+        return URLSessionByteTransport(session: URLSession(configuration: cfg, delegate: RedirectRefusal(),
+                                                           delegateQueue: nil))
+    }()
+
     static let chunkSize = 64 * 1024
 
     public func open(_ request: URLRequest) async throws -> (HTTPURLResponse, AsyncThrowingStream<Data, Error>) {
@@ -187,6 +202,24 @@ public struct URLSessionByteTransport: HTTPByteTransport {
         return (http, stream)
         #endif
     }
+}
+
+/// Session delegate that refuses every HTTP redirect (the redirect response becomes the final response).
+/// Linux FoundationNetworking has the completion-handler requirement only; on Apple platforms the async form of the
+/// same optional requirement is implemented (it avoids a `@Sendable` mismatch with the imported block type, which
+/// would silently leave the requirement unimplemented).
+final class RedirectRefusal: NSObject, URLSessionTaskDelegate, Sendable {
+    #if canImport(FoundationNetworking)
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+    #else
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest) async -> URLRequest? {
+        nil
+    }
+    #endif
 }
 
 /// Holds the reader task so a cancelled caller can stop it.

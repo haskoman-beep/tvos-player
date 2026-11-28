@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import Testing
 @testable import PlayerCore
 
@@ -24,7 +27,7 @@ private struct FailingSender: APISending {
 }
 
 private func client(_ http: FakeSender, sleeps: NuvioCallLog = NuvioCallLog(),
-                    onUnauthorized: (@Sendable (NuvioSession) async -> NuvioSession?)? = nil) -> NuvioClient {
+                    onUnauthorized: (@Sendable (NuvioSession) async -> NuvioRenewal)? = nil) -> NuvioClient {
     NuvioClient(http: http, sleep: { sleeps.note($0) }, onUnauthorized: onUnauthorized)
 }
 
@@ -127,7 +130,7 @@ private func client(_ http: FakeSender, sleeps: NuvioCallLog = NuvioCallLog(),
     let refreshed = NuvioCallLog()
     let gone = FakeSender([(401, "")])
     await #expect(throws: NuvioError.signedOut) {
-        try await client(gone, onUnauthorized: { _ in refreshed.note(1); return nil }).signOut(session)
+        try await client(gone, onUnauthorized: { _ in refreshed.note(1); return .refused }).signOut(session)
     }
     #expect(refreshed.all.isEmpty && gone.sent.count == 1)
 }
@@ -216,7 +219,7 @@ private func client(_ http: FakeSender, sleeps: NuvioCallLog = NuvioCallLog(),
     let fresh = NuvioSession(accessToken: "AT2", refreshToken: "RT2", expiresAt: nil, userID: session.userID)
     let c = client(http, onUnauthorized: { old in
         calls.note(1)
-        return old.accessToken == "AT1" ? fresh : nil
+        return old.accessToken == "AT1" ? .renewed(fresh) : .refused
     })
     #expect(try await c.progressCursor(profile: 1, session) == 7)
     #expect(calls.all.count == 1 && http.sent.count == 2)
@@ -226,7 +229,7 @@ private func client(_ http: FakeSender, sleeps: NuvioCallLog = NuvioCallLog(),
     let twice = FakeSender([(401, ""), (401, "")])
     let calls2 = NuvioCallLog()
     await #expect(throws: NuvioError.signedOut) {
-        try await client(twice, onUnauthorized: { _ in calls2.note(1); return fresh }).profiles(session)
+        try await client(twice, onUnauthorized: { _ in calls2.note(1); return .renewed(fresh) }).profiles(session)
     }
     #expect(calls2.all.count == 1 && twice.sent.count == 2)
     // Without a hook, or when it has nothing: signed out after one request.
@@ -234,7 +237,7 @@ private func client(_ http: FakeSender, sleeps: NuvioCallLog = NuvioCallLog(),
     await #expect(throws: NuvioError.signedOut) { try await client(bare).profiles(session) }
     #expect(bare.sent.count == 1)
     let nothing = FakeSender([(401, "")])
-    await #expect(throws: NuvioError.signedOut) { try await client(nothing, onUnauthorized: { _ in nil }).profiles(session) }
+    await #expect(throws: NuvioError.signedOut) { try await client(nothing, onUnauthorized: { _ in .refused }).profiles(session) }
     #expect(nothing.sent.count == 1)
 }
 
@@ -398,4 +401,52 @@ private func client(_ http: FakeSender, sleeps: NuvioCallLog = NuvioCallLog(),
     #expect(NuvioEndpoint.allCases.count == 13)
     for u in built { for f in forbidden { #expect(!u.contains(f), "\(u)") } }
     #expect(Set(NuvioEndpoint.allCases.map(\.path)).count == 12)   // sign-in and refresh share the token path
+}
+
+
+// MARK: Review 2 (findings 9, 13)
+
+@Test func nuvioRefreshThatCannotRunIsOfflineNotSignedOut() async throws {
+    let http = FakeSender([(401, "")])
+    await #expect(throws: NuvioError.offline) {
+        try await client(http, onUnauthorized: { _ in .unavailable }).progressCursor(profile: 1, session)
+    }
+    #expect(http.sent.count == 1)
+    // `renewal` maps refresh failures: 5xx and 429 are unavailable, 400 is refused, 200 renewed.
+    let down = client(FakeSender([(503, "")]))
+    #expect(await down.renewal(session, now: Date(timeIntervalSince1970: 1_750_000_000)) == .unavailable)
+    let busy = client(FakeSender([(429, ""), (429, "")]))
+    #expect(await busy.renewal(session, now: Date(timeIntervalSince1970: 1_750_000_000)) == .unavailable)
+    let refused = client(FakeSender([(400, #"{"error":"invalid_grant"}"#)]))
+    #expect(await refused.renewal(session, now: Date(timeIntervalSince1970: 1_750_000_000)) == .refused)
+    let ok = client(FakeSender([(200, #"{"access_token":"AT9","refresh_token":"RT9","expires_in":3600,"user":{"id":"\#(session.userID)"}}"#)]))
+    if case .renewed(let s) = await ok.renewal(session, now: Date(timeIntervalSince1970: 1_750_000_000)) {
+        #expect(s.accessToken == "AT9")
+    } else { Issue.record("expected renewed") }
+}
+
+@Test func nuvioRedirectIsAnAnswerNotASecondRequest() async throws {
+    // A 307 on sign-in comes back as `.status(307)`; the body is sent exactly once.
+    let http = FakeSender([(307, "")])
+    await #expect(throws: NuvioError.status(307, code: nil)) { _ = try await client(http).signIn(email: "a@b.example", password: "pw-invented") }
+    #expect(http.sent.count == 1)
+    // The Nuvio session delegate refuses the redirect (called through the protocol, as URLSession does).
+    let delegate: URLSessionTaskDelegate = RedirectRefusal()
+    let task = URLSession(configuration: .ephemeral).dataTask(with: URL(string: "https://example.org/a")!)
+    let response = HTTPURLResponse(url: URL(string: "https://example.org/a")!, statusCode: 307, httpVersion: nil,
+                                   headerFields: ["Location": "https://example.net/b"])!
+    let next = URLRequest(url: URL(string: "https://example.net/b")!)
+    #if canImport(FoundationNetworking)
+    let box = NuvioCallLog()
+    // Linux protocols have no optional requirements: a near-miss signature would silently run the default (which
+    // follows the redirect), and this call would see a request.
+    delegate.urlSession(URLSession.shared, task: task, willPerformHTTPRedirection: response, newRequest: next) { r in
+        box.note(r == nil ? 0 : 1)
+    }
+    #expect(box.all == [0])
+    #else
+    let r = await delegate.urlSession?(URLSession.shared, task: task, willPerformHTTPRedirection: response, newRequest: next)
+    #expect(r == .some(nil))
+    #endif
+    #expect(URLSessionByteTransport.nuvio.session.delegate is RedirectRefusal)
 }

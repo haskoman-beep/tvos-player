@@ -71,9 +71,22 @@ public enum NuvioEndpoint: String, CaseIterable, Sendable {
     var authorized: Bool { self != .signIn && self != .refresh }
 }
 
+/// What `onUnauthorized` did with a refused access token (review 2, finding 9).
+public enum NuvioRenewal: Equatable, Sendable {
+    /// A renewed session (the app stored it); the request is sent once more with it.
+    case renewed(NuvioSession)
+    /// The account refused the refresh (`NuvioError.signedOut` from `refresh`): the call ends in `.signedOut`.
+    case refused
+    /// The refresh could not run (offline, 429, 5xx, unreadable answer): the call ends in `.offline` and the stored
+    /// session stays.
+    case unavailable
+}
+
 /// Client for the public Nuvio API (reference v1.3, `https://api.nuvio.tv`). Every call goes through `APISending`.
 /// 429: one wait for `Retry-After` (at most 10 s), then `.rateLimited`. 401 on a data call: `onUnauthorized` is asked
-/// once for a renewed session (it refreshes and stores it); the request is sent once more with it.
+/// once (it refreshes and stores the session); `.renewed` sends the request once more, `.refused` is `.signedOut`,
+/// `.unavailable` is `.offline`. The default sender refuses redirects (`URLSessionByteTransport.nuvio`), so a 3xx is
+/// an answer (`.status`), never a second request with the body or token elsewhere.
 public struct NuvioClient: Sendable {
     public static let base = URL(string: "https://api.nuvio.tv")!
     /// The publishable key from the public API reference (meant for public clients).
@@ -85,10 +98,10 @@ public struct NuvioClient: Sendable {
 
     let http: APISending
     let sleep: APISleep
-    let onUnauthorized: (@Sendable (NuvioSession) async -> NuvioSession?)?
+    let onUnauthorized: (@Sendable (NuvioSession) async -> NuvioRenewal)?
 
-    public init(http: APISending = URLSessionSender(), sleep: @escaping APISleep = defaultAPISleep,
-                onUnauthorized: (@Sendable (NuvioSession) async -> NuvioSession?)? = nil) {
+    public init(http: APISending = URLSessionSender(client: LimitedHTTPClient.nuvio), sleep: @escaping APISleep = defaultAPISleep,
+                onUnauthorized: (@Sendable (NuvioSession) async -> NuvioRenewal)? = nil) {
         self.http = http; self.sleep = sleep; self.onUnauthorized = onUnauthorized
     }
 
@@ -129,13 +142,22 @@ public struct NuvioClient: Sendable {
         return res
     }
 
-    /// A data call: 401 → ask `onUnauthorized` once and resend with the renewed session; still 401 → `.signedOut`.
+    /// A data call: 401 → ask `onUnauthorized` once and resend with the renewed session; still 401, or the refresh
+    /// refused → `.signedOut`; the refresh could not run → `.offline` (the session stays).
     func perform(_ r: APIRequest, session: NuvioSession) async throws -> Data {
         var res = try await send(r)
-        if res.status == 401, let onUnauthorized, let fresh = await onUnauthorized(session) {
-            var again = r
-            again.headers["Authorization"] = "Bearer \(fresh.accessToken)"
-            res = try await send(again)
+        if res.status == 401, let onUnauthorized {
+            switch await onUnauthorized(session) {
+            case .renewed(let fresh):
+                var again = r
+                again.headers["Authorization"] = "Bearer \(fresh.accessToken)"
+                res = try await send(again)
+            case .refused:
+                throw NuvioError.signedOut
+            case .unavailable:
+                if Task.isCancelled { throw CancellationError() }
+                throw NuvioError.offline
+            }
         }
         if res.status == 401 { throw NuvioError.signedOut }
         guard (200..<300).contains(res.status) else {
@@ -174,7 +196,16 @@ public struct NuvioClient: Sendable {
                             expiresAt: now.addingTimeInterval(a.expiresIn ?? Self.defaultLifetime), userID: s.userID)
     }
 
-    /// `POST auth/v1/logout`. No refresh on 401 (that answer already means signed out: `.signedOut`).
+    /// `refresh` as a `NuvioRenewal`, for the app's `onUnauthorized` hook (which stores a renewed session):
+    /// `.signedOut` → `.refused`, any other failure → `.unavailable`.
+    public func renewal(_ s: NuvioSession, now: Date = Date()) async -> NuvioRenewal {
+        do { return .renewed(try await refresh(s, now: now)) } catch NuvioError.signedOut { return .refused } catch {
+            return .unavailable
+        }
+    }
+
+    /// `POST auth/v1/logout`. The reference (v1.3, "Sign out") documents no `scope` parameter, so none is sent; whether
+    /// the server ends only this session or all sessions of the account is not stated (review 2, finding 14). No refresh on 401 (that answer already means signed out: `.signedOut`).
     public func signOut(_ s: NuvioSession) async throws {
         let res = try await send(try request(.signOut, session: s))
         if res.status == 401 { throw NuvioError.signedOut }
@@ -235,6 +266,10 @@ public struct NuvioClient: Sendable {
     }
 
     // MARK: Watch progress
+
+    /// Rows the server returns at most for `progress` (reference v1.3: `p_limit` defaults to 200 and is capped at 200
+    /// without `p_since_last_watched`; no paging below the newest rows is documented, review 2 finding 6).
+    public static let snapshotLimit = 200
 
     /// `rpc/sync_pull_watch_progress` without `p_since_last_watched`: the newest rows (the server caps at 200),
     /// `last_watched` descending.
