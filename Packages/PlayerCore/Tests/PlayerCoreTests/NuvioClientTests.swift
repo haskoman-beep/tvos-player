@@ -445,8 +445,14 @@ private func client(_ http: FakeSender, sleeps: NuvioCallLog = NuvioCallLog(),
     }
     #expect(box.all == [0])
     #else
-    let r = await delegate.urlSession?(URLSession.shared, task: task, willPerformHTTPRedirection: response, newRequest: next)
-    #expect(r == .some(nil))
+    // Calling the optional async requirement through the existential crashes the Swift 6.2.4 compiler (SILGen), so
+    // the answer is taken from the concrete type, and the Objective-C selector URLSession looks for proves the
+    // requirement is really implemented (a near-miss signature would not respond to it).
+    let r = await RedirectRefusal().urlSession(URLSession.shared, task: task, willPerformHTTPRedirection: response,
+                                               newRequest: next)
+    #expect(r == nil)
+    let wanted = NSSelectorFromString("URLSession:task:willPerformHTTPRedirection:newRequest:completionHandler:")
+    #expect((delegate as AnyObject).responds(to: wanted))
     #endif
     #expect(URLSessionByteTransport.nuvio.session.delegate is RedirectRefusal)
 }
