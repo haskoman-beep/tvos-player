@@ -180,3 +180,28 @@ private func secretProfile() -> Profile {
     // Missing file stays recovery.
     #expect(ProfileStore(directory: tempDir()).loadResult().needsSecretRecovery)
 }
+
+/// Nuvio T2: the device-wide Nuvio session lives under its own scope; the profile secret migration never touches it,
+/// also not when a profile is deleted.
+@Test func secretMigrationLeavesNuvioSessionAlone() throws {
+    let store = MemorySecretStore()
+    let sessions = NuvioSessionStore(store: store)
+    let session = nuvioTestSession()
+    try sessions.save(session)
+    let p = secretProfile()
+    let other = Profile.makeDefault(name: "Zweites")
+    SecretMigration.copyIntoStore(profiles: [p, other], store: store)
+    #expect(sessions.load() == session)
+    var list = [p, other]
+    SecretMigration.fillMissing(&list, store: store)
+    #expect(sessions.load() == session)
+    #expect(!list.contains { $0.apiKeys.values.contains { $0.contains("AT1") } || !$0.syncTokens.keys.filter { $0.contains("nuvio") }.isEmpty })
+    let old = SecretMigration.snapshot([p, other])
+    var changed = p
+    changed.apiKeys["tmdb"] = "k-neu"
+    _ = try SecretMigration.mirror(from: old, to: [changed], store: store)   // `other` deleted
+    #expect(sessions.load() == session)
+    #expect(store.count(profile: other.id) == 0)
+    _ = try SecretMigration.mirror(from: SecretMigration.snapshot([changed]), to: [], store: store)
+    #expect(sessions.load() == session)
+}

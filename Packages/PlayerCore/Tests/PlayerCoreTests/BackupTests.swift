@@ -217,3 +217,23 @@ private func keyedProfile(_ name: String) -> Profile {
     var emptyKey = Profile.makeDefault(); emptyKey.apiKeys = ["tmdb": ""]
     #expect(!StoredProfiles(profiles: [emptyKey]).carriesSecrets)
 }
+
+/// Nuvio T2: the session is only in the secret store. Neither `profiles.json` nor any backup (plain or with keys)
+/// holds it, and a restore without keys does not pull it into a profile.
+@Test func backupsNeverHoldTheNuvioSession() throws {
+    let store = MemorySecretStore()
+    try NuvioSessionStore(store: store).save(nuvioTestSession())
+    var s = StoredProfiles.makeDefault()
+    s.profiles[0].apiKeys = ["tmdb": "k-tmdb"]
+    s.profiles[0].syncTokens = ["trakt": SyncToken(accessToken: "a-trakt", refreshToken: "r-trakt")]
+    SecretMigration.copyIntoStore(profiles: s.profiles, store: store)
+    let full = Backup(profiles: s)
+    let restored = full.withoutSecrets().profiles.keepingSecrets(from: s.profiles, store: store).profiles
+    let texts = [try JSONEncoder().encode(s), try full.encoded(), try full.withoutSecrets().encoded(),
+                 try JSONEncoder().encode(restored)].map { String(decoding: $0, as: UTF8.self) }
+    for t in texts {
+        #expect(!t.lowercased().contains("nuvio"))
+        #expect(!t.contains("AT1-nuvio-access"))
+        #expect(!t.contains("RT1-nuvio-refresh"))
+    }
+}

@@ -30,6 +30,11 @@ public enum LogRedact {
         let (head, cutNow) = capped(input)
         var out = head
         if out.contains("/") { out = replaceURLs(out) }
+        // Nuvio T2: e-mail addresses outside URLs (URLs were shortened above, so no credential `@` is left there).
+        if out.contains("@") {
+            out = emailPattern.stringByReplacingMatches(
+                in: out, range: NSRange(location: 0, length: (out as NSString).length), withTemplate: "…@…")
+        }
         let lower = out.lowercased()
         if keyWords.contains(where: { lower.contains($0) }) { out = maskKeyValues(out) }
         if lower.contains("bearer") || lower.contains("basic") {
@@ -225,6 +230,11 @@ public enum LogRedact {
     /// `Bearer <Wert>`, `Basic <Wert>` (Task 1.5) auch ohne Kopfzeilennamen.
     nonisolated(unsafe) private static let bearerPattern = try! NSRegularExpression(
         pattern: #"\b(Bearer|Basic)\s+(?:"[^"]*"|'[^']*'|"[^"]*$|'[^']*$|[A-Za-z0-9._~+/=\-]+)"#, options: [.caseInsensitive])
+
+    /// An e-mail address: local part, `@`, a domain with at least one dot and a letter TLD. Becomes `…@…` (which the
+    /// pattern no longer matches, so a second pass changes nothing).
+    nonisolated(unsafe) private static let emailPattern = try! NSRegularExpression(
+        pattern: #"(?<![A-Za-z0-9._%+\-])[A-Za-z0-9._%+\-]+@(?:[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}(?![A-Za-z0-9\-])"#)
 
     nonisolated(unsafe) private static let opaquePattern = try! NSRegularExpression(
         pattern: "[A-Za-z0-9_-]{\(opaqueRun),}")

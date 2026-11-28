@@ -368,3 +368,18 @@ import Testing
     #expect(ImageCacheBudget.changedEnough(old: 20 * mb, new: 16 * mb))
     #expect(!ImageCacheBudget.changedEnough(old: 16 * mb, new: 16 * mb))
 }
+
+/// Nuvio T2: e-mail addresses in free text are masked (second line of defence; the sign-in never logs one).
+@Test func redactEmailAddresses() {
+    let r = LogRedact.text("user@example.org fehlgeschlagen")
+    #expect(!r.contains("user@example.org") && !r.contains("user") && !r.contains("example.org"))
+    #expect(r.hasSuffix(" fehlgeschlagen"))
+    #expect(LogRedact.text(r) == r)   // idempotent
+    let mixed = LogRedact.text("Anmeldung für Max.Muster+tv@mail.example.co.uk (400), mailto:a_b@x-y.example.")
+    #expect(!mixed.contains("Max.Muster") && !mixed.contains("mail.example") && !mixed.contains("a_b") && !mixed.contains("x-y.example"))
+    #expect(mixed.contains("(400)"))
+    // No address: unchanged (Swift attributes, @2x names without a domain, a lone @).
+    for plain in ["@MainActor fertig", "Bild @2x", "a @ b", "status=400"] { #expect(LogRedact.text(plain) == plain) }
+    // Addresses inside URLs are handled by the URL rule as before.
+    #expect(LogRedact.text("x https://h.example/x/c.mkv?mail=a@b.example y") == "x https://h.example/…/c.mkv y")
+}
