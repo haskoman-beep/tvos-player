@@ -133,8 +133,10 @@ const fixtureMail = 'user@example.org', fixturePass = 'FAKE-PASS-0011 äö€ "&
   check('envelope = nonce || ciphertext || tag', raw.subarray(0, 12).equals(Buffer.from(fixtureNonce)));
   const pt = opensslOpen(Buffer.from(fixtureKey), raw.subarray(0, 12), raw.subarray(12), Buffer.from(lib.label, 'ascii'));
   const json = JSON.parse(pt.toString('utf8'));
-  check('envelope opens with OpenSSL, AAD = label, JSON {email,password}',
-        lib.label === 'player-nuvio-login-v1' && json.email === fixtureMail && json.password === fixturePass && Object.keys(json).length === 2);
+  check('envelope opens with OpenSSL, AAD = label, JSON {email,password,pad}',
+        lib.label === 'player-nuvio-login-v1' && json.email === fixtureMail && json.password === fixturePass &&
+        Object.keys(json).join() === 'email,password,pad' && /^ *$/.test(json.pad));
+  check('envelope plaintext is padded to exactly 1024 bytes', pt.length === 1024 && raw.length === 12 + 1024 + 16, String(pt.length));
   let tamperedOpens = false;
   const t = Buffer.from(raw); t[20] ^= 1;
   try { opensslOpen(Buffer.from(fixtureKey), t.subarray(0, 12), t.subarray(12), Buffer.from(lib.label)); tamperedOpens = true; } catch (e) {}
@@ -153,9 +155,41 @@ const fixtureMail = 'user@example.org', fixturePass = 'FAKE-PASS-0011 äö€ "&
   check('committed fixture equals what the script produces now', committed === text);
 }
 
+// --- padding: the envelope does not tell the password length --------------------------------------------------------
+const swiftInput = readFileSync(path.join(root, 'Packages/PlayerCore/Sources/PlayerCore/Phone/PhoneInput.swift'), 'utf8');
+const serverFieldLimit = Number((swiftInput.match(/static let nuvioFieldLimit = (\d+)/) || [])[1]);
+check('script field limit equals PhoneInputPage.nuvioFieldLimit (UTF-8 bytes)', lib.fieldLimit === 256 && lib.fieldLimit === serverFieldLimit,
+      `${lib.fieldLimit} vs ${serverFieldLimit}`);
+function plainOf(env, key = fixtureKey) {
+  const raw = Buffer.from(env, 'base64url');
+  return opensslOpen(Buffer.from(key), raw.subarray(0, 12), raw.subarray(12), Buffer.from(lib.label));
+}
+{
+  const lengths = [1, 8, 20, 200].map((n) => lib.sealLogin(fixtureKey, fixtureNonce, fixtureMail, 'p'.repeat(n)).length);
+  check('envelopes for passwords of 1, 8, 20 and 200 characters have identical length', new Set(lengths).size === 1, lengths.join());
+  const mixed = [1, 8, 20, 200].map((n) => lib.sealLogin(fixtureKey, fixtureNonce, 'a@b.example', '€'.repeat(Math.floor(n / 3) || 1)).length);
+  check('envelopes for multi-byte passwords have that same length too', new Set([...lengths, ...mixed]).size === 1, mixed.join());
+  let allBlocks = true, worst = 0;
+  for (const [e, p] of [['', ''], ['a@b', 'p'], ['x'.repeat(256), 'y'.repeat(256)], ['\u0001'.repeat(256), '\u0001'.repeat(256)],
+                        ['"'.repeat(256), '\\'.repeat(256)], ['a@b', '\ud800'.repeat(85)]]) {
+    const env = lib.sealLogin(fixtureKey, fixtureNonce, e, p), pt = plainOf(env), j = JSON.parse(pt.toString('utf8'));
+    if (pt.length % 1024 !== 0 || pt.length < 1024 || j.email !== e || (j.password !== p && !p.startsWith('\ud800'))) allBlocks = false;
+    worst = Math.max(worst, env.length);
+  }
+  check('plaintext is always a multiple of 1024 bytes (at least 1024), fields unchanged', allBlocks);
+  // PhoneLimits.maxBody(for: "/nuvio") = 16 KiB; PhoneSeal.maxFieldLength = that minus "sealed=".
+  check('largest allowed sign-in (escaped JSON) fits the TV limits', worst + 'sealed='.length <= 16 * 1024 && worst <= 16 * 1024 - 7, String(worst));
+  check('largest allowed sign-in pads to 4096 bytes', plainOf(lib.sealLogin(fixtureKey, fixtureNonce, '\u0001'.repeat(256), '\u0001'.repeat(256))).length === 4096);
+  check('fieldsTooLong counts UTF-8 bytes after trimming the e-mail',
+        !lib.fieldsTooLong('a'.repeat(256), 'p'.repeat(256)) && lib.fieldsTooLong('a'.repeat(257), 'p') && lib.fieldsTooLong('a@b', 'p'.repeat(257)) &&
+        !lib.fieldsTooLong('ä'.repeat(128), 'ä'.repeat(128)) && lib.fieldsTooLong('a@b', 'ä'.repeat(129)) &&
+        lib.fieldsTooLong('a@b', '\u{1F468}‍\u{1F469}‍\u{1F467}‍\u{1F466}'.repeat(256)) &&
+        !lib.fieldsTooLong('  ' + 'a'.repeat(256) + ' \n', 'p'));
+}
+
 // --- page binding in a fake DOM -------------------------------------------------------------------------------------
-function fakePage({ hash, storage = new Map(), randomValues = true, keyInStorage }) {
-  const replaced = [], scrolled = [];
+function fakePage({ hash, search = '', storage = new Map(), randomValues = true, keyInStorage, forgetMarker = false }) {
+  const replaced = [], scrolled = [], assigned = [];
   const el = (id, extra = {}) => ({ id, value: '', hidden: true, scrollIntoView() { scrolled.push(id); }, ...extra });
   const form = el('nuvioform', {
     children: [], listeners: {}, posted: null,
@@ -165,16 +199,18 @@ function fakePage({ hash, storage = new Map(), randomValues = true, keyInStorage
     removeChild(c) { this.children = this.children.filter((x) => x !== c); },
     submit() { this.posted = this.children.filter((c) => c.name).map((c) => [c.name, c.value]); },
   });
-  const els = { nuvioform: form, nv_email: el('nv_email'), nv_password: el('nv_password'), nv_fail: el('nv_fail'), nuvio: el('nuvio') };
-  const location = { hash, pathname: '/', search: '' };
+  const els = forgetMarker ? { nv_forget: el('nv_forget') }
+    : { nuvioform: form, nv_email: el('nv_email'), nv_password: el('nv_password'), nv_fail: el('nv_fail'), nuvio: el('nuvio') };
+  const location = { hash, pathname: '/', search, assign(u) { assigned.push(u); } };
   const document = { getElementById: (id) => els[id] || null, createElement: () => ({}) };
   const history = { state: null, replaceState(s, t, url) { replaced.push(url); const i = url.indexOf('#'); location.hash = i < 0 ? '' : url.slice(i); } };
   if (keyInStorage) storage.set('player_nuvio_k', keyInStorage);
-  const sessionStorage = { getItem: (k) => (storage.has(k) ? storage.get(k) : null), setItem: (k, v) => storage.set(k, String(v)) };
+  const sessionStorage = { getItem: (k) => (storage.has(k) ? storage.get(k) : null), setItem: (k, v) => storage.set(k, String(v)),
+                           removeItem: (k) => storage.delete(k) };
   const crypto = randomValues ? { getRandomValues: (a) => webcrypto.getRandomValues(a) } : {};
   load({ document, location, history, sessionStorage, crypto });
   const submit = () => { let prevented = false; form.listeners.submit({ preventDefault() { prevented = true; } }); return prevented; };
-  return { els, form, replaced, scrolled, storage, location, submit };
+  return { els, form, replaced, scrolled, storage, location, assigned, submit };
 }
 const pageKey = randomBytes(32), pageKeyText = pageKey.toString('base64url');
 {
@@ -196,8 +232,8 @@ const pageKey = randomBytes(32), pageKeyText = pageKey.toString('base64url');
   p.submit();
   check('page: a second submit sends one field with a fresh nonce', p.form.posted.length === 1 &&
         Buffer.from(p.form.posted[0][1], 'base64url').subarray(0, 12).compare(raw.subarray(0, 12)) !== 0);
-  // After the 303 to "/?nv=gesendet#nuvio" the address has no key: the stored one is used.
-  const q = fakePage({ hash: '#nuvio', storage: p.storage });
+  // After a 303 that did not send the sign-in on (here "/?nv=leer#nuvio") the address has no key: the stored one is used.
+  const q = fakePage({ hash: '#nuvio', search: '?nv=leer', storage: p.storage });
   q.els.nv_email.value = 'x@y.example'; q.els.nv_password.value = 'p';
   q.submit();
   check('page: later page in the same tab keeps working from sessionStorage, address untouched',
@@ -224,6 +260,62 @@ const pageKey = randomBytes(32), pageKeyText = pageKey.toString('base64url');
   p.els.nv_email.value = 'a@b.example'; p.els.nv_password.value = 'x';
   p.submit();
   check('page: a key that is not 32 bytes -> nothing sent', p.form.posted === null && p.els.nv_fail.hidden === false);
+}
+
+{ // review T1b: the e-mail is sent trimmed; the envelope length does not change with the password
+  const p = fakePage({ hash: '#nuvio&k=' + pageKeyText });
+  p.els.nv_email.value = '  a@b.example \n'; p.els.nv_password.value = 'x';
+  p.submit();
+  const a = p.form.posted[0][1];
+  p.els.nv_password.value = 'FAKE-PASS-0014 longer password with €';
+  p.submit();
+  const b = p.form.posted[0][1];
+  const j = JSON.parse(plainOf(a, pageKey).toString('utf8'));
+  check('page: e-mail sent trimmed, envelopes of different passwords equally long', j.email === 'a@b.example' && a.length === b.length,
+        `${a.length} ${b.length}`);
+}
+{ // review T1b: over-long input is not sealed; the page shows the existing "nv=leer" note
+  for (const [mail, pass, label] of [['a@b.example', 'p'.repeat(257), '257-byte password'],
+                                     ['a@b.example', '\u{1F468}‍\u{1F469}‍\u{1F467}‍\u{1F466}'.repeat(256), '256 family emoji'],
+                                     ['a'.repeat(250) + '@b.example', 'p', '260-byte e-mail']]) {
+    const p = fakePage({ hash: '#nuvio&k=' + pageKeyText });
+    p.els.nv_email.value = mail; p.els.nv_password.value = pass;
+    const prevented = p.submit();
+    check('page: ' + label + ' -> nothing sealed or sent, address /?nv=leer#nuvio, password emptied',
+          prevented && p.form.posted === null && p.assigned.join() === '/?nv=leer#nuvio' && p.els.nv_password.value === '' &&
+          p.els.nv_fail.hidden === true, JSON.stringify(p.assigned));
+  }
+}
+{ // review T1b: once the sign-in went to the TV ("nv=gesendet") the page key is dropped from storage and memory
+  const storage = new Map();
+  const first = fakePage({ hash: '#nuvio&k=' + pageKeyText, storage });
+  check('page: key stored before sending', storage.get('player_nuvio_k') === pageKeyText && first.els.nv_fail.hidden === true);
+  const p = fakePage({ hash: '#nuvio', search: '?nv=gesendet', storage });
+  check('page: nv=gesendet removes the key from sessionStorage, no failure note on load',
+        !storage.has('player_nuvio_k') && p.els.nv_fail.hidden === true);
+  p.els.nv_email.value = 'a@b.example'; p.els.nv_password.value = 'x';
+  p.submit();
+  check('page: after nv=gesendet nothing can be sealed any more', p.form.posted === null && p.els.nv_fail.hidden === false);
+  // The same in one page load: key in the address and the note together (memory copy dropped too).
+  const s2 = new Map();
+  const both = fakePage({ hash: '#nuvio&k=' + pageKeyText, search: '?ok=1&nv=gesendet', storage: s2 });
+  both.els.nv_email.value = 'a@b.example'; both.els.nv_password.value = 'x';
+  both.submit();
+  check('page: key in the address plus nv=gesendet -> address cleaned, nothing stored, nothing sent',
+        !s2.has('player_nuvio_k') && both.replaced[0] === '/?ok=1&nv=gesendet#nuvio' && both.form.posted === null);
+  // Notes that only look similar keep the key.
+  const s3 = new Map([['player_nuvio_k', pageKeyText]]);
+  fakePage({ hash: '#nuvio', search: '?nv=gesendetx', storage: s3 });
+  fakePage({ hash: '#nuvio', search: '?xnv=gesendet', storage: s3 });
+  check('page: other notes keep the key', s3.get('player_nuvio_k') === pageKeyText);
+}
+{ // review T1b: the 403 page ("Kein Zugang") carries the marker nv_forget: the key goes, also one in an old QR address
+  const storage = new Map([['player_nuvio_k', pageKeyText]]);
+  fakePage({ hash: '', storage, forgetMarker: true });
+  check('page: 403 marker removes a stored key', !storage.has('player_nuvio_k'));
+  const s2 = new Map();
+  const p = fakePage({ hash: '#nuvio&k=' + pageKeyText, search: '?t=old', storage: s2, forgetMarker: true });
+  check('page: 403 marker with a key in the address -> not stored, address cleaned', !s2.has('player_nuvio_k') && p.replaced[0] === '/?t=old#nuvio');
 }
 
 console.log(`\n${passes} passed, ${failures} failed`);

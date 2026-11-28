@@ -36,7 +36,7 @@ public struct HTTPRequest: Equatable, Sendable {
         var q: [String: String] = [:]
         for i in comps?.queryItems ?? [] { q[i.name] = i.value ?? "" }
         return .complete(RequestHead(method: String(first[0]), path: comps?.path ?? target, query: q, headers: headers,
-                                     contentLength: len, bodyStart: r.upperBound - data.startIndex))
+                                     contentLength: len, bodyStart: r.upperBound - data.startIndex, target: target))
     }
 
     public static func parse(_ data: Data) -> ParseResult {
@@ -63,6 +63,17 @@ public struct HTTPRequest: Equatable, Sendable {
         }
         return out
     }
+
+    /// Review T1b: the field names of an application/x-www-form-urlencoded body in order, duplicates and empty names
+    /// included (`form` drops both). Nil if the body is not UTF-8.
+    var formFieldNames: [String]? {
+        guard let s = String(data: body, encoding: .utf8) else { return nil }
+        if s.isEmpty { return [] }
+        return s.components(separatedBy: "&").map { pair in
+            let name = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? ""
+            return name.replacingOccurrences(of: "+", with: " ").removingPercentEncoding ?? name
+        }
+    }
 }
 
 /// Task 1.4: request line and headers of a request whose body has not been read yet.
@@ -74,6 +85,8 @@ public struct RequestHead: Equatable, Sendable {
     public var contentLength: Int
     /// Offset of the body in the received bytes.
     public var bodyStart: Int
+    /// Review T1b: the request target exactly as sent (path, query and anything after it), for `PhoneSession.admit`.
+    public var target: String = ""
 }
 
 public struct HTTPResponse: Equatable, Sendable {
@@ -206,7 +219,8 @@ public struct PhoneInputPage: Sendable {
     public static let busyText = "Am Fernseher wartet schon eine Anfrage. Bitte zuerst dort antworten und dann erneut senden."
     /// plan_nuvio_konto T1: own form for the Nuvio sign-in (password only in the POST body, never in a URL).
     public static let nuvioPath = "/nuvio"
-    /// Longest accepted e-mail and password (characters each).
+    /// Longest accepted e-mail (trimmed) and password, in UTF-8 bytes each; the page script checks the same
+    /// (`FIELD_LIMIT` in `PhoneSealScript`) and shows `nv=leer` without sending.
     static let nuvioFieldLimit = 256
     static let nuvioSentText = "Gesendet. Bitte am Fernseher „Erlauben“ wählen."
     static let nuvioEmptyText = "Bitte E-Mail und Passwort eingeben."
@@ -322,16 +336,18 @@ public struct PhoneInputPage: Sendable {
         case ("POST", Self.nuvioPath):
             // plan_nuvio_konto T1: one sign-in per request. The answer never carries a value, also not on an error.
             // T1b: only the field `sealed` (PhoneSeal.swift); e-mail or password in clear are refused, never read.
+            // Review T1b: an allow-list, the body holds exactly one field and it is `sealed`; anything else (an extra or
+            // unknown field, a second `sealed`, an empty name) is refused before anything is opened.
             let f = r.form
             var cmds: [PhoneCommand] = []
             let loc: String
-            if f["email"] != nil || f["password"] != nil {
+            if r.formFieldNames != [PhoneSeal.fieldName] {
                 loc = "/?nv=krypto#nuvio"
             } else if nuvio != .signedOut {
                 loc = "/#nuvio"   // the form is not shown in this state: an old page sent it
             } else if let sealed = f[PhoneSeal.fieldName], let login = nuvioLogin(sealed) {
                 let email = login.email.value.trimmingCharacters(in: .whitespacesAndNewlines), password = login.password.value
-                if email.isEmpty || password.isEmpty || email.count > Self.nuvioFieldLimit || password.count > Self.nuvioFieldLimit {
+                if email.isEmpty || password.isEmpty || email.utf8.count > Self.nuvioFieldLimit || password.utf8.count > Self.nuvioFieldLimit {
                     loc = "/?nv=leer#nuvio"
                 } else if backups.requestOpen {
                     loc = "/?wt=offen#nuvio"   // as on /submit: the phone hears that a request already waits on the TV

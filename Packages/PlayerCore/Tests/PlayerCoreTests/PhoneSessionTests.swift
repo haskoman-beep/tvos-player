@@ -447,15 +447,37 @@ private func req(_ s: String) -> HTTPRequest {
 @Test func nuvioSignInNeedsConfirmationWithoutValues() {
     let cmd = PhoneCommand.nuvioSignIn(email: PhoneSecret("user@example.org"), password: PhoneSecret("FAKE-PASS-0010"))
     guard case .needsConfirmation(let summary) = cmd.sensitivity else { Issue.record("confirmation expected"); return }
-    #expect(summary == "Bei Nuvio anmelden")
-    #expect(!summary.contains("example") && !summary.contains("FAKE"))
+    // Review T1b: the TV names the account, masked (first character of the local part and the domain), never the password.
+    #expect(summary == "Bei Nuvio anmelden: u…@example.org")
+    #expect(!summary.contains("user") && !summary.contains("FAKE"))
     #expect(!cmd.isHomeEdit && !cmd.needsBackupCode)
     var g = PhoneConfirmGate()
     let (plain, refused) = g.offer([cmd], now: t0)
     #expect(plain.isEmpty && refused.isEmpty)
     let open = g.current(now: t0)
-    #expect(open?.summary == ["Bei Nuvio anmelden"] && open?.expires == t0 + 60)
+    #expect(open?.summary == ["Bei Nuvio anmelden: u…@example.org"] && open?.expires == t0 + 60)
+    // The log path never carries the masked address.
     #expect(open?.logKind == "nuvio-anmeldung")
-    #expect(open?.logLine(.allowed).contains("example") == false)
+    for o in [PhoneConfirmation.Outcome.allowed, .declined, .lapsed] {
+        let line = open?.logLine(o) ?? ""
+        #expect(!line.contains("example") && !line.contains("u…") && !line.contains("@"), "\(line)")
+    }
     #expect(g.resolve(allow: true, now: t0 + 59) == [cmd])
+}
+
+@Test func nuvioSignInSummaryMasksTheAddress() {
+    func summary(_ email: String) -> String? {
+        if case .needsConfirmation(let s) = PhoneCommand.nuvioSignIn(email: PhoneSecret(email), password: PhoneSecret("p")).sensitivity { s } else { nil }
+    }
+    #expect(summary("a@b.example") == "Bei Nuvio anmelden: a…@b.example")
+    #expect(summary("Ännchen.Muster@bücher.example") == "Bei Nuvio anmelden: Ä…@bücher.example")
+    #expect(summary("x\"@y\"@mail.example") == "Bei Nuvio anmelden: x…@mail.example")   // the last @ starts the domain
+    #expect(summary("9@sub-1.example.org") == "Bei Nuvio anmelden: 9…@sub-1.example.org")
+    // A first character that is no letter or digit is left out.
+    #expect(summary("+tag@example.org") == "Bei Nuvio anmelden: …@example.org")
+    // No @, nothing before or after it, or a domain with other characters (spaces, line breaks, direction marks): no address.
+    for bad in ["nomail", "", "@example.org", "user@", "user@exa mple.org", "user@example.org\nErlaubt", "user@example.org\u{202E}gro",
+                "user@" + String(repeating: "a", count: 254)] {
+        #expect(summary(bad) == "Bei Nuvio anmelden", "\(bad)")
+    }
 }

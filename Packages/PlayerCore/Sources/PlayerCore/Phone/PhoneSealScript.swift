@@ -109,16 +109,33 @@ function utf8(s) {
   if (typeof g.TextEncoder !== 'function') throw new Error('no TextEncoder');
   return new g.TextEncoder().encode(s);
 }
-// The field "sealed": base64url(nonce || ciphertext || tag) of the UTF-8 JSON {"email":…,"password":…}, AAD = LABEL.
+// Longest e-mail (trimmed) and password in UTF-8 bytes; the TV applies the same limit (PhoneInputPage.nuvioFieldLimit).
+var FIELD_LIMIT = 256;
+// The sealed JSON is padded to a multiple of this many bytes, so the envelope does not tell the password length.
+var PAD_BLOCK = 1024;
+function fieldsTooLong(email, password) {
+  return utf8(String(email).trim()).length > FIELD_LIMIT || utf8(String(password)).length > FIELD_LIMIT;
+}
+// UTF-8 JSON {"email":…,"password":…,"pad":"   …"} of exactly PAD_BLOCK bytes, or the next multiple of it when the
+// fields are longer. The TV ignores "pad".
+function paddedLogin(email, password) {
+  var e = String(email), p = String(password);
+  var base = utf8(JSON.stringify({ email: e, password: p, pad: '' })).length;
+  var size = Math.max(PAD_BLOCK, Math.ceil(base / PAD_BLOCK) * PAD_BLOCK);
+  var out = utf8(JSON.stringify({ email: e, password: p, pad: new Array(size - base + 1).join(' ') }));
+  if (out.length !== size) throw new Error('padding');
+  return out;
+}
+// The field "sealed": base64url(nonce || ciphertext || tag) of the padded UTF-8 JSON, AAD = LABEL.
 function sealLogin(key, nonce, email, password) {
   if (typeof BigInt !== 'function' || key.length !== 32 || nonce.length !== 12) throw new Error('seal input');
-  var box = seal(key, nonce, utf8(JSON.stringify({ email: String(email), password: String(password) })), utf8(LABEL));
+  var box = seal(key, nonce, paddedLogin(email, password), utf8(LABEL));
   var env = new Uint8Array(12 + box.length);
   env.set(nonce); env.set(box, 12);
   return b64u(env);
 }
 g.PlayerSeal = { chachaBlock: chachaBlock, chachaXor: chachaXor, poly1305: poly1305, seal: seal, b64u: b64u, unb64u: unb64u,
-                 sealLogin: sealLogin, label: LABEL };
+                 sealLogin: sealLogin, fieldsTooLong: fieldsTooLong, label: LABEL, fieldLimit: FIELD_LIMIT, padBlock: PAD_BLOCK };
 
 var doc = g.document, loc = g.location;
 if (!doc || !loc) return;
@@ -146,20 +163,34 @@ function storedKey() {
   var target = anchor ? doc.getElementById(anchor) : null;
   if (target && target.scrollIntoView) target.scrollIntoView();
 })();
+// The key is dropped once the sign-in went to the TV (note nv=gesendet) and on the "no access" page (marker
+// nv_forget, the 403 of an ended session): a later sign-in needs a new QR code.
+function forget() {
+  mem = null;
+  try { g.sessionStorage.removeItem(STORE); } catch (e) {}
+}
+var sent = /(^|[?&])nv=gesendet(&|$)/.test(String(loc.search || ''));
+if (sent || doc.getElementById('nv_forget')) forget();
 var form = doc.getElementById('nuvioform');
 if (!form) return;
 var email = doc.getElementById('nv_email'), password = doc.getElementById('nv_password'), fail = doc.getElementById('nv_fail');
 function refuse() { if (fail) fail.hidden = false; }
-if (!storedKey()) refuse();
+if (!sent && !storedKey()) refuse();
 form.addEventListener('submit', function (e) {
   e.preventDefault();
   var envelope = null;
   try {
     var key = storedKey(), c = g.crypto;
     if (key && email && password && c && typeof c.getRandomValues === 'function') {
+      // Too long for the TV: nothing is sealed; the page shows the TV's note for unusable input.
+      if (fieldsTooLong(email.value, password.value)) {
+        password.value = '';
+        try { loc.assign('/?nv=leer#nuvio'); } catch (y) {}
+        return;
+      }
       var nonce = new Uint8Array(12);
       c.getRandomValues(nonce);
-      envelope = sealLogin(key, nonce, email.value, password.value);
+      envelope = sealLogin(key, nonce, String(email.value).trim(), password.value);
     }
   } catch (x) { envelope = null; }
   if (!envelope) { refuse(); return; }

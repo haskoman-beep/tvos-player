@@ -86,6 +86,23 @@ private func html(_ r: HTTPResponse) -> String { String(data: r.body, encoding: 
     for t in refused { #expect(PhoneSeal.envelope(t) == nil, "\(t.prefix(20))") }
 }
 
+/// Review T1b: the `sealed` field may be as long as the body of `POST /nuvio` allows, so every input that fits the body
+/// is opened and gets the field rules (`nv=leer` when too long), never `nv=krypto` for its size alone.
+@Test func sealFieldLimitIsTheNuvioBodyLimit() {
+    #expect(PhoneLimits.maxBody(for: PhoneInputPage.nuvioPath) == 16 * 1024)
+    #expect(PhoneSeal.maxFieldLength == 16 * 1024 - "sealed=".utf8.count)
+    let longest = PhoneSeal.base64URL(Data(count: 12_282)), over = PhoneSeal.base64URL(Data(count: 12_283))
+    #expect(longest.utf8.count == PhoneSeal.maxFieldLength - 1 && over.utf8.count == PhoneSeal.maxFieldLength + 1)
+    #expect(PhoneSeal.envelope(longest) != nil && PhoneSeal.envelope(over) == nil)
+    // The page pads the sign-in to 1024 bytes (more for long fields); the largest allowed one is 4096 bytes.
+    #expect(PhoneSeal.paddingBlock == 1024)
+}
+
+@Test func sealedLoginJSONIgnoresThePadding() {
+    let padded = "{\"email\":\"a@b\",\"password\":\"p\",\"pad\":\"" + String(repeating: " ", count: 990) + "\"}"
+    #expect(PhoneSeal.login(fromJSON: Data(padded.utf8)) == PhoneNuvioLogin(email: PhoneSecret("a@b"), password: PhoneSecret("p")))
+}
+
 @Test func sealedLoginJSONNeedsTwoStrings() {
     #expect(PhoneSeal.login(fromJSON: Data(loginJSON("a@b", "p").utf8)) == PhoneNuvioLogin(email: PhoneSecret("a@b"), password: PhoneSecret("p")))
     for bad in ["", "{}", "[]", "{\"email\":\"a\"}", "{\"email\":1,\"password\":\"p\"}", "{\"email\":\"a\",\"password\":null}", "nope"] {
@@ -186,6 +203,25 @@ final class SealCalls: @unchecked Sendable {
     #expect(asked == 0)
 }
 
+/// Review T1b: `POST /nuvio` takes exactly one field, `sealed`; anything else is refused before opening.
+@Test func nuvioPostAcceptsOnlyTheSealedField() {
+    var s = startedSealSession()
+    let page = PhoneInputPage()
+    var asked = 0
+    let good = sealedBody("a@b", "p", nonce: 40)
+    for body in [good + "&x=1", "x=1&" + good, good + "&" + sealedBody("a@b", "p", nonce: 41), good + "&", good + "&=1",
+                 good + "&sealed", "SEALED=" + toySeal(loginJSON("a@b", "p"), nonce: 42), "x=1", ""] {
+        let (resp, cmds) = page.handle(post("/nuvio", body), profileName: "Ich",
+                                       nuvioLogin: { asked += 1; return s.openNuvioLogin($0, open: toyOpen) }) { Data() }
+        #expect(cmds.isEmpty, "\(body)")
+        #expect(resp.status == 303 && resp.extraHeaders["Location"] == "/?nv=krypto#nuvio", "\(body)")
+    }
+    #expect(asked == 0)
+    // The same envelope alone still goes through (the refusals above did not use up its nonce).
+    let (ok, cmds) = page.handle(post("/nuvio", good), profileName: "Ich", nuvioLogin: { s.openNuvioLogin($0, open: toyOpen) }) { Data() }
+    #expect(cmds.count == 1 && ok.extraHeaders["Location"] == "/?nv=gesendet#nuvio")
+}
+
 @Test func sealedNuvioPostWithoutOpenerOrWithFailedOpenGivesNoCommand() {
     let page = PhoneInputPage()
     // Default of the page: no opener at all.
@@ -219,11 +255,17 @@ final class SealCalls: @unchecked Sendable {
         return page.handle(post("/nuvio", sealedBody(e, p, nonce: n)), profileName: "Ich", backups: backups, nuvio: nuvio,
                            nuvioLogin: { s.openNuvioLogin($0, open: toyOpen) }) { Data() }
     }
-    for (e, p) in [("", "p"), ("   ", "p"), ("a@b", ""), (String(repeating: "a", count: 257), "p"), ("a@b", String(repeating: "p", count: 257))] {
+    // Review T1b: the limit counts UTF-8 bytes (as the page script does), not characters.
+    let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}"   // one grapheme, 25 UTF-8 bytes
+    for (e, p) in [("", "p"), ("   ", "p"), ("a@b", ""), (String(repeating: "a", count: 257), "p"), ("a@b", String(repeating: "p", count: 257)),
+                   ("a@b", String(repeating: "ä", count: 129)), (String(repeating: "ä", count: 129), "p"),
+                   ("a@b", String(repeating: family, count: 11)), ("a@b", String(repeating: family, count: 256))] {
         let (r, c) = send(e, p)
-        #expect(c.isEmpty && r.extraHeaders["Location"] == "/?nv=leer#nuvio")
+        #expect(c.isEmpty && r.extraHeaders["Location"] == "/?nv=leer#nuvio", "\(e.utf8.count) \(p.utf8.count)")
     }
     #expect(send(String(repeating: "a", count: 256), String(repeating: "p", count: 256)).1.count == 1)
+    #expect(send(String(repeating: "ä", count: 128), String(repeating: "ä", count: 128)).1.count == 1)
+    #expect(send("a@b", String(repeating: family, count: 10)).1.count == 1)   // 250 bytes
     let (busy, none) = send("a@b", "p", backups: PhoneBackupState(requestOpen: true))
     #expect(none.isEmpty && busy.extraHeaders["Location"] == "/?wt=offen#nuvio")
     for state: PhoneNuvioState in [.connected(profileName: "Wohnzimmer"), .busy] {
@@ -268,14 +310,112 @@ final class SealCalls: @unchecked Sendable {
     }
 }
 
+/// Review T1b: a scanner that wrote `#` as `%23` sends the page key in the query. The key then crossed the Wi-Fi, so
+/// the session ends at once and the TV shows a new code (`needsNewCode`).
+@Test func pageKeyInTheRequestEndsTheSession() {
+    let k = PhoneSeal.base64URL(sealTestKey)
+    for target in ["/?t=tok%23nuvio&k=\(k)", "/?t=tok%23nuvio%26k%3D\(k)", "/?t=tok%23k=\(k)", "/?t=tok%23nuvio%26k%3d\(k)",
+                   "/?k=\(k)", "/?t=tok&k=", "/?t=tok#nuvio&k=\(k)", "/nuvio?k=\(k)"] {
+        var s = PhoneSession(token: "tok", now: t0, pageKey: sealTestKey)
+        let method = target.hasPrefix("/nuvio") ? "POST" : "GET"
+        guard case .respond(let r) = s.admit(head("\(method) \(target) HTTP/1.1\r\nContent-Length: 0\r\n\r\n"), peer: phone, now: t0) else {
+            Issue.record("refusal expected: \(target)"); continue
+        }
+        #expect(r.status == 403 && r.extraHeaders["Set-Cookie"] == nil, "\(target)")
+        #expect(s.ended && !s.tokenUsed && s.needsNewCode(now: t0), "\(target)")
+        // The token of this code no longer opens anything.
+        #expect(s.authorize(queryToken: "tok", cookie: nil, peer: phone, now: t0) == .denied)
+    }
+    // Also after the first use, with a valid cookie.
+    var s = PhoneSession(token: "tok", now: t0, pageKey: sealTestKey)
+    guard case .firstUse(let set) = s.authorize(queryToken: "tok", cookie: nil, peer: phone, now: t0) else { Issue.record("first use"); return }
+    let c = String(set.split(separator: ";")[0])
+    guard case .respond(let r) = s.admit(head("POST /nuvio?x=1&k=\(k) HTTP/1.1\r\nCookie: \(c)\r\nContent-Length: 10\r\n\r\n"), peer: phone, now: t0 + 1) else {
+        Issue.record("refusal expected"); return
+    }
+    #expect(r.status == 403 && s.ended && !s.isConnected && s.needsNewCode(now: t0 + 1))
+}
+
+/// Parameters that only end in `k` (`ok`, `lk`) or carry `k=` inside a value are no page key.
+@Test func pageKeyCheckLeavesOtherParametersAlone() {
+    var s = PhoneSession(token: "tok", now: t0, pageKey: sealTestKey)
+    guard case .respond(let first) = s.admit(head("GET /?t=tok&lk=3&ok=home HTTP/1.1\r\n\r\n"), peer: phone, now: t0) else { Issue.record("303"); return }
+    #expect(first.status == 303 && !s.ended)
+    let c = String((first.extraHeaders["Set-Cookie"] ?? "").split(separator: ";")[0])
+    for target in ["/?ok=home", "/?lk=2&lku=1", "/?nv=gesendet", "/export?secrets=1", "/?imp=unknown&ok=leer"] {
+        #expect(s.admit(head("GET \(target) HTTP/1.1\r\nCookie: \(c)\r\n\r\n"), peer: phone, now: t0 + 1) == .readBody(0), "\(target)")
+    }
+    #expect(!s.ended)
+}
+
+/// Review T1b: the "no access" answer carries the page script with the marker `nv_forget`, so the phone drops a
+/// stored page key (and one in the address of an old QR code).
+@Test func deniedAnswerTellsThePhoneToForgetTheKey() {
+    var s = PhoneSession(token: "tok", now: t0, pageKey: sealTestKey)
+    guard case .respond(let r) = s.admit(head("GET /?t=wrong HTTP/1.1\r\n\r\n"), peer: phone, now: t0) else { Issue.record("403"); return }
+    let body = html(r)
+    #expect(r.status == 403 && body.contains("<p id=nv_forget hidden></p>") && body.contains("<script>" + PhoneSealScript.source + "</script>"))
+    #expect(body.contains("Diese Adresse gilt nicht mehr."))
+    // The page itself has no such marker.
+    #expect(!PhoneInputPage().page(profileName: "Ich", note: nil).contains("nv_forget hidden"))
+}
+
 // MARK: The page
+
+/// The opening tags `<input …>` whose `id` is `id`.
+private func inputTags(_ html: String, id: String) -> [String] {
+    var tags: [String] = [], rest = html[...]
+    while let r = rest.range(of: "<input", options: .caseInsensitive) {
+        let tag = String(rest[r.lowerBound...].prefix { $0 != ">" })
+        if tagAttributes(tag)["id"] == id { tags.append(tag) }
+        rest = rest[r.upperBound...]
+    }
+    return tags
+}
+
+/// Attribute names (lower case) of an opening tag, with their values; quoted and unquoted values.
+private func tagAttributes(_ tag: String) -> [String: String] {
+    var out: [String: String] = [:]
+    let open = tag.hasSuffix(">") ? tag.dropLast() : tag[...]
+    var chars = Array(open.drop { $0 != " " && $0 != "\t" && $0 != "\n" })[...]
+    func skipSpace() { while let c = chars.first, c == " " || c == "\t" || c == "\n" || c == "/" { chars = chars.dropFirst() } }
+    skipSpace()
+    while !chars.isEmpty {
+        var name = ""
+        while let c = chars.first, c != "=", c != " ", c != "\t", c != "\n", c != "/" { name.append(c); chars = chars.dropFirst() }
+        var value = ""
+        if chars.first == "=" {
+            chars = chars.dropFirst()
+            if let q = chars.first, q == "\"" || q == "'" {
+                chars = chars.dropFirst()
+                while let c = chars.first, c != q { value.append(c); chars = chars.dropFirst() }
+                chars = chars.dropFirst()
+            } else {
+                while let c = chars.first, c != " ", c != "\t", c != "\n" { value.append(c); chars = chars.dropFirst() }
+            }
+        }
+        if !name.isEmpty { out[name.lowercased()] = value }
+        skipSpace()
+    }
+    return out
+}
 
 @Test func nuvioFormHasNoNamedCredentialFieldsAndCarriesTheScript() {
     let out = PhoneInputPage().page(profileName: "Ich", note: nil)
-    for bad in ["name=email", "name=\"email\"", "name=password", "name=\"password\"", "name='email'", "name='password'"] {
-        #expect(!out.contains(bad), "\(bad)")
+    // Review T1b: the e-mail and password inputs carry no `name` attribute at all (parsed, not two fixed names).
+    for id in ["nv_email", "nv_password"] {
+        let tags = inputTags(out, id: id)
+        #expect(tags.count == 1, "\(id)")
+        for tag in tags {
+            let attrs = tagAttributes(tag)
+            #expect(attrs["name"] == nil && !tag.lowercased().contains("name="), "\(tag)")
+            #expect(attrs["form"] == "nuvioform" && attrs["value"] == nil, "\(tag)")
+        }
     }
-    #expect(out.contains("id=nv_email") && out.contains("id=nv_password") && out.contains("type=\"password\""))
+    // The parser itself: names in any case, quoted and unquoted values, an attribute without a value.
+    #expect(tagAttributes("<input NAME=a id=q>")["name"] == "a" && tagAttributes("<input id=\"q r\" name='a'>") == ["id": "q r", "name": "a"])
+    #expect(tagAttributes("<input name id=q>") == ["name": "", "id": "q"])
+    #expect(inputTags(out, id: "nv_password").first.map { tagAttributes($0)["type"] } == "password")
     #expect(out.contains("<script>" + PhoneSealScript.source + "</script>"))
     #expect(out.contains("E-Mail und Passwort werden auf dem Handy verschlüsselt, bevor sie zum Fernseher gehen. Das Passwort wird nicht gespeichert."))
     #expect(out.contains("Der Fernseher fragt nach, bevor er sich anmeldet."))
@@ -303,6 +443,13 @@ final class SealCalls: @unchecked Sendable {
     #expect(lines[(start + 1)..<end].joined(separator: "\n") == PhoneSealScript.source)
 }
 
+/// The field limit the page script checks before sealing (`FIELD_LIMIT`) is the one the TV applies.
+@Test func phoneSealScriptUsesTheServerFieldLimit() {
+    #expect(PhoneInputPage.nuvioFieldLimit == 256)
+    #expect(PhoneSealScript.source.contains("var FIELD_LIMIT = \(PhoneInputPage.nuvioFieldLimit);"))
+    #expect(PhoneSealScript.source.contains("var PAD_BLOCK = \(PhoneSeal.paddingBlock);"))
+}
+
 // MARK: The JavaScript fixture
 
 /// The envelope the JavaScript produced reaches the opener split exactly as CryptoKit needs it.
@@ -317,24 +464,45 @@ final class SealCalls: @unchecked Sendable {
     #expect(s.openNuvioLogin(f.sealed, open: open) == PhoneNuvioLogin(email: PhoneSecret(f.email), password: PhoneSecret(f.password)))
 }
 
+/// Review T1b: the fixture's plaintext is padded to 1024 bytes and carries the member `pad`.
+@Test func javaScriptFixtureIsPadded() throws {
+    let f = try fixture()
+    #expect(f.plaintext.utf8.count == 1024 && unhex(f.ciphertextAndTagHex).count == 1024 + 16)
+    let obj = try #require(JSONSerialization.jsonObject(with: Data(f.plaintext.utf8)) as? [String: String])
+    #expect(Set(obj.keys) == ["email", "password", "pad"] && obj["pad"]!.allSatisfy { $0 == " " })
+}
+
 #if canImport(CryptoKit)
-/// Cross-check JavaScript → CryptoKit: only where CryptoKit exists (Apple platforms). CI runs PlayerCore tests on Linux.
+/// Cross-check JavaScript → CryptoKit with the opener the app ships (`PhoneSeal.cryptoKitOpen`): only where CryptoKit
+/// exists. CI runs these on the macOS runner (`swift test --filter javaScriptFixture`), the rest of the suite on Linux.
 @Test func javaScriptFixtureOpensWithCryptoKit() throws {
     let f = try fixture()
     let ct = unhex(f.ciphertextAndTagHex)
     let box = try ChaChaPoly.SealedBox(nonce: ChaChaPoly.Nonce(data: unhex(f.nonceHex)), ciphertext: ct.dropLast(16), tag: ct.suffix(16))
     let plain = try ChaChaPoly.open(box, using: SymmetricKey(data: unhex(f.keyHex)), authenticating: Data(f.aad.utf8))
     #expect(String(data: plain, encoding: .utf8) == f.plaintext)
-    // The same opener the app uses, through the session.
-    let open: PhoneSealOpen = { key, nonce, box, aad in
-        guard box.count >= 16, let n = try? ChaChaPoly.Nonce(data: nonce),
-              let sealed = try? ChaChaPoly.SealedBox(nonce: n, ciphertext: box.dropLast(16), tag: box.suffix(16)) else { return nil }
-        return try? ChaChaPoly.open(sealed, using: SymmetricKey(data: key), authenticating: aad)
-    }
+    #expect(PhoneSeal.cryptoKitOpen(unhex(f.keyHex), unhex(f.nonceHex), ct, PhoneSeal.aad) == Data(f.plaintext.utf8))
+    // Through the session, as the app calls it.
     var s = startedSealSession(key: unhex(f.keyHex))
-    #expect(s.openNuvioLogin(f.sealed, open: open) == PhoneNuvioLogin(email: PhoneSecret(f.email), password: PhoneSecret(f.password)))
+    #expect(s.openNuvioLogin(f.sealed, open: PhoneSeal.cryptoKitOpen) == PhoneNuvioLogin(email: PhoneSecret(f.email), password: PhoneSecret(f.password)))
     var tampered = Array(f.sealed); tampered[30] = tampered[30] == "A" ? "B" : "A"
     var s2 = startedSealSession(key: unhex(f.keyHex))
-    #expect(s2.openNuvioLogin(String(tampered), open: open) == nil)
+    #expect(s2.openNuvioLogin(String(tampered), open: PhoneSeal.cryptoKitOpen) == nil)
+}
+
+@Test func javaScriptFixtureRefusesWrongKeyOrAADWithCryptoKit() throws {
+    let f = try fixture()
+    let key = unhex(f.keyHex), nonce = unhex(f.nonceHex), ct = unhex(f.ciphertextAndTagHex)
+    var otherKey = key; otherKey[0] ^= 1
+    #expect(PhoneSeal.cryptoKitOpen(otherKey, nonce, ct, PhoneSeal.aad) == nil)
+    #expect(PhoneSeal.cryptoKitOpen(key, nonce, ct, Data("player-nuvio-login-v2".utf8)) == nil)
+    #expect(PhoneSeal.cryptoKitOpen(key, nonce, ct, Data()) == nil)
+    // Malformed parts: short key, short nonce, box shorter than a tag.
+    #expect(PhoneSeal.cryptoKitOpen(key.prefix(31), nonce, ct, PhoneSeal.aad) == nil)
+    #expect(PhoneSeal.cryptoKitOpen(key, nonce.prefix(11), ct, PhoneSeal.aad) == nil)
+    #expect(PhoneSeal.cryptoKitOpen(key, nonce, ct.prefix(15), PhoneSeal.aad) == nil)
+    // Through the session: a session with another key does not open the fixture.
+    var s = startedSealSession(key: otherKey)
+    #expect(s.openNuvioLogin(f.sealed, open: PhoneSeal.cryptoKitOpen) == nil)
 }
 #endif

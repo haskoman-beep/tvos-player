@@ -231,7 +231,7 @@ final class PhoneServer: ObservableObject {
         let backups = PhoneBackupState(blocked: model.storeState != .ready, sealedFile: sealedFile, sealedDelivered: sealedDelivered,
                                        sealedOutcome: sealedOutcome, requestOpen: gate.current(now: now) != nil)
         let (resp, cmds) = page.handle(r, profileName: model.profile.name, home: model.phoneHomeState(), backups: backups,
-                                       nuvioLogin: { self.session.openNuvioLogin($0, open: PhoneSealCryptoKit.open) }) {
+                                       nuvioLogin: { self.session.openNuvioLogin($0, open: PhoneSeal.cryptoKitOpen) }) {
             model.backupData()
         }
         // One download of the sealed file; the code stays on screen until the view closes.

@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(CryptoKit)
+import CryptoKit
+#endif
 
 // plan_nuvio_konto T1b: the Nuvio e-mail and password cross the Wi-Fi only sealed.
 //
@@ -6,16 +9,38 @@ import Foundation
 // address carries it in the URL fragment (`#nuvio&k=<base64url>` or `#k=<base64url>`), which a browser never sends in
 // a request. The page script (`PhoneSealScript`) moves it to sessionStorage, seals {"email","password"} with
 // ChaCha20-Poly1305 (RFC 8439, random 12-byte nonce, additional data `PhoneSeal.label`) and posts only
-// `sealed=<base64url(nonce || ciphertext || tag)>`. The TV opens it with the injected `PhoneSealOpen` (CryptoKit in the
-// app), accepts each nonce once per session, and refuses the e-mail or password in clear.
+// `sealed=<base64url(nonce || ciphertext || tag)>`. The JSON carries a third member "pad" (spaces) so it is exactly
+// `paddingBlock` bytes, or the next multiple of it for long fields; the envelope size then does not tell the password
+// length. The TV opens it with the injected `PhoneSealOpen` (`PhoneSeal.cryptoKitOpen` in the app), accepts each
+// nonce once per session, ignores "pad", and refuses the e-mail or password in clear. The page drops the key once the
+// sign-in went to the TV (`nv=gesendet`) and on the "no access" page; a key in a request's address ends the session.
 //
 // Honest limits: this protects against someone who only listens on the Wi-Fi. It does not protect against someone who
 // can alter traffic on the LAN (they can change the page script itself, which comes over plain HTTP), nor against a
-// compromised phone or TV. The key is as secret as the QR code on the TV screen and the phone's browser.
+// compromised phone or TV. The key is as secret as the QR code on the TV screen and the phone's browser. The full QR
+// address, key included, may remain in the phone browser's history or in a QR scanner app's scan log; someone who
+// recorded the Wi-Fi traffic and later obtains that history or log can open the recorded sign-in. There is no forward
+// secrecy: the key is fixed per session and nothing is agreed on the fly.
 
 /// Opens a ChaCha20-Poly1305 box (RFC 8439): 32-byte key, 12-byte nonce, ciphertext followed by its 16-byte tag, and
-/// the additional data. Nil if the tag does not match. PlayerCore has no CryptoKit on Linux, so the app injects it.
+/// the additional data. Nil if the tag does not match. Linux has no CryptoKit, so the opener is injected; the app passes
+/// `PhoneSeal.cryptoKitOpen`.
 public typealias PhoneSealOpen = @Sendable (_ key: Data, _ nonce: Data, _ ciphertextAndTag: Data, _ aad: Data) -> Data?
+
+#if canImport(CryptoKit)
+extension PhoneSeal {
+    /// The opener the app ships: CryptoKit ChaChaPoly (ChaCha20-Poly1305, RFC 8439). Nil for a wrong key or additional
+    /// data, changed bytes or a malformed box; PlayerCore then gives no command. Tested against the JavaScript fixture
+    /// in `javaScriptFixtureOpensWithCryptoKit` (macOS CI job).
+    public static let cryptoKitOpen: PhoneSealOpen = { key, nonce, ciphertextAndTag, aad in
+        guard key.count == keyLength, nonce.count == nonceLength, ciphertextAndTag.count >= tagLength,
+              let n = try? ChaChaPoly.Nonce(data: nonce),
+              let box = try? ChaChaPoly.SealedBox(nonce: n, ciphertext: ciphertextAndTag.dropLast(tagLength),
+                                                  tag: ciphertextAndTag.suffix(tagLength)) else { return nil }
+        return try? ChaChaPoly.open(box, using: SymmetricKey(data: key), authenticating: aad)
+    }
+}
+#endif
 
 /// The Nuvio sign-in after opening; both values stay wrapped (`PhoneSecret`).
 public struct PhoneNuvioLogin: Equatable, Sendable {
@@ -33,8 +58,12 @@ public enum PhoneSeal {
     public static let keyLength = 32
     public static let nonceLength = 12
     public static let tagLength = 16
-    /// Longest accepted `sealed` field (base64url characters); far above two 256-character fields as escaped JSON.
-    static let maxFieldLength = 12 * 1024
+    /// The page pads the sealed JSON to a multiple of this many bytes (`PAD_BLOCK` in `PhoneSealScript`).
+    public static let paddingBlock = 1024
+    /// Longest accepted `sealed` field (base64url characters): whatever fits the body limit of `POST /nuvio`, so every
+    /// sign-in that arrives is opened and gets the field rules (`nv=leer` when too long) instead of `nv=krypto`. The
+    /// largest allowed one (two 256-byte fields as escaped JSON, padded to 4096 bytes) needs 5499 characters.
+    static let maxFieldLength = PhoneLimits.maxBody(for: PhoneInputPage.nuvioPath) - (fieldName.utf8.count + 1)
     /// On the phone when the script cannot seal or the TV cannot open (redirect note `nv=krypto`).
     public static let failureText = "Verschlüsselung nicht möglich. Bitte den QR-Code am Fernseher neu scannen."
 
