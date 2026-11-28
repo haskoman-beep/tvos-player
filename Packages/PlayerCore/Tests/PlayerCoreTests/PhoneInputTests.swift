@@ -34,14 +34,14 @@ private func state() -> PhoneHomeState {
 }
 
 @Test func phoneSectionsInTargetOrderWithAnchors() {
-    #expect(PhoneSection.allCases.map(\.title) == ["Schnell-Import", "Addons", "Konten & Schlüssel", "Startseite", "Aussehen", "System"])
-    #expect(PhoneSection.allCases.map(\.rawValue) == ["import", "addon", "keys", "home", "aussehen", "system"])
+    #expect(PhoneSection.allCases.map(\.title) == ["Schnell-Import", "Addons", "Konten & Schlüssel", "Nuvio-Konto", "Startseite", "Aussehen", "System"])
+    #expect(PhoneSection.allCases.map(\.rawValue) == ["import", "addon", "keys", "nuvio", "home", "aussehen", "system"])
     #expect(PhoneSection.url("http://h/?t=x", section: .home) == "http://h/?t=x#home")
     #expect(PhoneSection.url("http://h/?t=x", section: nil) == "http://h/?t=x")
     let page = PhoneInputPage()
     let (resp, _) = page.handle(req("GET /?t=tok HTTP/1.1\r\n\r\n"), profileName: "Ich", home: state()) { Data() }
     let html = String(data: resp.body, encoding: .utf8)!
-    let pos = ["id=import>", "id=addon>", "id=keys>", "id=home>", "id=order>", "id=system>"].map { html.range(of: $0)?.lowerBound }
+    let pos = ["id=import>", "id=addon>", "id=keys>", "id=nuvio>", "id=home>", "id=order>", "id=system>"].map { html.range(of: $0)?.lowerBound }
     #expect(pos.allSatisfy { $0 != nil })
     #expect(pos.compactMap { $0 } == pos.compactMap { $0 }.sorted())
     // Bestehende Felder bleiben (Namen unverändert), alle Schlüssel samt TorBox im Abschnitt „Konten & Schlüssel“ (wave S).
@@ -211,4 +211,112 @@ private func state() -> PhoneHomeState {
     #expect(l.applyPhone(.deleteRow(b), hidden: &hidden, options: options) == .deleted(rowB, at: 1))
     #expect(l.rows.map(\.id) == [a, c] && hidden.isEmpty)
     #expect(l.applyPhone(.deleteRow(b), hidden: &hidden, options: options) == nil)
+}
+
+// MARK: Nuvio sign-in form (plan_nuvio_konto T1)
+
+private let nuvioMail = "user@example.org", nuvioPass = "FAKE-PASS-0009 &=+ä"
+
+private func nuvioBody(email: String, password: String) -> String {
+    func enc(_ s: String) -> String { s.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "" }
+    return "email=\(enc(email))&password=\(enc(password))"
+}
+
+private func html(_ r: HTTPResponse) -> String { String(data: r.body, encoding: .utf8) ?? "" }
+
+@Test func nuvioPostGivesOneSignInAndRedirectsWithoutValues() {
+    let page = PhoneInputPage()
+    let (resp, cmds) = page.handle(post(PhoneInputPage.nuvioPath, nuvioBody(email: "  \(nuvioMail) \n", password: nuvioPass)),
+                                   profileName: "Ich") { Data() }
+    // The e-mail is trimmed, the password is taken as typed.
+    #expect(cmds == [.nuvioSignIn(email: PhoneSecret(nuvioMail), password: PhoneSecret(nuvioPass))])
+    #expect(resp.status == 303)
+    let loc = resp.extraHeaders["Location"] ?? ""
+    #expect(loc == "/?nv=gesendet#nuvio")
+    #expect(!loc.contains("example") && !loc.contains("FAKE") && resp.body.isEmpty)
+}
+
+@Test func nuvioPostWithEmptyOrOverlongFieldGivesNoCommand() {
+    let page = PhoneInputPage()
+    for body in [nuvioBody(email: "", password: nuvioPass), nuvioBody(email: "   ", password: nuvioPass),
+                 nuvioBody(email: nuvioMail, password: ""), "email=\(nuvioMail)", "password=x", "",
+                 nuvioBody(email: String(repeating: "a", count: 257), password: nuvioPass),
+                 nuvioBody(email: nuvioMail, password: String(repeating: "p", count: 257))] {
+        let (resp, cmds) = page.handle(post("/nuvio", body), profileName: "Ich") { Data() }
+        #expect(cmds.isEmpty, "\(body.prefix(40))")
+        #expect(resp.status == 303 && resp.extraHeaders["Location"] == "/?nv=leer#nuvio")
+    }
+    // 256 characters each are still accepted.
+    let (_, ok) = page.handle(post("/nuvio", nuvioBody(email: String(repeating: "a", count: 256), password: String(repeating: "p", count: 256))),
+                              profileName: "Ich") { Data() }
+    #expect(ok.count == 1)
+}
+
+@Test func nuvioPostIsRefusedWhileARequestWaitsOrWhenNotSignedOut() {
+    let page = PhoneInputPage()
+    let body = nuvioBody(email: nuvioMail, password: nuvioPass)
+    let (busy, none) = page.handle(post("/nuvio", body), profileName: "Ich", backups: PhoneBackupState(requestOpen: true)) { Data() }
+    #expect(none.isEmpty && busy.extraHeaders["Location"] == "/?wt=offen#nuvio")
+    for state: PhoneNuvioState in [.connected(profileName: "Wohnzimmer"), .busy] {
+        let (r, c) = page.handle(post("/nuvio", body), profileName: "Ich", nuvio: state) { Data() }
+        #expect(c.isEmpty && r.status == 303 && r.extraHeaders["Location"] == "/#nuvio")
+    }
+}
+
+@Test func nuvioSecretNeverPrintsItsValue() {
+    let s = PhoneSecret(nuvioPass)
+    #expect(s.value == nuvioPass)
+    #expect(s.description == "‹verborgen›" && s.debugDescription == "‹verborgen›")
+    #expect(Mirror(reflecting: s).children.isEmpty)
+    let cmd = PhoneCommand.nuvioSignIn(email: PhoneSecret(nuvioMail), password: s)
+    var dumped = ""
+    dump(cmd, to: &dumped)
+    for text in [String(describing: cmd), String(reflecting: cmd), "\(cmd)", "\([cmd])", dumped,
+                 String(describing: s), String(reflecting: s), "\(s)"] {
+        #expect(!text.contains("example") && !text.contains("FAKE") && !text.contains("user@"), "\(text)")
+    }
+    #expect(String(describing: cmd).contains("‹verborgen›"))
+    #expect(PhoneSecret("a") == PhoneSecret("a") && PhoneSecret("a") != PhoneSecret("b"))
+}
+
+@Test func nuvioSectionShowsFormOnlyWhenSignedOut() {
+    let page = PhoneInputPage()
+    let out = page.page(profileName: "Ich", note: nil)
+    let start = out.range(of: "id=nuvio>")!.upperBound
+    let section = String(out[start...]).components(separatedBy: "</section>")[0]
+    #expect(section.contains("<h2>Nuvio-Konto</h2>"))
+    #expect(out.contains("action=\"/nuvio\""))
+    #expect(out.contains("type=\"password\"") && out.contains("type=\"email\""))
+    #expect(section.contains("E-Mail") && section.contains("Passwort") && section.contains(">Anmelden</button>"))
+    #expect(section.contains("Der Fernseher fragt nach, bevor er sich anmeldet. Das Passwort wird nicht gespeichert."))
+    // Own form with autocomplete off; neither field carries a value.
+    let form = out.range(of: "<form id=nuvioform")!
+    let formTag = String(out[form.lowerBound...].prefix { $0 != ">" })
+    #expect(formTag.contains("method=post") && formTag.contains("action=\"/nuvio\"") && formTag.contains("autocomplete=off"))
+    for name in ["email", "password"] {
+        let r = out.range(of: "name=\(name) ")!
+        let tag = String(out[out[..<r.lowerBound].lastIndex(of: "<")!...].prefix { $0 != ">" })
+        #expect(!tag.contains("value="), "\(tag)")
+        #expect(tag.contains("form=nuvioform"), "\(tag)")
+    }
+    // The fields do not belong to the main form, so "An den Fernseher senden" never carries them.
+    #expect(page.page(profileName: "Ich", note: nil, nuvio: .connected(profileName: "<Wohnzimmer>")).contains("&lt;Wohnzimmer&gt;"))
+    for state: PhoneNuvioState in [.connected(profileName: "Wohnzimmer"), .connected(profileName: nil), .busy] {
+        let p = page.page(profileName: "Ich", note: nil, nuvio: state)
+        #expect(p.contains("id=nuvio>"))
+        #expect(!p.contains("action=\"/nuvio\"") && !p.contains("type=\"password\"") && !p.contains("nuvioform"))
+    }
+    #expect(page.page(profileName: "Ich", note: nil, nuvio: .connected(profileName: nil))
+        .contains("Mit Nuvio verbunden. Abmelden geht am Fernseher unter Einstellungen › Konten."))
+    #expect(page.page(profileName: "Ich", note: nil, nuvio: .busy).contains("Anmeldung läuft …"))
+}
+
+@Test func nuvioNotesOnThePage() {
+    let page = PhoneInputPage()
+    func get(_ q: String) -> String { html(page.handle(req("GET /?\(q) HTTP/1.1\r\n\r\n"), profileName: "Ich") { Data() }.0) }
+    #expect(get("nv=gesendet").contains("Gesendet. Bitte am Fernseher „Erlauben“ wählen."))
+    #expect(get("nv=leer").contains("Bitte E-Mail und Passwort eingeben."))
+    #expect(!get("nv=%3Cb%3E").contains("<b>"))
+    let connected = html(page.handle(req("GET / HTTP/1.1\r\n\r\n"), profileName: "Ich", nuvio: .connected(profileName: "Wohnzimmer")) { Data() }.0)
+    #expect(connected.contains("Mit Nuvio verbunden.") && !connected.contains("type=\"password\""))
 }

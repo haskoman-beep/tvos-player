@@ -6,6 +6,8 @@ public enum PhoneSection: String, CaseIterable, Sendable {
     case quickImport = "import"
     case addon
     case keys
+    /// plan_nuvio_konto T1: sign-in to a Nuvio account (own form, `POST /nuvio`).
+    case nuvio
     case home
     /// Task 4.3: look from the configurator.
     case look = "aussehen"
@@ -16,6 +18,7 @@ public enum PhoneSection: String, CaseIterable, Sendable {
         case .quickImport: "Schnell-Import"
         case .addon: "Addons"
         case .keys: "Konten & Schlüssel"
+        case .nuvio: "Nuvio-Konto"
         case .home: "Startseite"
         case .look: "Aussehen"
         case .system: "System"

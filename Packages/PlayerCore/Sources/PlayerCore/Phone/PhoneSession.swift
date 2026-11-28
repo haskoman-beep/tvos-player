@@ -13,7 +13,7 @@ public enum PhoneLimits {
     public static func maxBody(for path: String) -> Int {
         switch path {
         case "/submit": 8 * 1024 * 1024   // backups and pasted collection code
-        default: 16 * 1024                // "/home" (one move) and everything else
+        default: 16 * 1024                // "/home" (one move), "/nuvio" (sign-in) and everything else
         }
     }
 }
@@ -162,6 +162,9 @@ extension PhoneCommand {
                 + (noSecrets && hasAddons ? " Addons mit Zugangsdaten danach neu eintragen." : ""))
         case .exportSecrets:
             return .needsConfirmation(summary: "Sicherung mit allen Schlüsseln und Anmeldungen verschlüsselt an das Handy geben. Den Code zeigt danach nur der Fernseher.")
+        case .nuvioSignIn:
+            // plan_nuvio_konto T1: someone could sign the TV into their own account; the summary shows no value.
+            return .needsConfirmation(summary: "Bei Nuvio anmelden")
         case .importNuvioURL, .importNuvioJSON, .addTMDBLink, .importFusionURL, .moveRow, .removeRow, .deleteRow, .restoreRow, .addRow,
              .setRatingIconSet, .importCollectionLink, .importCollectionCode, .look:
             return .plain
@@ -207,6 +210,7 @@ extension PhoneConfirmation {
             case .setKey(let s, _): k = s == AtvloadlyAddress.key ? "Adresse" : "Schlüssel"
             case .importBackup: k = "Import"
             case .exportSecrets: k = "Sicherung"
+            case .nuvioSignIn: k = "nuvio-anmeldung"
             default: k = "Befehl"
             }
             if !kinds.contains(k) { kinds.append(k) }

@@ -431,3 +431,31 @@ private func req(_ s: String) -> HTTPRequest {
     #expect(s.profiles.count == 1 && !report.isEmpty)
     #expect(report.ignored.allSatisfy { !$0.contains("turquoise") })   // paths only, no values
 }
+
+// MARK: Nuvio sign-in (plan_nuvio_konto T1)
+
+@Test func nuvioBodyOverSixteenKilobytesIs413() {
+    var s = PhoneSession(token: "tok", now: t0)
+    let c = cookieHeader(s.authorize(queryToken: "tok", cookie: nil, peer: phone, now: t0))
+    #expect(PhoneLimits.maxBody(for: PhoneInputPage.nuvioPath) == 16 * 1024)
+    let big = s.admit(head("POST /nuvio HTTP/1.1\r\nCookie: \(c)\r\nContent-Length: \(16 * 1024 + 1)\r\n\r\n"), peer: phone, now: t0 + 1)
+    guard case .respond(let r) = big else { Issue.record("413 expected"); return }
+    #expect(r.status == 413)
+    #expect(s.admit(head("POST /nuvio HTTP/1.1\r\nCookie: \(c)\r\nContent-Length: 60\r\n\r\n"), peer: phone, now: t0 + 2) == .readBody(60))
+}
+
+@Test func nuvioSignInNeedsConfirmationWithoutValues() {
+    let cmd = PhoneCommand.nuvioSignIn(email: PhoneSecret("user@example.org"), password: PhoneSecret("FAKE-PASS-0010"))
+    guard case .needsConfirmation(let summary) = cmd.sensitivity else { Issue.record("confirmation expected"); return }
+    #expect(summary == "Bei Nuvio anmelden")
+    #expect(!summary.contains("example") && !summary.contains("FAKE"))
+    #expect(!cmd.isHomeEdit && !cmd.needsBackupCode)
+    var g = PhoneConfirmGate()
+    let (plain, refused) = g.offer([cmd], now: t0)
+    #expect(plain.isEmpty && refused.isEmpty)
+    let open = g.current(now: t0)
+    #expect(open?.summary == ["Bei Nuvio anmelden"] && open?.expires == t0 + 60)
+    #expect(open?.logKind == "nuvio-anmeldung")
+    #expect(open?.logLine(.allowed).contains("example") == false)
+    #expect(g.resolve(allow: true, now: t0 + 59) == [cmd])
+}

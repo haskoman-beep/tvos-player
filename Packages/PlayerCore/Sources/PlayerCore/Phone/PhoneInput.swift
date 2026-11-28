@@ -127,6 +127,30 @@ public enum PhoneCommand: Equatable, Sendable {
     /// Task 4.3: a look from the configurator (`LookImport`); sets the active profile's look. Changes only the
     /// appearance, never keys or addons, so it needs no confirmation on the TV.
     case look(Look)
+    /// plan_nuvio_konto T1: sign in to a Nuvio account with the e-mail and password typed on the phone
+    /// (`POST /nuvio`). Both stay wrapped, so a log of the command never shows them; the TV confirms first.
+    case nuvioSignIn(email: PhoneSecret, password: PhoneSecret)
+}
+
+/// plan_nuvio_konto T1: a value from the phone that must never reach a log, a notice or a dump (the Nuvio e-mail and
+/// password). Not `Codable` on purpose; printing, debug printing and reflection show only `‹verborgen›`. It lives
+/// from the POST until the sign-in call returns and is never stored.
+public struct PhoneSecret: Equatable, Sendable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    public static let masked = "‹verborgen›"
+    public let value: String
+    public init(_ value: String) { self.value = value }
+    public var description: String { Self.masked }
+    public var debugDescription: String { Self.masked }
+    public var customMirror: Mirror { Mirror(self, children: [], displayStyle: .struct) }
+}
+
+/// plan_nuvio_konto T1: what the section „Nuvio-Konto“ on the phone page shows. The form only when signed out.
+public enum PhoneNuvioState: Equatable, Sendable {
+    case signedOut
+    /// `profileName`: the chosen Nuvio profile, nil while none is chosen.
+    case connected(profileName: String?)
+    /// A sign-in runs on the TV.
+    case busy
 }
 
 /// Task 1.4: what the page may do with backups right now.
@@ -180,6 +204,17 @@ public struct PhoneInputPage: Sendable {
     public static let sealedPath = "/export/sicherung"
     static let blockedText = "Die Profile am Fernseher sind gerade nicht lesbar. Sichern und Wiederherstellen sind gesperrt, bis dort eine Fassung geladen oder neu angefangen wurde."
     public static let busyText = "Am Fernseher wartet schon eine Anfrage. Bitte zuerst dort antworten und dann erneut senden."
+    /// plan_nuvio_konto T1: own form for the Nuvio sign-in (password only in the POST body, never in a URL).
+    public static let nuvioPath = "/nuvio"
+    /// Longest accepted e-mail and password (characters each).
+    static let nuvioFieldLimit = 256
+    static let nuvioSentText = "Gesendet. Bitte am Fernseher „Erlauben“ wählen."
+    static let nuvioEmptyText = "Bitte E-Mail und Passwort eingeben."
+    static let nuvioHintText = "Der Fernseher fragt nach, bevor er sich anmeldet. Das Passwort wird nicht gespeichert."
+    /// Residual risk of the plain-HTTP LAN form (plan section 2), same words as the hint on the TV.
+    static let nuvioRiskText = "Es geht einmal unverschlüsselt durch dein WLAN zum Fernseher und von dort verschlüsselt an Nuvio. Nutze ein Passwort, das du nur für Nuvio verwendest."
+    static let nuvioConnectedText = "Mit Nuvio verbunden. Abmelden geht am Fernseher unter Einstellungen › Konten."
+    static let nuvioBusyText = "Anmeldung läuft …"
 
     public init() {}
 
@@ -190,13 +225,15 @@ public struct PhoneInputPage: Sendable {
 
     /// `backup` liefert den Profil-Export ohne Geheimnisse für GET /export; `home` den Stand für „Startseite ordnen“.
     public func handle(_ r: HTTPRequest, profileName: String, home: PhoneHomeState = .empty,
-                       backups: PhoneBackupState = PhoneBackupState(), backup: () -> Data) -> (HTTPResponse, [PhoneCommand]) {
+                       backups: PhoneBackupState = PhoneBackupState(), nuvio: PhoneNuvioState = .signedOut,
+                       backup: () -> Data) -> (HTTPResponse, [PhoneCommand]) {
         switch (r.method, r.path) {
         case ("GET", "/"):
             return (HTTPResponse(status: 200, body: Data(page(profileName: profileName, note: r.query["ok"], importNote: r.query["imp"],
                                                               lookNote: r.query["lk"], lookUnknown: r.query["lku"],
                                                               home: home, backupBlocked: backups.blocked,
-                                                              requestWaiting: r.query["wt"] == "offen").utf8)), [])
+                                                              requestWaiting: r.query["wt"] == "offen",
+                                                              nuvio: nuvio, nuvioNote: r.query["nv"]).utf8)), [])
         case ("GET", "/export"), ("GET", Self.sealedPath):
             guard !backups.blocked else {
                 return (HTTPResponse(status: 409, body: Data(Self.html("Gesperrt", "<p>\(Self.blockedText)</p>").utf8)), [])
@@ -280,6 +317,23 @@ public struct PhoneInputPage: Sendable {
             let cmds = home.command(op: r.form["op"] ?? "").map { [$0] } ?? []
             let loc = "/?ok=\(cmds.isEmpty ? "home0" : "home")#order"
             return (HTTPResponse(status: 303, body: Data(), extraHeaders: ["Location": loc]), cmds)
+        case ("POST", Self.nuvioPath):
+            // plan_nuvio_konto T1: one sign-in per request. The answer never carries a value, also not on an error.
+            let f = r.form
+            let email = (f["email"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines), password = f["password"] ?? ""
+            var cmds: [PhoneCommand] = []
+            let loc: String
+            if nuvio != .signedOut {
+                loc = "/#nuvio"   // the form is not shown in this state: an old page sent it
+            } else if email.isEmpty || password.isEmpty || email.count > Self.nuvioFieldLimit || password.count > Self.nuvioFieldLimit {
+                loc = "/?nv=leer#nuvio"
+            } else if backups.requestOpen {
+                loc = "/?wt=offen#nuvio"   // as on /submit: the phone hears that a request already waits on the TV
+            } else {
+                cmds = [.nuvioSignIn(email: PhoneSecret(email), password: PhoneSecret(password))]
+                loc = "/?nv=gesendet#nuvio"
+            }
+            return (HTTPResponse(status: 303, body: Data(), extraHeaders: ["Location": loc]), cmds)
         default:
             return (HTTPResponse(status: 404, body: Data(Self.html("Nicht gefunden", "").utf8)), [])
         }
@@ -315,7 +369,8 @@ public struct PhoneInputPage: Sendable {
 
     func page(profileName: String, note: String?, importNote: String? = nil, lookNote: String? = nil,
               lookUnknown: String? = nil, home: PhoneHomeState = .empty,
-              backupBlocked: Bool = false, requestWaiting: Bool = false) -> String {
+              backupBlocked: Bool = false, requestWaiting: Bool = false,
+              nuvio: PhoneNuvioState = .signedOut, nuvioNote: String? = nil) -> String {
         var msg: String
         switch note {
         case nil, "home", "home0": msg = ""   // Rückmeldung von „Startseite ordnen“ steht in dessen Abschnitt
@@ -346,6 +401,7 @@ public struct PhoneInputPage: Sendable {
         <section id=\(PhoneSection.keys.rawValue)>\(head(.keys))\(field("key_tmdb", "TMDB-API-Key", ""))\(field("key_mdblist", "MDBList-Key", ""))
         \(field("key_trakt_id", "Trakt Client ID", ""))\(field("key_trakt_secret", "Trakt Client Secret", ""))\(field("key_simkl_id", "Simkl Client ID", ""))
         \(field("key_torbox", "TorBox-API-Key (Bibliothek „Meine TorBox-Dateien“)", ""))</section>
+        <section id=\(PhoneSection.nuvio.rawValue)>\(head(.nuvio))\(nuvioSection(nuvio, note: nuvioNote))</section>
         <section id=\(PhoneSection.home.rawValue)>\(head(.home))<h3>Collections importieren</h3>
         \(field("nuvio_url", "Collection-Link: Widget-Export, Preview Pack oder Collection-Export (wird gemerkt, am Fernseher „Aktualisieren“)", "https://…json"))\(field("nuvio_json", "… oder den Code (JSON-Text) einfügen", "[…] oder {…}", area: true))
         \(field("tmdb_link", "TMDB- oder Trakt-Liste, Filmreihe, Studio als Reihe", "https://www.themoviedb.org/list/… oder https://trakt.tv/users/…/lists/…"))
@@ -359,10 +415,34 @@ public struct PhoneInputPage: Sendable {
         \(backupPart)</section>
         <button>An den Fernseher senden</button>
         </form>
-        <form id=homeform method=post action="/home"></form>
+        <form id=homeform method=post action="/home"></form>\(nuvio == .signedOut ? "<form id=nuvioform method=post action=\"\(Self.nuvioPath)\" autocomplete=off></form>" : "")
         <script>\(Self.orderScript)\(Self.fileScript)</script>
         """
         return Self.html("Player · \(Self.escape(profileName))", body)
+    }
+
+    /// plan_nuvio_konto T1: section „Nuvio-Konto“. The fields belong to the own form `nuvioform` (outside the main
+    /// form, via `form=`), so „An den Fernseher senden“ never carries them. No field ever gets a `value`.
+    func nuvioSection(_ state: PhoneNuvioState, note: String?) -> String {
+        var out = ""
+        switch note {
+        case "gesendet": out += "<p class=ok>\(Self.nuvioSentText)</p>"
+        case "leer": out += "<p class=ok>\(Self.nuvioEmptyText)</p>"
+        default: break
+        }
+        switch state {
+        case .signedOut:
+            out += "<label>E-Mail<input form=nuvioform name=email type=\"email\" autocomplete=off autocapitalize=off autocorrect=off spellcheck=false></label>"
+            out += "<label>Passwort<input form=nuvioform name=password type=\"password\" autocomplete=off></label>"
+            out += "<p class=hint>\(Self.nuvioHintText) \(Self.nuvioRiskText)</p>"
+            out += "<button form=nuvioform>Anmelden</button>"
+        case .connected(let name):
+            out += "<p>\(Self.nuvioConnectedText)</p>"
+            if let name { out += "<p class=hint>Verbunden · \(Self.escape(name))</p>" }
+        case .busy:
+            out += "<p>\(Self.nuvioBusyText)</p>"
+        }
+        return out
     }
 
     /// Welle F-e: „Startseite ordnen“. Knöpfe gehören über `form=homeform` zum eigenen Formular (ohne die Felder oben,

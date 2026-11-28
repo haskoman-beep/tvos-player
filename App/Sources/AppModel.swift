@@ -1168,6 +1168,7 @@ final class AppModel {
             case .importCollectionCode: return "collection-code"
             case .exportSecrets: return "sicherung-verschlüsselt"
             case .look(let l): return "aussehen \(l.overrides.count) abweichungen"   // Task 4.3
+            case .nuvioSignIn: return "nuvio-anmeldung"   // kind only, never the e-mail or password
             }
         }.joined(separator: ", "))
         let noticeBefore = notice
@@ -1248,6 +1249,7 @@ final class AppModel {
             case .importCollectionLink(let u): await CollectionLinkStore.shared.importLink(u, model: self)   // wave F-o round 2
             case .importCollectionCode(let d): await CollectionLinkStore.shared.importCode(d, model: self)
             case .exportSecrets: break   // PhoneServer.answer seals the file after „Erlauben“
+            case .nuvioSignIn: break   // Nuvio: wired in T8
             case .look(let l):
                 // Task 4.3 (controller ruling): the look goes onto the active profile, and the old fields it maps to
                 // are written too, so the views that still read `appearance`/`player` show it today (PlayerCore).
