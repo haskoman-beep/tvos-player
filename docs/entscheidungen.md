@@ -54,3 +54,19 @@ migration paths are written out.
 - **Decision:** TrueHD, DTS and DTS-HD MA stay converted to Dolby Digital Plus 5.1 by default; the README now says so.
 - **Why:** this reaches a sound system over optical or ARC; the README claimed multichannel PCM (W-A-12, W-12).
 - **Follows:** 7.1 becomes 5.1 and height channels are dropped for these formats.
+
+## Nuvio account sync (28 Nov 2026)
+- **Decision:** the app can sign in to one Nuvio account per device and use it as an additional sync target next to the profile's progress source. It reads collections, addons, watch progress and watch history, and writes watch progress only (`sync_push_watch_progress`). Each local profile picks one account profile. Owner decisions:
+  - The password is typed on the phone page and sealed there (ChaCha20-Poly1305 with a key carried in the QR address fragment); without sealing nothing is sent, there is no cleartext fallback.
+  - Existing local progress is not uploaded at first connect; only titles played after connecting are pushed.
+  - Removals stay local: "remove from continue watching" and "mark unwatched" delete nothing on the account.
+  - Settings blobs (profile settings, home catalog settings) stay separate; the app keeps its own settings (D1).
+  - Addons removed on the account are listed in the next import preview and asked about one by one; only addons that came from the account are offered, locally installed ones are never touched (D2).
+  - A chosen account profile that gets a PIN later stops the sync until another profile is chosen (D3).
+  - The first pull takes all titles, however old (D4).
+- **Why:** the service's terms allow automation only through the APIs documented for public use, so the client follows the public API reference (v1.3) alone and uses no code from other clients. `NuvioEndpoint` is a closed list of 13 calls; `NuvioGuardTests` pins that list and fails when a source file names a full-replace, delete, sign-up, TV/QR login, device registry, tracker-token, provider-credential or settings call, when the service's host appears outside `NuvioClient.swift`, or when anything but `NuvioSession.swift` names the Keychain entry `nuvio.session`.
+- **Follows:** the session lives only in the Keychain (device-only, in no profile and no backup); pulled progress lands in the normal progress books. Known limits:
+  - Sealing protects only against a passive listener on the Wi-Fi. Someone who can change the page in transit can read the password; the key may stay in the phone browser's history; there is no forward secrecy.
+  - The first progress snapshot holds at most the newest 200 rows (the server's cap); older unfinished titles from before the first connect are not imported. The watch history is read in full, in pages of 500 (20 per pass, then resumed in the next pass).
+  - The scope of sign-out is not documented: it may end only this session or all sessions of the account.
+  - A title marked watched by hand without a known duration is not pushed, because a push needs position and duration.
