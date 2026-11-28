@@ -55,6 +55,8 @@ final class CollectionLinkStore: ObservableObject {
 
     @Published private(set) var links: [CollectionLink] = []
     @Published private(set) var busy = false
+    /// Loads holding `busy` (an account refresh holds it around the import it runs).
+    private var holds = 0
     /// Title lookup of all stored preview packs (earlier links win on equal titles).
     private(set) var packIndex = PreviewPack.Index([])
     /// Rises with every pack change (memo of enriched profile collections).
@@ -225,8 +227,8 @@ final class CollectionLinkStore: ObservableObject {
             model.lastError = "Import: Link ungültig (\(u))."
             return
         }
-        busy = true
-        defer { busy = false }
+        hold()
+        defer { release() }
         RemoteLog.info("import", "Collection-Link: \(url.host ?? "?")")
         let data: Data
         do { data = try await Self.fetch(url) } catch {
@@ -240,8 +242,8 @@ final class CollectionLinkStore: ObservableObject {
     func importCode(_ data: Data, model: AppModel) async {
         ensure(model)
         let scope = model.scopes.current   // Task 3.1
-        busy = true
-        defer { busy = false }
+        hold()
+        defer { release() }
         await importData(data, link: nil, model: model, scope: scope)
     }
 
@@ -252,8 +254,8 @@ final class CollectionLinkStore: ObservableObject {
                        merge: @escaping @MainActor (NuvioImportResult, [String: FolderMedia]?) -> NuvioImportResult) async {
         ensure(model)
         let scope = model.scopes.current   // Task 3.1
-        busy = true
-        defer { busy = false }
+        hold()
+        defer { release() }
         await importData(data, link: link, model: model, scope: scope, merge: merge)
     }
 
@@ -265,19 +267,36 @@ final class CollectionLinkStore: ObservableObject {
         return snapshot(id) ?? [:]
     }
 
-    /// "Aktualisieren": fetch one stored link again.
+    private func hold() { holds += 1; busy = true }
+    private func release() { holds = max(0, holds - 1); busy = holds > 0 }
+
+    /// "Aktualisieren": fetch one stored link again. Busy from the first step (review 3, finding 9d: the account
+    /// entry loads the profile list and the collections before its import sets it), so a second press waits.
     func refresh(_ id: String, model: AppModel) async {
-        guard let u = links.first(where: { $0.id == id })?.url else { return }
+        guard !busy, let u = links.first(where: { $0.id == id })?.url else { return }
+        hold()
+        defer { release() }
         if NuvioAccountImport.isAccountLink(u) { await model.nuvioRefreshAccountCollections(link: u); return }
         await importLink(u, model: model)
     }
 
+    /// Review 3, finding 8: an account entry that is not the current account and account profile (signed out, other
+    /// account) is skipped, with one notice that does not replace the result of the other links.
     func refreshAll(model: AppModel) async {
-        for u in links.compactMap(\.url) {
+        guard !busy else { return }
+        hold()
+        defer { release() }
+        let current = NuvioAccountImport.currentLink(sessionUser: model.nuvioSession?.userID,
+                                                     state: model.nuvioState(for: model.profile.id))
+        let todo = NuvioAccountImport.refreshable(links.compactMap(\.url), current: current)
+        let before = model.notice
+        for u in todo.links {
             if NuvioAccountImport.isAccountLink(u) { await model.nuvioRefreshAccountCollections(link: u) } else {
                 await importLink(u, model: model)
             }
         }
+        if let n = NuvioAccountImport.skippedNotice(todo.skipped, notice: model.notice, before: before) { model.notice = n }
+        if todo.skipped > 0 { RemoteLog.info("import", "Alle aktualisieren: \(todo.skipped) Nuvio-Konto-Eintrag/Einträge übersprungen") }
     }
 
     /// Forget a link. Imported rows stay on the start page (they are removed there); a pack stops enriching.

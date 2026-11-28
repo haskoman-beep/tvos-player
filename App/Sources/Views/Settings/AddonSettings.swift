@@ -76,6 +76,7 @@ struct AddonDetailPage: View {
                                   message: "Kataloge und Quellen dieses Addons verschwinden aus allen Reihen.",
                                   verb: "Entfernen") {
                 model.update { $0.addons.removeAll { $0.manifestURL == manifestURL } }
+                model.nuvioForgetAddonOrigin(a)   // review 3, finding 6: removed by hand, no longer "from the account"
                 model.clearCatalogCache()   // Reihen des Addons nicht aus dem Plattencache zurückholen
                 RemoteLog.info("einstellung", "Addon entfernt: \(a.manifest.name)")
                 dismiss()

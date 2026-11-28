@@ -201,13 +201,15 @@ final class AppModel {
         progressSaveHeld = false
         // Build 2 (2.5): same watched rule as the scrobble stop, so a close-time save cannot undo the stop's mark.
         let threshold = ProgressBook.finishedThreshold(syncConnected: Self.syncServices.contains(where: isConnected))
-        progress.record(id: r.id, item: r.item, season: r.season, episode: r.episode, position: position, duration: duration,
-                        finishedAt: threshold)
+        let took = progress.record(id: r.id, item: r.item, season: r.season, episode: r.episode, position: position,
+                                   duration: duration, finishedAt: threshold)
         if progress.isWatched(r.id), let n = r.nextRequest, let s = n.season, let e = n.episode {
             progress.recordNextUp(id: n.id, item: n.item, season: s, episode: e)
         }
         do { try saveProgressBook() } catch { lastError = "Fortschritt nicht gespeichert: \(error)" }
-        nuvioNoteProgress(r.id)   // T9: local play into the Nuvio outbox (pushed when due)
+        // T9: local play into the Nuvio outbox (pushed when due). A refused report left the entry as it was, which
+        // may be one pulled from the account: nothing is queued then (review 3, finding 9c).
+        if took { nuvioNoteProgress(r.id) }
         scrobbleProgress(r, fraction: duration > 0 ? position / duration : 0)
     }
 
@@ -349,7 +351,7 @@ final class AppModel {
     func syncRemoteProgress() async {
         await processSyncQueue()   // Wave L: send pending tile changes before pulling
         // T9: app start, profile switch, replaced profiles: a Nuvio pass of its own, independent of the source below.
-        Task { await syncNuvio(.full, reason: "abgleich") }
+        nuvioForegroundPass(reason: "abgleich")   // review 3, finding 9a: the same gate as the foreground trigger
         let scope = scopes.current   // Task 3.1 (S-3): the pull belongs to this profile and epoch
         let s: String
         switch profile.progressSource { case .local: return; case .trakt: s = "trakt"; case .simkl: s = "simkl" }
@@ -937,10 +939,9 @@ final class AppModel {
                   id.hasPrefix("tt") else { return .notFound }
             imdbCache[key] = id
             return .found(id)
-        } catch APIError.status(404) {
-            return .notFound
         } catch {
-            return .unavailable
+            // Review 3, finding 4: TMDB answers through `HTTPClientFetcher` (`AddonError.http(404)`), not `APIError`.
+            return NuvioIDLookup.of(error: error)
         }
     }
 

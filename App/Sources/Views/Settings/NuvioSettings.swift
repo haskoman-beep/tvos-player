@@ -21,12 +21,12 @@ struct NuvioAccountRow: View {
 struct NuvioSettingsPage: View {
     @Environment(AppModel.self) var model
     let tint: Color
-    @State private var page: NuvioPage?
+    @State private var page: NuvioSettingsRoute?
     @State private var confirmSignOut = false
     /// The sign-in request already handled (a new one after a sign-in opens the profile picker).
     @State private var seenRequest: Int?
 
-    private enum NuvioPage: Hashable, Identifiable {
+    private enum NuvioSettingsRoute: Hashable, Identifiable {
         case signIn
         case profiles
         var id: Self { self }

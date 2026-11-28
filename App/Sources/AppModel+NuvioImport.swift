@@ -59,6 +59,7 @@ extension AppModel {
         static let scopeChanged = "Profil oder Einstellungen wurden währenddessen geändert. Bitte erneut laden."
         static let noCollections = "Import: Im Nuvio-Profil sind keine Collections."
         static let otherLink = "Import: Dieser Eintrag gehört zu einem anderen Nuvio-Konto oder -Profil."
+        static let accountChanged = "Nuvio-Konto oder -Profil wurde währenddessen geändert. Nichts wurde übernommen."
         static func noProfile(_ name: String) -> String { "Nuvio-Profil für „\(name)“ wählen." }
     }
 
@@ -85,7 +86,10 @@ extension AppModel {
             let fetched = await nuvioLoadManifests(candidates)
             guard scopeStillCurrent(scope, "Nuvio-Import") else { ui.phase = .failed(NuvioImportText.scopeChanged); return }
             let previous = CollectionLinkStore.shared.accountSnapshot(context.source.link, model: self)
-            let origin = NuvioImportOriginStore(storage: progressStore.storage).load(target)
+            // Review 3, finding 6: marks of addons no longer installed (removed by hand, restore) go first.
+            let originStore = NuvioImportOriginStore(storage: progressStore.storage)
+            var origin = originStore.load(target)
+            if origin.prune(installedAddons: profile.addons) { nuvioSaveOrigin(origin, originStore, target) }
             let preview = NuvioAccountImport.plan(
                 localAddons: profile.addons, localCollections: profile.collections, source: context.source,
                 accountAddons: rows, accountCollections: parsed.collections, origin: origin,
@@ -112,6 +116,14 @@ extension AppModel {
         guard profile.id == pending.profile, scopes.current.profile == pending.profile else {
             ui.phase = .failed(NuvioImportText.profileChanged)
             RemoteLog.info("nuvio", "Import nicht übernommen: Profil gewechselt")
+            return
+        }
+        // Review 3, finding 7: the preview belongs to one account and account profile; signed out or changed
+        // meanwhile, nothing is applied.
+        guard NuvioAccountImport.currentLink(sessionUser: nuvioSession?.userID,
+                                             state: nuvioState(for: pending.profile)) == pending.source.link else {
+            ui.phase = .failed(NuvioImportText.accountChanged)
+            RemoteLog.info("nuvio", "Import nicht übernommen: Konto oder Konto-Profil gewechselt")
             return
         }
         ui.phase = .applying
@@ -190,7 +202,10 @@ extension AppModel {
         // and a sync pass never race over the rotating refresh token.
         guard var session = nuvioSession else { return .failure(.init(.signedOut)) }
         let state = nuvioState(for: target)
-        guard let index = state.profileIndex else { return .failure(.init(.noProfile)) }
+        // Review 3, finding 7: a choice made for another account does not count.
+        guard let index = NuvioAccountImport.chosenIndex(sessionUser: session.userID, state: state) else {
+            return .failure(.init(.noProfile))
+        }
         let client = nuvioClient()
         if session.needsRefresh() {
             switch await renewNuvio(after: session) {
@@ -267,6 +282,16 @@ extension AppModel {
         var out = fresh
         out.collections = m.imported
         return out
+    }
+
+    /// Review 3, finding 6: an addon removed by hand (addon settings) loses its account mark at once, so the same
+    /// addon installed again by hand is never offered under "am Konto entfernt".
+    func nuvioForgetAddonOrigin(_ addon: InstalledAddon) {
+        let target = profile.id
+        let originStore = NuvioImportOriginStore(storage: progressStore.storage)
+        var origin = originStore.load(target)
+        guard origin.forget(addon) else { return }
+        nuvioSaveOrigin(origin, originStore, target)
     }
 
     private func nuvioSaveOrigin(_ o: NuvioImportOrigin, _ store: NuvioImportOriginStore, _ target: UUID) {

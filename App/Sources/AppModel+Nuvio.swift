@@ -37,8 +37,15 @@ final class NuvioHolder {
     @ObservationIgnored var again: [UUID: NuvioPassRequest] = [:]
     /// After a 429 that survived the client's retry: no Nuvio call before it (memory only).
     @ObservationIgnored var cooldownUntil: Date?
-    @ObservationIgnored var foregroundGate = NuvioTriggerGate(interval: NuvioTriggerGate.foreground)
+    /// Which passes may start per local profile: foreground pull, push throttle, no push while PIN-protected
+    /// (review 3, findings 1 and 9a).
+    @ObservationIgnored var gate = NuvioPassGate()
     @ObservationIgnored var playbackGate = NuvioTriggerGate(interval: NuvioTriggerGate.afterPlayback)
+    /// Bumped by every sign-in and every wipe (sign-out, refused renewal); a renewal keeps it. A pass whose epoch
+    /// changed while it ran is dropped (review 3, findings 2 and 3).
+    @ObservationIgnored var sessionEpoch = 0
+    /// The running pass per local profile (cancelled at a new epoch).
+    @ObservationIgnored var passTasks: [UUID: Task<NuvioSyncResult, Never>] = [:]
     @ObservationIgnored var observing = false
 }
 
@@ -135,9 +142,19 @@ extension AppModel {
         h.session = nil
         h.expired = expired
         h.refresh.reset()
+        newNuvioSessionEpoch()
         do { try NuvioSessionStore(store: secrets).wipe() } catch {
             RemoteLog.error("sync", "nuvio: Sitzung im Schlüsselbund nicht gelöscht")
         }
+    }
+
+    /// Sign-in or wipe: running passes belong to the session before. They are cancelled (the core pass also stops
+    /// at its next account call, `NuvioSyncDependencies.currentSession`) and their results are dropped.
+    private func newNuvioSessionEpoch() {
+        let h = NuvioHolder.shared
+        h.sessionEpoch &+= 1
+        for t in h.passTasks.values { t.cancel() }
+        h.passTasks.removeAll()
     }
 
     // MARK: State per profile
@@ -168,6 +185,7 @@ extension AppModel {
         let h = NuvioHolder.shared
         nuvioStateStore.remove(id)
         h.states[id] = nil; h.profileNames[id] = nil; h.lastOutcome[id] = nil; h.again[id] = nil
+        h.gate.reset(id)
         h.revision += 1
     }
 
@@ -177,6 +195,7 @@ extension AppModel {
         let h = NuvioHolder.shared
         for id in ids {
             h.states[id] = nil
+            h.gate.reset(id)   // the next start sync of the restored profile runs
             var s = nuvioState(for: id)
             guard s.userID != nil || s.profileIndex != nil else { continue }
             s.resetCursors()
@@ -230,6 +249,7 @@ extension AppModel {
         h.expired = false
         h.refresh.reset()
         h.cooldownUntil = nil
+        newNuvioSessionEpoch()
         var kept = true
         do { try NuvioSessionStore(store: secrets).save(session) } catch { kept = false }
         // Another account than the one this profile was synced with: choice and cursors start over (tombstones stay).
@@ -244,6 +264,7 @@ extension AppModel {
         }
         saveNuvioState(st, for: id)
         h.lastOutcome[id] = nil
+        h.gate.reset(id)
         if other { h.profileNames[id] = nil }
         notice = other ? NuvioTexts.otherAccount : NuvioTexts.signedIn
         if !kept { lastError = NuvioTexts.keychainFailed }
@@ -273,6 +294,7 @@ extension AppModel {
         saveNuvioState(st, for: id)
         h.profileNames[id] = p.name
         h.lastOutcome[id] = nil
+        h.gate.reset(id)   // D3: a chosen profile lifts the PIN stop
         RemoteLog.info("einstellung", "nuvio: Profil \(p.profileIndex) gewählt")
         Task { await syncNuvio(.full, reason: "profilwahl") }
     }
@@ -293,6 +315,7 @@ extension AppModel {
         }
         h.lastOutcome.removeAll()
         h.again.removeAll()
+        h.gate.removeAll()
         notice = NuvioTexts.signedOut
         RemoteLog.info("einstellung", "nuvio: abgemeldet")
         guard let old else { return }
@@ -305,10 +328,13 @@ extension AppModel {
 
     /// T9: one pass for the active profile. While one runs for it, the request is merged into one more pass. A
     /// pass whose profile is no longer active when it ends does not touch the active one (its outbox waits on disk).
-    func syncNuvio(_ mode: NuvioSyncMode = .full, reason: String, manual: Bool = false) async {
+    /// `foreground`: app start, foreground or profile switch; with the other full passes at most one per 5 min and
+    /// profile (`NuvioPassGate`, checked before the first suspension, so two triggers at once give one pass).
+    func syncNuvio(_ mode: NuvioSyncMode = .full, reason: String, manual: Bool = false, foreground: Bool = false) async {
         let h = NuvioHolder.shared, owner = profile.id
         guard nuvioSession != nil else { return }
-        if mode == .full { _ = h.foregroundGate.allow(now: Date()) }
+        let due = nuvioState(for: owner).outbox.isDue(now: Date(), force: false)
+        guard h.gate.admit(mode, profile: owner, now: Date(), manual: manual, foreground: foreground, outboxDue: due) else { return }
         let request = NuvioPassRequest(mode: mode, manual: manual, reason: reason)
         guard !h.running.contains(owner) else {
             h.again[owner] = request.merged(with: h.again[owner])
@@ -328,16 +354,31 @@ extension AppModel {
     private func nuvioPass(_ job: NuvioPassRequest, owner: UUID) async {
         let h = NuvioHolder.shared
         guard let session = nuvioSession else { return }
+        let epoch = h.sessionEpoch
         let start = ContinuousClock.now
         let previousCooldown = h.cooldownUntil
-        let r = await NuvioSync.run(job.mode, session: session, book: progress, state: nuvioState(for: owner),
-                                    cooldownUntil: previousCooldown, using: nuvioDependencies())
+        let mode = job.mode, book = progress, state = nuvioState(for: owner), deps = nuvioDependencies()
+        // Its own task, so "Abmelden" (a new epoch) can cancel it.
+        let task = Task { await NuvioSync.run(mode, session: session, book: book, state: state,
+                                              cooldownUntil: previousCooldown, using: deps) }
+        h.passTasks[owner] = task
+        let r = await task.value
+        if h.sessionEpoch == epoch { h.passTasks[owner] = nil }
         let ms = Metric.ms(start.duration(to: ContinuousClock.now))
-        let reaction = NuvioPassReaction.of(r.outcome, mode: job.mode, manual: job.manual, previousCooldown: previousCooldown)
+        var reaction = NuvioPassReaction.of(r.outcome, mode: job.mode, manual: job.manual, previousCooldown: previousCooldown)
+        let quiet = NuvioPassReaction.isQuiet(mode: job.mode, outcome: r.outcome, summary: r.summary)
+        let fate = NuvioPassFate.of(sameSession: h.sessionEpoch == epoch, ownerActive: profile.id == owner, quiet: quiet,
+                                    changed: !r.changes.isEmpty, clearProfile: reaction.clearProfile)
+        // Signed out or in again meanwhile: no wipe of the newer session, no message, no replay, no save.
+        if fate == .dropSession { reaction = reaction.forReplacedSession }
         // Device-wide parts, whatever profile is active now.
         if let until = reaction.cooldownUntil { h.cooldownUntil = until }
         if reaction.wipeSession, nuvioSession != nil { wipeNuvioSession(expired: true) }
-        let quiet = job.mode != .full && r.outcome == .ok && r.summary.pushed == 0 && r.summary.pushDropped == 0
+        if fate == .dropSession {
+            RemoteLog.info("sync", "nuvio \(job.reason): Ergebnis verworfen (abgemeldet oder neu angemeldet)")
+            return
+        }
+        h.gate.finished(r.outcome, profile: owner)
         if !quiet {
             RemoteLog.info("sync", NuvioLog.passLine(reason: job.reason, mode: job.mode, outcome: r.outcome, summary: r.summary, ms: ms))
             // T11: the same pass as a measuring line (counts only).
@@ -347,23 +388,29 @@ extension AppModel {
                                                           "geloescht": "\(r.summary.deleted)"])
         }
         if let e = reaction.error, lastError != e { lastError = e }
-        // Profile parts only onto the profile the pass belongs to, and only while it is active.
-        guard profile.id == owner else {
+        switch fate {
+        case .dropSession, .nothing:
+            // A push pass that found nothing due (most calls while playing) changed nothing: no write.
+            return
+        case .otherProfile:
+            // Profile parts only onto the profile the pass belongs to, and only while it is active.
             RemoteLog.info("profil", "Ergebnis verworfen (Profil) · nuvio")
             return
+        case .replay:
+            break
         }
-        // A push pass that found nothing due (most calls while playing) changed nothing: no write.
-        if quiet, r.changes.isEmpty, !reaction.clearProfile { return }
-        var live = nuvioState(for: owner)
+        let before = nuvioState(for: owner)
+        var live = before
         let replay = replayNuvio(r.changes, state: &live)
         guard replay.applied.applied else {
             RemoteLog.info("sync", "nuvio: Ergebnis verworfen (Stand inzwischen geändert)")
             return
         }
-        // The book is on its way to disk (or held): only then the state with its cursors.
-        guard replay.bookSaved else { return }
-        if reaction.clearProfile { live.clearProfile(); h.profileNames[owner] = nil }
-        saveNuvioState(live, for: owner)
+        // The cursors only with the book on its way to disk (or held); the profile reaction and the status always.
+        if let s = reaction.stateToStore(before: before, replayed: live, bookSaved: replay.bookSaved) {
+            saveNuvioState(s, for: owner)
+        }
+        if reaction.clearProfile { h.profileNames[owner] = nil }
         if r.outcome != .cancelled { h.lastOutcome[owner] = r.outcome }
         if let p = r.profile, !p.name.isEmpty { h.profileNames[owner] = p.name }
     }
@@ -397,14 +444,24 @@ extension AppModel {
         _ = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil,
                                                    queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, self.nuvioSession != nil,
-                      NuvioHolder.shared.foregroundGate.allow(now: Date()) else { return }
-                Task { await self.syncNuvio(.full, reason: "vordergrund") }
+                guard let self else { return }
+                self.nuvioForegroundPass(reason: "vordergrund")
             }
         }
     }
 
-    /// Local play (recordProgress, every few seconds): queue it and push when the outbox is due (60 s).
+    /// Foreground, app start, profile switch: one gate for all of them (`NuvioPassGate`), checked here before the
+    /// task starts, so "didBecomeActive" and the start sync at launch give one full pass (review 3, finding 9a).
+    func nuvioForegroundPass(reason: String) {
+        let h = NuvioHolder.shared, owner = profile.id
+        guard nuvioSession != nil,
+              h.gate.admit(.full, profile: owner, now: Date(), foreground: true) else { return }
+        // Admitted here; `syncNuvio` lets a full pass without `foreground` through (it only notes the start again).
+        Task { await syncNuvio(.full, reason: reason) }
+    }
+
+    /// Local play (recordProgress, every few seconds, only when the book took the report): queue it and push when
+    /// the outbox is due (60 s; `NuvioPassGate` also holds the pass back for 60 s whatever the last one ended with).
     func nuvioNoteProgress(_ id: String) {
         guard nuvioNote(id, kind: nil) else { return }
         Task { await syncNuvio(.pushOnly(force: false), reason: "fortschritt") }
@@ -449,14 +506,12 @@ extension AppModel {
         return true
     }
 
-    /// T9: a local removal the next pulls must not undo (`perform` in AppModel+SyncQueue).
+    /// T9: a local removal the next pulls must not undo (`perform` in AppModel+SyncQueue). Recorded whenever the
+    /// profile has a chosen Nuvio profile, with or without a session (review 3, finding 9b).
     func nuvioTombstone(_ itemIDs: [String], kind: NuvioTombstone.Kind) {
-        guard nuvioSession != nil else { return }
         let owner = profile.id
         var st = nuvioState(for: owner)
-        guard st.profileIndex != nil else { return }
-        let now = Date()
-        for id in Set(itemIDs) where !id.isEmpty { st.tombstone(itemID: id, kind: kind, at: now) }
+        guard st.noteRemoval(itemIDs, kind: kind, now: Date()) else { return }
         saveNuvioState(st, for: owner)
     }
 }
