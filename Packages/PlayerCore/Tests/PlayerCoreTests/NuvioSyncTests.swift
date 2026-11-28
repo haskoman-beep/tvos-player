@@ -869,9 +869,29 @@ private actor Counter {
     s.outbox.note(push(), now: t0)
     _ = await run(api, state: s, currentSession: { stored.value })
     #expect(api.tokens == ["AT1", "AT2", "AT2", "AT2"])
-    // A stored session of another account is ignored.
+    // Review 3, finding 3: a stored session of another account (signed in again) stops the pass before any call.
     let foreign = FakeNuvio()
     let other = NuvioSession(accessToken: "AT9", refreshToken: "RT9", expiresAt: nil, userID: "00000000-0000-4000-8000-0000000000DD")
-    _ = await run(foreign, state: chosen(), currentSession: { other })
-    #expect(foreign.tokens.allSatisfy { $0 == "AT1" })
+    let r = await run(foreign, state: chosen(), currentSession: { other })
+    #expect(r.outcome == .cancelled && foreign.calls.isEmpty)
+}
+
+@Test func nuvioSyncStopsWhenTheSessionIsGoneMidPass() async {
+    // Review 3, finding 3: "Abmelden" during a pass. The profile check ran with the session; then the app has none:
+    // no pull and above all no push with the old session.
+    let stored = Box<NuvioSession?>(session)
+    let api = FakeNuvio()
+    api.afterProfiles = { stored.value = nil }
+    var s = chosen()
+    s.outbox.note(push(), now: t0)
+    let full = await run(api, state: s, currentSession: { stored.value })
+    #expect(full.outcome == .cancelled && api.calls == [.profiles] && api.pushed.isEmpty)
+
+    stored.value = session
+    let pushOnly = FakeNuvio()
+    pushOnly.afterProfiles = { stored.value = nil }
+    let r = await run(pushOnly, state: s, mode: .pushOnly(force: true), currentSession: { stored.value })
+    #expect(r.outcome == .cancelled && pushOnly.calls == [.profiles] && pushOnly.pushed.isEmpty)
+    // Not even counted as sent: the entry waits.
+    #expect(r.state.outbox.entries.count == 1 && r.summary.pushed == 0)
 }

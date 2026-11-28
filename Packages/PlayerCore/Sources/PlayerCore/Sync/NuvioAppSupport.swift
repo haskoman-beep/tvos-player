@@ -180,6 +180,122 @@ public struct NuvioPassReaction: Equatable, Sendable {
     }
 }
 
+extension NuvioPassReaction {
+    /// A push pass (play, pause, stop) that found nothing to do: no log line, no write.
+    public static func isQuiet(mode: NuvioSyncMode, outcome: NuvioSyncOutcome, summary: NuvioSyncSummary) -> Bool {
+        mode != .full && outcome == .ok && summary.pushed == 0 && summary.pushDropped == 0
+    }
+
+    /// The reaction of a pass whose session was replaced meanwhile (signed out, or in again; review 3, findings 2
+    /// and 3): nothing but the cooldown, which is about the server, not the account. No wipe of the newer session,
+    /// no message about the old one.
+    public var forReplacedSession: NuvioPassReaction { NuvioPassReaction(cooldownUntil: cooldownUntil) }
+
+    /// The state to store after the replay (review 3, finding 5). With the book on its way to disk: the replayed
+    /// state. Without it (book file held or not written) the cursors must not pass the book, so the live state from
+    /// before the replay is kept, and only the profile reaction (A3: back to "Nuvio-Profil wählen") goes onto it.
+    /// nil: nothing to store.
+    public func stateToStore(before: NuvioState, replayed: NuvioState, bookSaved: Bool) -> NuvioState? {
+        var s: NuvioState
+        if bookSaved { s = replayed } else if clearProfile { s = before } else { return nil }
+        if clearProfile { s.clearProfile() }
+        return s
+    }
+}
+
+/// What the app does with a finished pass (review 3, findings 2, 3, 5).
+public enum NuvioPassFate: Equatable, Sendable {
+    /// Signed out or signed in again while it ran: nothing of it is used (no replay, no save, no wipe, no status).
+    case dropSession
+    /// Another local profile is active by now: only the device-wide parts (cooldown, wipe, message).
+    case otherProfile
+    /// A quiet push pass that changed nothing: no write.
+    case nothing
+    /// Replay onto the live state, store, set the status.
+    case replay
+
+    /// `sameSession`: the session epoch is the one the pass started with (a renewal keeps it).
+    public static func of(sameSession: Bool, ownerActive: Bool, quiet: Bool, changed: Bool,
+                          clearProfile: Bool) -> NuvioPassFate {
+        guard sameSession else { return .dropSession }
+        guard ownerActive else { return .otherProfile }
+        if quiet, !changed, !clearProfile { return .nothing }
+        return .replay
+    }
+}
+
+/// Which passes may start, per local profile (review 3, findings 1 and 9a). Checked synchronously when a trigger
+/// asks, so two triggers at the same moment (app start: "didBecomeActive" and the start sync) give one pass.
+/// - A foreground pass (foreground, app start, profile switch) at most once per `foreground`; every full pass that
+///   starts counts.
+/// - A non-forced push pass (progress while playing) only when the outbox is due, and at most once per
+///   `NuvioOutbox.interval` whatever the last pass ended with (a stop at the profile check records no push attempt,
+///   so the outbox throttle alone would let every progress report ask the account again).
+/// - No push pass at all while the profile's last outcome was `.pinProtected` (D3: sync stops), until the profile is
+///   chosen again (`reset`) or a full pass (manual, foreground, after playback) ends otherwise.
+/// A clock that went back never blocks.
+public struct NuvioPassGate: Equatable, Sendable {
+    public static let foreground: TimeInterval = NuvioTriggerGate.foreground
+    public static let push: TimeInterval = NuvioOutbox.interval
+
+    public private(set) var lastFull: [UUID: Date] = [:]
+    public private(set) var lastPass: [UUID: Date] = [:]
+    public private(set) var stopped: Set<UUID> = []
+
+    public init() {}
+
+    /// True (and remembers the start) when the pass may run. `foreground`: a trigger the foreground interval
+    /// applies to; `outboxDue`: `NuvioOutbox.isDue(now:force: false)` of the profile (read for non-forced pushes).
+    public mutating func admit(_ mode: NuvioSyncMode, profile: UUID, now: Date, manual: Bool = false,
+                               foreground: Bool = false, outboxDue: Bool = true) -> Bool {
+        switch mode {
+        case .full:
+            if foreground, !manual, Self.within(lastFull[profile], Self.foreground, now) { return false }
+            lastFull[profile] = now
+        case .pushOnly(let force):
+            if stopped.contains(profile), !manual { return false }
+            if !force, !manual, !outboxDue || Self.within(lastPass[profile], Self.push, now) { return false }
+        }
+        lastPass[profile] = now
+        return true
+    }
+
+    /// The outcome of a pass of `profile` whose result was used.
+    public mutating func finished(_ outcome: NuvioSyncOutcome, profile: UUID) {
+        switch outcome {
+        case .pinProtected: stopped.insert(profile)
+        case .ok, .partial, .notChosen, .profileMissing, .profileReplaced: stopped.remove(profile)
+        case .signedOut, .rateLimited, .offline, .failed, .cancelled: break
+        }
+    }
+
+    /// Profile chosen again, cursors reset (restore) or profile gone: everything of it starts over.
+    public mutating func reset(_ profile: UUID) {
+        lastFull[profile] = nil; lastPass[profile] = nil; stopped.remove(profile)
+    }
+
+    /// Sign-out.
+    public mutating func removeAll() { self = NuvioPassGate() }
+
+    static func within(_ last: Date?, _ interval: TimeInterval, _ now: Date) -> Bool {
+        guard let last else { return false }
+        let gap = now.timeIntervalSince(last)
+        return gap >= 0 && gap < interval
+    }
+}
+
+extension NuvioIDLookup {
+    /// The answer for a failed TMDB lookup (review 3, finding 4). `TMDBClient` fetches through
+    /// `HTTPClientFetcher`, which throws `AddonError.http(status)` for a non-2xx answer: a 404 means TMDB has no such
+    /// title (counted as `notFound`); everything else (offline, 401 for a bad key, 429, 5xx) is `unavailable`.
+    public static func of(error: Error) -> NuvioIDLookup {
+        switch error {
+        case AddonError.http(404), APIError.status(404): .notFound
+        default: .unavailable
+        }
+    }
+}
+
 extension NuvioSyncMode {
     /// Two requests for one pass: a full pass covers a push; `force` wins.
     public func merged(with other: NuvioSyncMode?) -> NuvioSyncMode {
@@ -235,6 +351,16 @@ extension NuvioState {
         let series = e.season != nil || ContentKind.isEpisodic(type: e.item.type)
         guard let p = NuvioMapping.push(e, contentID: remoteID(local: e.item.id, series: series)) else { return false }
         outbox.note(p, kind: kind, now: now)
+        return true
+    }
+
+    /// A local removal ("Aus Weiterschauen entfernen", "als ungesehen") that later pulls must not undo (A4).
+    /// Review 3, finding 9b: recorded whenever a Nuvio profile is chosen, with or without a session, so a removal
+    /// made while signed out or expired still holds after the next sign-in. False (nothing recorded): none chosen.
+    @discardableResult
+    public mutating func noteRemoval(_ itemIDs: [String], kind: NuvioTombstone.Kind, now: Date) -> Bool {
+        guard profileIndex != nil else { return false }
+        for id in Set(itemIDs) where !id.isEmpty { tombstone(itemID: id, kind: kind, at: now) }
         return true
     }
 }

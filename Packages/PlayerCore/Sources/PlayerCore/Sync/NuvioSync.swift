@@ -57,7 +57,8 @@ public struct NuvioSyncDependencies: Sendable {
     public var meta: @Sendable (MetaPreview) async -> MetaPreview?
     public var now: @Sendable () -> Date
     /// The stored session, read again before every account call (finding 18): after the client's refresh hook stored
-    /// a renewed session, the rest of the pass uses it. A session of another account is ignored.
+    /// a renewed session, the rest of the pass uses it. nil (signed out) or a session of another account ends the
+    /// pass as `.cancelled` before the next call (review 3, finding 3).
     public var currentSession: (@Sendable () async -> NuvioSession?)?
 
     public init(api: any NuvioSyncAPI, imdbID: @escaping @Sendable (MetaPreview) async -> NuvioIDLookup,
@@ -266,7 +267,7 @@ public enum NuvioSync {
         if case .pushOnly(let f) = mode, !p.state.outbox.isDue(now: start, force: f) { return p.finish(.ok) }
 
         let profiles: [NuvioProfile]
-        do { profiles = try await deps.api.profiles(await p.current()) } catch { return p.finish(p.outcome(error)) }
+        do { profiles = try await deps.api.profiles(try await p.current()) } catch { return p.finish(p.outcome(error)) }
         switch p.state.matches(profiles) {
         case .ok(let fresh):
             p.profile = fresh
@@ -499,9 +500,13 @@ private struct Pass {
                                profile: profile)
     }
 
-    /// The session for the next call: the stored one when the app renewed it meanwhile (same account).
-    mutating func current() async -> NuvioSession {
-        if let read = deps.currentSession, let s = await read(), s.userID == session.userID { session = s }
+    /// The session for the next call: the stored one when the app renewed it meanwhile (same account). Review 3,
+    /// finding 3: when the app has no session any more (signed out) or one of another account (signed in again),
+    /// the pass stops here with `.cancelled` before the call; it never goes on with the session it started with.
+    mutating func current() async throws -> NuvioSession {
+        guard let read = deps.currentSession else { return session }
+        guard let s = await read(), s.userID == session.userID else { throw CancellationError() }
+        session = s
         return session
     }
 
@@ -545,7 +550,7 @@ private struct Pass {
 
     mutating func send(_ index: Int, _ batch: [NuvioSentPush]) async -> Sent {
         do {
-            try await deps.api.push(profile: index, batch.map(\.push), await current())
+            try await deps.api.push(profile: index, batch.map(\.push), try await current())
             record(.pushed(batch, at: deps.now()))
             summary.pushed += batch.count
             return .done
@@ -572,9 +577,9 @@ private struct Pass {
         if let r = state.bootstrapResume {
             (pc, wc, first) = (r.progressCursor, r.watchedCursor, r.nextWatchedPage)
         } else {
-            pc = try await api.progressCursor(profile: index, await current())
-            wc = try await api.watchedCursor(profile: index, await current())
-            snapshot = try await api.progress(profile: index, await current())
+            pc = try await api.progressCursor(profile: index, try await current())
+            wc = try await api.watchedCursor(profile: index, try await current())
+            snapshot = try await api.progress(profile: index, try await current())
             first = 1
         }
         var history: [NuvioWatchedItem] = []
@@ -582,7 +587,7 @@ private struct Pass {
         var complete = false
         var last = first
         for page in first..<(first + NuvioSync.maxWatchedPages) {
-            let w = try await api.watched(profile: index, page: page, pageSize: NuvioSync.watchedPageSize, await current())
+            let w = try await api.watched(profile: index, page: page, pageSize: NuvioSync.watchedPageSize, try await current())
             history += w.rows
             unreadable += w.skipped
             last = page
@@ -611,7 +616,7 @@ private struct Pass {
 
         var since = state.progressCursor ?? 0
         for n in 1...NuvioSync.maxDeltaPages {
-            let page = try await api.progressDelta(profile: index, since: since, limit: NuvioSync.deltaLimit, await current())
+            let page = try await api.progressDelta(profile: index, since: since, limit: NuvioSync.deltaLimit, try await current())
             let settled = NuvioSync.settle(page.rows, id: \.eventID, key: \.progressKey, operation: \.operation)
             take(progress: settled.upserts.compactMap(\.row), watched: [], unreadable: page.skipped)
             let deletes = settled.deletes.map(\.progressKey)
@@ -625,7 +630,7 @@ private struct Pass {
 
         since = state.watchedCursor ?? 0
         for n in 1...NuvioSync.maxDeltaPages {
-            let page = try await api.watchedDelta(profile: index, since: since, limit: NuvioSync.deltaLimit, await current())
+            let page = try await api.watchedDelta(profile: index, since: since, limit: NuvioSync.deltaLimit, try await current())
             let settled = NuvioSync.settle(page.rows, id: \.eventID, key: \.item.progressKey, operation: \.operation)
             take(progress: [], watched: settled.upserts.map(\.item), unreadable: page.skipped)
             // A whole-series item (no episode) is never applied (plan section 7.8), also not as a delete.

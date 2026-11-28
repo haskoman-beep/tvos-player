@@ -166,8 +166,10 @@ public struct ProgressBook: Codable, Sendable, Equatable {
 
     /// Speichert eine Position. Ab 92 % gilt der Titel als gesehen.
     /// `finishedAt`: watched threshold (80 % while a sync service is connected, as there; else 92 %).
+    /// Returns false when the report was not taken (see `record(_:now:finishedAt:)`).
+    @discardableResult
     public mutating func record(id: String, item: MetaPreview, season: Int? = nil, episode: Int? = nil,
-                                position: Double, duration: Double, now: Date = Date(), finishedAt: Double = ProgressBook.finishedAt) {
+                                position: Double, duration: Double, now: Date = Date(), finishedAt: Double = ProgressBook.finishedAt) -> Bool {
         record(WatchProgress(id: id, item: item, season: season, episode: episode,
                              position: position, duration: duration, updated: now), now: now, finishedAt: finishedAt)
     }
@@ -176,12 +178,15 @@ public struct ProgressBook: Codable, Sendable, Equatable {
     /// - a watched entry stays watched unless the new session ran more than 5 % and more than 120 s;
     /// - the next-episode hint stays until the episode itself ran more than 120 s;
     /// - `remoteFraction`, title and artwork of the old entry stay when the new one does not bring them.
-    public mutating func record(_ new: WatchProgress, now: Date = Date(), finishedAt: Double = ProgressBook.finishedAt) {
+    /// Returns false when the report was ignored and the entry stayed as it was (review 3, finding 9c: then the
+    /// entry may be one pulled from Nuvio, which must not be queued as a local play).
+    @discardableResult
+    public mutating func record(_ new: WatchProgress, now: Date = Date(), finishedAt: Double = ProgressBook.finishedAt) -> Bool {
         // Phase 0a (finding 7): a stream without a known length reports an infinite duration; JSON cannot encode it,
         // so every later save of the book would fail.
         // Phase 0a.1: NaN/±infinity, a length ≤ 0 or a negative position → the report is ignored, the existing entry
         // stays as it was (no clamp to 0, that would erase real progress on a player glitch).
-        guard ProgressNumbers.isUsableReport(position: new.position, duration: new.duration) else { return }
+        guard ProgressNumbers.isUsableReport(position: new.position, duration: new.duration) else { return false }
         var new = new
         new.position = min(new.position, new.duration)   // beyond the end (player overshoot): the end, then the 92 % rule
         new.remoteFraction = ProgressNumbers.storedFraction(new.remoteFraction)
@@ -189,7 +194,7 @@ public struct ProgressBook: Codable, Sendable, Equatable {
         let old = entries[new.id]
         let done = new.position / new.duration >= finishedAt
         let ranLong = new.position > Self.markerSeconds
-        if let old, old.finished, !done, !(ranLong && new.position > Self.unfinishFraction * new.duration) { return }
+        if let old, old.finished, !done, !(ranLong && new.position > Self.unfinishFraction * new.duration) { return false }
         clearSeriesMarker(itemID: new.item.id, episodeID: new.id, updated: stamp)
         var e = new
         e.item = Self.filled(new.item, from: old?.item)
@@ -199,6 +204,7 @@ public struct ProgressBook: Codable, Sendable, Equatable {
         e.nextUp = !done && (new.nextUp == true || (old?.nextUp == true && !ranLong)) ? true : nil
         e.remoteFraction = new.remoteFraction ?? ProgressNumbers.storedFraction(old?.remoteFraction)
         entries[new.id] = e
+        return true
     }
 
     /// Fills empty title and missing artwork/text of `item` from `fallback` (same id only).

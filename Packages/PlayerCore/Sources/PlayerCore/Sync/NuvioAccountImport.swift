@@ -97,6 +97,23 @@ public struct NuvioImportOrigin: Codable, Equatable, Sendable {
     /// Marks of addons that are no longer installed go (removed by hand: never offered again).
     public mutating func prune(installed: Set<String>) { addons.removeAll { !installed.contains($0.instanceID) } }
 
+    /// `prune(installed:)` against the installed addons (both forms of each identity). True when a mark went.
+    @discardableResult
+    public mutating func prune(installedAddons: [InstalledAddon]) -> Bool {
+        let before = addons.count
+        prune(installed: Set(installedAddons.flatMap(NuvioAccountImport.identities)))
+        return addons.count != before
+    }
+
+    /// An addon removed by hand (review 3, finding 6): its mark goes at once, so the same addon installed again by
+    /// hand later is the user's own and never offered under "am Konto entfernt". True when a mark went.
+    @discardableResult
+    public mutating func forget(_ addon: InstalledAddon) -> Bool {
+        let before = addons.count
+        forgetAddons(NuvioAccountImport.identities(addon))
+        return addons.count != before
+    }
+
     /// Adds or replaces the marks by `accountID`.
     public mutating func noteCollections(_ marks: [CollectionMark]) {
         for m in marks {
@@ -238,6 +255,38 @@ public enum NuvioAccountImport {
     public static let linkPrefix = "nuvio-account:"
 
     public static func isAccountLink(_ link: String?) -> Bool { link?.hasPrefix(linkPrefix) ?? false }
+
+    /// The account profile an import may read for a local profile (review 3, finding 7): the chosen index, only
+    /// while the state belongs to the session's account (a state of another account counts as no choice).
+    public static func chosenIndex(sessionUser: String, state: NuvioState) -> Int? {
+        guard state.userID == sessionUser else { return nil }
+        return state.profileIndex
+    }
+
+    /// The pseudo-link (A2) of the account entry that can be loaded now; nil when signed out or no profile of the
+    /// session's account is chosen. A preview is applied and a stored entry refreshed only while this matches its
+    /// link (review 3, findings 7 and 8).
+    public static func currentLink(sessionUser: String?, state: NuvioState) -> String? {
+        guard let user = sessionUser, let index = chosenIndex(sessionUser: user, state: state) else { return nil }
+        return NuvioAccountSource(userID: user, profileIndex: index, usesPrimaryAddons: false).link
+    }
+
+    /// "Alle aktualisieren" (review 3, finding 8): stored links in order without the account entries that are not
+    /// `current` (signed out, another account or account profile), and how many were left out.
+    public static func refreshable(_ links: [String], current: String?) -> (links: [String], skipped: Int) {
+        let kept = links.filter { !isAccountLink($0) || $0 == current }
+        return (kept, links.count - kept.count)
+    }
+
+    /// The notice after "Alle aktualisieren" with `skipped` account entries left out: appended to the result line
+    /// of the other links when they set one (`notice` differs from `before`), else alone. nil: leave it as it is.
+    public static func skippedNotice(_ skipped: Int, notice: String?, before: String?) -> String? {
+        guard skipped > 0 else { return nil }
+        let text = (skipped == 1 ? "1 Nuvio-Konto-Eintrag" : "\(skipped) Nuvio-Konto-Einträge")
+            + " übersprungen (nicht angemeldet oder anderes Konto/Profil)."
+        if let n = notice, !n.isEmpty, n != before { return n + " · " + text }
+        return text
+    }
 
     /// The account profile addons are read from: 1 when the chosen profile shares the primary addons (plan 7.9).
     public static func addonProfileIndex(chosen: Int, profiles: [NuvioProfile]) -> Int {
