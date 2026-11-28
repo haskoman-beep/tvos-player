@@ -43,6 +43,10 @@ commit that was built. After a release, `[Unreleased]` is renamed to `[Build <nu
   (`PLAYERLOG_SECRET` or `--secret-file`). The app sends only to the chosen receiver and signs every request.
 - „App aktualisieren“ (update app): the network search shows the atvloadly instances it found to choose from, and
   installing first shows the build and commit (and the package's SHA256, when the release has one) for confirmation.
+- Source list: the row looks like in Build 4 again (name and cache badge left, the full addon text in the middle,
+  the size right) as the new default style „Klassisch“ (classic). „Kompakt“, „Ausführlich“ and „Karten“ (compact,
+  detailed, cards) stay selectable under Aussehen › Quellenliste › „Darstellung“. A chosen „Ausführlich“ or „Karten“ is kept;
+  „Kompakt“ was the old default and shows as „Klassisch“ after the update.
 - Phone page: the TVDB key field is gone; the app has no TVDB function.
 - „Was spielt wie“ (what plays how) in the device check: Dolby Vision Profile 7 FEL now correctly says that the
   enhancement layer is applied.
