@@ -38,7 +38,7 @@ public enum LookDescriptionLines: Int, LookOption { case two = 2, three = 3, fiv
 public enum LookCast: String, LookOption { case kreise, karten, text, aus }
 public enum LookBadgeStyle: String, LookOption { case umriss, gefuellt, text, logos }
 public enum LookRatingStyle: String, LookOption { case symbole, text, kacheln }
-public enum LookSourceList: String, LookOption { case kompakt, ausfuehrlich, karten }
+public enum LookSourceList: String, LookOption { case klassisch, kompakt, ausfuehrlich, karten }
 
 // MARK: player
 

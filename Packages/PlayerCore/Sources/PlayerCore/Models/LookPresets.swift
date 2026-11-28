@@ -32,7 +32,7 @@ public enum LookPreset {
                        rowTitle: .standard, cardTitles: .immer, expandPosters: false, focusScale: .kraeftig,
                        focusBorder: .keiner, focusShadow: .tief, focusGlow: true),
         detail: LookDetail(layout: .kino, descriptionLines: .two, cast: .kreise, badgeStyle: .text,
-                           ratingStyle: .text, sourceList: .kompakt),
+                           ratingStyle: .text, sourceList: .klassisch),
         player: LookPlayer(controlBar: .minimal, badges: .aus, timeDisplay: .rest, trackPanel: .unten,
                            upNext: .karte, stillWatching: .dialog))
 }

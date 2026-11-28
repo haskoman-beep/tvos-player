@@ -313,9 +313,11 @@ public enum LookOptionCatalog {
               [("symbole", "Symbol + Zahl"), ("text", "Textzeile"), ("kacheln", "Kacheln")],
               "Symbole mit Zahl, reine Textzeile oder kleine Kacheln mit Quelle.", .b5b),
             e(.detail, "Quellenliste", "sourceList", "Darstellung",
-              [("kompakt", "Kompakt"), ("ausfuehrlich", "Ausführlich"), ("karten", "Karten")],
-              "Kompakt zeigt eine Zeile pro Quelle. Ausführlich zeigt den Text des Addons. Karten trennt Plaketten und "
-                + "Text klar.", .b5b),
+              [("klassisch", "Klassisch"), ("kompakt", "Kompakt"), ("ausfuehrlich", "Ausführlich"),
+               ("karten", "Karten")],
+              "Klassisch zeigt links den Namen mit Cache-Plakette, in der Mitte den ganzen Text des Addons und rechts "
+                + "die Größe. Kompakt zeigt eine Zeile pro Quelle. Ausführlich zeigt den Text des Addons. Karten "
+                + "trennt Plaketten und Text klar.", .b5b),
             // player
             e(.player, "Steuerleiste", "controlBar", "Umfang",
               [("minimal", "Minimal"), ("standard", "Standard"), ("ausfuehrlich", "Ausführlich")],

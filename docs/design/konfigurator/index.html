@@ -192,7 +192,7 @@ const GROUPS={
    O("badgeStyle","Plakettenstil","Umriss ist fein, Gefüllt ist gut lesbar, Text kommt ohne Fläche aus. Logos zeichnet die Schriftzüge nach.",[["umriss","Umriss"],["gefuellt","Gefüllt"],["text","Nur Text"],["logos","Logos"]],"Logos müssen selbst gezeichnet werden und berühren Markenrechte. Nur als nachempfundene Schriftzüge.") ,
    O("ratingStyle","Bewertungen","Symbole mit Zahl, reine Textzeile oder kleine Kacheln mit Quelle.",[["symbole","Symbol + Zahl"],["text","Textzeile"],["kacheln","Kacheln"]])]],
   ["Quellenliste","Die Liste der abspielbaren Quellen.",[
-   O("sourceList","Darstellung","Kompakt zeigt eine Zeile pro Quelle. Ausführlich zeigt den Text des Addons. Karten trennt Plaketten und Text klar.",[["kompakt","Kompakt"],["ausfuehrlich","Ausführlich"],["karten","Karten"]])]]],
+   O("sourceList","Darstellung","Klassisch zeigt links den Namen mit Cache-Plakette, in der Mitte den ganzen Text des Addons und rechts die Größe. Kompakt zeigt eine Zeile pro Quelle. Ausführlich zeigt den Text des Addons. Karten trennt Plaketten und Text klar.",[["klassisch","Klassisch"],["kompakt","Kompakt"],["ausfuehrlich","Ausführlich"],["karten","Karten"]])]]],
  player:[
   ["Steuerleiste","Was beim Abspielen eingeblendet wird.",[
    O("controlBar","Umfang","Minimal zeigt nur Zeitleiste und Zeit. Standard ergänzt Titel und Knöpfe. Ausführlich zeigt zusätzlich Kapitelmarken und Technik.",[["minimal","Minimal"],["standard","Standard"],["ausfuehrlich","Ausführlich"]]),
@@ -224,7 +224,7 @@ const PRESETS={
  appletv:{label:"Apple TV",values:{
   global:{navigation:"oben",clock:false,settingsLayout:"spalten",accent:"weiss",background:"schwarz",typeScale:"standard",typeCharacter:"neutral",motion:"standard"},
   home:{heroStyle:"vollbild",heroInfo:"standard",heroTitle:"logo",backdropFollowsFocus:true,cardShape:"querformat",cardSize:"gross",corners:"rund",rowSpacing:"luftig",rowTitle:"standard",cardTitles:"immer",expandPosters:false,focusScale:"kraeftig",focusBorder:"keiner",focusShadow:"tief",focusGlow:true},
-  detail:{layout:"kino",descriptionLines:2,cast:"kreise",badgeStyle:"text",ratingStyle:"text",sourceList:"kompakt"},
+  detail:{layout:"kino",descriptionLines:2,cast:"kreise",badgeStyle:"text",ratingStyle:"text",sourceList:"klassisch"},
   player:{controlBar:"minimal",badges:"aus",timeDisplay:"rest",trackPanel:"unten",upNext:"karte",stillWatching:"dialog"}}},
  infuse:{label:"Infuse",values:{
   global:{navigation:"oben",clock:true,settingsLayout:"liste",accent:"koralle",background:"graphit",typeScale:"kompakt",typeCharacter:"technisch",motion:"dezent"},
@@ -321,6 +321,7 @@ function sceneHome(){const h=state.values.home;const edge="var(--edge)";
   return html+rowsHTML(h,top)+nav(0)}
 function sourcesHTML(d){const S=[["2160p Remux","61,4 GB",["4K","DV","Atmos","7.1"],"Nordlicht.2024.2160p.UHD.BluRay.REMUX.DV.HDR.TrueHD.Atmos.7.1"],["2160p WEB-DL","18,2 GB",["4K","HDR10+","5.1"],"Nordlicht.2024.2160p.WEB-DL.DDP5.1.HDR10Plus.HEVC"],["1080p BluRay","9,8 GB",["HD","5.1"],"Nordlicht.2024.1080p.BluRay.DD5.1.x264"]];
   return `<div class="src">${S.map((s,i)=>{const b=`<div class="badges">${s[2].map(x=>badge(x,d.badgeStyle==="logos"?"gefuellt":d.badgeStyle)).join("")}</div>`;
+    if(d.sourceList==="klassisch")return `<div class="s ${i?"":"f"}" style="display:flex;align-items:flex-start;gap:18px"><div style="width:330px;flex:none"><div class="t-cap">${s[0]}</div><div class="t-meta" style="margin-top:6px">Sofort bereit</div></div><div class="t-meta" style="flex:1;font-size:calc(21px*var(--ts));word-break:break-all">${s[3]}</div><span class="t-meta">${s[1]}</span></div>`;
     if(d.sourceList==="kompakt")return `<div class="s ${i?"":"f"}" style="display:flex;align-items:center;gap:18px"><span class="t-cap">${s[0]}</span>${b}<span class="t-meta" style="margin-left:auto">${s[1]}</span></div>`;
     if(d.sourceList==="ausfuehrlich")return `<div class="s ${i?"":"f"}"><div class="t-cap">Sofort verfügbar · ${s[0]} · ${s[1]}</div><div class="t-meta" style="margin-top:6px;font-size:calc(21px*var(--ts));word-break:break-all">${s[3]}</div></div>`;
     return `<div class="s ${i?"":"f"}"><div style="display:flex;justify-content:space-between"><span class="t-cap">${s[0]}</span><span class="t-meta">${s[1]}</span></div><div style="margin-top:10px">${b}</div><div class="t-meta" style="margin-top:8px;font-size:calc(21px*var(--ts))">Sofort verfügbar · Deutsch, Englisch</div></div>`}).join("")}</div>`}

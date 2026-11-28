@@ -209,3 +209,34 @@ import Testing
     #expect(DetailLook.kinoHeadHeight(area: 0, topPadding: 60, bottomInset: 70, series: false) == nil)
     #expect(DetailLook.kinoHeadHeight(area: 500, topPadding: 60, bottomInset: 70, series: true) == nil)
 }
+
+// Phase 0a.1: the Build 4 source row is back as `klassisch` and is the default of every preset; explicit choices
+// stay as stored.
+@Test func sourceListDefaultsToKlassisch() throws {
+    for id in LookPresetID.allCases { #expect(LookPreset.values(id).detail.sourceList == .klassisch) }
+    #expect(LookPreset.baseline.detail.sourceList == .klassisch)
+    #expect(Look().resolved().detail.sourceList == .klassisch)
+
+    let entry = try #require(LookOptionCatalog.entry("sourceList"))
+    #expect(entry.choices.map(\.raw) == ["klassisch", "kompakt", "ausfuehrlich", "karten"])
+    #expect(entry.choices.first?.label == "Klassisch")
+    #expect(entry.help.hasPrefix("Klassisch zeigt"))
+}
+
+@Test func sourceListOverridesDecodeAndFallBackLeniently() throws {
+    func decode(_ raw: String) throws -> (Look, DecodeReport) {
+        let json = #"{"version":1,"preset":"appletv","overrides":{"detail":{"sourceList":"\#(raw)"}}}"#
+        return try JSONDecoder().decodeReporting(Look.self, from: Data(json.utf8))
+    }
+    for raw in ["klassisch", "kompakt", "ausfuehrlich", "karten"] {
+        let (look, report) = try decode(raw)
+        #expect(look.resolved().detail.sourceList.rawValue == raw)
+        #expect(report.isEmpty)
+    }
+    // An explicit "kompakt" stays an override although the preset default moved to klassisch.
+    #expect(try decode("kompakt").0.overrides.detail.sourceList == .kompakt)
+    // Unknown value: no override, the preset default shows, nothing fails.
+    let (unknown, _) = try decode("liste")
+    #expect(unknown.overrides.detail.sourceList == nil)
+    #expect(unknown.resolved().detail.sourceList == .klassisch)
+}

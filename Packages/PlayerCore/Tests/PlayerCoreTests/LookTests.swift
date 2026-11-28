@@ -335,7 +335,7 @@ private func leafCount(_ v: JSONValue) -> Int {
     #expect(LookCast.allCases.map(\.rawValue) == ["kreise", "karten", "text", "aus"])
     #expect(LookBadgeStyle.allCases.map(\.rawValue) == ["umriss", "gefuellt", "text", "logos"])
     #expect(LookRatingStyle.allCases.map(\.rawValue) == ["symbole", "text", "kacheln"])
-    #expect(LookSourceList.allCases.map(\.rawValue) == ["kompakt", "ausfuehrlich", "karten"])
+    #expect(LookSourceList.allCases.map(\.rawValue) == ["klassisch", "kompakt", "ausfuehrlich", "karten"])
     #expect(LookControlBar.allCases.map(\.rawValue) == ["minimal", "standard", "ausfuehrlich"])
     #expect(LookPlayerBadges.allCases.map(\.rawValue) == ["aus", "kompakt", "voll"])
     #expect(LookTimeDisplay.allCases.map(\.rawValue) == ["rest", "gesamt", "ende"])
