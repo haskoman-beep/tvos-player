@@ -120,14 +120,15 @@ public enum NuvioMapping {
                                   updated: clamped(row.lastWatched, now: now))
     }
 
-    /// A pulled watched-history item as a finished local entry (position and length unknown). The item's `title`
-    /// becomes the name. nil for a whole-series item (no episode, plan section 7.8) or an empty item id.
+    /// A pulled watched-history item as a finished local entry (position and length unknown). A film's `title` becomes
+    /// the name; an episode gets none (its `title` may be "Show S01E01", review 2 finding 5), so it waits for the
+    /// series title. nil for a whole-series item (no episode, plan section 7.8) or an empty item id.
     public static func entry(_ watched: NuvioWatchedItem, itemID: String, now: Date) -> NuvioProgressEntry? {
         guard !itemID.isEmpty else { return nil }
         let ep = episode(type: watched.contentType, season: watched.season, episode: watched.episode)
         if ep == nil, ContentKind.isEpisodic(type: watched.contentType) { return nil }
         return NuvioProgressEntry(id: localProgressID(itemID: itemID, season: ep?.season, episode: ep?.episode),
-                                  item: meta(itemID, series: ep != nil, name: watched.title), season: ep?.season,
+                                  item: meta(itemID, series: ep != nil, name: ep == nil ? watched.title : nil), season: ep?.season,
                                   episode: ep?.episode, position: 0, duration: 0,
                                   updated: clamped(watched.watchedAt, now: now), watched: true)
     }

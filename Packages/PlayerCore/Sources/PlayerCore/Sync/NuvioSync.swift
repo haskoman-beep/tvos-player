@@ -1,15 +1,27 @@
 import Foundation
 
 // Nuvio account sync, T7: one sync pass as pure orchestration (plan sections 1.7–1.9, addendum A3, A4, A8, D3, D4).
-// Profile check → push the outbox → bootstrap or delta pull → merge → state update. No timer, no sleep, no storage:
-// the client calls, the id and title lookups and the clock are injected; book and state go in and come out by value.
-// The app owns persistence, the single-flight token refresh, the cooldown memory and the triggers.
+// Profile check → bootstrap or delta pull → merge → IMDb ids of `tmdb:` titles → push the outbox → titles of staged
+// rows. No timer, no sleep, no storage: the client calls, the id and title lookups and the clock are injected; book and
+// state go in and come out by value. The app owns persistence, the single-flight token refresh, the cooldown memory
+// and the triggers.
 //
 // Consistency: every change is recorded as a `NuvioSyncChange` and applied at once to the working copy. A cursor
 // step is recorded only after the changes of its page, so whatever the pass returns (also after an error midway)
 // never has a cursor past data that is not in the returned book. A bootstrap commits as one group (rows, cursors,
-// `bootstrapDone`) or not at all. Merging is newer-wins with a tie keeping local, so a page applied twice changes
-// nothing, and a second pass after any interruption converges.
+// `bootstrapDone`) or not at all; one that needs more passes stores where it goes on. Merging is newer-wins with a tie
+// keeping local, so a page applied twice changes nothing, and a second pass after any interruption converges.
+//
+// Ids (review 2, findings 1 and 2): no lookup runs while rows are taken. A `tmdb:N` row without a known link is merged
+// at once under the provisional local id `tmdb:N` (one id for all rows of the title) and noted as pending; after the
+// pull at most `metaPerPass` pending titles are looked up, newest first, and a found IMDb id moves the title with a
+// `.rekey` step (entries, tombstones, staged rows, outbox). Links and pending titles are keyed by kind, since TMDB
+// numbers films and series separately.
+//
+// Deletes (finding 12, documented, not changed): a delete event is judged against `lastPullAt`, the start of the last
+// pass that reached its end. A pass that fails midway after consuming delete pages leaves `lastPullAt` older than
+// the rows it merged, so such a delete may be consumed without removing an entry pulled in that pass. That errs on
+// the safe side (an entry stays, nothing is lost) and the next upsert or delete of the title settles it.
 
 /// The client calls a pass needs (`NuvioClient` conforms; tests use a scripted fake).
 public protocol NuvioSyncAPI: Sendable {
@@ -25,25 +37,40 @@ public protocol NuvioSyncAPI: Sendable {
 
 extension NuvioClient: NuvioSyncAPI {}
 
+/// Answer of the IMDb-id lookup for a `tmdb:N` title (finding 2).
+public enum NuvioIDLookup: Equatable, Sendable {
+    /// The IMDb id (`tt…`; anything else counts as `none`).
+    case found(String)
+    /// The title has no IMDb id. After `NuvioState.maxIDAttempts` such answers it keeps `tmdb:N`.
+    case notFound
+    /// The lookup could not run (offline, rate limit, no key): tried again in a later pass, no attempt counted.
+    case unavailable
+}
+
 /// Everything a pass reaches outside itself.
 public struct NuvioSyncDependencies: Sendable {
     public var api: any NuvioSyncAPI
-    /// `tmdb:N` → IMDb id. Gets a nameless preview (`id` = `tmdb:N`, `type` = `movie` or `series`), the form of the
-    /// app's `imdbID(for:)`. nil: the title keeps `tmdb:N` as its local item id.
-    public var imdbID: @Sendable (MetaPreview) async -> String?
+    /// `tmdb:N` → IMDb id. Gets a nameless preview (`id` = `tmdb:N`, `type` = `movie` or `series`).
+    public var imdbID: @Sendable (MetaPreview) async -> NuvioIDLookup
     /// Title (and artwork) for a nameless pulled row. Gets the local item preview without a name; nil or an empty
     /// name: the row stays staged and is tried again at the next pass.
     public var meta: @Sendable (MetaPreview) async -> MetaPreview?
     public var now: @Sendable () -> Date
+    /// The stored session, read again before every account call (finding 18): after the client's refresh hook stored
+    /// a renewed session, the rest of the pass uses it. A session of another account is ignored.
+    public var currentSession: (@Sendable () async -> NuvioSession?)?
 
-    public init(api: any NuvioSyncAPI, imdbID: @escaping @Sendable (MetaPreview) async -> String?,
-                meta: @escaping @Sendable (MetaPreview) async -> MetaPreview?, now: @escaping @Sendable () -> Date = { Date() }) {
-        self.api = api; self.imdbID = imdbID; self.meta = meta; self.now = now
+    public init(api: any NuvioSyncAPI, imdbID: @escaping @Sendable (MetaPreview) async -> NuvioIDLookup,
+                meta: @escaping @Sendable (MetaPreview) async -> MetaPreview?, now: @escaping @Sendable () -> Date = { Date() },
+                currentSession: (@Sendable () async -> NuvioSession?)? = nil) {
+        self.api = api; self.imdbID = imdbID; self.meta = meta; self.now = now; self.currentSession = currentSession
     }
 }
 
 public enum NuvioSyncMode: Equatable, Sendable {
-    /// Push (always, when something waits), then pull. App start, profile switch, foreground, after playback.
+    /// Pull, then push (always, when something waits; finding 4: a queued entry the account already has newer is
+    /// dropped by the pull first). App start, profile switch, foreground, after playback. A pull that fails ends the
+    /// pass before the push.
     case full
     /// Push only, when due (`force` skips the 60 s throttle: pause, stop). Nothing is pulled.
     case pushOnly(force: Bool)
@@ -91,8 +118,16 @@ public struct NuvioSyncSummary: Equatable, Sendable {
     public var bootstrapped = false
     /// A delta stream hit its page cap; the next pass continues from the stored cursor.
     public var moreToPull = false
-    /// The push the account refused with a status or an unreadable answer (the pull still ran; the outbox is kept).
+    /// The push the account refused with a status or an unreadable answer (the pull still ran; the outbox is kept,
+    /// except entries refused alone `NuvioOutbox.maxAttempts` times).
     public var pushError: NuvioError?
+    /// Outbox entries dropped in this pass after the account refused them alone too often (finding 11).
+    public var pushDropped = 0
+    /// The bootstrap snapshot came back full (200 rows, the server's cap without `p_since_last_watched`): older
+    /// progress rows of the account were not in it (finding 6; the reference documents no paging for it).
+    public var snapshotCapped = false
+    /// `tmdb:` titles still waiting for their IMDb id after the pass (`state.pendingIDs.count`).
+    public var pendingIDs = 0
 
     public init() {}
 }
@@ -111,19 +146,31 @@ public struct NuvioSentPush: Equatable, Sendable {
 public enum NuvioSyncChange: Equatable, Sendable {
     /// The session's account: sets `userID`, or resets the state when it belonged to another account.
     case account(String)
+    /// The chosen profile had no id stored; the fresh list gave one (finding 8).
+    case profilePinned(String)
     case pushed([NuvioSentPush], at: Date)
     case pushFailed(at: Date)
-    /// Local item id → `content_id` as the account has it.
-    case remoteIDs([String: String])
+    /// The account refused this entry sent alone (finding 11): one attempt counted, dropped at the limit.
+    case pushRefused(NuvioSentPush, at: Date)
+    /// Progress key → `last_watched` (epoch ms) of pulled rows: queued entries not newer go (finding 4).
+    case outboxSeen([String: Int])
+    /// Provisional `tmdb:N` titles to resolve.
+    case pending([NuvioPendingID])
+    /// The lookup said "no IMDb id" for the title (one attempt; at the limit it keeps `tmdb:N` for good).
+    case idMissing(number: Int, series: Bool)
+    /// Moves a title from its provisional id to its IMDb id and links the two (finding 2). Idempotent.
+    case rekey(from: String, to: String, series: Bool)
     /// Pulled entries, filtered with the tombstones (A4) and merged.
     case merge([NuvioProgressEntry])
-    /// Nameless rows that wait for a title.
+    /// Nameless rows that wait for a title (beyond `NuvioState.maxStaged` the oldest go and are counted as skipped).
     case stage([NuvioStaged])
     /// Staged rows (by `NuvioStaged.id`) that were merged or replaced.
     case unstage([String])
     /// Delete events by progress key (translated to local ids when applied; staged rows of the keys go too).
     case delete(progressKeys: [String], watchedKeys: [String], before: Date)
     case skipped(Int)
+    /// A bootstrap goes on in the next pass from here (nil: it starts over).
+    case bootstrapResume(NuvioBootstrapResume?)
     /// Bootstrap committed: cursors captured before the snapshot, `bootstrapDone`.
     case bootstrapped(progressCursor: Int, watchedCursor: Int)
     case progressCursor(Int)
@@ -131,21 +178,48 @@ public enum NuvioSyncChange: Equatable, Sendable {
     case pulled(at: Date)
 }
 
+/// What `NuvioSyncChanges.apply` did.
+public struct NuvioSyncApplied: Equatable, Sendable {
+    /// False: the live state belongs to another account, profile or reset generation than the one the pass started
+    /// from; nothing was replayed (finding 10).
+    public var applied: Bool
+    public var merged: Int
+    public var deleted: Int
+
+    public init(applied: Bool, merged: Int, deleted: Int) {
+        self.applied = applied; self.merged = merged; self.deleted = deleted
+    }
+}
+
 public struct NuvioSyncChanges: Equatable, Sendable {
     public internal(set) var steps: [NuvioSyncChange] = []
+    /// The state the pass started from: account, profile and reset generation (finding 10).
+    public internal(set) var userID: String?
+    public internal(set) var profileIndex: Int?
+    public internal(set) var profileID: String?
+    public internal(set) var generation = 0
+
     public init() {}
+
+    init(from state: NuvioState) {
+        userID = state.userID; profileIndex = state.profileIndex; profileID = state.profileID
+        generation = state.generation
+    }
+
     public var isEmpty: Bool { steps.isEmpty }
 
-    /// Replays the pass onto other values (the live book and state). Returns how many entries were merged and
-    /// removed.
+    /// Replays the pass onto other values (the live book and state). Does nothing when the live state was reset,
+    /// changed account or profile since the pass started.
     @discardableResult
-    public func apply(to book: inout ProgressBook, state: inout NuvioState) -> (merged: Int, deleted: Int) {
+    public func apply(to book: inout ProgressBook, state: inout NuvioState) -> NuvioSyncApplied {
+        guard state.userID == userID, state.profileIndex == profileIndex, state.profileID == profileID,
+              state.generation == generation else { return NuvioSyncApplied(applied: false, merged: 0, deleted: 0) }
         var m = 0, d = 0
         for s in steps {
             let r = NuvioSync.apply(s, book: &book, state: &state)
             m += r.merged; d += r.deleted
         }
-        return (m, d)
+        return NuvioSyncApplied(applied: true, merged: m, deleted: d)
     }
 }
 
@@ -189,85 +263,93 @@ public enum NuvioSync {
         if let until = cooldownUntil, start < until { return p.finish(.rateLimited(until: until)) }
         if p.state.userID != session.userID { p.record(.account(session.userID)) }
         guard let index = p.state.profileIndex else { return p.finish(.notChosen) }
-        let force: Bool
-        switch mode {
-        case .full: force = true
-        case .pushOnly(let f):
-            force = f
-            guard p.state.outbox.isDue(now: start, force: f) else { return p.finish(.ok) }
-        }
+        if case .pushOnly(let f) = mode, !p.state.outbox.isDue(now: start, force: f) { return p.finish(.ok) }
 
         let profiles: [NuvioProfile]
-        do { profiles = try await deps.api.profiles(session) } catch { return p.finish(p.outcome(error)) }
+        do { profiles = try await deps.api.profiles(await p.current()) } catch { return p.finish(p.outcome(error)) }
         switch p.state.matches(profiles) {
-        case .ok(let fresh): p.profile = fresh
+        case .ok(let fresh):
+            p.profile = fresh
+            if p.state.profileID == nil, let id = fresh?.id, !id.isEmpty { p.record(.profilePinned(id)) }
         case .notChosen: return p.finish(.notChosen)
         case .missing: return p.finish(.profileMissing)
         case .replaced: return p.finish(.profileReplaced)
         case .pinProtected: return p.finish(.pinProtected)
         }
 
-        if p.state.outbox.isDue(now: deps.now(), force: force) {
-            let batch = p.state.outbox.batch()
-            do {
-                try await deps.api.push(profile: index, batch.map(\.entry), session)
-                p.record(.pushed(batch.map { NuvioSentPush(key: $0.key, push: $0.entry) }, at: deps.now()))
-                p.summary.pushed = batch.count
-            } catch {
-                p.record(.pushFailed(at: deps.now()))
-                let o = p.outcome(error)
-                guard case .failed(let e) = o, mode == .full else { return p.finish(o) }
-                p.summary.pushError = e
-            }
+        if case .pushOnly(let f) = mode {
+            if p.state.outbox.isDue(now: deps.now(), force: f), let stop = await p.push(index) { return p.finish(stop) }
+            return p.finish(p.summary.pushError.map { .failed($0) } ?? .ok)
         }
-        if mode != .full { return p.finish(.ok) }
 
         do {
             if !p.state.bootstrapDone { try await p.bootstrap(index) }
-            try await p.delta(index, start: start)
+            if p.state.bootstrapDone { try await p.delta(index, start: start) }
         } catch {
             return p.finish(p.outcome(error))
         }
         p.record(.pulled(at: start))
+        await p.resolveIDs()
+        if Task.isCancelled { return p.finish(.cancelled) }
+        if p.state.outbox.isDue(now: deps.now(), force: true), let stop = await p.push(index) { return p.finish(stop) }
         await p.resolveStaged()
         return p.finish(p.summary.moreToPull || p.summary.pushError != nil ? .partial : .ok)
     }
 
     // MARK: Applying one change
 
-    static func apply(_ c: NuvioSyncChange, book: inout ProgressBook, state: inout NuvioState) -> (merged: Int, deleted: Int) {
+    struct Applied { var merged = 0, deleted = 0, dropped = 0, pushDropped = 0 }
+
+    static func apply(_ c: NuvioSyncChange, book: inout ProgressBook, state: inout NuvioState) -> Applied {
+        var r = Applied()
         switch c {
         case .account(let user):
             if state.userID == nil { state.userID = user } else if state.userID != user { state.resetForAccount(user) }
+        case .profilePinned(let id):
+            if state.profileID == nil { state.profileID = id }
         case .pushed(let sent, let at):
             state.outbox.confirm(sent.map { (key: $0.key, entry: $0.push) }, now: at)
         case .pushFailed(let at):
             state.outbox.failed(now: at)
-        case .remoteIDs(let ids):
-            state.remoteIDs.merge(ids) { _, new in new }
+        case .pushRefused(let sent, let at):
+            if state.outbox.refused((key: sent.key, entry: sent.push), now: at) { r.pushDropped = 1 }
+        case .outboxSeen(let seen):
+            state.outbox.dropSeen(seen)
+        case .pending(let list):
+            for p in list { state.notePending(p) }
+        case .idMissing(let number, let series):
+            guard let i = state.pendingIDs.firstIndex(where: { $0.number == number && $0.series == series }) else { break }
+            state.pendingIDs[i].attempts += 1
+            if state.pendingIDs[i].attempts >= NuvioState.maxIDAttempts {
+                state.pendingIDs.remove(at: i)
+                state.link(NuvioIDLink(local: "tmdb:\(number)", remote: "tmdb:\(number)", series: series))
+            }
+        case .rekey(let from, let to, let series):
+            r.merged = rekey(from: from, to: to, series: series, book: &book, state: &state)
         case .merge(let entries):
             let kept = state.filterPulled(entries)
-            return (book.merge(nuvio: kept), 0)
+            r.merged = book.merge(nuvio: kept)
         case .stage(let rows):
-            for r in rows { state.stage(r) }
+            for row in rows { r.dropped += state.stage(row) }
         case .unstage(let ids):
             let gone = Set(ids)
             state.staged.removeAll { gone.contains($0.id) }
         case .delete(let progressKeys, let watchedKeys, let before):
-            let reverse = reverseIDs(state.remoteIDs)
-            let local = { (key: String) in localID(key: key, reverse: reverse) }
+            let local = { (key: String) in localID(key: key, state: state) }
             let gone = Set(progressKeys.map { "p:" + $0 } + watchedKeys.map { "w:" + $0 })
             state.staged.removeAll { gone.contains($0.id) }
             let protected = Set(state.outbox.keys.compactMap(local))
-            let n = book.applyNuvio(deletedProgress: progressKeys.compactMap(local),
-                                    watchedRemoved: watchedKeys.compactMap(local), protected: protected, before: before)
-            return (0, n)
+            r.deleted = book.applyNuvio(deletedProgress: progressKeys.compactMap(local),
+                                        watchedRemoved: watchedKeys.compactMap(local), protected: protected, before: before)
         case .skipped(let n):
             state.skipped += n
+        case .bootstrapResume(let resume):
+            state.bootstrapResume = resume
         case .bootstrapped(let pc, let wc):
             state.progressCursor = pc
             state.watchedCursor = wc
             state.bootstrapDone = true
+            state.bootstrapResume = nil
         case .progressCursor(let c):
             state.progressCursor = c
         case .watchedCursor(let c):
@@ -275,25 +357,44 @@ public enum NuvioSync {
         case .pulled(let at):
             state.lastPullAt = at
         }
-        return (0, 0)
+        return r
+    }
+
+    /// The `.rekey` step: book entries (tombstones of either id judge the moved ones), tombstones, staged rows, outbox
+    /// entries queued under the IMDb id (to the account's `content_id`), the link, the pending title.
+    static func rekey(from: String, to: String, series: Bool, book: inout ProgressBook, state: inout NuvioState) -> Int {
+        let judge = state
+        let n = book.rekeyNuvio(from: from, to: to, series: series) { e in
+            judge.blocks(itemID: to, updated: e.updated, finished: e.finished)
+                || judge.blocks(itemID: from, updated: e.updated, finished: e.finished)
+        }
+        if let t = state.tombstones.filter({ $0.itemID == from }).max(by: { $0.at < $1.at }) {
+            state.tombstones.removeAll { $0.itemID == from }
+            if let have = state.tombstones.first(where: { $0.itemID == to }), have.at >= t.at {} else {
+                state.tombstones.removeAll { $0.itemID == to }
+                state.tombstones.append(NuvioTombstone(itemID: to, kind: t.kind, at: t.at))
+            }
+        }
+        for i in state.staged.indices where state.staged[i].itemID == from && state.staged[i].isSeries == series {
+            state.staged[i].itemID = to
+        }
+        state.outbox.rewrite(contentID: to, to: from, series: series)
+        state.link(NuvioIDLink(local: to, remote: from, series: series))
+        if case .tmdb(let number) = NuvioMapping.remoteID(from) {
+            state.pendingIDs.removeAll { $0.number == number && $0.series == series }
+        }
+        return n
     }
 
     // MARK: Ids
 
-    /// `content_id` → local item id, from the stored round-trip map. Several local ids for one remote form: the
-    /// smallest wins (deterministic).
-    static func reverseIDs(_ remoteIDs: [String: String]) -> [String: String] {
-        var out: [String: String] = [:]
-        for (local, remote) in remoteIDs where out[remote].map({ local < $0 }) ?? true { out[remote] = local }
-        return out
-    }
-
-    /// A progress key (`{content_id}` or `{content_id}_s{S}e{E}`) as the local progress id, or nil for an id scheme
-    /// the app cannot address.
-    static func localID(key: String, reverse: [String: String]) -> String? {
+    /// A progress key (`{content_id}` or `{content_id}_s{S}e{E}`) as the local progress id (with the stored links, by
+    /// kind: a key with an episode is a series), or nil for an id scheme the app cannot address.
+    static func localID(key: String, state: NuvioState) -> String? {
         let k = NuvioMapping.parseKey(key)
+        let series = k.episode != nil
         let item: String
-        if let l = reverse[k.contentID] {
+        if let l = state.localID(remote: k.contentID, series: series) {
             item = l
         } else {
             switch NuvioMapping.remoteID(k.contentID) {
@@ -357,30 +458,51 @@ private struct TMDBKey: Hashable, Sendable {
     var series: Bool
 }
 
+/// A title by local item id and kind (a film and a series may share a provisional `tmdb:N`).
+private struct TitleKey: Hashable, Sendable {
+    var id: String
+    var series: Bool
+
+    init(_ e: NuvioProgressEntry) { id = e.item.id; series = e.season != nil || ContentKind.isEpisodic(type: e.item.type) }
+    init(_ e: WatchProgress) { id = e.item.id; series = e.season != nil || ContentKind.isEpisodic(type: e.item.type) }
+}
+
 private struct Pass {
     var book: ProgressBook
     var state: NuvioState
     let deps: NuvioSyncDependencies
-    let session: NuvioSession
-    var changes = NuvioSyncChanges()
+    var session: NuvioSession
+    var changes: NuvioSyncChanges
     var summary = NuvioSyncSummary()
     var profile: NuvioProfile?
 
     init(book: ProgressBook, state: NuvioState, deps: NuvioSyncDependencies, session: NuvioSession) {
         self.book = book; self.state = state; self.deps = deps; self.session = session
+        changes = NuvioSyncChanges(from: state)
     }
 
-    mutating func record(_ c: NuvioSyncChange) {
+    @discardableResult
+    mutating func record(_ c: NuvioSyncChange) -> NuvioSync.Applied {
         let r = NuvioSync.apply(c, book: &book, state: &state)
         summary.merged += r.merged
         summary.deleted += r.deleted
+        summary.pushDropped += r.pushDropped
+        if r.dropped > 0 { summary.skipped += r.dropped; summary.moreToPull = true }
         changes.steps.append(c)
+        return r
     }
 
     mutating func finish(_ outcome: NuvioSyncOutcome) -> NuvioSyncResult {
         summary.staged = state.staged.count
+        summary.pendingIDs = state.pendingIDs.count
         return NuvioSyncResult(outcome: outcome, summary: summary, book: book, state: state, changes: changes,
                                profile: profile)
+    }
+
+    /// The session for the next call: the stored one when the app renewed it meanwhile (same account).
+    mutating func current() async -> NuvioSession {
+        if let read = deps.currentSession, let s = await read(), s.userID == session.userID { session = s }
+        return session
     }
 
     func outcome(_ error: Error) -> NuvioSyncOutcome {
@@ -394,39 +516,104 @@ private struct Pass {
         }
     }
 
+    // MARK: Push
+
+    /// Sends the outbox in one batch. A 4xx (not 401/429) for several entries sends them one by one, so one refused
+    /// entry does not block the rest; an entry refused alone counts an attempt (finding 11). Returns the outcome that
+    /// ends the pass (signed out, rate limit, offline, cancelled), or nil; a refusal is kept in `summary.pushError`.
+    mutating func push(_ index: Int) async -> NuvioSyncOutcome? {
+        let batch = state.outbox.batch().map { NuvioSentPush(key: $0.key, push: $0.entry) }
+        guard !batch.isEmpty else { return nil }
+        switch await send(index, batch) {
+        case .done: return nil
+        case .stop(let o): return o
+        case .refused(let e):
+            summary.pushError = e
+            guard batch.count > 1 else { record(.pushRefused(batch[0], at: deps.now())); return nil }
+            for one in batch {
+                switch await send(index, [one]) {
+                case .done: break
+                case .stop(let o): return o
+                case .refused(let e): summary.pushError = e; record(.pushRefused(one, at: deps.now()))
+                }
+            }
+            return nil
+        }
+    }
+
+    enum Sent { case done, stop(NuvioSyncOutcome), refused(NuvioError) }
+
+    mutating func send(_ index: Int, _ batch: [NuvioSentPush]) async -> Sent {
+        do {
+            try await deps.api.push(profile: index, batch.map(\.push), await current())
+            record(.pushed(batch, at: deps.now()))
+            summary.pushed += batch.count
+            return .done
+        } catch {
+            let o = outcome(error)
+            guard case .failed(let e) = o else { record(.pushFailed(at: deps.now())); return .stop(o) }
+            if case .status(let code, _) = e, (400..<500).contains(code), code != 401, code != 429 { return .refused(e) }
+            record(.pushFailed(at: deps.now()))
+            summary.pushError = e
+            return .done
+        }
+    }
+
     // MARK: Pull
 
-    /// Cursors first, then the snapshot (newest 200 progress rows), then history pages; commits as one group.
+    /// Cursors first, then the snapshot (newest 200 progress rows), then history pages; commits as one group. History
+    /// beyond `maxWatchedPages` pages goes on in the next pass from a stored resume point (one page read again, since
+    /// newer plays push items down meanwhile); the delta waits until the bootstrap is done. When staged rows had to be
+    /// dropped the bootstrap is not committed and starts over in a later pass (finding 6).
     mutating func bootstrap(_ index: Int) async throws {
         let api = deps.api
-        let pc = try await api.progressCursor(profile: index, session)
-        let wc = try await api.watchedCursor(profile: index, session)
-        let snapshot = try await api.progress(profile: index, session)
+        let pc: Int, wc: Int, first: Int
+        var snapshot: NuvioPage<NuvioProgressRow>?
+        if let r = state.bootstrapResume {
+            (pc, wc, first) = (r.progressCursor, r.watchedCursor, r.nextWatchedPage)
+        } else {
+            pc = try await api.progressCursor(profile: index, await current())
+            wc = try await api.watchedCursor(profile: index, await current())
+            snapshot = try await api.progress(profile: index, await current())
+            first = 1
+        }
         var history: [NuvioWatchedItem] = []
-        var unreadable = snapshot.skipped
-        for page in 1...NuvioSync.maxWatchedPages {
-            let w = try await api.watched(profile: index, page: page, pageSize: NuvioSync.watchedPageSize, session)
+        var unreadable = snapshot?.skipped ?? 0
+        var complete = false
+        var last = first
+        for page in first..<(first + NuvioSync.maxWatchedPages) {
+            let w = try await api.watched(profile: index, page: page, pageSize: NuvioSync.watchedPageSize, await current())
             history += w.rows
             unreadable += w.skipped
-            if w.received < NuvioSync.watchedPageSize { break }
+            last = page
+            if w.received < NuvioSync.watchedPageSize { complete = true; break }
         }
-        await take(progress: snapshot.rows, watched: history, unreadable: unreadable)
-        record(.bootstrapped(progressCursor: pc, watchedCursor: wc))
-        summary.bootstrapped = true
+        if let snapshot, snapshot.received >= NuvioClient.snapshotLimit { summary.snapshotCapped = true }
+        let dropped = take(progress: snapshot?.rows ?? [], watched: history, unreadable: unreadable)
+        if dropped > 0 {
+            if state.bootstrapResume != nil { record(.bootstrapResume(nil)) }
+            summary.moreToPull = true
+        } else if complete {
+            record(.bootstrapped(progressCursor: pc, watchedCursor: wc))
+            summary.bootstrapped = true
+        } else {
+            record(.bootstrapResume(NuvioBootstrapResume(progressCursor: pc, watchedCursor: wc,
+                                                         nextWatchedPage: max(first + 1, last))))
+            summary.moreToPull = true
+        }
     }
 
     /// Both delta streams from the stored cursors. Each page is applied, then its cursor step is recorded.
     mutating func delta(_ index: Int, start: Date) async throws {
         let api = deps.api
-        let session = self.session
         // Deletes win only over local entries older than the last pull (the bootstrap pass: older than its start).
         let before = state.lastPullAt ?? start
 
         var since = state.progressCursor ?? 0
         for n in 1...NuvioSync.maxDeltaPages {
-            let page = try await api.progressDelta(profile: index, since: since, limit: NuvioSync.deltaLimit, session)
+            let page = try await api.progressDelta(profile: index, since: since, limit: NuvioSync.deltaLimit, await current())
             let settled = NuvioSync.settle(page.rows, id: \.eventID, key: \.progressKey, operation: \.operation)
-            await take(progress: settled.upserts.compactMap(\.row), watched: [], unreadable: page.skipped)
+            take(progress: settled.upserts.compactMap(\.row), watched: [], unreadable: page.skipped)
             let deletes = settled.deletes.map(\.progressKey)
             if !deletes.isEmpty { record(.delete(progressKeys: deletes, watchedKeys: [], before: before)) }
             let next = max(since, page.lastEventID ?? page.rows.map(\.eventID).max() ?? since)
@@ -438,9 +625,9 @@ private struct Pass {
 
         since = state.watchedCursor ?? 0
         for n in 1...NuvioSync.maxDeltaPages {
-            let page = try await api.watchedDelta(profile: index, since: since, limit: NuvioSync.deltaLimit, session)
+            let page = try await api.watchedDelta(profile: index, since: since, limit: NuvioSync.deltaLimit, await current())
             let settled = NuvioSync.settle(page.rows, id: \.eventID, key: \.item.progressKey, operation: \.operation)
-            await take(progress: [], watched: settled.upserts.map(\.item), unreadable: page.skipped)
+            take(progress: [], watched: settled.upserts.map(\.item), unreadable: page.skipped)
             // A whole-series item (no episode) is never applied (plan section 7.8), also not as a delete.
             let deletes = settled.deletes.filter {
                 !(ContentKind.isEpisodic(type: $0.item.contentType)
@@ -457,29 +644,42 @@ private struct Pass {
 
     // MARK: Taking rows
 
-    /// Maps pulled rows to local entries and records them: ids (with the round-trip map), then merge for rows with a
-    /// known title, staging for the rest. Rows a tombstone would drop are neither merged nor staged.
-    mutating func take(progress rows: [NuvioProgressRow], watched: [NuvioWatchedItem], unreadable: Int) async {
+    /// Maps pulled rows to local entries and records them: ids (links by kind, else `tt…` as is and `tmdb:N` as the
+    /// provisional id, noted as pending), then merge for rows with a known title, staging for the rest. Rows a
+    /// tombstone would drop are neither merged nor staged. Every row's `last_watched` drops older queued pushes of
+    /// its key. No lookup runs here. Returns how many staged rows had to be dropped (overflow).
+    @discardableResult
+    mutating func take(progress rows: [NuvioProgressRow], watched: [NuvioWatchedItem], unreadable: Int) -> Int {
         var skipped = unreadable
-        let items = await itemIDs(rows.map { ($0.contentID, NuvioSync.isSeries(type: $0.contentType, season: $0.season,
-                                                                                  episode: $0.episode)) }
-                                  + watched.map { ($0.contentID, NuvioSync.isSeries(type: $0.contentType,
-                                                                                      season: $0.season,
-                                                                                      episode: $0.episode)) })
         let names = nameIndex()
         let now = deps.now()
-        var newIDs: [String: String] = [:]
+        var seen: [String: Int] = [:]
+        var pending: [TMDBKey: Int] = [:]
         var merge: [NuvioProgressEntry] = []
         var stage: [NuvioStaged] = []
         var unstage: [String] = []
+        let state = self.state
+
+        func local(_ cid: String, series: Bool, at: Int) -> String? {
+            if let l = state.localID(remote: cid, series: series) { return l }
+            switch NuvioMapping.remoteID(cid) {
+            case .imdb(let s): return s
+            case .tmdb(let n):
+                let k = TMDBKey(number: n, series: series)
+                pending[k] = max(pending[k] ?? 0, at)
+                return "tmdb:\(n)"
+            case .other: return nil
+            }
+        }
 
         for row in rows {
-            guard let item = items[row.contentID],
+            seen[row.progressKey] = max(seen[row.progressKey] ?? 0, row.lastWatched)
+            let series = NuvioSync.isSeries(type: row.contentType, season: row.season, episode: row.episode)
+            guard let item = local(row.contentID, series: series, at: row.lastWatched),
                   var e = NuvioMapping.entry(row, itemID: item, name: nil, now: now) else { skipped += 1; continue }
             guard !tombstoned(e) else { continue }
-            if item != row.contentID { newIDs[item] = row.contentID }
             let staged = NuvioStaged(itemID: item, row: row, stagedAt: now)
-            if let known = names[item] {
+            if let known = names[TitleKey(e)] {
                 e.item.name = known
                 merge.append(e)
                 unstage.append(staged.id)
@@ -488,12 +688,13 @@ private struct Pass {
             }
         }
         for w in watched {
-            guard let item = items[w.contentID],
+            seen[w.progressKey] = max(seen[w.progressKey] ?? 0, w.watchedAt)
+            let series = NuvioSync.isSeries(type: w.contentType, season: w.season, episode: w.episode)
+            guard let item = local(w.contentID, series: series, at: w.watchedAt),
                   var e = NuvioMapping.entry(w, itemID: item, now: now) else { skipped += 1; continue }
             guard !tombstoned(e) else { continue }
-            if item != w.contentID { newIDs[item] = w.contentID }
             let staged = NuvioStaged(itemID: item, watched: w, stagedAt: now)
-            if let known = names[item] { e.item.name = known }
+            if let known = names[TitleKey(e)] { e.item.name = known }
             if e.item.name.isEmpty {
                 stage.append(staged)
             } else {
@@ -502,43 +703,28 @@ private struct Pass {
             }
         }
 
-        if !newIDs.isEmpty { record(.remoteIDs(newIDs)) }
+        let notes = pending.map { NuvioPendingID(number: $0.key.number, series: $0.key.series, lastWatched: $0.value) }
+            .sorted { ($0.number, $0.series ? 1 : 0) < ($1.number, $1.series ? 1 : 0) }
+        if !notes.isEmpty { record(.pending(notes)) }
         if !unstage.isEmpty { record(.unstage(unstage)) }
         if !merge.isEmpty { record(.merge(merge)) }
-        if !stage.isEmpty { record(.stage(stage)) }
+        var dropped = 0
+        if !stage.isEmpty { dropped = record(.stage(stage)).dropped }
+        if !seen.isEmpty, !state.outbox.isEmpty { record(.outboxSeen(seen)) }
         if skipped > 0 { record(.skipped(skipped)); summary.skipped += skipped }
+        return dropped
     }
 
-    /// `content_id` → local item id. `tt…` stays; `tmdb:N` uses the round-trip map, then the lookup (at most
-    /// `lookupWidth` at a time), else stays `tmdb:N`; other schemes are left out.
-    func itemIDs(_ ids: [(String, Bool)]) async -> [String: String] {
-        let reverse = NuvioSync.reverseIDs(state.remoteIDs)
-        var out: [String: String] = [:]
-        var lookups: [String: TMDBKey] = [:]
-        for (cid, series) in ids where out[cid] == nil && lookups[cid] == nil {
-            if let l = reverse[cid] { out[cid] = l; continue }
-            switch NuvioMapping.remoteID(cid) {
-            case .imdb(let s): out[cid] = s
-            case .tmdb(let n): lookups[cid] = TMDBKey(number: n, series: series)
-            case .other: break
-            }
+    /// Local title → name, from the book: per title the newest named entry (tie: the smallest entry id), so the
+    /// choice does not depend on dictionary order (finding 5).
+    func nameIndex() -> [TitleKey: String] {
+        var best: [TitleKey: WatchProgress] = [:]
+        for e in book.entries.values where !e.item.name.isEmpty {
+            let k = TitleKey(e)
+            if let b = best[k], b.updated > e.updated || (b.updated == e.updated && b.id < e.id) { continue }
+            best[k] = e
         }
-        let keys = Array(Set(lookups.values)).sorted { ($0.number, $0.series ? 1 : 0) < ($1.number, $1.series ? 1 : 0) }
-        let imdbID = deps.imdbID
-        let found = await NuvioSync.bounded(keys, width: NuvioSync.lookupWidth) { k -> String? in
-            let id = await imdbID(MetaPreview(id: "tmdb:\(k.number)", type: k.series ? "series" : "movie", name: ""))
-            guard let id, case .imdb = NuvioMapping.remoteID(id) else { return nil }
-            return id
-        }
-        for (cid, k) in lookups { out[cid] = found[k] ?? "tmdb:\(k.number)" }
-        return out
-    }
-
-    /// Local item id → title, from the book (any entry of the title with a name).
-    func nameIndex() -> [String: String] {
-        var out: [String: String] = [:]
-        for e in book.entries.values where !e.item.name.isEmpty { out[e.item.id] = e.item.name }
-        return out
+        return best.mapValues(\.item.name)
     }
 
     /// True when the tombstones would drop the entry (judged on a copy; the merge step filters for real).
@@ -546,6 +732,36 @@ private struct Pass {
         guard !state.tombstones.isEmpty else { return false }
         var copy = state
         return copy.filterPulled([e]).isEmpty
+    }
+
+    // MARK: Ids (finding 2)
+
+    /// Up to `metaPerPass` pending `tmdb:` titles, newest first, looked up at most `lookupWidth` at a time. A found
+    /// IMDb id re-keys the title; `notFound` counts an attempt; "unavailable" leaves it for a later pass. A cancelled
+    /// task records nothing of the lookups.
+    mutating func resolveIDs() async {
+        let todo = state.pendingIDs.sorted {
+            $0.lastWatched != $1.lastWatched ? $0.lastWatched > $1.lastWatched
+                : ($0.number, $0.series ? 1 : 0) < ($1.number, $1.series ? 1 : 0)
+        }.prefix(NuvioSync.metaPerPass).map { TMDBKey(number: $0.number, series: $0.series) }
+        guard !todo.isEmpty else { return }
+        let imdbID = deps.imdbID
+        let found = await NuvioSync.bounded(todo, width: NuvioSync.lookupWidth) { k -> NuvioIDLookup? in
+            await imdbID(MetaPreview(id: "tmdb:\(k.number)", type: k.series ? "series" : "movie", name: ""))
+        }
+        if Task.isCancelled { return }
+        for k in todo {
+            switch found[k] {
+            case .found(let id)?:
+                if case .imdb(let tt) = NuvioMapping.remoteID(id) {
+                    record(.rekey(from: "tmdb:\(k.number)", to: tt, series: k.series))
+                } else {
+                    record(.idMissing(number: k.number, series: k.series))
+                }
+            case .notFound?: record(.idMissing(number: k.number, series: k.series))
+            case .unavailable?, nil: continue
+            }
+        }
     }
 
     // MARK: Staged rows (plan section 1.9)
@@ -557,27 +773,31 @@ private struct Pass {
         let now = deps.now()
         let names = nameIndex()
         let ordered = state.staged.sorted { $0.lastWatched != $1.lastWatched ? $0.lastWatched > $1.lastWatched : $0.id < $1.id }
-        var previews: [String: MetaPreview] = [:]
-        var lookup: [String] = []
-        for s in ordered where names[s.itemID] == nil && previews[s.itemID] == nil {
-            guard lookup.count < NuvioSync.metaPerPass else { break }
+        var previews: [TitleKey: MetaPreview] = [:]
+        var lookup: [TitleKey] = []
+        for s in ordered {
             guard let e = entry(s, now: now) else { continue }
-            previews[s.itemID] = e.item
-            lookup.append(s.itemID)
+            let k = TitleKey(e)
+            guard names[k] == nil, previews[k] == nil else { continue }
+            guard lookup.count < NuvioSync.metaPerPass else { break }
+            previews[k] = e.item
+            lookup.append(k)
         }
         let meta = deps.meta
         let asked = previews
-        let found = await NuvioSync.bounded(lookup, width: NuvioSync.lookupWidth) { id -> MetaPreview? in
-            guard let p = asked[id], let m = await meta(p), !m.name.isEmpty else { return nil }
+        let found = await NuvioSync.bounded(lookup, width: NuvioSync.lookupWidth) { k -> MetaPreview? in
+            guard let p = asked[k], let m = await meta(p), !m.name.isEmpty else { return nil }
             return m
         }
+        if Task.isCancelled { return }
         var merge: [NuvioProgressEntry] = []
         var unstage: [String] = []
         for s in ordered {
             guard var e = entry(s, now: now) else { unstage.append(s.id); continue }
-            if let n = names[s.itemID] {
+            let k = TitleKey(e)
+            if let n = names[k] {
                 e.item.name = n
-            } else if let m = found[s.itemID] {
+            } else if let m = found[k] {
                 e.item.name = m.name
                 e.item.poster = e.item.poster ?? m.poster
                 e.item.background = e.item.background ?? m.background
@@ -591,9 +811,12 @@ private struct Pass {
         if !merge.isEmpty { record(.merge(merge)) }
     }
 
+    /// The staged row as an entry, its time clamped to when it was staged (finding 3): a future-dated row must not
+    /// become newer than a local play made after it was staged.
     func entry(_ s: NuvioStaged, now: Date) -> NuvioProgressEntry? {
-        if let r = s.row { return NuvioMapping.entry(r, itemID: s.itemID, name: nil, now: now) }
-        if let w = s.watched { return NuvioMapping.entry(w, itemID: s.itemID, now: now) }
+        let at = min(now, s.stagedAt)
+        if let r = s.row { return NuvioMapping.entry(r, itemID: s.itemID, name: nil, now: at) }
+        if let w = s.watched { return NuvioMapping.entry(w, itemID: s.itemID, now: at) }
         return nil
     }
 }

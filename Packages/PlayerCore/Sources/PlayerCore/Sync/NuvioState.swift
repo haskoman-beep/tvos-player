@@ -48,6 +48,55 @@ public struct NuvioStaged: Codable, Equatable, Sendable {
 
     /// Epoch ms of the remote change (newest first when resolving and bounding).
     public var lastWatched: Int { row?.lastWatched ?? watched?.watchedAt ?? 0 }
+
+    /// The row belongs to a series (an episode).
+    public var isSeries: Bool {
+        if let r = row { return NuvioSync.isSeries(type: r.contentType, season: r.season, episode: r.episode) }
+        if let w = watched { return NuvioSync.isSeries(type: w.contentType, season: w.season, episode: w.episode) }
+        return false
+    }
+}
+
+/// How the account names a title the app keeps under another local id (review 2, finding 1): TMDB numbers films and
+/// series separately, so the kind is part of the link.
+public struct NuvioIDLink: Codable, Hashable, Sendable {
+    /// Local item id (`tt…`).
+    public var local: String
+    /// `content_id` as the account has it (`tmdb:N`).
+    public var remote: String
+    public var series: Bool
+
+    public init(local: String, remote: String, series: Bool) {
+        self.local = local; self.remote = remote; self.series = series
+    }
+}
+
+/// A `tmdb:N` title merged under its provisional local id `tmdb:N` that waits for its IMDb id (review 2, finding 2).
+public struct NuvioPendingID: Codable, Hashable, Sendable {
+    public var number: Int
+    public var series: Bool
+    /// Newest `last_watched` (epoch ms) seen for the title: newest titles are resolved first.
+    public var lastWatched: Int
+    /// Lookups that answered "no IMDb id"; at `NuvioState.maxIDAttempts` the title keeps `tmdb:N`.
+    public var attempts: Int
+
+    public init(number: Int, series: Bool, lastWatched: Int, attempts: Int = 0) {
+        self.number = number; self.series = series; self.lastWatched = lastWatched; self.attempts = attempts
+    }
+
+    public var provisionalID: String { "tmdb:\(number)" }
+}
+
+/// Where a bootstrap that needs more than one pass goes on (review 2, finding 6): the cursors captured before its
+/// first snapshot and the next history page.
+public struct NuvioBootstrapResume: Codable, Equatable, Sendable {
+    public var progressCursor: Int
+    public var watchedCursor: Int
+    public var nextWatchedPage: Int
+
+    public init(progressCursor: Int, watchedCursor: Int, nextWatchedPage: Int) {
+        self.progressCursor = progressCursor; self.watchedCursor = watchedCursor; self.nextWatchedPage = nextWatchedPage
+    }
 }
 
 /// Result of checking the stored profile choice against a fresh `sync_pull_profiles` list (addendum A3, D3).
@@ -65,8 +114,15 @@ public enum NuvioProfileCheck: Equatable, Sendable {
     case pinProtected
 }
 
-public struct NuvioState: Codable, Equatable, Sendable {
-    public static let maxStaged = 300
+/// `description`, `debugDescription` and the mirror show counts and the profile index only: no account user id,
+/// no profile id, no content ids (review 2, finding 17).
+public struct NuvioState: Codable, Equatable, Sendable, CustomStringConvertible, CustomDebugStringConvertible,
+    CustomReflectable {
+    /// Staged rows kept; beyond it the oldest go and are counted in `skipped` (never silently, finding 6). One lookup
+    /// names every row of a title, so this is rows, not titles.
+    public static let maxStaged = 3000
+    /// "No IMDb id" answers before a `tmdb:N` title stops being looked up.
+    public static let maxIDAttempts = 3
     public static let maxTombstones = 200
     public static let tombstoneMaxAge: TimeInterval = 30 * 86400
 
@@ -79,8 +135,15 @@ public struct NuvioState: Codable, Equatable, Sendable {
     public var watchedCursor: Int?
     public var bootstrapDone = false
     public var lastPullAt: Date?
-    /// Local item id → `content_id` as the account has it, so a push uses the same key as the pulled row.
-    public var remoteIDs: [String: String] = [:]
+    /// Local item id ↔ `content_id` as the account has it (per kind), so a push uses the same key as the pulled row.
+    public var remoteIDs: [NuvioIDLink] = []
+    /// `tmdb:N` titles waiting for their IMDb id.
+    public var pendingIDs: [NuvioPendingID] = []
+    /// A bootstrap that goes on in the next pass (history beyond one pass, finding 6).
+    public var bootstrapResume: NuvioBootstrapResume?
+    /// Bumped by every reset and profile change; `NuvioSyncChanges.apply` replays nothing onto another generation
+    /// (finding 10).
+    public var generation = 0
     public var outbox = NuvioOutbox()
     public var staged: [NuvioStaged] = []
     /// Pulled rows the app could not address (other id schemes, whole-series rows), shown as a number.
@@ -91,7 +154,7 @@ public struct NuvioState: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case userID, profileIndex, profileID, progressCursor, watchedCursor, bootstrapDone, lastPullAt, remoteIDs
-        case outbox, staged, skipped, tombstones
+        case pendingIDs, bootstrapResume, generation, outbox, staged, skipped, tombstones
     }
 
     /// Field by field: an unknown field is ignored, a missing or unreadable one takes its default, one unreadable
@@ -106,7 +169,10 @@ public struct NuvioState: Codable, Equatable, Sendable {
         watchedCursor = field(.watchedCursor, Int.self)
         bootstrapDone = field(.bootstrapDone, Bool.self) ?? false
         lastPullAt = field(.lastPullAt, Date.self)
-        remoteIDs = field(.remoteIDs, [String: String].self) ?? [:]
+        remoteIDs = (field(.remoteIDs, [Lossy<NuvioIDLink>].self) ?? []).compactMap(\.value)
+        pendingIDs = (field(.pendingIDs, [Lossy<NuvioPendingID>].self) ?? []).compactMap(\.value)
+        bootstrapResume = field(.bootstrapResume, NuvioBootstrapResume.self)
+        generation = field(.generation, Int.self) ?? 0
         outbox = field(.outbox, NuvioOutbox.self) ?? NuvioOutbox()
         staged = (field(.staged, [Lossy<NuvioStaged>].self) ?? []).compactMap(\.value)
         skipped = field(.skipped, Int.self) ?? 0
@@ -118,10 +184,10 @@ public struct NuvioState: Codable, Equatable, Sendable {
     /// Another account signed in: nothing of the old account stays (profile choice, cursors, ids, outbox, staged
     /// rows, counter). Tombstones stay: they are local decisions of this profile, not account data.
     public mutating func resetForAccount(_ userID: String) {
-        let keep = tombstones
+        let keep = (tombstones, generation + 1)
         self = NuvioState()
         self.userID = userID
-        tombstones = keep
+        (tombstones, generation) = keep
     }
 
     /// The book was replaced (restore): pull from scratch, keep the profile choice and the outbox.
@@ -130,6 +196,8 @@ public struct NuvioState: Codable, Equatable, Sendable {
         watchedCursor = nil
         bootstrapDone = false
         lastPullAt = nil
+        bootstrapResume = nil
+        generation += 1
     }
 
     /// The user picked an account profile. The same profile (index and id) changes nothing; another one starts
@@ -137,9 +205,9 @@ public struct NuvioState: Codable, Equatable, Sendable {
     public mutating func choose(_ profile: NuvioProfile) {
         let id = profile.id.isEmpty ? nil : profile.id
         if profileIndex == profile.profileIndex, profileID == id { return }
-        let keep = (userID, tombstones)
+        let keep = (userID, tombstones, generation + 1)
         self = NuvioState()
-        (userID, tombstones) = keep
+        (userID, tombstones, generation) = keep
         profileIndex = profile.profileIndex
         profileID = id
     }
@@ -167,20 +235,51 @@ public struct NuvioState: Codable, Equatable, Sendable {
     // MARK: Staged rows
 
     /// Keeps a row until its title is known. Same row again: the newer stays. Beyond `maxStaged` the oldest
-    /// (`lastWatched`) go.
-    public mutating func stage(_ s: NuvioStaged) {
+    /// (`lastWatched`) go; they are added to `skipped` and their number is returned (finding 6).
+    @discardableResult
+    public mutating func stage(_ s: NuvioStaged) -> Int {
         if let i = staged.firstIndex(where: { $0.id == s.id }) {
-            if staged[i].lastWatched > s.lastWatched { return }
+            if staged[i].lastWatched > s.lastWatched { return 0 }
             staged.remove(at: i)
         }
         staged.append(s)
-        guard staged.count > Self.maxStaged else { return }
+        guard staged.count > Self.maxStaged else { return 0 }
         staged.sort { $0.lastWatched != $1.lastWatched ? $0.lastWatched > $1.lastWatched : $0.id < $1.id }
-        staged.removeLast(staged.count - Self.maxStaged)
+        let n = staged.count - Self.maxStaged
+        staged.removeLast(n)
+        skipped += n
+        return n
     }
 
     /// The row was merged (or given up).
     public mutating func unstage(_ s: NuvioStaged) { staged.removeAll { $0.id == s.id } }
+
+    // MARK: Ids (findings 1, 2)
+
+    /// `content_id` of a local item id for a push (the local id itself when no link is known).
+    public func remoteID(local: String, series: Bool) -> String {
+        remoteIDs.first { $0.local == local && $0.series == series }?.remote ?? local
+    }
+
+    /// Local item id of a `content_id` of this kind, when a link is known. Several: the smallest (deterministic).
+    public func localID(remote: String, series: Bool) -> String? {
+        remoteIDs.filter { $0.remote == remote && $0.series == series }.map(\.local).min()
+    }
+
+    /// Adds or replaces the link of `(remote, series)`.
+    public mutating func link(_ l: NuvioIDLink) {
+        remoteIDs.removeAll { ($0.remote == l.remote && $0.series == l.series) || ($0.local == l.local && $0.series == l.series) }
+        remoteIDs.append(l)
+    }
+
+    /// Notes a provisional `tmdb:N` title (newest `lastWatched` kept, attempts kept).
+    public mutating func notePending(_ p: NuvioPendingID) {
+        if let i = pendingIDs.firstIndex(where: { $0.number == p.number && $0.series == p.series }) {
+            pendingIDs[i].lastWatched = max(pendingIDs[i].lastWatched, p.lastWatched)
+        } else {
+            pendingIDs.append(NuvioPendingID(number: p.number, series: p.series, lastWatched: p.lastWatched))
+        }
+    }
 
     // MARK: Tombstones (A4)
 
@@ -189,7 +288,7 @@ public struct NuvioState: Codable, Equatable, Sendable {
     public mutating func tombstone(itemID: String, kind: NuvioTombstone.Kind, at: Date) {
         tombstones.removeAll { $0.itemID == itemID }
         tombstones.append(NuvioTombstone(itemID: itemID, kind: kind, at: at))
-        outbox.remove(contentIDs: Set([itemID] + [remoteIDs[itemID]].compactMap { $0 }))
+        outbox.remove(contentIDs: Set([itemID] + remoteIDs.filter { $0.local == itemID }.map(\.remote)))
         guard tombstones.count > Self.maxTombstones else { return }
         tombstones.sort { $0.at != $1.at ? $0.at < $1.at : $0.itemID < $1.itemID }
         tombstones.removeFirst(tombstones.count - Self.maxTombstones)
@@ -203,12 +302,23 @@ public struct NuvioState: Codable, Equatable, Sendable {
         let byItem = Dictionary(tombstones.map { ($0.itemID, $0) }) { a, b in a.at >= b.at ? a : b }
         var cleared = Set<String>()
         let out = pulled.filter { e in
-            guard let t = byItem[e.item.id] ?? byItem[e.id] else { return true }
+            // Both ids of a title (finding 2): a row under `tmdb:N` meets a tombstone under its linked `tt…`.
+            let series = e.season != nil || ContentKind.isEpisodic(type: e.item.type)
+            let other = localID(remote: e.item.id, series: series)
+            guard let t = byItem[e.item.id] ?? byItem[e.id] ?? other.flatMap({ byItem[$0] }) else { return true }
             if e.updated > t.at { cleared.insert(t.itemID); return true }
             return t.kind == .removedFromContinue && Self.isFinished(e)
         }
         if !cleared.isEmpty { tombstones.removeAll { cleared.contains($0.itemID) } }
         return out
+    }
+
+    /// True when the tombstone of `itemID` blocks a local entry with this time and state (used when entries move to
+    /// another id, finding 2).
+    func blocks(itemID: String, updated: Date, finished: Bool) -> Bool {
+        guard let t = tombstones.filter({ $0.itemID == itemID }).max(by: { $0.at < $1.at }) else { return false }
+        if updated > t.at { return false }
+        return !(t.kind == .removedFromContinue && finished)
     }
 
     /// Drops tombstones older than `tombstoneMaxAge` and prunes the outbox.
@@ -218,7 +328,21 @@ public struct NuvioState: Codable, Equatable, Sendable {
     }
 
     static func isFinished(_ e: NuvioProgressEntry) -> Bool {
-        e.watched || (e.duration.isFinite && e.duration > 0 && e.position / e.duration >= ProgressBook.finishedAt)
+        e.watched || ProgressBook.nuvioFinished(position: e.position, duration: e.duration)
+    }
+}
+
+extension NuvioState {
+    public var description: String {
+        "NuvioState(profileIndex: \(profileIndex.map(String.init) ?? "nil"), bootstrapDone: \(bootstrapDone), "
+            + "outbox: \(outbox.entries.count), staged: \(staged.count), skipped: \(skipped), "
+            + "tombstones: \(tombstones.count), pendingIDs: \(pendingIDs.count))"
+    }
+    public var debugDescription: String { description }
+    public var customMirror: Mirror {
+        Mirror(self, children: ["profileIndex": profileIndex as Any, "bootstrapDone": bootstrapDone,
+                                "outbox": outbox.entries.count, "staged": staged.count, "skipped": skipped,
+                                "tombstones": tombstones.count], displayStyle: .struct)
     }
 }
 

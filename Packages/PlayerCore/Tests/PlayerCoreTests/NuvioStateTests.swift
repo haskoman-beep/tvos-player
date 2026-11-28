@@ -25,7 +25,7 @@ private func sample() -> NuvioState {
     s.watchedCursor = 7
     s.bootstrapDone = true
     s.lastPullAt = t0
-    s.remoteIDs = ["tt0903747": "tmdb:1396"]
+    s.remoteIDs = [NuvioIDLink(local: "tt0903747", remote: "tmdb:1396", series: true)]
     s.outbox.note(NuvioProgressPush(contentID: "tmdb:1396", contentType: "series", videoID: "tmdb:1396:1:1", season: 1,
                                     episode: 1, position: 1000, duration: 2000, lastWatched: 5), now: t0)
     s.stage(NuvioStaged(itemID: "tt0903747",
@@ -102,7 +102,7 @@ private func entry(_ id: String = "tt0137523", item: String? = nil, season: Int?
     s.resetCursors()
     #expect(s.progressCursor == nil && s.watchedCursor == nil && !s.bootstrapDone && s.lastPullAt == nil)
     #expect(s.profileIndex == 2 && s.profileID == "00000000-0000-4000-8000-000000000102")
-    #expect(!s.outbox.isEmpty && s.remoteIDs == ["tt0903747": "tmdb:1396"])
+    #expect(!s.outbox.isEmpty && s.remoteIDs == [NuvioIDLink(local: "tt0903747", remote: "tmdb:1396", series: true)])
 }
 
 @Test func nuvioChoosingAnotherProfileStartsOver() {
@@ -167,6 +167,9 @@ private func entry(_ id: String = "tt0137523", item: String? = nil, season: Int?
     #expect(s.staged.count == 1)
     for i in 0..<(NuvioState.maxStaged + 10) { s.stage(NuvioStaged(itemID: "tt\(100 + i)", row: row("tt\(100 + i)", last: 100 + i), stagedAt: t0)) }
     #expect(s.staged.count == NuvioState.maxStaged)
+    // Review 2, finding 6: the dropped rows are counted, never silent (the watched tt1 left over plus 10 rows).
+    #expect(s.skipped == 11)
+    #expect(s.stage(NuvioStaged(itemID: "tt99", row: row("tt99", last: 1), stagedAt: t0)) == 1 && s.skipped == 12)
     #expect(!s.staged.contains { $0.itemID == "tt100" } && s.staged.contains { $0.itemID == "tt409" })
 }
 
@@ -206,7 +209,7 @@ private func entry(_ id: String = "tt0137523", item: String? = nil, season: Int?
 
 @Test func nuvioTombstoneDropsPendingPushesOfTheTitle() {
     var s = NuvioState()
-    s.remoteIDs = ["tt0903747": "tmdb:1396"]
+    s.remoteIDs = [NuvioIDLink(local: "tt0903747", remote: "tmdb:1396", series: true)]
     s.outbox.note(NuvioProgressPush(contentID: "tmdb:1396", contentType: "series", videoID: "tmdb:1396:1:1", season: 1,
                                     episode: 1, position: 1, duration: 2, lastWatched: 3), now: t0)
     s.outbox.note(NuvioProgressPush(contentID: "tt5", contentType: "movie", videoID: "tt5", position: 1, duration: 2,
@@ -226,4 +229,16 @@ private func entry(_ id: String = "tt0137523", item: String? = nil, season: Int?
     s.prune(now: t0.addingTimeInterval(NuvioState.tombstoneMaxAge + 20))
     #expect(s.tombstones.allSatisfy { $0.at >= t0.addingTimeInterval(20) })
     #expect(!s.tombstones.contains { $0.itemID == "tt9" } && s.tombstones.contains { $0.itemID == "tt10" })
+}
+
+// MARK: Review 2 (finding 17)
+
+@Test func nuvioStateDescriptionHidesAccountAndProfileIDs() {
+    let s = sample()
+    for text in [String(describing: s), String(reflecting: s), "\(s)", String(describing: Mirror(reflecting: s).children.map(\.value))] {
+        for secret in ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000102", "tmdb:1396", "tt0903747"] {
+            #expect(!text.contains(secret), "\(text)")
+        }
+    }
+    #expect(String(describing: s).contains("profileIndex: 2"))
 }

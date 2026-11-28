@@ -9,6 +9,8 @@ public struct NuvioOutbox: Codable, Equatable, Sendable {
     public static let interval: TimeInterval = 60
     public static let maxEntries = 200
     public static let maxAge: TimeInterval = 30 * 86400
+    /// Refusals of one entry sent alone before it is dropped (finding 11).
+    public static let maxAttempts = 3
 
     /// Why the entry is queued. `watched`: the app marked the title watched (80 % rule of Trakt/Simkl, or by hand);
     /// it is sent as position = duration so the account records it as complete (addendum A8).
@@ -19,12 +21,14 @@ public struct NuvioOutbox: Codable, Equatable, Sendable {
         public var kind: Kind
         /// When the app queued it (for `maxAge` and the overflow order).
         public var notedAt: Date
+        /// How often the account refused this entry on its own (4xx, finding 11); at `maxAttempts` it is dropped.
+        public var attempts: Int
 
-        public init(push: NuvioProgressPush, kind: Kind, notedAt: Date) {
-            self.push = push; self.kind = kind; self.notedAt = notedAt
+        public init(push: NuvioProgressPush, kind: Kind, notedAt: Date, attempts: Int = 0) {
+            self.push = push; self.kind = kind; self.notedAt = notedAt; self.attempts = attempts
         }
 
-        enum CodingKeys: String, CodingKey { case push, kind, notedAt }
+        enum CodingKeys: String, CodingKey { case push, kind, notedAt, attempts }
 
         /// An unknown kind (newer build) reads as `progress`; a missing or broken date reads as the reference date
         /// (2001), so the next `prune` drops the entry.
@@ -33,6 +37,7 @@ public struct NuvioOutbox: Codable, Equatable, Sendable {
             push = try c.decode(NuvioProgressPush.self, forKey: .push)
             kind = (try? c.decodeIfPresent(Kind.self, forKey: .kind)) ?? .progress
             notedAt = (try? c.decodeIfPresent(Date.self, forKey: .notedAt)) ?? Date(timeIntervalSinceReferenceDate: 0)
+            attempts = ((try? c.decodeIfPresent(Int.self, forKey: .attempts)) ?? nil) ?? 0
         }
     }
 
@@ -108,6 +113,42 @@ public struct NuvioOutbox: Codable, Equatable, Sendable {
         let before = entries.count
         entries = entries.filter { !contentIDs.contains($0.value.push.contentID) }
         return before - entries.count
+    }
+
+    /// The account refused `sent` when sent alone. The entry (if not replaced meanwhile) counts the attempt and goes
+    /// at `maxAttempts`. Returns true when it was dropped.
+    @discardableResult
+    public mutating func refused(_ sent: (key: String, entry: NuvioProgressPush), now: Date) -> Bool {
+        lastAttemptAt = now
+        guard var e = entries[sent.key], e.push == sent.entry else { return false }
+        e.attempts += 1
+        if e.attempts >= Self.maxAttempts { entries[sent.key] = nil; return true }
+        entries[sent.key] = e
+        return false
+    }
+
+    /// Drops entries the account already has in a newer or equal state: `seen` maps a progress key to the
+    /// `last_watched` (epoch ms) of a pulled row (finding 4). Returns how many went.
+    @discardableResult
+    public mutating func dropSeen(_ seen: [String: Int]) -> Int {
+        let before = entries.count
+        entries = entries.filter { k, e in seen[k].map { $0 < e.push.lastWatched } ?? true }
+        return before - entries.count
+    }
+
+    /// Entries queued under `from` (a local `tt…` id) go to `to` (the account's `content_id` of the title); on a key
+    /// collision the newer `lastWatched` stays (finding 2).
+    public mutating func rewrite(contentID from: String, to: String, series: Bool) {
+        let moving = entries.filter { $0.value.push.contentID == from && ($0.value.push.season != nil) == series }
+        guard !moving.isEmpty, from != to else { return }
+        for (k, var e) in moving {
+            entries[k] = nil
+            e.push.contentID = to
+            e.push.videoID = NuvioMapping.videoID(contentID: to, season: e.push.season, episode: e.push.episode)
+            let nk = Self.key(e.push)
+            if let old = entries[nk], old.push.lastWatched > e.push.lastWatched { continue }
+            entries[nk] = e
+        }
     }
 
     /// Sign-out or account change.
