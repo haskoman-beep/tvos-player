@@ -237,18 +237,38 @@ public struct NuvioState: Codable, Equatable, Sendable, CustomStringConvertible,
     /// Keeps a row until its title is known. Same row again: the newer stays. Beyond `maxStaged` the oldest
     /// (`lastWatched`) go; they are added to `skipped` and their number is returned (finding 6).
     @discardableResult
-    public mutating func stage(_ s: NuvioStaged) -> Int {
-        if let i = staged.firstIndex(where: { $0.id == s.id }) {
-            if staged[i].lastWatched > s.lastWatched { return 0 }
-            staged.remove(at: i)
+    public mutating func stage(_ s: NuvioStaged) -> Int { stage(contentsOf: [s]) }
+
+    /// `stage(_:)` for each row in order, with the same result, but one id lookup table per batch instead of a
+    /// linear search per row (a pass can stage thousands of rows; the per-row search made that quadratic). The table
+    /// keeps the first index of an id (as `firstIndex` did) and is rebuilt after anything that moves indices.
+    @discardableResult
+    public mutating func stage(contentsOf rows: [NuvioStaged]) -> Int {
+        var index: [String: Int]?
+        var dropped = 0
+        for s in rows {
+            let id = s.id
+            let table = index ?? Dictionary(staged.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
+            index = table
+            if let i = table[id] {
+                if staged[i].lastWatched > s.lastWatched { continue }
+                staged.remove(at: i)
+                index = nil
+            }
+            staged.append(s)
+            if index != nil { index?[id] = staged.count - 1 }
+            guard staged.count > Self.maxStaged else { continue }
+            // Sort keys computed once per row; same order as comparing the computed properties directly.
+            staged = staged.map { (last: $0.lastWatched, id: $0.id, row: $0) }
+                .sorted { $0.last != $1.last ? $0.last > $1.last : $0.id < $1.id }
+                .map(\.row)
+            let n = staged.count - Self.maxStaged
+            staged.removeLast(n)
+            skipped += n
+            dropped += n
+            index = nil
         }
-        staged.append(s)
-        guard staged.count > Self.maxStaged else { return 0 }
-        staged.sort { $0.lastWatched != $1.lastWatched ? $0.lastWatched > $1.lastWatched : $0.id < $1.id }
-        let n = staged.count - Self.maxStaged
-        staged.removeLast(n)
-        skipped += n
-        return n
+        return dropped
     }
 
     /// The row was merged (or given up).

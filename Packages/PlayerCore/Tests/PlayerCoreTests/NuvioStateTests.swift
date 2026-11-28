@@ -165,12 +165,53 @@ private func entry(_ id: String = "tt0137523", item: String? = nil, season: Int?
     #expect(s.staged.count == 2)
     s.unstage(s.staged[0])
     #expect(s.staged.count == 1)
-    for i in 0..<(NuvioState.maxStaged + 10) { s.stage(NuvioStaged(itemID: "tt\(100 + i)", row: row("tt\(100 + i)", last: 100 + i), stagedAt: t0)) }
+    // One batch, as a sync pass stages its rows (row by row is the same, see the next test, but quadratic in time).
+    #expect(s.stage(contentsOf: (0..<(NuvioState.maxStaged + 10)).map {
+        NuvioStaged(itemID: "tt\(100 + $0)", row: row("tt\(100 + $0)", last: 100 + $0), stagedAt: t0)
+    }) == 11)
     #expect(s.staged.count == NuvioState.maxStaged)
     // Review 2, finding 6: the dropped rows are counted, never silent (the watched tt1 left over plus 10 rows).
     #expect(s.skipped == 11)
     #expect(s.stage(NuvioStaged(itemID: "tt99", row: row("tt99", last: 1), stagedAt: t0)) == 1 && s.skipped == 12)
     #expect(!s.staged.contains { $0.itemID == "tt100" } && s.staged.contains { $0.itemID == "tt409" })
+}
+
+/// The former row-by-row `stage(_:)` (linear search, sort on overflow), kept as the reference for the batch.
+private func referenceStage(_ s: NuvioStaged, staged: inout [NuvioStaged], skipped: inout Int) -> Int {
+    if let i = staged.firstIndex(where: { $0.id == s.id }) {
+        if staged[i].lastWatched > s.lastWatched { return 0 }
+        staged.remove(at: i)
+    }
+    staged.append(s)
+    guard staged.count > NuvioState.maxStaged else { return 0 }
+    staged.sort { $0.lastWatched != $1.lastWatched ? $0.lastWatched > $1.lastWatched : $0.id < $1.id }
+    let n = staged.count - NuvioState.maxStaged
+    staged.removeLast(n)
+    skipped += n
+    return n
+}
+
+/// A batch stages exactly like the former code row by row: duplicates (newer, equal, older), a watched item of a
+/// staged key, overflow at the limit, a row too old to stay and a dropped id coming back newer.
+@Test func nuvioStagedBatchEqualsOneByOne() {
+    func row(_ c: String, last: Int) -> NuvioStaged {
+        NuvioStaged(itemID: c, row: NuvioProgressRow(contentID: c, contentType: "movie", videoID: c, position: 1, duration: 2,
+                                                     lastWatched: last), stagedAt: t0)
+    }
+    var base = NuvioState()
+    base.stage(contentsOf: (0..<(NuvioState.maxStaged - 2)).map { row("tt\(1_000 + $0)", last: 1_000 + $0) })
+    let rows = [row("tt1500", last: 9_000), row("tt1501", last: 5), row("tt1502", last: 1_502), row("tt5", last: 9_001),
+                NuvioStaged(itemID: "tt5", watched: NuvioWatchedItem(contentID: "tt5", contentType: "movie", watchedAt: 9_002),
+                            stagedAt: t0),
+                row("tt6", last: 9_003), row("tt7", last: 1), row("tt1000", last: 9_004), row("tt8", last: 9_005),
+                row("tt1001", last: 9_006), row("tt6", last: 9_007), row("tt1002", last: 3)]
+    var refStaged = base.staged, refSkipped = base.skipped, refDropped = 0
+    for r in rows { refDropped += referenceStage(r, staged: &refStaged, skipped: &refSkipped) }
+    var batch = base, single = base
+    #expect(batch.stage(contentsOf: rows) == refDropped && refDropped > 0)
+    #expect(batch.staged == refStaged && batch.skipped == refSkipped && refStaged.count == NuvioState.maxStaged)
+    #expect(rows.map { single.stage($0) }.reduce(0, +) == refDropped)
+    #expect(single.staged == refStaged && single.skipped == refSkipped)
 }
 
 // MARK: Tombstones (addendum A4)

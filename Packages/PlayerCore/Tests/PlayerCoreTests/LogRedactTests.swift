@@ -173,7 +173,7 @@ import Testing
 
 // MARK: Nachtrag 2
 
-@Test func redactLongRunIsFastAndCapped() {
+@Test(.tags(.wallClock)) func redactLongRunIsFastAndCapped() {
     let run = String(repeating: "a-", count: 10_000) + "key"          // 20 003 Zeichen
     let line = "token=geheim1 " + run + "=wert9"
     let clock = ContinuousClock()
@@ -187,7 +187,7 @@ import Testing
     #expect(LogRedact.text(r) == r)
 }
 
-@Test func redactLongRunBelowCapIsFastAndMasked() {
+@Test(.tags(.wallClock)) func redactLongRunBelowCapIsFastAndMasked() {
     let line = String(repeating: "a-", count: 3_500) + "key=wert9"      // < 8 KB, kein Kürzen
     let clock = ContinuousClock()
     var r = ""
